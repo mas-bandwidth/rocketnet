@@ -109,9 +109,13 @@ static void test_dst_outage_opted_in_reliable_timeout()
 // An outage at each stage of the handshake, T = 10, D = 9, a 30 s token,
 // 150 ms round trip. States 1 and 2, the true X1 window, the server's and the
 // client's CONNECTED: survives. State 3 with the client's direction dark:
-// the server never sees the response (its handshake window is 5 s), and the
-// attempt fails with CONNECTION_RESPONSE_TIMED_OUT at T; with only the
-// server's direction dark it survives.
+// the client sends its first response in the update that enters state 3
+// (W2-51), before the harness can see the state and go dark, so that one
+// response escapes, the server holds the client, and the attempt survives;
+// with only the server's direction dark it survives too. The row is judged
+// as RESPONSE_TIMEOUT so the harness measures the escape, and it asserts the
+// escape. The state 3 timeout end itself is reached in
+// test_unit_handshake_witness.cpp and test_unit_status_codes_reached.cpp.
 
 static void test_dst_outage_at_each_handshake_stage()
 {
@@ -141,18 +145,17 @@ static void test_dst_outage_at_each_handshake_stage()
         options.large_bytes = 0;
         const dst_outage_result_t result = dst_outage_unit_run( "handshake", &options );
 
-        // the state 3 row ends as it claims: the response did not escape
-        // before the outage (the harness would judge survival instead), and
-        // the attempt failed with CONNECTION_RESPONSE_TIMED_OUT. The client
-        // sends its response at its send step, after the harness has gone
-        // dark; a library that sent it inside the update that entered state
-        // 3 (which tests/dst_outage.h allows) moves this row to survival
+        // the state 3 client-dark row ends by the branch it claims: the
+        // response escaped in the update that entered state 3, so the
+        // harness judged survival, and the connection survived (no end on
+        // either side). A library that held the response to its send step
+        // would end this row with CONNECTION_RESPONSE_TIMED_OUT and fail here
         if ( rows[i].expect == DST_OUTAGE_EXPECT_RESPONSE_TIMEOUT )
         {
-            check( !result.response_escaped );
-            check( result.client_ended );
-            check( result.client_state == ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT );
-            check( !result.connected );
+            check( result.response_escaped );
+            check( result.connected );
+            check( !result.client_ended );
+            check( !result.server_ended );
         }
     }
 }
