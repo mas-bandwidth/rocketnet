@@ -347,7 +347,7 @@ inline void rocketnet_msgx_socket_table_index_insert( struct rocketnet_msgx_sock
 inline void rocketnet_msgx_socket_table_index_remove( struct rocketnet_msgx_socket_table_t * table, int slot )
 {
     const uint32_t mask = (uint32_t) table->index_size - 1;
-    uint32_t hole =rocketnet_msgx_address_hash( &table->slots[slot].address ) & mask;
+    uint32_t hole = rocketnet_msgx_address_hash( &table->slots[slot].address ) & mask;
     while ( table->index[hole] != slot )
     {
         rocketnet_assert( table->index[hole] >= 0 );

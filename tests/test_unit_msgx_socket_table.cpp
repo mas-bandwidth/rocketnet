@@ -128,7 +128,7 @@ static struct msgx_test_t msgx_test_create( int capacity, int num_holders, int o
     test.kernel->num_fds = num_fds;
     // the table's block, sized for capacity slots as the transport sizes it
     void * block = calloc( 1, (size_t) rocketnet_msgx_socket_table_bytes( capacity ) );
-    rocketnet_unit_check( block != NULL );
+    rocketnet_unit_check( block != NULL );     // a failed check ends the case
     test.table = rocketnet_msgx_socket_table_init( block, capacity, num_holders, opens_per_update, msgx_test_open, msgx_test_close, test.kernel );
     return test;
 }

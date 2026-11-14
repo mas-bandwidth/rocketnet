@@ -105,10 +105,13 @@ static uint64_t msgx_sizing_allocated( int workers, int max_clients )
     return allocated;
 }
 
-// What create allocates is the plan, less the threads and wakes it creates
-// after (the plan counts them by the platform's own byte helpers), at 1, 8
-// and 1000 clients: the receive banks, the socket table and the worker
-// buckets come to exactly what the plan counts, and fall with the count.
+// What create allocates before its sockets and threads is the plan less the
+// threads and wakes (which this case does not create: the plan counts them by
+// the platform's own byte helpers, and this case subtracts the same), at 1, 8
+// and 1000 clients: the transport, the process view, the receive banks, the
+// socket table and the worker buckets come to exactly what the plan counts,
+// and grow with the count (the table and buckets between 1 and 8 while the
+// receive budget keeps its 512-client floor, everything up to 1000).
 static void test_msgx_allocation_is_the_plan()
 {
     const int workers = ROCKETNET_MSGX_DEFAULT_WORKERS;
