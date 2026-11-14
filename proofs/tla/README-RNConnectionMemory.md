@@ -26,10 +26,15 @@ A client owns one region; it is the same machine with one slot.
   - `Release(s)`: an ack or a released delivery gives room back
     (`rn_region_send_free`, `rn_region_send_free_fragment`), also while
     exhausted; that room is not taken again before `Reuse`.
-  - `Exhaust(s)`: an operation finds no room. The region takes its sticky
-    exhausted state with the reason `MESSAGE_MEMORY_EXHAUSTED`
-    (`rn_region_exhaust`, called from the refusals of `rn_region_send_alloc`
-    and `rn_region_send_alloc_span`).
+  - `Exhaust(s)`: a receive placement finds no room. The region takes its
+    sticky exhausted state with the reason `MESSAGE_MEMORY_EXHAUSTED`
+    (`rn_region_exhaust`, called from the receive side's no-room sites:
+    `rn_channels_delivery_room` and the CONFIG placement in
+    `sdk/rocketnet_channel.cpp`, and a reliable delivery with no room in
+    `rn_sequenced_room`, `sdk/rocketnet_channel_sequenced.cpp`). A send with
+    no room is not this step: `rn_region_send_alloc` and
+    `rn_region_send_alloc_span` call `rn_region_send_refuse`, which is
+    `Refuse(s, n)` (revision 1.1.2 below).
   - `Kick(s)`: the owner, reading `rn_connection_memory_decide`, disconnects
     the connection with that reason. A server kicks the slot; a client
     disconnects itself.
@@ -110,8 +115,11 @@ The instance: three slots, four clients, a region of three records.
 - `Capacity` stands for every part of the region at once. The code has
   several pools (the three store classes, the descriptor pool, the receive
   ring, the holds). Any one of them refusing is `Exhaust`.
-- The receive side's no-room sites are not wired to `rn_region_exhaust` yet;
-  the objects layer wires them with the kick.
+- The receive side's no-room sites are wired to `rn_region_exhaust`
+  (`rn_channels_delivery_room` and the CONFIG placement in
+  `sdk/rocketnet_channel.cpp`, `rn_sequenced_room` for a reliable delivery in
+  `sdk/rocketnet_channel_sequenced.cpp`); the kick that follows is the
+  owner's, reading `rn_connection_memory_decide`.
 - `Connect`, `Leave` and the disconnect itself are the objects' (layer 8). The
   region provides the state, the reason, the decision and the reset.
 
@@ -133,12 +141,15 @@ refused and counted; the region and the connection are as they were. Only the
 receive side's exhaustion ends a connection with MESSAGE_MEMORY_EXHAUSTED.
 The new action `Refuse(s)` is the send refusal (`rn_region_send_refuse`,
 `sdk/rocketnet_allocator.cpp`); `Exhaust(s)` is now the receive placement
-only. The ghost `cause` records the side that exhausted a region.
+only. Revision 1.1 recorded the side that exhausted a region in a ghost
+`cause`; revision 1.1.2 below removed it and restated `SendNeverEnds`.
 `SendExhausts = TRUE` is the reversed witness, v1.0's send-side kick.
+
+The properties, with `SendNeverEnds` as it stands since revision 1.1.2:
 
 | Property | Kind | Claim |
 |---|---|---|
-| `SendNeverEnds` | invariant | no slot is disconnected with cause `"send"` |
+| `SendNeverEnds` | action property since 1.1.2 (an invariant on the ghost `cause` in 1.1) | no start, refused or not, changes its slot's state, exhausted flag or reason |
 | `RefusalLeavesStateUnchanged` | action | a refused send leaves its slot's state, owner, room, exhaustion, reason and records unchanged |
 | `ExhaustionOnlyLeadsToDisconnect` | action | narrowed to the receive side's exhaustion, the only one there is |
 
