@@ -1062,6 +1062,7 @@ MCRNFillPhaseBrokenNoMainWindow.cfg	MCRNFillPhase.tla	invariant	WindowShut	check
 MCRNFillPhaseBrokenTakeUncounted.cfg	MCRNFillPhase.tla	invariant	TakeSound	check	rnfillphase	required	-
 MCRNFillPhaseBrokenOwnerAtDecide.cfg	MCRNFillPhase.tla	invariant	NoFalseNest	check	rnfillphase	required	-
 MCRNFillPhaseBrokenKickAll.cfg	MCRNFillPhase.tla	invariant	NoKickOnOpenUpdate	check	rnfillphase	required	-
+MCRNFillPhaseBrokenFreshKept.cfg	MCRNFillPhase.tla	invariant	NoKickOnOpenUpdate	check	rnfillphase	required	-
 MCRNFillPhaseBrokenShutOnEarly.cfg	MCRNFillPhase.tla	invariant	StageShut	check	rnfillphase	required	-
 MCRNFillPhaseBrokenScanFirst.cfg	MCRNFillPhase.tla	invariant	PlainChecked	check	rnfillphase	required	-
 MCRNSendReserveCalls.cfg	MCRNSendReserveCalls.tla	pass	-	check	rnsendreserve	required	-

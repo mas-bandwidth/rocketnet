@@ -185,6 +185,10 @@ struct fp_walk_t
     // walk drives a bare check with no message server, so this is the walk's
     // own bookkeeping of what its update calls left, not read from the code
     bool stage;
+
+    // a finish in the running main operation handed deliveries over
+    // (RNFillPhase fresh): the walk's own bookkeeping, as stage is
+    bool fresh;
 };
 
 static thread_local int fp_this_actor = -1;
@@ -245,6 +249,18 @@ static bool fp_window( const fp_walk_t * walk )
 static bool fp_stage_after( const fp_walk_t * walk, fp_main_kind_t kind )
 {
     return kind == FP_KIND_OTHER ? walk->stage : kind == FP_KIND_RECEIVE;
+}
+
+// RNFillPhase UpdateHands, on the stage before the step: an update_finish
+// closes the update, handing its deliveries over; an update_receive hands
+// over only the update it found open and finished
+static bool fp_hands_over( const fp_walk_t * walk, fp_main_kind_t kind )
+{
+    if ( kind == FP_KIND_FINISH )
+    {
+        return true;
+    }
+    return kind == FP_KIND_RECEIVE && walk->stage;
 }
 
 static fp_word_t fp_word( uint64_t word )
@@ -347,6 +363,7 @@ static tla_record_t fp_state( fp_walk_t * walk )
     record.add( "mainCalls", tla_int( walk->phase->main_calls.load() ) );
     record.add( "window", tla_bool( fp_window( walk ) ) );
     record.add( "stage", tla_bool( walk->stage ) );
+    record.add( "fresh", tla_bool( walk->fresh ) );
     record.add( "fillsIn", tla_function( lines, fills_in ) );
     record.add( "fline", tla_function( fillers, fline ) );
     record.add( "epoch", tla_int( (int64_t) walk->phase->epoch.load() ) );
@@ -457,6 +474,9 @@ static bool fp_apply( fp_walk_t * walk, int actor, const fp_step_t * step )
         }
         else if ( action == "MainEpoch" )
         {
+            // RNFillPhase UpdateHands: an update call's finish, of the update
+            // it found open or of the one it began, hands deliveries over
+            walk->fresh = walk->fresh || fp_hands_over( walk, walk->mkind );
             walk->stage = fp_stage_after( walk, walk->mkind );
             walk->mpc = FP_EPOCHED;
             memset( walk->phase_in, 0, sizeof( walk->phase_in ) );
@@ -466,6 +486,8 @@ static bool fp_apply( fp_walk_t * walk, int actor, const fp_step_t * step )
             walk->mpc = FP_IDLE;
             walk->mkind = FP_KIND_NONE;
             walk->mains_done++;
+            // the operation returns: the game may receive what it handed over
+            walk->fresh = false;
         }
         else
         {
@@ -918,6 +940,7 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                     {
                         walk->mains_done++;
                         walk->stage = fp_stage_after( walk, walk->next_kind );
+                        walk->fresh = false;
                         report.act( "MainSkip" );
                         records.push_back( tla_step( "main_scope", "MainSkip",
                                                      tla_sequence( { fp_kind_text( walk->next_kind ), tla_bool( fp_window( walk ) ), tla_bool( walk->stage ) } ),
@@ -1088,7 +1111,7 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
                                   "    LookFirst = FALSE\n    LoadStore = FALSE\n    ResetOnLeave = TRUE\n    NoEpochLook = FALSE\n" +
                                   "    NoRestore = FALSE\n    ScanOne = FALSE\n    NoWindow = FALSE\n    NoMainWindow = FALSE\n" +
                                   "    TakeUncounted = FALSE\n    OptedAtStart = FALSE\n    ArmedAtCreate = FALSE\n" +
-                                  "    OwnerAtDecide = FALSE\n    KickAll = FALSE\n    ShutOnEarly = FALSE\n    ScanFirst = FALSE\n    DepthMax = " + tla_int( ROCKETNET_FILL_PHASE_DEPTH_MAX ) + "\n" +
+                                  "    OwnerAtDecide = FALSE\n    KickAll = FALSE\n    FreshKept = FALSE\n    ShutOnEarly = FALSE\n    ScanFirst = FALSE\n    DepthMax = " + tla_int( ROCKETNET_FILL_PHASE_DEPTH_MAX ) + "\n" +
                                   "    Lines = " + lines + "\n";
     const bool written = tla_write_trace( out, "MCTraceFillPhase", seed, "TraceRNFillPhase", "", constants, records );
 
