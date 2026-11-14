@@ -57,8 +57,8 @@ with a first run reconstructs to 0 and is refused by the run bound.
 
 | Config | Constants | Expected |
 |---|---|---|
-| `MCAckBlockWrap.cfg` | `BrokenHalfRange = FALSE`, `RunBoundChecked = TRUE`, every invariant | pass (STATES_MAIN) |
-| `MCAckBlockWrapFromOne.cfg` | `Start = 1`, `BrokenHalfRange = FALSE`, `RunBoundChecked = TRUE`, every invariant | pass (STATES_FROMONE) |
+| `MCAckBlockWrap.cfg` | `BrokenHalfRange = FALSE`, `RunBoundChecked = TRUE`, every invariant | pass (4,149,761 generated, 807,244 distinct on aws-mut-3, 9.0 s, 2026-11-13) |
+| `MCAckBlockWrapFromOne.cfg` | `Start = 1`, `MaxSeq = 6`, `BrokenHalfRange = FALSE`, `RunBoundChecked = TRUE`, every invariant | pass (830,526 generated, 158,261 distinct on aws-mut-3, 2.5 s, 2026-11-13) |
 | `MCAckBlockWrapBrokenHalfRange.cfg` | `BrokenHalfRange = TRUE`, `EmptyRecognised` | exit 12, `EmptyRecognised` violated |
 | `MCAckBlockWrapBrokenRunBound.cfg` | `RunBoundChecked = FALSE`, `MalformedRefused` | exit 12, `MalformedRefused` violated |
 
