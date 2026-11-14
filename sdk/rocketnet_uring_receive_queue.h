@@ -273,7 +273,20 @@ int rocketnet_uring_receive_queue_test_take( const struct rocketnet_uring_receiv
 int rocketnet_uring_receive_queue_test_write( struct rocketnet_uring_receive_queue_t * queue, int buffer_id, const void * name, int name_bytes, const uint8_t * payload,
                                               int payload_bytes, int segment_bytes, uint32_t socket_drops, uint32_t out_flags );
 
+// the next count buffer ring registrations of rocketnet_uring_receive_queue_create
+// answer -ENOMEM in place of the kernel's answer; 0 ends it
+void rocketnet_uring_receive_queue_test_buf_ring_enomem( int count );
+
 #endif // #if ROCKETNET_DEV
+
+// a ring setup or buffer ring registration at server create that the kernel
+// refuses with ENOMEM is tried again, up to ROCKETNET_URING_SETUP_ENOMEM_RETRIES
+// more times ROCKETNET_URING_SETUP_ENOMEM_WAIT_SECONDS apart (100 ms in all).
+// The refusal can pass in that time: the kernel frees a closed ring's memory
+// in its own work after close returns, and a host short of free pages
+// reclaims more. A refusal that outlasts the bound fails the create as before.
+#define ROCKETNET_URING_SETUP_ENOMEM_RETRIES 10
+#define ROCKETNET_URING_SETUP_ENOMEM_WAIT_SECONDS 0.01
 
 // the provided buffer ring's registration, with the fallback for kernels
 // whose resv check is inverted (Ubuntu 24.04 6.8.0-136 to 6.8.0-148): the

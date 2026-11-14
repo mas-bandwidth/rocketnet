@@ -8803,6 +8803,7 @@ void rocketnet_test_server_gso_receive_overflow_counted()
 // transport is available (rocketnet_server_uring_available).
 
 #include "rocketnet_server_uring.h"
+#include "rocketnet_uring_receive_queue.h" // ROCKETNET_URING_SETUP_ENOMEM_RETRIES
 #include "reserved_port.h"
 
 #include <pthread.h>
@@ -8932,6 +8933,45 @@ void rocketnet_test_server_auto_uring_refused_grants_gso()
 
     rocketnet_check( rocketnet_test_open_fds() == fds_before );
     rocketnet_check( rocketnet_server_uring_available() );
+}
+
+void rocketnet_test_server_uring_create_retries_enomem()
+{
+    // functional: real rings and a loopback socket. The kernel can refuse a
+    // ring setup or a buffer ring registration with ENOMEM for a moment (a
+    // create just after a destroy, a host short of free pages: a nightly
+    // create and destroy loop failed so on its second create), so create
+    // tries each again within ROCKETNET_URING_SETUP_ENOMEM_RETRIES. The seam
+    // plants the refusals: a few of each and the create succeeds; one past
+    // the bound, on either step, and it fails and leaves nothing open
+
+    rocketnet_check( rocketnet_server_uring_available() );
+    const int fds_before = rocketnet_test_open_fds();
+
+    rocketnet_address_t bind_address;
+    rocketnet_check( rocketnet_address_parse( &bind_address, "127.0.0.1" ) );
+    rocketnet_server_uring_test_setup_enomem( 3, 3 );
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &bind_address, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    if ( !uring )
+    {
+        printf( "io_uring server create after 3 planted ENOMEM ring setups and 3 planted ENOMEM buffer ring registrations failed: create gave up within its bound of %d retries\n",
+                ROCKETNET_URING_SETUP_ENOMEM_RETRIES );
+    }
+    rocketnet_check( uring != NULL );
+    rn_native_backend_stop_and_destroy( uring, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+
+    rocketnet_address_t ring_address;
+    rocketnet_check( rocketnet_address_parse( &ring_address, "127.0.0.1" ) );
+    rocketnet_server_uring_test_setup_enomem( ROCKETNET_URING_SETUP_ENOMEM_RETRIES + 1, 0 );
+    rocketnet_check( rocketnet_server_uring_create( NULL, &ring_address, 1, ROCKETNET_DEFAULT_MAX_CLIENTS ) == NULL );
+
+    rocketnet_address_t buf_ring_address;
+    rocketnet_check( rocketnet_address_parse( &buf_ring_address, "127.0.0.1" ) );
+    rocketnet_server_uring_test_setup_enomem( 0, ROCKETNET_URING_SETUP_ENOMEM_RETRIES + 1 );
+    rocketnet_check( rocketnet_server_uring_create( NULL, &buf_ring_address, 1, ROCKETNET_DEFAULT_MAX_CLIENTS ) == NULL );
+
+    rocketnet_server_uring_test_setup_enomem( 0, 0 );
+    rocketnet_check( rocketnet_test_open_fds() == fds_before );
 }
 
 #endif // #if ROCKETNET_DEV
@@ -17772,6 +17812,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_io_uring_transport_probe_needs_multishot", rocketnet_test_server_uring_probe_needs_multishot, rocketnet_server_uring_available },
 #if ROCKETNET_DEV
     { "test_io_uring_transport_auto_refused_grants_gso", rocketnet_test_server_auto_uring_refused_grants_gso, rocketnet_server_uring_available },
+    { "test_io_uring_transport_create_retries_enomem", rocketnet_test_server_uring_create_retries_enomem, rocketnet_server_uring_available },
 #endif // #if ROCKETNET_DEV
     { "test_io_uring_transport_server_wire_ipv4", rocketnet_test_server_uring_wire_ipv4, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv6", rocketnet_test_server_uring_wire_ipv6, rocketnet_server_uring_available },

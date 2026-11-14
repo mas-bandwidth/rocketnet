@@ -165,6 +165,12 @@ uint64_t rocketnet_uring_receive_queue_mapped_bytes( int buffers )
 
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
+// rocketnet_uring_receive_queue_test_buf_ring_enomem: the registrations still
+// to answer -ENOMEM in place of the kernel's answer
+static std::atomic<int> rocketnet_uring_receive_test_buf_ring_enomem{ 0 };
+#endif // #if ROCKETNET_DEV
+
 // the provided buffer ring. Ubuntu 24.04 kernels 6.8.0-136 through 6.8.0-148
 // carry a broken backport in io_uring/kbuf.c: the resv check in
 // io_register_pbuf_ring and io_unregister_pbuf_ring is inverted, so every
@@ -380,8 +386,34 @@ struct rocketnet_uring_receive_queue_t * rocketnet_uring_receive_queue_create( v
     }
     else
     {
+        // a registration refused with ENOMEM is tried again within a bound
+        // (ROCKETNET_URING_SETUP_ENOMEM_RETRIES)
+
         int error = 0;
-        queue->buf_ring = rocketnet_uring_receive_buf_ring_setup( ring, (unsigned int) config->buffers, config->bgid, &queue->buf_ring_inverted_resv, &error );
+        for ( int attempt = 0;; attempt++ )
+        {
+#if ROCKETNET_DEV
+            if ( rocketnet_uring_receive_test_buf_ring_enomem.load( std::memory_order_relaxed ) > 0 )
+            {
+                rocketnet_uring_receive_test_buf_ring_enomem.fetch_sub( 1, std::memory_order_relaxed );
+                error = -ENOMEM;
+            }
+            else
+#endif // #if ROCKETNET_DEV
+            {
+                queue->buf_ring = rocketnet_uring_receive_buf_ring_setup( ring, (unsigned int) config->buffers, config->bgid, &queue->buf_ring_inverted_resv, &error );
+            }
+            if ( queue->buf_ring || error != -ENOMEM || attempt == ROCKETNET_URING_SETUP_ENOMEM_RETRIES )
+            {
+                break;
+            }
+            if ( attempt == 0 )
+            {
+                rocketnet_warn( "io_uring receive queue %d: the buffer ring setup failed: %s; trying again up to %d times, %d ms apart", config->queue_index,
+                                rocketnet_platform_socket_error_text( -error ).text, ROCKETNET_URING_SETUP_ENOMEM_RETRIES, (int) ( ROCKETNET_URING_SETUP_ENOMEM_WAIT_SECONDS * 1000.0 ) );
+            }
+            rocketnet_platform_sleep( ROCKETNET_URING_SETUP_ENOMEM_WAIT_SECONDS );
+        }
         if ( !queue->buf_ring )
         {
             rocketnet_error( "io_uring receive queue %d: the buffer ring setup failed: %s", config->queue_index, rocketnet_platform_socket_error_text( -error ).text );
@@ -809,6 +841,11 @@ void rocketnet_uring_receive_queue_drops( const struct rocketnet_uring_receive_q
 
 #if ROCKETNET_DEV
 
+void rocketnet_uring_receive_queue_test_buf_ring_enomem( int count )
+{
+    rocketnet_uring_receive_test_buf_ring_enomem.store( count, std::memory_order_relaxed );
+}
+
 int rocketnet_uring_receive_queue_test_take( const struct rocketnet_uring_receive_queue_t * queue, uint16_t * head )
 {
     rocketnet_assert( queue );
@@ -1015,6 +1052,11 @@ void rocketnet_uring_receive_buf_ring_free( struct io_uring * ring, struct io_ur
 }
 
 #if ROCKETNET_DEV
+
+void rocketnet_uring_receive_queue_test_buf_ring_enomem( int count )
+{
+    (void) count;
+}
 
 int rocketnet_uring_receive_queue_test_take( const struct rocketnet_uring_receive_queue_t * queue, uint16_t * head )
 {
