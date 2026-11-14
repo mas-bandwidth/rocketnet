@@ -117,7 +117,8 @@ run_id="$seed"
 tmp=$( mktemp -d "${TMPDIR:-/tmp}/live-xdp-fleet.XXXXXX" ) || refuse "cannot create a temp directory"
 cleanup()
 {
-    rm -f "$tmp/clients.tsv" "$tmp/sorted.tsv" "$tmp/sorted.tsv.new" "$tmp/stop-heartbeat"
+    rm -f "$tmp/clients.tsv" "$tmp/sorted.tsv" "$tmp/sorted.tsv.new" "$tmp/stop-heartbeat" \
+          "$tmp/copy.log" "$tmp"/*.build
     rmdir "$tmp" 2>/dev/null
 }
 trap cleanup EXIT
