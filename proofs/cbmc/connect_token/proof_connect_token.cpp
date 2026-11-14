@@ -5,7 +5,8 @@
     ESBMC nightly proofs of the connect-token readers.
 
     The reader is sdk/rocketnet_connect_token.cpp, included below; no sdk code
-    is copied. The token is exactly ROCKETNET_CONNECT_TOKEN_BYTES symbolic
+    is copied except the crypto tally's accessor, restated from
+    sdk/rocketnet_protocol.cpp because that unit is not included. The token is exactly ROCKETNET_CONNECT_TOKEN_BYTES symbolic
     bytes, the signed connect data is exactly
     ROCKETNET_SIGNED_CONNECT_DATA_BYTES symbolic bytes, and the private block
     is exactly ROCKETNET_PRIVATE_BLOCK_BYTES symbolic bytes, so a read one
@@ -144,6 +145,17 @@ int crypto_generichash( unsigned char * out,
     PROOF_HAVOC( out, outlen );
 
     return 0;
+}
+
+/* the private block's zero pad check: reads the whole pad, answers either way */
+
+int sodium_is_zero( const unsigned char * n, const size_t nlen )
+{
+    __CPROVER_assert( PROOF_R_OK( n, nlen ), "is_zero reads its whole range" );
+
+    int zero = nondet_int();
+    __CPROVER_assume( zero == 0 || zero == 1 );
+    return zero;
 }
 
 /* The writer functions in the included unit reference the remaining libsodium
