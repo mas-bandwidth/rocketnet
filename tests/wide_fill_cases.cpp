@@ -1122,11 +1122,12 @@ static void test_wide_fill_check_stop_read_once()
 // Each is held at its check's entry while a whole stop runs (nested, as
 // above), then finds the server stopped and does nothing: no API misuse, no
 // assert, the retiring run kept. Before, each read the running server again
-// inside its check and found NULL: the disconnect of one client and the send
-// rate passed that NULL on and counted API misuse for a NULL the game never
-// passed (asserting in a debug build); the disconnect of all took the address
-// of a member through it, which is undefined behaviour that only a build
-// with -fsanitize=null reports (its kick then returned on NULL).
+// inside its check and found NULL. Each disconnect took the address of a
+// member through it for its kick, which is undefined behaviour that only a
+// build with -fsanitize=null reports (the kick then returned on NULL); the
+// disconnect of one client and the send rate also passed that NULL on and
+// counted API misuse for a NULL the game never passed (asserting in a debug
+// build), so the disconnect of all was red only under the sanitizer.
 
 enum wide_fill_stopped_call_t
 {
