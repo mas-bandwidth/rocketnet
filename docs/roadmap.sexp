@@ -823,4 +823,14 @@
    :title "The unit purity gate sees file reads and host-state reads"
    :text "tools/check_unit_purity.py exempts tests/suite_runner.h and has no pattern for a file read (fopen, /proc, /sys) or a host query (sched_getaffinity, sysctlbyname, GlobalMemoryStatusEx), so a unit case that called the runner's live helpers read the host's cgroup, memory and affinity unseen (row TM036, repaired on tests/v1.1.x/p8-status-config-units by passing those inputs in). Teach the gate those patterns for unit sources, with the runner's own use (it plans the job count) allowed by name only."
    :date "2026-11-13" :origin "Review before v1.2.0, tests track row TM036 (Ro O-M1), tests/v1.1.x/p8-status-config-units")
+
+  (item "aead-open-argument-checks" :group "review-v1-2" :area "tests"
+   :title "Isolate the open-side argument checks of the packet AEAD"
+   :text "The open-side argument checks in sdk/rocketnet_protocol.cpp (327-340 at 5a2dbf403: the sequence-0 guard, the nonce guard and the ephemeral-key discipline) are not tested on their own: the two packets the test in sdk/rocketnet_tests.cpp feeds fail the AEAD anyway, so deleting either guard passes, and the ephemeral discipline on open is never called with a mismatched argument. Add cases whose only fault is the argument each guard refuses (a packet that would open but for that argument), each shown red when its guard is deleted."
+   :date "2026-11-13" :origin "Tests review before v1.2.0, row TM220 (optional)")
+
+  (item "layer-export-table-check" :group "review-v1-2" :area "tools"
+   :title "Hold the layer NULL-audit table to rocketnet_layers.h with a tool"
+   :text "tools/check_exports.py holds rocketnet_test_exports (the public NULL audit in sdk/rocketnet_tests.cpp) to sdk/rocketnet.h, but nothing compares rocketnet_test_layer_exports with the entry points rocketnet_layers.h declares, so a new layer entry point with no row, no NULL-case list entry and no NULL call passes. Extend the tool (or add one beside it) to derive the layer entry points from the header and refuse a missing, undeclared or duplicate name, and to refuse a NULL-case name with no NULL call in rocketnet_test_public_api_null_is_a_counted_no_op."
+   :date "2026-11-13" :origin "Tests review before v1.2.0, row TM085 (follow-up)")
  ))
