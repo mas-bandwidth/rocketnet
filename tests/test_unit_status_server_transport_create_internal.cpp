@@ -305,7 +305,7 @@ static void test_server_transport_create_ex_reports_every_status()
         const int calls = state.calls;
 
         status = -1;
-        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_resolved( &state, "127.0.0.1:12345", &config, 1, &status );
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_resolved( &state, "127.0.0.1:12345", &config, 1, &status, NULL );
         check( server == NULL );
         if ( server )
         {
