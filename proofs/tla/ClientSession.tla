@@ -253,8 +253,8 @@ TokenExpires == st \in HandshakeStates /\ End(conn, "CONNECT_TOKEN_EXPIRED", FAL
 \* A challenge carrying a small-order server ephemeral key ends the attempt
 \* in sending connection request (rocketnet_client_process_challenge, the
 \* small-order arm; TRANSPORT.md t11.2 step 4): the transport's -10 reads back
-\* as PROTOCOL_VIOLATION, the end of that name a server's packet causes in
-\* the handshake.
+\* as PROTOCOL_VIOLATION, the end of that name an authenticated server packet
+\* causes in the handshake.
 HandshakeViolation == st = "SENDING_CONNECTION_REQUEST" /\ End(conn, "PROTOCOL_VIOLATION", FALSE)
 
 \* Reachability only (MCClientSessionReachHandshakeViolation.cfg, expected to
