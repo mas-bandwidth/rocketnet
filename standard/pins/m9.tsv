@@ -1,7 +1,9 @@
 # The rows of RN-2 m9 (standard/MESSAGES.md): document name, sdk expression, value.
 # Format and rules: standard/STYLE.md section 10.
-client_default_kbps	ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS	1000
-server_default_kbps	ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS	10000
+client send_kbps	ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS	1000
+server per_client_send_kbps	ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS	10000
+packets_per_update	rn_pin_message_default_packets_per_update	256
+packets_in_flight	rn_pin_message_default_packets_in_flight	1024
 send_kbps_min	ROCKETNET_SEND_BUDGET_MIN_KBPS	1
 send_kbps_max	ROCKETNET_SEND_BUDGET_MAX_KBPS	2147483646
 depth_seconds	ROCKETNET_SEND_BUDGET_DEPTH_SECONDS	0.1

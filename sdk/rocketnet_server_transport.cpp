@@ -4636,9 +4636,10 @@ static void rocketnet_server_transport_update_receive_body( struct rocketnet_ser
     // the caller's clock is clamped once, before anything reads it: a NaN,
     // an infinity, a negative time, a caller's time above
     // ROCKETNET_UPDATE_TIME_MAX_SECONDS or a step backwards becomes the last good
-    // time, counted and loud in a debug build. The message server's clock is
-    // not held to the ceiling: its raw samples were. the last good time
-    // starts at zero, the value a value-initialized transport carries.
+    // time, counted as API misuse and logged as an error once per clamped
+    // update, in every build. The message server's clock is not held to the
+    // ceiling: its raw samples were. the last good time starts at zero, the
+    // value a value-initialized transport carries.
 
     bool time_clamped = false;
     if ( from_layer )

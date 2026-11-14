@@ -3472,8 +3472,9 @@ static void rocketnet_client_transport_update_body( rocketnet_client_transport_t
     // the caller's clock is clamped once, before anything reads it: a NaN,
     // an infinity, a negative time, a caller's time above
     // ROCKETNET_UPDATE_TIME_MAX_SECONDS or a step backwards becomes the last
-    // good time, counted and loud in a debug build. The message client's
-    // clock is not held to the ceiling: its raw samples were.
+    // good time, counted as API misuse and logged as an error once per
+    // clamped update, in every build. The message client's clock is not held
+    // to the ceiling: its raw samples were.
 
     bool time_clamped = false;
     if ( from_layer )
