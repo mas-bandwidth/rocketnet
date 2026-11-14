@@ -137,9 +137,11 @@ struct rocketnet_server_msgx_worker_t
 
     uint8_t padding_4[4096];
 
-    // worker only: the bank sorted by socket slot, staged order kept
+    // worker only: the bank sorted by socket slot, staged order kept. bucket
+    // holds the table's capacity + 2 counts, carved after the worker
+    // (rocketnet_server_msgx_worker_layout)
     int order[ROCKETNET_MSGX_SEND_QUEUE_SIZE];
-    int bucket[ROCKETNET_MSGX_TABLE_MAX_SLOTS + 2];
+    int * bucket;
     struct rocketnet_server_msgx_msghdr_x_t messages[ROCKETNET_MSGX_SEND_BATCH];
     struct iovec iovecs[ROCKETNET_MSGX_SEND_BATCH];
 
@@ -148,14 +150,16 @@ struct rocketnet_server_msgx_worker_t
     struct rocketnet_server_msgx_send_bank_t banks[ROCKETNET_MSGX_TX_BANKS];
 };
 
+// a receive bank's arrays hold ROCKETNET_MSGX_RECV_QUEUE_SIZE( max_clients )
+// datagrams, carved after the receiver (rocketnet_server_msgx_receiver_layout)
 struct rocketnet_server_msgx_recv_bank_t
 {
     uint32_t num_packets;
     uint64_t receive_calls;
     uint64_t refused;
-    rocketnet_address_t from[ROCKETNET_MSGX_RECV_QUEUE_SIZE];
-    int packet_bytes[ROCKETNET_MSGX_RECV_QUEUE_SIZE];
-    alignas( 16 ) uint8_t packet_data[ROCKETNET_MSGX_RECV_QUEUE_SIZE][ROCKETNET_FRAME_STRIDE];
+    rocketnet_address_t * from;
+    int * packet_bytes;
+    uint8_t ( *packet_data )[ROCKETNET_FRAME_STRIDE];
 };
 
 struct rocketnet_server_msgx_receiver_t
@@ -192,8 +196,110 @@ struct rocketnet_server_msgx_receiver_t
 
     uint8_t padding_4[4096];
 
+    uint32_t bank_capacity;         // each bank's datagrams: ROCKETNET_MSGX_RECV_QUEUE_SIZE( max_clients )
     struct rocketnet_server_msgx_recv_bank_t banks[3];
 };
+
+// The receiver and its three banks are one block: the receiver, then each
+// bank's datagrams, sources and lengths. Create, the test seams and the plan
+// all take this layout.
+struct rocketnet_server_msgx_receiver_layout_t
+{
+    uint32_t capacity;
+    uint64_t packet_data[3];
+    uint64_t from[3];
+    uint64_t packet_bytes[3];
+    uint64_t bytes;
+};
+
+static bool rocketnet_server_msgx_receiver_layout( int max_clients, struct rocketnet_server_msgx_receiver_layout_t * layout )
+{
+    memset( layout, 0, sizeof( *layout ) );
+    if ( max_clients < 1 || max_clients > ROCKETNET_MSGX_TABLE_MAX_SLOTS )
+    {
+        return false;
+    }
+    layout->capacity = (uint32_t) ROCKETNET_MSGX_RECV_QUEUE_SIZE( max_clients );
+    const uint64_t capacity = layout->capacity;
+    rocketnet_carve_t carve = { 0, false };
+    rocketnet_carve( carve, 1, sizeof( struct rocketnet_server_msgx_receiver_t ) );
+    for ( int b = 0; b < 3; b++ )
+    {
+        layout->packet_data[b] = rocketnet_carve( carve, capacity, (uint64_t) ROCKETNET_FRAME_STRIDE, 16 );
+        layout->from[b] = rocketnet_carve( carve, capacity, sizeof( rocketnet_address_t ), alignof( rocketnet_address_t ) );
+        layout->packet_bytes[b] = rocketnet_carve( carve, capacity, sizeof( int ), alignof( int ) );
+    }
+    layout->bytes = carve.bytes;
+    return !carve.failed && carve.bytes <= SIZE_MAX;
+}
+
+// A send worker and its sort buckets are one block: the worker, then the
+// table's capacity + 2 bucket counts (sdk/rocketnet_msgx_send_runs.h).
+struct rocketnet_server_msgx_worker_layout_t
+{
+    uint64_t bucket;
+    uint64_t bytes;
+};
+
+static bool rocketnet_server_msgx_worker_layout( int max_clients, struct rocketnet_server_msgx_worker_layout_t * layout )
+{
+    memset( layout, 0, sizeof( *layout ) );
+    if ( max_clients < 1 || max_clients > ROCKETNET_MSGX_TABLE_MAX_SLOTS )
+    {
+        return false;
+    }
+    rocketnet_carve_t carve = { 0, false };
+    rocketnet_carve( carve, 1, sizeof( struct rocketnet_server_msgx_worker_t ) );
+    layout->bucket = rocketnet_carve( carve, (uint64_t) max_clients + 2, sizeof( int ), alignof( int ) );
+    layout->bytes = carve.bytes;
+    return !carve.failed && carve.bytes <= SIZE_MAX;
+}
+
+// the receiver for max_clients: one block, every bank empty and wired, the
+// worker filling bank 0 (sdk/rocketnet_msgx_receive_fill.h). NULL when the
+// allocation fails
+static struct rocketnet_server_msgx_receiver_t * rocketnet_server_msgx_receiver_create( void * context, int max_clients )
+{
+    struct rocketnet_server_msgx_receiver_layout_t layout;
+    if ( !rocketnet_server_msgx_receiver_layout( max_clients, &layout ) )
+    {
+        return NULL;
+    }
+    uint8_t * base = (uint8_t *) rocketnet_malloc( context, (size_t) layout.bytes );
+    if ( !base )
+    {
+        return NULL;
+    }
+    struct rocketnet_server_msgx_receiver_t * receiver = new ( base ) rocketnet_server_msgx_receiver_t();
+    receiver->thread = NULL;
+    rocketnet_msgx_receive_banks_init( &receiver->hand );
+    receiver->main_cursor = 0;
+    receiver->main_stopped = 0;
+    receiver->main_retired = 0;
+    receiver->bank_capacity = layout.capacity;
+    for ( int b = 0; b < 3; b++ )
+    {
+        receiver->banks[b].num_packets = 0;
+        receiver->banks[b].receive_calls = 0;
+        receiver->banks[b].refused = 0;
+        receiver->banks[b].from = (rocketnet_address_t *) ( base + layout.from[b] );
+        receiver->banks[b].packet_bytes = (int *) ( base + layout.packet_bytes[b] );
+        receiver->banks[b].packet_data = (uint8_t( * )[ROCKETNET_FRAME_STRIDE]) ( base + layout.packet_data[b] );
+    }
+    rocketnet_receive_drop_tally_reset( &receiver->tally );
+    ROCKETNET_RED_ZONE_CARVE( base, rocketnet_server_msgx_receiver_layout( max_clients, &layout ) );
+    return receiver;
+}
+
+static void rocketnet_server_msgx_receiver_free( void * context, struct rocketnet_server_msgx_receiver_t * receiver )
+{
+    if ( receiver->mutex.ok )
+    {
+        rocketnet_platform_mutex_destroy( &receiver->mutex );
+    }
+    receiver->~rocketnet_server_msgx_receiver_t();
+    rocketnet_free( context, receiver );
+}
 
 struct rocketnet_server_msgx_t
 {
@@ -1036,7 +1142,7 @@ static void rocketnet_server_msgx_fill_take( void * user, int i )
         return;
     }
 
-    rocketnet_assert( bank->num_packets < ROCKETNET_MSGX_RECV_QUEUE_SIZE );
+    rocketnet_assert( bank->num_packets < receiver->bank_capacity );
     const uint32_t index = bank->num_packets++;
     bank->from[index] = from;
     bank->packet_bytes[index] = bytes;
@@ -1103,7 +1209,7 @@ static bool rocketnet_server_msgx_drain( struct rocketnet_server_msgx_t * msgx, 
     io.take = rocketnet_server_msgx_fill_take;
     io.publish = rocketnet_server_msgx_fill_publish;
     io.failed = rocketnet_server_msgx_fill_failed;
-    return rocketnet_msgx_receive_drain( &io, fd, ROCKETNET_MSGX_RECV_QUEUE_SIZE, ROCKETNET_MSGX_RECV_BATCH, ROCKETNET_MSGX_RECV_SOCKET_BUDGET );
+    return rocketnet_msgx_receive_drain( &io, fd, (int) receiver->bank_capacity, ROCKETNET_MSGX_RECV_BATCH, ROCKETNET_MSGX_RECV_SOCKET_BUDGET );
 }
 
 #if ROCKETNET_DEV
@@ -1148,24 +1254,23 @@ bool rocketnet_server_msgx_test_receive_source( uint16_t port, int * banked, uin
         return false;
     }
     void * msgx_storage = rocketnet_malloc( NULL, sizeof( struct rocketnet_server_msgx_t ) );
-    void * receiver_storage = rocketnet_malloc( NULL, sizeof( struct rocketnet_server_msgx_receiver_t ) );
-    if ( !msgx_storage || !receiver_storage )
+    struct rocketnet_server_msgx_receiver_t * receiver = rocketnet_server_msgx_receiver_create( NULL, 1 );
+    if ( !msgx_storage || !receiver )
     {
         rocketnet_free( NULL, msgx_storage );
-        rocketnet_free( NULL, receiver_storage );
+        if ( receiver )
+        {
+            rocketnet_server_msgx_receiver_free( NULL, receiver );
+        }
         return false;
     }
     memset( msgx_storage, 0, sizeof( struct rocketnet_server_msgx_t ) );
-    memset( receiver_storage, 0, sizeof( struct rocketnet_server_msgx_receiver_t ) );
     struct rocketnet_server_msgx_t * msgx = new ( msgx_storage ) rocketnet_server_msgx_t();
-    struct rocketnet_server_msgx_receiver_t * receiver = new ( receiver_storage ) rocketnet_server_msgx_receiver_t();
 
     msgx->ipv6 = false;
     memcpy( msgx->packet_filter, rocketnet_server_msgx_test_source_filter, sizeof( rocketnet_server_msgx_test_source_filter ) );
     msgx->recvmsg_x = rocketnet_server_msgx_test_source_receive;
     msgx->receiver = receiver;
-    rocketnet_msgx_receive_banks_init( &receiver->hand );
-    rocketnet_receive_drop_tally_reset( &receiver->tally );
 
     rocketnet_server_msgx_test_source_port = port;
     rocketnet_server_msgx_test_source_left = 1;
@@ -1174,9 +1279,8 @@ bool rocketnet_server_msgx_test_receive_source( uint16_t port, int * banked, uin
     *banked = done ? (int) rocketnet_server_msgx_worker_bank( receiver )->num_packets : -1;
     *failed = receiver->tally.values[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED].load( std::memory_order_relaxed );
 
-    receiver->~rocketnet_server_msgx_receiver_t();
+    rocketnet_server_msgx_receiver_free( NULL, receiver );
     msgx->~rocketnet_server_msgx_t();
-    rocketnet_free( NULL, receiver_storage );
     rocketnet_free( NULL, msgx_storage );
     return true;
 }
@@ -1426,10 +1530,16 @@ uint64_t rocketnet_server_msgx_allocation_bytes( int num_workers, int max_client
     {
         return 0;
     }
-    uint64_t bytes = rocketnet_memory_allocations( { sizeof( rocketnet_server_msgx_t ), sizeof( rocketnet_msgx_socket_table_t ),
-                                                     sizeof( rocketnet_server_msgx_receiver_t ) } );
+    struct rocketnet_server_msgx_receiver_layout_t receiver;
+    struct rocketnet_server_msgx_worker_layout_t worker_layout;
+    const uint64_t table = rocketnet_msgx_socket_table_bytes( max_clients );
+    if ( !table || !rocketnet_server_msgx_receiver_layout( max_clients, &receiver ) || !rocketnet_server_msgx_worker_layout( max_clients, &worker_layout ) )
+    {
+        return 0;
+    }
+    uint64_t bytes = rocketnet_memory_allocations( { sizeof( rocketnet_server_msgx_t ), table, receiver.bytes } );
     const uint64_t view = rocketnet_server_process_packets_allocation_bytes( rocketnet_server_receive_packets_per_update( max_clients ) );
-    const uint64_t worker = rocketnet_memory_allocations( { sizeof( rocketnet_server_msgx_worker_t ) } );
+    const uint64_t worker = rocketnet_memory_allocations( { worker_layout.bytes } );
     if ( !bytes || !view || !worker || !rocketnet_memory_add( bytes, 1, view ) || !rocketnet_memory_add( bytes, (uint64_t) num_workers, worker ) ||
          !rocketnet_memory_add( bytes, (uint64_t) num_workers + 1, rocketnet_platform_thread_allocation_bytes() ) ||
          !rocketnet_memory_add( bytes, (uint64_t) num_workers, rocketnet_platform_wake_allocation_bytes() ) )
@@ -1462,12 +1572,7 @@ static void rocketnet_server_msgx_free( struct rocketnet_server_msgx_t * msgx )
     }
     if ( msgx->receiver )
     {
-        if ( msgx->receiver->mutex.ok )
-        {
-            rocketnet_platform_mutex_destroy( &msgx->receiver->mutex );
-        }
-        msgx->receiver->~rocketnet_server_msgx_receiver_t();
-        rocketnet_free( context, msgx->receiver );
+        rocketnet_server_msgx_receiver_free( context, msgx->receiver );
         msgx->receiver = NULL;     // the table's close_all below reads it
     }
     if ( msgx->table )
@@ -1498,6 +1603,103 @@ static void rocketnet_server_msgx_abort_create( struct rocketnet_server_msgx_t *
     }
     rocketnet_server_msgx_destroy( msgx );
 }
+
+// every allocation create makes before it opens a socket or starts a thread,
+// sized by max_clients: the transport, the process view, the socket table, the
+// receiver with its banks and each send worker with its buckets, exactly what
+// rocketnet_server_msgx_allocation_bytes counts but the threads and wakes.
+// NULL, with everything freed, when an allocation fails
+static struct rocketnet_server_msgx_t * rocketnet_server_msgx_allocate( void * context, int num_workers, int max_clients )
+{
+    struct rocketnet_server_msgx_worker_layout_t worker_layout;
+    if ( !rocketnet_server_msgx_worker_layout( max_clients, &worker_layout ) )
+    {
+        return NULL;
+    }
+
+    struct rocketnet_server_msgx_t * msgx = (struct rocketnet_server_msgx_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_msgx_t ) );
+    if ( !msgx )
+    {
+        return NULL;
+    }
+    new ( msgx ) rocketnet_server_msgx_t();
+    msgx->context = context;
+    msgx->num_workers = num_workers;
+    msgx->max_clients = max_clients;
+    msgx->stopping = false;
+    msgx->shared_fd = -1;
+    msgx->kq = -1;
+    msgx->update = 0;
+    for ( int w = 0; w < ROCKETNET_MSGX_MAX_WORKERS; w++ )
+    {
+        msgx->workers[w] = NULL;
+    }
+    msgx->receiver = NULL;
+    msgx->table = NULL;
+    msgx->packets_received = 0;
+    msgx->receive_calls = 0;
+    msgx->receive_refused = 0;
+    msgx->shared_receive_buffer = 0;
+    memset( &msgx->process_packets, 0, sizeof( msgx->process_packets ) );
+
+    bool ok = rocketnet_server_process_packets_create( context, &msgx->process_packets, rocketnet_server_receive_packets_per_update( max_clients ) );
+
+    void * table_block = ok ? rocketnet_malloc( context, (size_t) rocketnet_msgx_socket_table_bytes( max_clients ) ) : NULL;
+    if ( table_block )
+    {
+        msgx->table = rocketnet_msgx_socket_table_init( table_block, max_clients, num_workers + 1, ROCKETNET_MSGX_OPENS_PER_UPDATE,
+                                                        rocketnet_server_msgx_table_open, rocketnet_server_msgx_table_close, msgx );
+        ROCKETNET_RED_ZONE_CARVE( table_block, rocketnet_msgx_socket_table_bytes( max_clients ) );
+    }
+    ok = ok && msgx->table;
+
+    msgx->receiver = ok ? rocketnet_server_msgx_receiver_create( context, max_clients ) : NULL;
+    ok = ok && msgx->receiver;
+
+    for ( int w = 0; ok && w < num_workers; w++ )
+    {
+        uint8_t * base = (uint8_t *) rocketnet_malloc( context, (size_t) worker_layout.bytes );
+        if ( !base )
+        {
+            ok = false;
+            break;
+        }
+        struct rocketnet_server_msgx_worker_t * worker = new ( base ) rocketnet_server_msgx_worker_t();
+        worker->msgx = msgx;
+        worker->index = w;
+        worker->thread = NULL;
+        worker->wake = NULL;
+        worker->producer = 0;
+        worker->bucket = (int *) ( base + worker_layout.bucket );
+        rocketnet_buffer_handoff_init( &worker->handoff, 0 );
+        msgx->workers[w] = worker;
+        ROCKETNET_RED_ZONE_CARVE( base, rocketnet_server_msgx_worker_layout( max_clients, &worker_layout ) );
+    }
+
+    if ( !ok )
+    {
+        rocketnet_server_msgx_free( msgx );
+        return NULL;
+    }
+    return msgx;
+}
+
+#if ROCKETNET_DEV
+bool rocketnet_server_msgx_test_allocate( int num_workers, int max_clients )
+{
+    if ( num_workers < 1 || num_workers > ROCKETNET_MSGX_MAX_WORKERS || max_clients < 1 || max_clients > ROCKETNET_MSGX_TABLE_MAX_SLOTS )
+    {
+        return false;
+    }
+    struct rocketnet_server_msgx_t * msgx = rocketnet_server_msgx_allocate( NULL, num_workers, max_clients );
+    if ( !msgx )
+    {
+        return false;
+    }
+    rocketnet_server_msgx_free( msgx );
+    return true;
+}
+#endif // #if ROCKETNET_DEV
 
 struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, struct rocketnet_address_t * bind_address, int num_workers,
                                                                int max_clients, const uint8_t * packet_filter, int * status )
@@ -1535,91 +1737,16 @@ struct rocketnet_server_msgx_t * rocketnet_server_msgx_create( void * context, s
         return NULL;
     }
 
-    struct rocketnet_server_msgx_t * msgx = (struct rocketnet_server_msgx_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_msgx_t ) );
+    struct rocketnet_server_msgx_t * msgx = rocketnet_server_msgx_allocate( context, num_workers, max_clients );
     if ( !msgx )
     {
         rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
     }
-    new ( msgx ) rocketnet_server_msgx_t();
-    msgx->context = context;
-    msgx->num_workers = num_workers;
-    msgx->max_clients = max_clients;
     msgx->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
-    msgx->stopping = false;
     msgx->sendmsg_x = send_fn;
     msgx->recvmsg_x = recv_fn;
-    msgx->shared_fd = -1;
-    msgx->kq = -1;
-    msgx->update = 0;
     memcpy( msgx->packet_filter, packet_filter, ROCKETNET_PACKET_FILTER_BYTES );
-    for ( int w = 0; w < ROCKETNET_MSGX_MAX_WORKERS; w++ )
-    {
-        msgx->workers[w] = NULL;
-    }
-    msgx->receiver = NULL;
-    msgx->table = NULL;
-    msgx->packets_received = 0;
-    msgx->receive_calls = 0;
-    msgx->receive_refused = 0;
-    msgx->shared_receive_buffer = 0;
-    memset( &msgx->process_packets, 0, sizeof( msgx->process_packets ) );
-
-    bool ok = rocketnet_server_process_packets_create( context, &msgx->process_packets, rocketnet_server_receive_packets_per_update( max_clients ) );
-
-    msgx->table = ok ? (struct rocketnet_msgx_socket_table_t *) rocketnet_malloc( context, sizeof( struct rocketnet_msgx_socket_table_t ) ) : NULL;
-    if ( msgx->table )
-    {
-        new ( msgx->table ) rocketnet_msgx_socket_table_t();
-        rocketnet_msgx_socket_table_init( msgx->table, max_clients, num_workers + 1, ROCKETNET_MSGX_OPENS_PER_UPDATE,
-                                          rocketnet_server_msgx_table_open, rocketnet_server_msgx_table_close, msgx );
-    }
-    ok = ok && msgx->table;
-
-    msgx->receiver = ok ? (struct rocketnet_server_msgx_receiver_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_msgx_receiver_t ) ) : NULL;
-    if ( msgx->receiver )
-    {
-        new ( msgx->receiver ) rocketnet_server_msgx_receiver_t();
-        struct rocketnet_server_msgx_receiver_t * receiver = msgx->receiver;
-        receiver->thread = NULL;
-        rocketnet_msgx_receive_banks_init( &receiver->hand );
-        receiver->main_cursor = 0;
-        receiver->main_stopped = 0;
-        receiver->main_retired = 0;
-        for ( int b = 0; b < 3; b++ )
-        {
-            receiver->banks[b].num_packets = 0;
-            receiver->banks[b].receive_calls = 0;
-            receiver->banks[b].refused = 0;
-        }
-        rocketnet_receive_drop_tally_reset( &receiver->tally );
-    }
-    ok = ok && msgx->receiver;
-
-    for ( int w = 0; ok && w < num_workers; w++ )
-    {
-        struct rocketnet_server_msgx_worker_t * worker = (struct rocketnet_server_msgx_worker_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_msgx_worker_t ) );
-        if ( !worker )
-        {
-            ok = false;
-            break;
-        }
-        new ( worker ) rocketnet_server_msgx_worker_t();
-        worker->msgx = msgx;
-        worker->index = w;
-        worker->thread = NULL;
-        worker->wake = NULL;
-        worker->producer = 0;
-        rocketnet_buffer_handoff_init( &worker->handoff, 0 );
-        msgx->workers[w] = worker;
-    }
-
-    if ( !ok )
-    {
-        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
-        rocketnet_server_msgx_free( msgx );
-        return NULL;
-    }
 
     // the shared socket: handshakes, and every client without its own socket.
     // Its receive buffer takes a whole update's inbound at the full client

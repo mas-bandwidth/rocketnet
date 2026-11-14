@@ -47,9 +47,10 @@
 #include "../sdk/rocketnet_msgx_socket_table.h"
 #include "tla_trace_record.h"
 
-// the instance: the model's checked shape, with the code's index (2048
-// entries) and cooldown table (64 entries) and four addresses whose index
-// homes collide and wrap past the last entry
+// the instance: the model's checked shape, with the code's index for its
+// slots (ROCKETNET_MSGX_TABLE_INDEX_SIZE( 3 ), 8 entries) and cooldown table
+// (64 entries) and four addresses whose index homes collide and wrap past the
+// last entry
 #define MSGX_SLOTS 3
 #define MSGX_ADDRS 4
 #define MSGX_FDS 3
@@ -252,7 +253,7 @@ static tla_record_t msgx_state( const msgx_walk_t & walk )
 
     // the entries in use: the model's index is empty where the code holds -1
     std::vector<std::string> index_keys, index_values;
-    for ( int e = 0; e < ROCKETNET_MSGX_TABLE_INDEX_SIZE; e++ )
+    for ( int e = 0; e < table->index_size; e++ )
     {
         if ( table->index[e] >= 0 )
         {
@@ -658,11 +659,12 @@ static void msgx_enabled( const msgx_walk_t & walk, std::vector<msgx_op_t> & ops
     }
 }
 
-// four ipv4 addresses with index homes 2046, 2046, 2047 and 0: a run of
-// three that collides and wraps past the last entry
+// four ipv4 addresses with index homes mask - 1, mask - 1, mask and 0 (6, 6,
+// 7 and 0 in the 8-entry index of 3 slots): a run of three that collides and
+// wraps past the last entry
 static bool msgx_pick_addresses( msgx_walk_t & walk )
 {
-    const uint32_t mask = ROCKETNET_MSGX_TABLE_INDEX_SIZE - 1;
+    const uint32_t mask = (uint32_t) ROCKETNET_MSGX_TABLE_INDEX_SIZE( MSGX_SLOTS ) - 1;
     const uint32_t want[MSGX_ADDRS + 1] = { 0, mask - 1, mask - 1, mask, 0 };
     int a = 1;
     for ( int port = 1; port < 65536 && a <= MSGX_ADDRS; port++ )
@@ -684,11 +686,12 @@ static bool msgx_pick_addresses( msgx_walk_t & walk )
 static int trace_msgx( uint64_t seed, int steps, const char * out )
 {
     msgx_walk_t walk;
-    walk.table = (struct rocketnet_msgx_socket_table_t *) calloc( 1, sizeof( struct rocketnet_msgx_socket_table_t ) );
-    if ( !walk.table )
+    void * block = calloc( 1, (size_t) rocketnet_msgx_socket_table_bytes( MSGX_SLOTS ) );
+    if ( !block )
     {
         return 1;
     }
+    walk.table = NULL;
     memset( walk.address, 0, sizeof( walk.address ) );
     for ( int f = 0; f < MSGX_FDS; f++ )
     {
@@ -710,10 +713,10 @@ static int trace_msgx( uint64_t seed, int steps, const char * out )
     if ( !msgx_pick_addresses( walk ) )
     {
         fprintf( stderr, "tla_trace msgx: no addresses with the wanted homes\n" );
-        free( walk.table );
+        free( block );
         return 1;
     }
-    rocketnet_msgx_socket_table_init( walk.table, MSGX_SLOTS, MSGX_HOLDERS, MSGX_BUDGET, msgx_fake_open, msgx_fake_close, &walk );
+    walk.table = rocketnet_msgx_socket_table_init( block, MSGX_SLOTS, MSGX_HOLDERS, MSGX_BUDGET, msgx_fake_open, msgx_fake_close, &walk );
 
     tla_random_t random = { seed };
     std::vector<tla_record_t> records;
@@ -743,7 +746,7 @@ static int trace_msgx( uint64_t seed, int steps, const char * out )
     for ( int a = 1; a <= MSGX_ADDRS; a++ )
     {
         const uint32_t hash = rocketnet_msgx_address_hash( &walk.address[a] );
-        home_at += ( a > 1 ? ", " : "" ) + tla_int( (int64_t) a * ROCKETNET_MSGX_TABLE_INDEX_SIZE + ( hash & ( ROCKETNET_MSGX_TABLE_INDEX_SIZE - 1 ) ) );
+        home_at += ( a > 1 ? ", " : "" ) + tla_int( (int64_t) a * walk.table->index_size + ( hash & (uint32_t) ( walk.table->index_size - 1 ) ) );
         cool_at += ( a > 1 ? ", " : "" ) +
                    tla_int( (int64_t) a * ROCKETNET_MSGX_TABLE_COOLDOWN_ENTRIES + rocketnet_msgx_socket_table_cooldown_entry( &walk.address[a] ) );
     }
@@ -758,7 +761,7 @@ static int trace_msgx( uint64_t seed, int steps, const char * out )
               "    Budget = %d\n    GenWrap = 1073741824\n    PassLimit = 1000000000\n"
               "    MaxUpdates = 1000000000\n    MaxPackets = 1000000000\n    MaxEnv = %d\n    Icmp = TRUE\n"
               "    Quarantine = TRUE\n    GenCheck = TRUE\n    PassCopyFirst = FALSE\n    RefusedOpenFree = TRUE\n",
-              MSGX_SLOTS, MSGX_FDS, ROCKETNET_MSGX_TABLE_INDEX_SIZE, home_at.c_str(), ROCKETNET_MSGX_TABLE_COOLDOWN_ENTRIES, cool_at.c_str(),
+              MSGX_SLOTS, MSGX_FDS, walk.table->index_size, home_at.c_str(), ROCKETNET_MSGX_TABLE_COOLDOWN_ENTRIES, cool_at.c_str(),
               ROCKETNET_MSGX_TABLE_DEAD_COOLDOWN_UPDATES, walk.table->opens_per_update, MSGX_MAX_ENV );
     const bool written = tla_write_trace( out, "MCTraceMsgx", seed, "TraceRNMsgxSocketTable", "", constants, records );
     free( walk.table );

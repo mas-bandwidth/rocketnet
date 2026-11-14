@@ -17,8 +17,9 @@
 // a stamp from before a retire resolving to no socket; a dead report retiring
 // only the generation it names and starting the address's cooldown; the open
 // budget deferring a mark to the next update; a refused open and a full table
-// counted with no slot taken; the index against a reference over a seeded
-// walk of 1000 slots with deletes; and close_all.
+// counted with no slot taken; the index against a reference over seeded
+// walks of 1000, 8 and 1 slots with deletes; the table's block sized by its
+// configured slots; and close_all.
 
 #include "test_unit_registry.h"
 
@@ -28,6 +29,7 @@
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define MSGX_TEST_FDS 2048
@@ -124,14 +126,17 @@ static struct msgx_test_t msgx_test_create( int capacity, int num_holders, int o
     struct msgx_test_t test;
     test.kernel = new msgx_test_kernel_t();
     test.kernel->num_fds = num_fds;
-    test.table = new rocketnet_msgx_socket_table_t();
-    rocketnet_msgx_socket_table_init( test.table, capacity, num_holders, opens_per_update, msgx_test_open, msgx_test_close, test.kernel );
+    // the table's block, sized for capacity slots as the transport sizes it
+    void * block = calloc( 1, (size_t) rocketnet_msgx_socket_table_bytes( capacity ) );
+    rocketnet_unit_check( block != NULL );
+    test.table = rocketnet_msgx_socket_table_init( block, capacity, num_holders, opens_per_update, msgx_test_open, msgx_test_close, test.kernel );
     return test;
 }
 
 static void msgx_test_destroy( struct msgx_test_t * test )
 {
-    delete test->table;
+    test->table->~rocketnet_msgx_socket_table_t();
+    free( test->table );
     delete test->kernel;
 }
 
@@ -546,14 +551,20 @@ static uint64_t msgx_test_random( uint64_t * state )
 #define MSGX_TEST_ADDRESSES 1500
 
 // the index against a reference over a seeded walk of marks and forgets on
-// 1000 slots: every open address is found at its slot, every other is not,
-// and the slots and the free stack stay whole
-static void test_rocketnet_msgx_socket_table_index_reference()
+// capacity slots, with half as many addresses again: every open address is
+// found at its slot, every other is not, and the slots and the free stack
+// stay whole. The index is sized for capacity (16 entries at 8 slots, 2048 at
+// 1000), so the walk runs its probes and wraps at that size
+static void msgx_test_index_reference( int capacity )
 {
-    struct msgx_test_t test = msgx_test_create( ROCKETNET_MSGX_TABLE_MAX_SLOTS, 1, ROCKETNET_MSGX_TABLE_MAX_SLOTS, MSGX_TEST_FDS );
+    const int num_addresses = capacity + ( capacity + 1 ) / 2;
+    rocketnet_unit_check( num_addresses <= MSGX_TEST_ADDRESSES );
+    struct msgx_test_t test = msgx_test_create( capacity, 1, capacity, MSGX_TEST_FDS );
+    rocketnet_unit_check( test.table->index_size == ROCKETNET_MSGX_TABLE_INDEX_SIZE( capacity ) );
+    const uint32_t mask = (uint32_t) test.table->index_size - 1;
     static struct rocketnet_address_t addresses[MSGX_TEST_ADDRESSES];
     static int reference[MSGX_TEST_ADDRESSES];     // the slot open at the address, or -1
-    for ( int i = 0; i < MSGX_TEST_ADDRESSES; i++ )
+    for ( int i = 0; i < num_addresses; i++ )
     {
         addresses[i] = msgx_test_address( i );
         reference[i] = -1;
@@ -563,14 +574,14 @@ static void test_rocketnet_msgx_socket_table_index_reference()
     uint64_t random = 0x6d73677874626c31ULL;
     for ( int step = 0; step < 200000; step++ )
     {
-        const int i = (int) ( msgx_test_random( &random ) % MSGX_TEST_ADDRESSES );
+        const int i = (int) ( msgx_test_random( &random ) % (uint64_t) num_addresses );
         // phases of 20000 steps: filling (marks win, the table fills and
         // marks find it full) and draining, so runs grow and are deleted
         const bool filling = ( step / 20000 ) % 2 == 0;
         const bool mark = (int) ( msgx_test_random( &random ) % 100 ) < ( filling ? 85 : 30 );
         if ( mark )
         {
-            const bool full = reference[i] < 0 && num_open == ROCKETNET_MSGX_TABLE_MAX_SLOTS;
+            const bool full = reference[i] < 0 && num_open == capacity;
             rocketnet_unit_check( rocketnet_msgx_socket_table_mark( test.table, &addresses[i] ) );
             if ( reference[i] < 0 && !full )
             {
@@ -581,8 +592,8 @@ static void test_rocketnet_msgx_socket_table_index_reference()
         }
         else
         {
-            const uint32_t home = rocketnet_msgx_address_hash( &addresses[i] ) & ( ROCKETNET_MSGX_TABLE_INDEX_SIZE - 1 );
-            const bool next_used = test.table->index[( home + 1 ) & ( ROCKETNET_MSGX_TABLE_INDEX_SIZE - 1 )] >= 0;
+            const uint32_t home = rocketnet_msgx_address_hash( &addresses[i] ) & mask;
+            const bool next_used = test.table->index[( home + 1 ) & mask] >= 0;
             int retired_fd = -1;
             rocketnet_unit_check( rocketnet_msgx_socket_table_forget( test.table, &addresses[i], &retired_fd ) );
             rocketnet_unit_check( ( retired_fd >= 0 ) == ( reference[i] >= 0 ) );
@@ -601,27 +612,83 @@ static void test_rocketnet_msgx_socket_table_index_reference()
         if ( step % 1000 == 999 )
         {
             int found = 0;
-            for ( int j = 0; j < MSGX_TEST_ADDRESSES; j++ )
+            for ( int j = 0; j < num_addresses; j++ )
             {
                 rocketnet_unit_check( rocketnet_msgx_socket_table_lookup( test.table, &addresses[j] ) == reference[j] );
                 found += reference[j] >= 0 ? 1 : 0;
             }
             int entries = 0;
-            for ( int e = 0; e < ROCKETNET_MSGX_TABLE_INDEX_SIZE; e++ )
+            for ( int e = 0; e < test.table->index_size; e++ )
             {
                 entries += test.table->index[e] >= 0 ? 1 : 0;
             }
             rocketnet_unit_check( found == num_open && entries == num_open );
             rocketnet_unit_check( test.table->num_open == num_open );
-            rocketnet_unit_check( test.table->num_open + test.table->num_free + test.table->num_retired == ROCKETNET_MSGX_TABLE_MAX_SLOTS );
+            rocketnet_unit_check( test.table->num_open + test.table->num_free + test.table->num_retired == capacity );
         }
     }
     // the walk filled the table and its deletes moved runs
     rocketnet_unit_check( msgx_test_counts( test ).table_full > 0 );
-    rocketnet_unit_check( removes_with_shift > 1000 );
+    // (one slot never shares an index run, so it never shifts on a delete)
+    rocketnet_unit_check( capacity == 1 || removes_with_shift > 1000 );
     rocketnet_unit_check( msgx_test_counts( test ).opened ==
                           msgx_test_counts( test ).closed + (uint64_t) num_open );
 
+    msgx_test_destroy( &test );
+}
+
+static void test_rocketnet_msgx_socket_table_index_reference()
+{
+    msgx_test_index_reference( ROCKETNET_MSGX_TABLE_MAX_SLOTS );
+}
+
+static void test_rocketnet_msgx_socket_table_index_reference_small()
+{
+    msgx_test_index_reference( 8 );
+    msgx_test_index_reference( 1 );
+}
+
+// A table for 8 slots is a block of 8 slots, 8 free and 8 retired entries
+// and a 16-entry index after the table, smaller than a table for 1000; init
+// wires every array inside the block, after the table and apart from each
+// other, so a table's memory is what its configured slots need
+static void test_rocketnet_msgx_socket_table_sized_by_capacity()
+{
+    const uint64_t small = rocketnet_msgx_socket_table_bytes( 8 );
+    const uint64_t large = rocketnet_msgx_socket_table_bytes( 1000 );
+    rocketnet_unit_check( small > 0 && large > small );
+    rocketnet_unit_check( rocketnet_msgx_socket_table_bytes( 0 ) == 0 );
+    rocketnet_unit_check( rocketnet_msgx_socket_table_bytes( ROCKETNET_MSGX_TABLE_MAX_SLOTS + 1 ) == 0 );
+    rocketnet_unit_check( ROCKETNET_MSGX_TABLE_INDEX_SIZE( 1 ) == 2 );
+    rocketnet_unit_check( ROCKETNET_MSGX_TABLE_INDEX_SIZE( 8 ) == 16 );
+    rocketnet_unit_check( ROCKETNET_MSGX_TABLE_INDEX_SIZE( 1000 ) == 2048 );
+    rocketnet_unit_check( large - small >= ( 1000 - 8 ) * ( sizeof( struct rocketnet_msgx_socket_slot_t ) + 2 * sizeof( int ) ) + ( 2048 - 16 ) * sizeof( int16_t ) );
+
+    struct msgx_test_t test = msgx_test_create( 8, 2, 4, 8 );
+    const uint8_t * base = (const uint8_t *) test.table;
+    const uint8_t * end = base + small;
+    struct span_t
+    {
+        const uint8_t * begin;
+        const uint8_t * end;
+    };
+    const struct span_t spans[] = {
+        { base, base + sizeof( struct rocketnet_msgx_socket_table_t ) },
+        { (const uint8_t *) test.table->slots, (const uint8_t *) ( test.table->slots + 8 ) },
+        { (const uint8_t *) test.table->free_slots, (const uint8_t *) ( test.table->free_slots + 8 ) },
+        { (const uint8_t *) test.table->retired, (const uint8_t *) ( test.table->retired + 8 ) },
+        { (const uint8_t *) test.table->index, (const uint8_t *) ( test.table->index + 16 ) },
+    };
+    const int num_spans = (int) ( sizeof( spans ) / sizeof( spans[0] ) );
+    for ( int s = 0; s < num_spans; s++ )
+    {
+        rocketnet_unit_check( spans[s].begin >= base && spans[s].end <= end );
+        for ( int t = s + 1; t < num_spans; t++ )
+        {
+            rocketnet_unit_check( spans[s].end <= spans[t].begin || spans[t].end <= spans[s].begin );
+        }
+    }
+    rocketnet_unit_check( test.table->capacity == 8 && test.table->index_size == 16 && test.table->num_free == 8 );
     msgx_test_destroy( &test );
 }
 
@@ -683,4 +750,6 @@ REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_stale_dead_report );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_open_budget );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_refused_and_full );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_index_reference );
+REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_index_reference_small );
+REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_sized_by_capacity );
 REGISTER_UNIT_TEST( test_rocketnet_msgx_socket_table_close_all );
