@@ -10,7 +10,10 @@ static void unhex( unsigned char * out, const char * text )
 {
     for ( size_t i = 0; i < strlen( text ) / 2; ++i )
     {
-        const char pair[3] = { text[i * 2], text[i * 2 + 1], '\0' };
+        char pair[3];
+        pair[0] = text[i * 2];
+        pair[1] = text[i * 2 + 1];
+        pair[2] = '\0';
         char * end = NULL;
         const unsigned long byte = strtoul( pair, &end, 16 );
         CHECK( end != pair );

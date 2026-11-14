@@ -80,7 +80,9 @@ static inline int rn_cli_server_is_stopped( void * object )
 
 static inline void rn_cli_client_wait_disconnected( struct rocketnet_client_t * client, double time )
 {
-    struct rn_cli_client_wait_t wait = { client, time };
+    struct rn_cli_client_wait_t wait;
+    wait.client = client;
+    wait.time = time;
     rn_cli_bounded_wait( &wait, rn_cli_client_is_disconnected, rn_cli_client_step, rocketnet_time, rocketnet_sleep, "client" );
 }
 
