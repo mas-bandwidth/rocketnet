@@ -1910,7 +1910,7 @@ static void test_connection_reset_client_disconnect_is_clean()
 REGISTER_UNIT_TEST( test_connection_reset_client_disconnect_is_clean );
 
 // A connect from each failure state (CONNECTION_DENIED down to
-// CONNECT_TOKEN_EXPIRED) is a fresh attempt: rocketnet_client_protocol_connect
+// CONNECT_TOKEN_EXPIRED, and PROTOCOL_VIOLATION) is a fresh attempt: rocketnet_client_protocol_connect
 // runs rocketnet_client_connection_reset first, so no key, cookie, sequence,
 // replay window or ack of the earlier attempt is carried, the salt and the
 // ephemeral keypair are new, the sequences are at one, and what the client
@@ -1927,9 +1927,24 @@ static void test_connection_reset_connect_from_each_failure_state()
                                                      0xF00D, 1000, 1030, 10, NULL,
                                                      token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 
-    for ( int state = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED;
-          state >= ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED; state-- )
+    // the handshake's failure states, -1 down to -7, and protocol violation
+    // (-10), the end of an attempt whose challenge carried a small-order key
+
+    const int failure_states[] = {
+        ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED,
+        ROCKETNET_CLIENT_TRANSPORT_STATE_COOKIE_REQUEST_TIMED_OUT,
+        ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_REQUEST_TIMED_OUT,
+        ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT,
+        ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT,
+        ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN,
+        ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED,
+        ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION,
+    };
+
+    for ( size_t s = 0; s < sizeof( failure_states ) / sizeof( failure_states[0] ); s++ )
     {
+        const int state = failure_states[s];
+
         rocketnet_counters_t counters;
         memset( &counters, 0, sizeof( counters ) );
 

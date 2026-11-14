@@ -1857,6 +1857,7 @@ REGISTER_UNIT_TEST( test_witness_client_send_rate_constant_across_attempt );
 static void test_witness_endpoints_expose_state_and_end_reason()
 {
     const int all_states[] = {
+        ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION,
         ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN,
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED,
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT,

@@ -85,6 +85,8 @@ bool rocketnet_get_thread_priority( void );
  */
 #define ROCKETNET_TRANSPORT_STRING_LENGTH                     64
 
+/** @brief The server sent what the protocol forbids: the attempt ended at a connection challenge whose server ephemeral key is a small-order point (the transport value of ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION). */
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION         (-10)
 /** @brief The connect token expired: its expire time was not after the current Unix time when the connect began, or its lifetime (expire minus create) ran out before the handshake reached CONNECTED. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED         -7
 /** @brief The connect token failed the client's checks at connect: no or unknown address flags, a create time after its expire time, or a wrong format version. The client does not verify the token's signature; the server does. */

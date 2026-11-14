@@ -119,6 +119,8 @@ MCClientConnectionBrokenCommitEarly.cfg	MCClientConnection.tla	invariant	Commits
 MCClientConnectionBrokenEarlyAnyCookie.cfg	MCClientConnection.tla	invariant	EarlySendPerAdvance	ignore-terminal	clientconnection	required	-
 MCClientConnectionSFirstSmall.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
 MCClientConnectionReachSFirstSmall.cfg	MCClientConnectionEarly.tla	invariant	NotEarlyConnected	ignore-terminal	clientconnection	required	-
+MCClientConnectionSmallOrder.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
+MCClientConnectionBrokenSmallOrderIgnored.cfg	MCClientConnection.tla	action	SmallOrderEndsAttempt	ignore-terminal	clientconnection	required	-
 MCReceiveOrder.cfg	MCReceiveOrder.tla	pass	-	check	receiveorder	required	-
 MCReceiveOrderBrokenSlotsAfterKeypair.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
 MCReceiveOrderBrokenVersionNotFirst.cfg	MCReceiveOrder.tla	invariant	CheapRefusalsFirst	check	receiveorder	required	-
@@ -341,6 +343,7 @@ MCClientSessionSkipStop.cfg	MCClientSession.tla	invariant	PendingRefuses	ignore-
 MCClientSessionCompletionRefused.cfg	MCClientSession.tla	invariant	TerminalRetryEnabled	ignore-terminal	clientsession	required	-
 MCClientSessionReuseKeys.cfg	MCClientSession.tla	invariant	ReconnectObservesNothing	ignore-terminal	clientsession	required	-
 MCClientSessionTransportState.cfg	MCClientSession.tla	invariant	CallbackReportsPublicState	ignore-terminal	clientsession	required	-
+MCClientSessionReachHandshakeViolation.cfg	MCClientSession.tla	action	NoHandshakeViolation	ignore-terminal	clientsession	required	-
 MCServerSession.cfg	MCServerSession.tla	pass	-	ignore-terminal	serversession	required	-
 MCServerSessionUnresetSlot.cfg	MCServerSession.tla	invariant	SlotReuseObservesNothing	ignore-terminal	serversession	required	-
 MCServerSessionStopLeavesClient.cfg	MCServerSession.tla	invariant	NoClientWhileStopped	ignore-terminal	serversession	required	-

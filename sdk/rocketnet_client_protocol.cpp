@@ -25,6 +25,7 @@ const char * rocketnet_client_transport_state_name( int state )
 {
     switch ( state )
     {
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION:            return "protocol violation";
         case ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED:         return "connect token expired";
         case ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN:         return "invalid connect token";
         case ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT:          return "connection timed out";
@@ -418,6 +419,9 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
                                      &client->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_LOST],
                                      &client->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW] );
 
+    // TRANSPORT.md t13, connected: any session packet sent stamps the send
+    // clock, the standalone ack as much as the scheduled keep-alive
+    client->last_send_time = current_time;
     client->ack.ack_debt = 0;
 
     return bytes;
@@ -729,8 +733,13 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     }
 
     // the full derivation, refusing a degenerate server ephemeral outright.
-    // the attempt then ends at its deadline, the correct outcome for a server
-    // offering a small order point.
+    // TRANSPORT.md t7 rule 5 and t11.2 step 4: the challenge opened under the
+    // handshake keys, so the server (or a holder of the token's keys) sent
+    // it, and a small-order key is what the protocol forbids: the attempt
+    // ends here, in protocol violation (-10), not at its deadline. No
+    // session key is derived; the state change resets the connection state
+    // and erases every key.
+    // proofs/tla/ClientConnection.tla ClientRecvSmallOrder.
 
     if ( !rocketnet_derive_connection_keys( &client->keys,
                                             client->token.client_to_server_key,
@@ -741,9 +750,10 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     {
         sodium_memzero( &temporary_keys, sizeof( temporary_keys ) );
 
-        rocketnet_debug( "client ignored challenge. server ephemeral key is a small order point" );
+        rocketnet_debug( "client abandoned the attempt. server ephemeral key is a small order point" );
 
         counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_SMALL_ORDER_KEY]++;
+        rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION );
         return 0;
     }
 

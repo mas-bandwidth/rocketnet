@@ -664,6 +664,9 @@ send never causes it) and an update with a message not received read `ROCKETNET_
 `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED` and `ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED`. Each stays until
 disconnect, or until connect ends it to start the next connection. A NULL
 client reads as `ROCKETNET_CLIENT_STATE_DISCONNECTED`, counted as misuse.
+`ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION` is also how a handshake ends when
+the connection challenge carries a small-order server ephemeral key, which a
+conforming server never sends; a later connect starts clean from it.
 
 ```c
 #include "rocketnet.h"

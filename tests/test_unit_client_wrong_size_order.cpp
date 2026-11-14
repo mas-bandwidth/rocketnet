@@ -72,6 +72,7 @@ static void wso_write_junk_packet( uint8_t * packet, int packet_bytes, uint8_t p
 static void test_client_wrong_size_counts_wrong_size_not_integrity()
 {
     static const int states[] = {
+        ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION,
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED,
         ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN,
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT,
