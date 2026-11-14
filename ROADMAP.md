@@ -10,10 +10,10 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (4)
 - [Existing nightly proof debt](#existing-nightly-proof-debt) (6)
 - [Found while preparing v1.0.1](#found-while-preparing-v101) (23)
-- [Trace check: gaps the README declares](#trace-check-gaps-the-readme-declares) (8)
+- [Trace check: gaps the README declares](#trace-check-gaps-the-readme-declares) (9)
 - [Decisions](#decisions) (7)
-- [Found while landing and re-measuring the v1.1.x transport work](#found-while-landing-and-re-measuring-the-v11x-transport-work) (27)
-- [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (74)
+- [Found while landing and re-measuring the v1.1.x transport work](#found-while-landing-and-re-measuring-the-v11x-transport-work) (28)
+- [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (88)
 
 ## Suspected defects not yet fixed
 
@@ -48,6 +48,12 @@ From: Review of sending from the game threads
 A partial sendmsg_x result ends the call kept (sdk/rocketnet_msgx_send_runs.h), so the transmit worker marks the socket full and waits 1 ms (sdk/rocketnet_server_msgx_apple.cpp) although the socket took data. Loop again at once when the kept call made progress, and wait only when a call took nothing. Measured nowhere yet: the four space rows pass as it is.
 
 From: v1.1.x review
+
+### Trace the msgx server's own receive glue against RNMsgxReceiveFill
+
+The msgx server's receive glue in sdk/rocketnet_server_msgx_apple.cpp is bound to RNMsgxReceiveFill.tla only through a copy in the walk of tests/tla_trace_msgx_receive_fill.cpp: the round's commit rule (commit when the round read and did not hold), rocketnet_server_msgx_count_stopped's bank resets and folds, and the early return of rocketnet_server_msgx_receive_packets once stopping. The trace drives only the pure sdk/rocketnet_msgx_receive_fill.h and the handoff's commit. Drive the server's own code from the trace, as tests/tla_trace_receive_handoff.cpp does for gso through test hooks, and trace the model's RoundKeep step (a round that read nothing), which no trace takes today.
+
+From: Cold read of the msgx receive latency fix at 32b57c1b8
 
 ### Hard-killed client cases: take the wire mark after the clients read the last pass's sends
 
@@ -102,12 +108,6 @@ From: Review of the io_uring transport work, and a bench run
 The worker counts a cancel it submitted when its completion arrives (rocketnet_uring_queue_worker_reap_one, ROCKETNET_URING_TAG_CANCEL). A cancel the kernel answers -EALREADY (the target already completed) reads the same as one that took effect; the model (RNUringQueueWorker.tla CancelRecv, CancelWake, CancelPoll) has one outcome. Check the worker against the answers and add the case to the model.
 
 From: Review of the io_uring transport work
-
-### test_transport_reply_opens_a_later_update failed once on a loaded macOS runner
-
-On PR #1124's first CI run (43476345841, attempt 1) macos / Release / functional on one macOS runner failed at tests/functional/rocketnet_functional_tests.cpp:10204: one of the 200 replies was never seen within the case's 12000 updates (9.8 s). The case sends unreliable datagrams over real loopback and answers each once, so one lost request or reply fails it. The rerun passed on another macOS runner, and the case passed 40 of 40 on a Linux bench both at #1124's head and at its base a756b3398. The cause is not shown. PR #1118 (transport reply waits resend through the loss gate) is the candidate fix, held until it shows the cause.
-
-From: PR #1124 CI
 
 ### Offline cpu holes in the io_uring pin
 
@@ -303,7 +303,7 @@ From: v1.0.1 Windows review
 
 ### Functional cases that assert exact delivery over real sockets
 
-Windows functional cases and the gso and io_uring functional cases assert exact delivery over real sockets, so a host dropping a datagram under load turns them red. Assert what the library promises instead.
+Functional cases that count datagrams over a real socket and assert every one arrived, with no resend and no loss accounting, so a host dropping a datagram under load turns them red. gso_client_wire_exchange and server_uring_wire_gro now resend only what the loss gate in tests/kernel_drops.h admits from the kernel's receive drops (3c6b00056). The gate does not admit SEND_FAILED: under load on aws-mut-2 (600 runs at once, 2026-11-14) every SEND_FAILED in gso_client_wire_exchange was the portable server's send handoff dropping on its no-free-bank path (sdk/rocketnet_driver_builtin.cpp portable_tx_drop; no send call, no errno), and no counter separates a full socket's EAGAIN or ENOBUFS from the other refusals SEND_FAILED counts, so that case stays red when the handoff drops: a library finding, owed its own counter or a fix. Still exact, in tests/functional/rocketnet_functional_tests.cpp: pump_chaff_exchange (received == sent_real), server_gso_wire_exchange (num_seen == ROCKETNET_GSO_TEST_PACKETS twice, num_segments_seen == gro_segments), server_uring_wire_exchange_flags (num_seen == ROCKETNET_URING_TEST_PACKETS twice), server_uring_gro_cmsg_faults_counted (num_seen == datagrams), xdp_max_size_both_ways (server_received == count), xdp_over_mtu_refused (received_small == count); Windows: server_rio_wire (num_seen == last twice), iocp_exchange (num_seen == ROCKETNET_IOCP_TEST_PACKETS), iocp_client_send_and_collect and iocp_client_receive_from_server (received == num_packets; the gate reads no counter on Windows, so these need the iocp transports' SEND_FAILED at least). Fix each the same way.
 
 From: v1.0.1 review
 
@@ -379,7 +379,7 @@ From: Trace check v2 review
 
 ### Find why TLC sometimes prints no behaviour for a plant's violation
 
-TLC 2.19 exits 12 on a plant trace and reports the invariant violated, then sometimes prints no behaviour; the statistics lines that follow are printed, so the log is not cut off. tools/tla_trace_check.py reruns such a plant up to five times and prints PLANT-ATTEMPTS (#1106). Ruled out on byte-identical inputs of the msgxsendruns seed 1 plant (one Linux host, 2026-11-13): TLC's -seed and -fp index (both pinned, -workers 1: a behaviour in 5/10, 6/10 and 7/10 runs for three pairs) and a shared or reused metadir (a fresh directory and -metadir each run). Start from a TLC-side cause: the trace file's write and read-back at the violation.
+TLC 2.19 exits 12 on a plant trace and reports the invariant violated, then sometimes prints no behaviour; the statistics lines that follow are printed, so the log is not cut off. tools/tla_trace_check.py reruns such a plant up to five times and prints PLANT-ATTEMPTS (#1106). Ruled out on byte-identical inputs of the msgxsendruns seed 1 plant (one Linux host, 2026-11-13): TLC's -seed and -fp index (both pinned, -workers 1: a behaviour in 5/10, 6/10 and 7/10 runs for three pairs) and a shared or reused metadir (a fresh directory and -metadir each run). Start from a TLC-side cause: the trace file's write and read-back at the violation. The check no longer depends on it (5ac01acce): when all five attempts print none, the last matched record is read from TLC's counts, only when its state graph is one chain. At integration 70b94e882 the rolling seeds 21352-21415 of msgxsendruns printed no behaviour 5 of 5 on seeds 21369 and 21377 (aws-mut-2, 2026-11-14), both read from the counts; the TLC log ends 'Error: Invariant TraceConsistent is violated.' then the statistics, one stream for both of TLC's outputs (nova-tools pkg/tlc Execute), so nothing is lost on the way to the log.
 
 From: #1093 trace shard 0/6
 
@@ -406,6 +406,12 @@ From: split-update pass 2, finding S173 (no code change now)
 tools/tla_trace_check.py checks that each row's reach predicates are reached in some clean trace (a TLC run with ~predicate as the invariant). A predicate that holds in the initial state, or always, passes that check without proving any edge was walked. Refuse a predicate that holds at the first record, with a planted row.
 
 From: #1074 review
+
+### Bind refused io_uring submits in the queue-worker trace
+
+The queue-worker walk (tests/tla_trace_queue_worker.cpp) drives worker_step and never calls rocketnet_uring_queue_worker_run, so its fake qwork_submit is never called and always returns 0. RNUringQueueWorker has no refused-submit action (its Submit is SQE preparation). Add a prepared-but-unsubmitted state and a SubmitRefused action to the model, a per-step record seam so the walk can drive run, and scripted transient and fatal submit errors. Also decide what run should do on a persistent non-transient submit error: today it loops and logs once.
+
+From: Tests review TM062, trace half (P12)
 
 ## Decisions
 
@@ -619,6 +625,12 @@ When a server update has nothing else for a client, the ack for what the client 
 
 From: Fix round 1, W2-52, stopped; work kept on wip/standalone-ack-same-update (37abc02ad)
 
+### A NIGHTLY-DEBT row is not tied to the inputs it was measured on
+
+proofs/tla/NIGHTLY-DEBT.tsv records each nightly debt case's completed counts, time and budget, but not the input fingerprint they came from, so a model change after the row was written passes every per-commit check and is found only by the nightly: in v1.1.58 two rows were stale at once (MCRNClientIoDecrypt after 683c103bf; MCClientConnectionLCrash after e04c7f459 and 0d72e5804, whose state space grew past its 900 s budget). Give each row the input_sha256 its counts were measured at, and have check_tla_records refuse a row whose fingerprint differs from the case's current inputs (tlacheck inputs), as RUNS.tsv rows are refused.
+
+From: Fix round 1, the tlc workflow reds on v1.1.58 (run 43542939752)
+
 ## Found by the review before v1.2.0, not fixed for it
 
 Findings of the review that started on 2026-11-13 that are not being fixed for v1.2.0. Read, not run, unless an entry says so; each names the file and lines.
@@ -646,6 +658,12 @@ From: Review round 1, R70 (FW2, second part)
 The msgx shared socket sets SO_REUSEPORT so its per-client connected sockets can join the port, and so any later local socket that sets SO_REUSEPORT can bind the port too; a more specific one (the server's own address, or AF_INET beside a dual-stack [::] server) then receives every datagram meant for the shared socket, handshakes included, uncounted (measured, one user; docs/MACOS.md, Who else can bind a server's port). Darwin has no exclusive option that still lets the server's own sockets share the port. A real fix: drop the per-client connected sockets and demultiplex every client on the shared socket, so the shared socket needs no SO_REUSEPORT; with a specific bind address no later socket then receives its datagrams, as measured for a plain socket on a specific address. Costs: the per-client sockets' receive split and send path, to be measured against the load test row before it is taken. Also owed: run the intruder cases as a second user on a bench Mac (not measured).
 
 From: Review before v1.2.0 (run, one user)
+
+### macOS msgx server: spread sends across the network threads
+
+macOS msgx server: spread sends across the network threads instead of the main thread's single sendmsg_x path; measured locally only (not landed for v1.2.0; msgx is correct and is not a v1.2 throughput deliverable: Glenn 2026-11-14). Evidence: review-v12/MSGX-LATENCY-LANDING.md.
+
+From: v1.2.0 scope: send spread held out (owner, 2026-11-14)
 
 ### Windows iocp: refused message starts at the 1000-player peak
 
@@ -1066,3 +1084,81 @@ From: Hostile-input-cost round 1, the replay orphan fix (Astra H01), cold read f
 rocketnet_server_update, update_receive, update_finish, send_packets, receipts and receive_messages read server->running before their check and again after it (their check opens inside the message server call), where stop, the disconnects and the send rate now take one copy, use only that copy after their check, and return when a stop retired it (fix/v1.1.x/checked-server-overlap-refusals). Under a stop on another thread overlapping one of these calls, which the header forbids and promises to refuse: the overlap can go uncounted (the second read finds NULL before the check opens), a false API misuse can be counted for that NULL (asserting in a debug build), or, when the stop ran whole before the call's check, the call can step or read the stopping run (update and send_packets step its stopping transport, receipts can return receipts from slots the stop just kicked, receive_messages releases its batch and clears the count). No data loss or crash found. The fix is the same pattern: read running once, open the check in the wrapper on that run's transport (an update call for the three update calls), return when refused or when rn_server(server) != running, pass the copy on; the message server's own check then nests on the same thread. It moves where the check opens on the per-frame main-thread calls, so it needs a main-thread cost measurement at the 1000-player bar, before and after, before it lands.
 
 From: Audit v1.1.58, finding S3-2 (Emma), the per-frame calls left by the overlap-refusals fix; review of 138d227ef, H1
+
+### harden_load: reconcile each connection's reliable and big sends against what arrived
+
+tests/load/harden_load.cpp now requires a reliable stream to start at sequence 0 and fails a run whose server sent reliable or big messages that no client delivered, but the tail is not reconciled: no sender ledger checks each stable connection's reliable and big sends against its unique receives after a bounded drain. Add that ledger and its verdict term, with a planted dropped tail as the red witness.
+
+From: Tests review TM016 (P12), follow-on
+
+### check_split_load.py: a sequenced stream missing its newest send is a loss
+
+tools/load_split_verify.h now fails a reliable-sequenced stream whose newest send never arrived instead of excusing it as a stale skip (TM051). tools/check_split_load.py has the same excuse; give it the same rule and a witness that withholds the newest send.
+
+From: Tests review TM051 (P12), the same gap in the Python checker
+
+### harden-cell: require each role's own PASS verdict and exit status
+
+scripts/harden-pair now requires every role to print its own PASS verdict, no FAIL, and exit 0 (TM017). scripts/harden-cell:202 still accepts any harden_verdict line in any log; give it the same per-role rule and a planted server FAIL as the red witness.
+
+From: Tests review TM017 (P12), the same gap in harden-cell
+
+### DST: messages up to the fragment ceiling
+
+DST caps messages at 16384 bytes (tests/dst_checks.h) and draws sizes from 14 to 16384 (rocketnet_dst_draw_size in tests/dst_harness.h), so it reaches about 15 fragments and never the 57-fragment default, the 64-fragment ceiling, or the resend bitmap words past them. 16384 is an input to the budget slack derivation (dst_checks.h, dst_harness.h), so raising it means deriving that slack again, not changing one constant.
+
+From: Tests review TA030 (P12)
+
+### Nightly jobs red on runner setup, not code
+
+Five scheduled jobs fail before testing anything: nightly-framework (FRAMEWORK_READ_TOKEN not set); nightly-toolchains v141, v143 and v145 (runs-on [self-hosted, Windows, X64, rocketnet-windows] matches runners without the toolset: MSB8020, or MSVC 14.52 not installed); nightly-windows-sanitizers appverif (NETWORK SERVICE cannot write the HKLM IFEO key); nightly-ubuntu-lts-vms 24.04 (gpg-agent fails in the cloud image verify step); nightly-real-load (no inventory file on the runner). Smallest fix: a toolset label per matrix row on the runners that hold it, the secret, the account right, the gpg setup and the inventory file, each through the fleet's own tooling.
+
+From: Nightly triage 2026-11-14
+
+### Nightly fuzz macOS falls under its executions floor
+
+FUZZ-EXECS-FLOOR on mini-m5-1 and mini-m5-2 at a1a426851: client 4408 of 6003, server 4430 of 9000 per second; the Windows legs failed the same way at earlier shas; green on 11-12. GUESS: a floor measured on idle hosts and read on shared ones, not a regression. Settled by one run on an idle host. Fix then: a floor per host class, or a void on host load as the frame budget does.
+
+From: Nightly triage 2026-11-14: fuzz-nightly 43570535426
+
+### Server stats packets_received misses datagrams the gso and io_uring workers drop
+
+sdk/rocketnet.h documents rocketnet_server_stats_t packets_received as 'UDP datagrams received'. A raw socket sending a 100-byte then a 7-byte non-protocol datagram to a wildcard server (tests/functional/server_bind_address.cpp) reads 2 on portable; on gso the stats field reads 0 while the transport's ROCKETNET_COUNTER_PACKETS_RECEIVED reads 2, and on io_uring the stats field reads 0 while the counter reads 1 with PREFILTER_TOO_SHORT 1 (aws-mut-2, 2026-11-14, a temporary print in rn_server_running_counts). The field is main's count (rocketnet_server_wire_totals_add_received), and the queue workers' prefilter drops reach only the counters (sdk/rocketnet_receive_prefilter.h); on io_uring one of the two is in neither. Fix the field or its documentation, and find io_uring's missing datagram; then test_server_bind_address_not_reached_on_another_address can run under every Linux server pin.
+
+From: Cold read of known-defects-linux at f89c21e87
+
+### Mutation campaign: the daily slices are not baselined
+
+nightly linux / mutation reports 194 new survivors (150 on 11-13) against the 181 rows of tools/mutation/survivors.tsv, and 46 of 515 mutants do not compile. The daily slices were never triaged into the baseline. Fix: triage each slice's survivors into a test or a survivors.tsv row with its reason.
+
+From: Nightly triage 2026-11-14: nightly 43577137425
+
+### Soak link witness: loopback loss fails a clean run, and a count cannot tell it from a lost payload
+
+Nightly CI platform selftests / macos (21543f689) failed the soak argument and summary selftest at leg 2, not leg 9 as first recorded: '--seconds 3 exited 1' (leg 9 passed); the log kept only the summary counters, so the selftest now prints the failure lines first. Reproduced on the studio under the looping functional suite: bin/soak --seconds 3 failed 1 run in 20 with 'LINK WITNESS FAILED: client_to_server missing=2 ... server_to_client missing=2', honest loopback loss in transit (lo0 drops), which the witness treats as impossible on a clean link. Tried and rejected: admitting missing payloads up to the loss gate's count (tests/kernel_drops.h). Quiet, the selftest passed 20 of 20; loaded, the planted skip in leg 9 was admitted 1 run in 20 ('exited 0 -- the link witness verdict is decoration'): the soak's own sockets always show hundreds of datagrams sent and not received (teardown disconnects, in flight), so the evidence falls to lo0's machine-wide drops, and any count also covers a lost datagram that carried no payload. Fix: evidence per direction and per connection that only a lost packet can produce, a hole in the receiving end's packet sequences (a later packet received, an earlier one never), read from the library's own counters, and admit only that many missing payloads; the planted skip leaves no hole.
+
+From: Nightly triage 2026-11-14: nightly-ci 43554956087; studio runs 2026-11-14
+
+### macOS loss gate: the lo0 drop evidence is still machine-wide
+
+The macOS loss gate (tests/kernel_drops.h) admits the smaller of this process's sent-not-received and the rise in lo0's drops. lo0's drops are machine-wide, so on a loaded host a library datagram sent to a port none of this process's sockets has bound is still admitted (own 1, lo0 1 or more from other traffic). And a full receive buffer never shows in lo0 (measured: 1776 lost, lo0 +0); the gate refuses that only through the own count. Evidence: the cold reader's probe, scratchpad/lo0probe/main.go (2026-11-14). A second reader's further cases: a receiving or sending socket closed before the gate is asked is not summed, so its counts leave the own count (tests/kernel_drops.h rocketnet_kernel_own_lost_since). With more than 128 UDP sockets open in the process, the sockets past ROCKETNET_KERNEL_OWN_MAX_SOCKETS are not counted. When the per-datagram receive calibration fails its 3 tries, the own count is off and the gate refuses every resend (rocketnet_kernel_rx_per_datagram). A per-socket receive-buffer overflow is not visible in lo0, so such a loss is never admitted. Next step: per-socket evidence, so that only a drop at this process's own sockets is admitted.
+
+From: Cold read of fix/v1.1.x/known-defects-macos at a75d81bd5
+
+### rio: warn at start when an adapter queue interrupt lands on a lane worker or the main thread
+
+rio reads neither the adapter's RSS processors nor where its queue interrupts land. On AWS ENA (m7i.16xlarge, 2026-11-14) a queue interrupt on a lane I/O worker's processor or the main thread's failed the 1000-player peak row every time (MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY counting from warm-up, RIO_SEND_WAITS in the thousands, one worker 99% busy), and each adapter initialise moves the 12 MSI-X messages on by 12 processors, 6 of 6 observations as predicted; docs/WINDOWS.md (worked example, step 3) tells the operator to check it by hand. Windows exposes enough for a start-time warning: the WMI query behind Get-NetAdapterHardwareInfo (MSFT_NetAdapterHardwareInfoSettingData, MsixMessageAffinityArray, one processor mask a message) and the RSS processor list (MSFT_NetAdapterRssSettingData). Which messages carry the queues is inferred (messages 1 to the queue count on ENA, from where interrupt time appears under load), not documented, so the warning names the processors it found and the lane and main thread processors, and never refuses.
+
+From: Final bar for rio, Windows pair 1, 2026-11-14
+
+### Two Windows runner slots on one host still queue behind a long commit-lock holder
+
+The mutex Global\rocketnet-test-commit-bound (tests/suite_runner.h) is machine-wide by design: it bounds the host's commit, so both runner slots share it. A long holder on one slot still fails the other's wait at SUITE_COMMIT_LOCK_WAIT_SECONDS (1800): test_secrets_wiped_destroy_writes_only_keys in nightly-soak windows and Nightly CI windows unit. Since 17d9cafc0 the wait names its holder (pid, executable, case, since) every 60 s and at the bound, so it is diagnosed by name, not fixed; on aws-win-ci-3 a clang-cl ASan test_server_stats_current_every_update held it 26 min. Also open: a run outside session 0 that may not create the Global\ mapping falls back to Local\ names, so a waiter in another session can read a stale or empty holder record. Fix: keep a long holder from starving the other slot (bound or split the long ASan case, or let a waiter whose case fits the free commit go), and read the holder record from the same namespace the lock came from.
+
+From: fix/v1.1.x/known-defects-windows at 01fc4826d, cold read follow-up
+
+### iocp: keep the completion workers off the adapter's RSS processors
+
+Completion worker w binds its socket and pins its thread to the first processor of core w in placement order (rocketnet_iocp_core_order, sdk/rocketnet_server_iocp_windows.cpp; processor 2w where each core has two processors), and docs/WINDOWS.md gives RSS as -BaseProcessorNumber 0 -MaxProcessorNumber 2W-2, so the adapter's receive DPC work runs on the workers' processors. On AWS m7i.16xlarge (64 processors, ENA, 1000 players at 60 Hz, 900k packets a second, queue interrupts on game-thread processors) the defaults passed with it, but at 2 workers with 3 send threads one row of 3 sent 803k packets a second with the worker on processor 2 at 83% busy, and with 4 send threads one row of 3 sent 575k with that worker at 100% and players lost; DPC was 18-21% of processors 0 and 2. The library cannot learn the adapter's RSS processors in this release, so docs/WINDOWS.md says how to move RSS off them. Fix: read the RSS processor set at create (GetAdapterAddresses/IOCTL or the registry) and place the workers and their sockets' affinity off it, with a functional row that puts RSS on the default worker processors and passes.
+
+From: iocp default thread grid on Windows pair 1, review-v12/FINAL-BAR-iocp.md
