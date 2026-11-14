@@ -1051,6 +1051,71 @@ static void test_wide_fill_check_running_read_once()
     rocketnet_assert_function( NULL );
 }
 
+// A checked main-thread call reads the running server once, then enters its
+// check: a stop that runs whole between that read and the call's work inside
+// the check leaves the call nothing to do. Here the outer stop is held at its
+// check's entry by the trace hook, which makes a whole stop (nested, so its
+// own work) before the outer one goes on. The outer stop then finds the run
+// it read already retired and returns: the retiring run is kept until the
+// destroy. Read again inside the check, the outer stop found the server
+// stopped and stored that NULL over the retiring run, so the server reported
+// stopped at once and the run's transport was never polled or destroyed.
+
+struct wide_fill_stop_inside_t
+{
+    rocketnet_server_t * server;
+    bool armed;
+    int stops;
+};
+
+static void wide_fill_stop_inside_hook( void * context, const char * action, int, uint64_t, bool refused )
+{
+    wide_fill_stop_inside_t * inside = (wide_fill_stop_inside_t *) context;
+    if ( !inside->armed || refused || strcmp( action, "MainIn" ) != 0 )
+    {
+        return;
+    }
+    inside->armed = false;
+    inside->stops++;
+    rocketnet_server_stop( inside->server );
+}
+
+static void test_wide_fill_check_stop_read_once()
+{
+    rocketnet_assert_function( wide_fill_assert_hook );
+    g_wide_fill_asserts = 0;
+
+    wide_fill_world_t world;
+    wide_fill_world_create( &world, 1 );
+    wide_fill_connect_all( &world );
+    wide_fill_opt_in( &world );
+    rocketnet_server_send_packets( world.server );      // a main thread call: the opt-in's claim ends
+
+    struct rocketnet_message_server_t * running = rocketnet_server_message_server( world.server );
+    check( running != NULL );
+    const uint64_t misuse = rocketnet_api_misuse_count();
+
+    wide_fill_stop_inside_t inside;
+    inside.server = world.server;
+    inside.armed = true;
+    inside.stops = 0;
+    rocketnet_fill_phase_set_trace( wide_fill_stop_inside_hook, &inside );
+    rocketnet_server_stop( world.server );
+    rocketnet_fill_phase_set_trace( NULL, NULL );
+    check( inside.stops == 1 );
+
+    // stopped once: the run that stop retired is still the retiring one,
+    // nothing refused and no misuse counted
+
+    check( !rocketnet_server_running( world.server ) );
+    check( rocketnet_server_message_server( world.server ) == running );
+    check( rocketnet_api_misuse_count() == misuse );
+    check( g_wide_fill_asserts == 0 );
+
+    wide_fill_world_destroy( &world );
+    rocketnet_assert_function( NULL );
+}
+
 #endif // #if ROCKETNET_DEV
 
 // the public server: refusals reach the server's counters, and a refused
@@ -1262,6 +1327,81 @@ static void test_wide_fill_main_refused_during_fill()
     check( !rocketnet_server_client_connected( world.server, slot1 ) );
     check( rocketnet_server_client_connected( world.server, slot0 ) );
     check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 3 );
+
+    wide_fill_world_destroy( &world );
+    rocketnet_assert_function( NULL );
+}
+
+// receive_messages made while another main-thread operation runs (held open
+// by hand on this thread; the receive is a real second thread) is refused,
+// counted MAIN_THREAD_CALL_OVERLAP, and does nothing: the batch the game
+// holds keeps its messages and the queue keeps the rest. Before, the call
+// cleared the batch's count ahead of its check, so the refused call emptied
+// the batch the game was reading, and made at the same moment as an accepted
+// receive it raced that receive's fill of the batch.
+
+static void test_wide_fill_refused_receive_keeps_batch()
+{
+    rocketnet_assert_function( wide_fill_assert_hook );
+    g_wide_fill_asserts = 0;
+
+    wide_fill_world_t world;
+    wide_fill_world_create( &world, 1 );
+    wide_fill_connect_all( &world );
+    wide_fill_opt_in( &world );
+    const int slot = rocketnet_client_index( world.clients[0] );
+
+    for ( int m = 0; m < 2; m++ )
+    {
+        uint8_t * p = rocketnet_client_start_message( world.clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 8 );
+        check( p != NULL );
+        if ( p )
+        {
+            memset( p, 0x81 + m, 8 );
+            check( rocketnet_client_finish_message( world.clients[0], 8 ) != 0 );
+        }
+    }
+    rocketnet_server_send_packets( world.server );
+    wide_fill_clients_step( &world );
+    rocketnet_server_update( world.server, world.time );
+
+    const struct rocketnet_message_batch_t * batch = rocketnet_server_receive_messages( world.server );
+    check( batch != NULL );
+    if ( !batch )
+    {
+        return;
+    }
+    const int held = batch->num_messages;
+    check( held == 2 );
+    const uint8_t * first = batch->data[0];
+
+    rocketnet_fill_phase_t * phase = rocketnet_server_transport_fill_phase( rocketnet_message_server_transport( rocketnet_server_message_server( world.server ) ) );
+    check( phase != NULL );
+    const uint64_t overlap = wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP );
+    const uint64_t misuse = rocketnet_api_misuse_count();
+
+    check( rocketnet_fill_phase_main_begin( phase ) );
+    const struct rocketnet_message_batch_t * second = batch;
+    std::thread tr( [&]
+                    { second = rocketnet_server_receive_messages( world.server ); } );
+    tr.join();
+    rocketnet_fill_phase_main_end( phase );
+
+    // refused and counted; the held batch as it was
+
+    check( second == NULL );
+    check( wide_fill_counter( world.server, ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP ) == overlap + 1 );
+    check( g_wide_fill_asserts == wide_fill_expected_asserts( 1 ) );
+    check( rocketnet_api_misuse_count() == misuse );
+    check( batch->num_messages == held );
+    check( batch->data[0] == first );
+    check( batch->client_index[0] == slot && batch->client_index[1] == slot );
+    check( batch->data[0][0] == 0x81 && batch->data[1][0] == 0x82 );
+
+    // the next accepted receive releases the batch and finds nothing more:
+    // the refused call took nothing from the queue
+
+    check( rocketnet_server_receive_messages( world.server ) == NULL );
 
     wide_fill_world_destroy( &world );
     rocketnet_assert_function( NULL );
@@ -2369,10 +2509,12 @@ REGISTER_UNIT_TEST( test_wide_fill_check_armed_across_restart );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_wide_fill_check_nested_never_torn );
 REGISTER_UNIT_TEST( test_wide_fill_check_running_read_once );
+REGISTER_UNIT_TEST( test_wide_fill_check_stop_read_once );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_wide_fill_check_public );
 REGISTER_UNIT_TEST( test_wide_fill_open_per_client );
 REGISTER_UNIT_TEST( test_wide_fill_main_refused_during_fill );
+REGISTER_UNIT_TEST( test_wide_fill_refused_receive_keeps_batch );
 REGISTER_UNIT_TEST( test_wide_fill_split_update_window );
 REGISTER_UNIT_TEST( test_wide_fill_split_update_open_update_call );
 REGISTER_UNIT_TEST( test_wide_fill_plain_finish_checked );
