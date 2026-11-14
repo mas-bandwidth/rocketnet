@@ -6,7 +6,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Suspected defects not yet fixed](#suspected-defects-not-yet-fixed) (21)
+- [Suspected defects not yet fixed](#suspected-defects-not-yet-fixed) (22)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (4)
 - [Existing nightly proof debt](#existing-nightly-proof-debt) (6)
 - [Found while preparing v1.0.1](#found-while-preparing-v101) (23)
@@ -144,6 +144,12 @@ From: Review of the io_uring transport work
 A kernel that refuses multishot receive (Linux before 6.0) ends every arm at once; the worker arms again on its next pass without a bound, burning its core. The refusals are visible as RECEIVE_FAILED now (the receive module's ERRORS reach the drop totals). Bound the re-arms, back off, and name the kernel in the create log.
 
 From: Review of the io_uring transport work
+
+### A transient ENOMEM at the io_uring availability probe turns io_uring off for the process
+
+rocketnet_server_uring_available (sdk/rocketnet_server_uring_linux.cpp, the probe near line 331) caches its answer for the life of the process and does not retry. A transient ENOMEM at the first probe's ring setup or buffer ring registration therefore leaves io_uring off until the process restarts: under auto the server runs gso, and the refusal is logged as a warning. Server create now retries ENOMEM within one budget (ROCKETNET_URING_SETUP_ENOMEM_RETRIES); decide whether the probe should share that retry, or not cache an ENOMEM answer, and test it with a planted refusal.
+
+From: Cold read of the io_uring create ENOMEM retry (fix/v1.1.x/uring-create-destroy-enomem)
 
 ## Investigations that need a quiet host
 
@@ -303,7 +309,7 @@ From: v1.0.1 Windows review
 
 ### Functional cases that assert exact delivery over real sockets
 
-Functional cases that count datagrams over a real socket and assert every one arrived, with no resend and no loss accounting, so a host dropping a datagram under load turns them red. gso_client_wire_exchange and server_uring_wire_gro now resend only what the loss gate in tests/kernel_drops.h admits from the kernel's receive drops (3c6b00056). The gate does not admit SEND_FAILED: under load on aws-mut-2 (600 runs at once, 2026-11-14) every SEND_FAILED in gso_client_wire_exchange was the portable server's send handoff dropping on its no-free-bank path (sdk/rocketnet_driver_builtin.cpp portable_tx_drop; no send call, no errno), and no counter separates a full socket's EAGAIN or ENOBUFS from the other refusals SEND_FAILED counts, so that case stays red when the handoff drops: a library finding, owed its own counter or a fix. Still exact, in tests/functional/rocketnet_functional_tests.cpp: pump_chaff_exchange (received == sent_real), server_gso_wire_exchange (num_seen == ROCKETNET_GSO_TEST_PACKETS twice, num_segments_seen == gro_segments), server_uring_wire_exchange_flags (num_seen == ROCKETNET_URING_TEST_PACKETS twice), server_uring_gro_cmsg_faults_counted (num_seen == datagrams), xdp_max_size_both_ways (server_received == count), xdp_over_mtu_refused (received_small == count); Windows: server_rio_wire (num_seen == last twice), iocp_exchange (num_seen == ROCKETNET_IOCP_TEST_PACKETS), iocp_client_send_and_collect and iocp_client_receive_from_server (received == num_packets; the gate reads no counter on Windows, so these need the iocp transports' SEND_FAILED at least). Fix each the same way.
+Functional cases that count datagrams over a real socket and assert every one arrived, with no resend and no loss accounting, so a host dropping a datagram under load turns them red. gso_client_wire_exchange and server_uring_wire_gro now resend only what the loss gate in tests/kernel_drops.h admits from the kernel's receive drops (3c6b00056). In gso_client_wire_exchange the server's SEND_FAILED since the exchange began, each spent once, also covers tags missing at the client, and nothing else is admitted. Under load on aws-mut-2 (600 runs at once, 2026-11-14) and on hetzner2 in the v1.2.0 gates every such SEND_FAILED was the portable server's send handoff dropping on its no-free-bank path (sdk/rocketnet_driver_builtin.cpp portable_tx_drop; no send call, no errno), and no counter separates a full socket's EAGAIN or ENOBUFS from the other refusals SEND_FAILED counts, so the drop is counted and resent, not fixed: a library finding, owed its own counter or a fix. Still exact, in tests/functional/rocketnet_functional_tests.cpp: pump_chaff_exchange (received == sent_real), server_gso_wire_exchange (num_seen == ROCKETNET_GSO_TEST_PACKETS twice, num_segments_seen == gro_segments), server_uring_wire_exchange_flags (num_seen == ROCKETNET_URING_TEST_PACKETS twice), server_uring_gro_cmsg_faults_counted (num_seen == datagrams), xdp_max_size_both_ways (server_received == count), xdp_over_mtu_refused (received_small == count); Windows: server_rio_wire (num_seen == last twice), iocp_exchange (num_seen == ROCKETNET_IOCP_TEST_PACKETS), iocp_client_send_and_collect and iocp_client_receive_from_server (received == num_packets; the gate reads no counter on Windows, so these need the iocp transports' SEND_FAILED at least). Fix each the same way.
 
 From: v1.0.1 review
 
@@ -1153,7 +1159,7 @@ From: Final bar for rio, Windows pair 1, 2026-11-14
 
 ### Two Windows runner slots on one host still queue behind a long commit-lock holder
 
-The mutex Global\rocketnet-test-commit-bound (tests/suite_runner.h) is machine-wide by design: it bounds the host's commit, so both runner slots share it. A long holder on one slot still fails the other's wait at SUITE_COMMIT_LOCK_WAIT_SECONDS (1800): test_secrets_wiped_destroy_writes_only_keys in nightly-soak windows and Nightly CI windows unit. Since 17d9cafc0 the wait names its holder (pid, executable, case, since) every 60 s and at the bound, so it is diagnosed by name, not fixed; on aws-win-ci-3 a clang-cl ASan test_server_stats_current_every_update held it 26 min. Also open: a run outside session 0 that may not create the Global\ mapping falls back to Local\ names, so a waiter in another session can read a stale or empty holder record. Fix: keep a long holder from starving the other slot (bound or split the long ASan case, or let a waiter whose case fits the free commit go), and read the holder record from the same namespace the lock came from.
+The mutex Global\rocketnet-test-commit-bound (tests/suite_runner.h) is machine-wide by design: it bounds the host's commit, so both runner slots share it. A long holder on one slot still fails the other's wait at SUITE_COMMIT_LOCK_WAIT_SECONDS (1800): test_secrets_wiped_destroy_writes_only_keys in nightly-soak windows and Nightly CI windows unit. Since 17d9cafc0 the wait names its holder (pid, executable, case, since) every 60 s and at the bound, so it is diagnosed by name, not fixed; on aws-win-ci-3 a clang-cl ASan test_server_stats_current_every_update held it 26 min. Also open: a run outside session 0 that may not create the Global\ mapping falls back to Local\ names, so a waiter in another session can read a stale or empty holder record. Not this item: the 2026-11-14 "could not open" reds on aws-win-ci-3 were cross-account (an Administrator run's default descriptor refused NETWORK SERVICE), fixed by the Authenticated Users descriptor; that day's nightly-soak 1800 s wait on aws-win-ci-1 named no holder because the other slot's Release ASan job of main@a1a426851, built before the record, had been in progress since 08:43Z. Fix: keep a long holder from starving the other slot (bound or split the long ASan case, or let a waiter whose case fits the free commit go), and read the holder record from the same namespace the lock came from.
 
 From: fix/v1.1.x/known-defects-windows at 01fc4826d, cold read follow-up
 
