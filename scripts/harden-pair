@@ -431,7 +431,9 @@ if [ "$hostile" = "1" ]; then
     logs="$logs,$out/hostile.log"
 fi
 
-status=0
+# a role still running past the deadline fails the cell on every system,
+# whatever it prints or returns after
+status=$timed_out
 "$local_bin/harden_load" reconcile --logs "$logs" --netem-duplicates "$duplicates" --min-delivery "$min_delivery" --frame-p99-us "$frame_p99_us" \
     | tee "$out/reconcile.txt" || status=1
 # every role prints a verdict; none at all is a role that never ran to its end
