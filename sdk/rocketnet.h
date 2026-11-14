@@ -1447,9 +1447,10 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_loopback_hub_destroy( struct 
 /// portable,rio,iocp on Windows. Production servers try
 /// xdp,gso,io_uring,portable on Linux; msgx,portable on macOS; and
 /// rio,iocp,portable on Windows, keeping native server transports first.
-/// rio is the server transport to use on Windows: it is the one measured to
-/// hold the 1000-player peak with no refused sends; iocp remains available
-/// and is tried when rio refuses.
+/// rio is the server transport to use on Windows: with its default five
+/// lanes on a bind address it is the one measured to hold the 1000-player
+/// peak with no refused sends; iocp remains available and is tried when rio
+/// refuses (not for want of memory, which ends the start).
 /// io_uring requires build support. Linux clients try gso,portable; macOS
 /// clients try msgx,portable; and Windows clients try iocp,portable.
 /// Loopback is selected only as the sole name of a list, never by auto, and

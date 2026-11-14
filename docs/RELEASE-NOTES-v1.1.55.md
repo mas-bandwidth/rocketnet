@@ -29,9 +29,10 @@ released id moved.
 - Transports:
   - On Windows a server's `auto` tries `rio` before `iocp`: production
     servers try `rio`, `iocp`, `portable` and development servers `portable`,
-    `rio`, `iocp`. `rio` is the Windows server transport measured to hold the
-    1000-player peak with no refused sends; `iocp` is tried when `rio`
-    refuses. Clients are unchanged.
+    `rio`, `iocp`. `rio`, with its default five lanes on a bind address, is
+    the Windows server transport measured to hold the 1000-player peak with
+    no refused sends; `iocp` is tried when `rio` refuses (not for want of
+    memory). Clients are unchanged.
   - POSIX receive treats `EMSGSIZE` as weather, not a fault.
   - The loopback client waits and is woken instead of polling every
     millisecond; the loopback hub's public contract and latency timing are

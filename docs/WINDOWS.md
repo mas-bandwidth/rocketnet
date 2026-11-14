@@ -46,14 +46,15 @@ the SDK into a game's own build.
 
 ## The Windows transports
 
-**`rio` is the server transport to use on Windows.** It is the one measured
-to hold the 1000-player peak, about 900,000 packets a second, with no refused
-sends: the five- and six-lane rows in [PERFORMANCE.md](PERFORMANCE.md) have
-zero message-start refusals. `iocp` remains available and holds the average
-load with none, but at the peak it refuses a small share of sends: its two
-peak rows there held about 900,000 packets a second with 738 and 7405
-message-start refusals over the run. A server's `auto` tries `rio` first, and
-falls to `iocp` where `rio` cannot start.
+**`rio` is the server transport to use on Windows.** With its default five
+lanes on a bind address it is the one measured to hold the 1000-player peak,
+about 900,000 packets a second, with no refused sends: the five- and six-lane
+rows in [PERFORMANCE.md](PERFORMANCE.md) have zero message-start refusals.
+`iocp` remains available and holds the average load with none, but at the
+peak it refuses a small share of sends: its two peak rows there, at its
+built-in placement, held about 900,000 packets a second with 738 and 7405
+message-start refusals over the run. A production server's `auto` tries `rio`
+first, and falls to `iocp` where `rio` refuses (below).
 
 | Transport | Endpoint | `auto` rank | What it is |
 | --- | --- | --- | --- |
@@ -105,13 +106,17 @@ server starts, and the line it logs then names each lane's region size:
 rio transport: port 40000, 1 lane (one socket and I/O worker each), 4096 receive slices and 16384 send frames per phase per lane, <n> registered bytes per lane
 ```
 
-Because `rio` ranks ahead of `iocp`, `auto` runs it whenever it starts, and
-falls to `iocp` only when `rio` refuses: when Winsock offers no Registered I/O
-function table, when `num_rio_lanes` is outside 1 to 32, when more than one
-lane is asked for on the wildcard or an IPv4-mapped address, when another
-socket holds the lanes' address and port, when its registered region cannot
-be allocated or registered, or when its memory plan exceeds the operator's
-memory budget. Each refusal is logged with its reason. With no bind address
+Because `rio` ranks ahead of `iocp`, a production server's `auto` runs it
+whenever it starts, and falls to `iocp` when `rio` refuses: for example when
+Winsock offers no Registered I/O function table, when `num_rio_lanes` is
+negative or above 32 (0 is the default), when more than one lane is asked for
+on the wildcard or an IPv4-mapped address, when another socket holds the
+lanes' address and port, when its memory plan exceeds the operator's memory
+budget, or when any other step of its create fails. A region that cannot be
+allocated or registered for want of memory is the exception: that ends the
+start with `OUT_OF_MEMORY` and does not fall to `iocp` ("What the host
+needs", below).
+Each refusal is logged with its reason. With no bind address
 a server runs one `rio` lane, as `iocp` runs one completion worker (below).
 How its send phases and receive banks change hands is in
 TRANSPORTS.md, "The RIO server transport".

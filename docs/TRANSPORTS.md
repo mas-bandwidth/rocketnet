@@ -33,10 +33,11 @@ So `auto` resolves to:
 | Windows | `portable`, `rio`, `iocp` | `rio`, `iocp`, `portable` | `iocp`, `portable` |
 
 A Linux build without liburing has no `io_uring` row. On a Windows server
-`rio` is the transport to use: it is the one measured to hold the 1000-player
-peak with no refused sends ([PERFORMANCE.md](PERFORMANCE.md)), so it ranks
-ahead of `iocp`, which `auto` reaches when `rio` refuses
-([WINDOWS.md](WINDOWS.md#the-windows-transports)).
+`rio` is the transport to use: with its default five lanes on a bind address
+it is the one measured to hold the 1000-player peak with no refused sends
+([PERFORMANCE.md](PERFORMANCE.md)), so it ranks ahead of `iocp`, which `auto`
+reaches when `rio` refuses (not for want of memory, which ends the start;
+[WINDOWS.md](WINDOWS.md#the-windows-transports)).
 
 **Pinning.** Set `transport` in `rocketnet_server_config_t` or
 `rocketnet_client_config_t`, or set `ROCKETNET_SERVER_TRANSPORT` or

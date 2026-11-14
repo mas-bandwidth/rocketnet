@@ -572,8 +572,9 @@ backlog left by a cut call, and the process view has room (the exceptions
 a call that began with a backlog finishes that backlog and moves on to the
 worker's bank only at a later call. The next call, one update later (16.7 ms
 at 60 Hz), is the earliest it can be returned, not a deadline.
-Its server rank is 35, ahead of IOCP's 40, so automatic selection
-chooses it whenever it starts and falls to IOCP when it refuses. Its
+Its server rank is 35, ahead of IOCP's 40, so a production server's automatic
+selection chooses it whenever it starts and falls to IOCP when it refuses (a
+failure for want of memory ends the start instead). Its
 `ROCKETNET_COUNTER_RIO_*` counters (public rows, sdk/rocketnet_counters.h) report sent and received packets, full send
 slots, failed sends, waits for a send phase, failed receives, dropped-size and
 dropped-overflow receives, failed receive reposts, and RIO commit calls. Its

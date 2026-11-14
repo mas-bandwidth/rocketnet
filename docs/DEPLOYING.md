@@ -85,8 +85,9 @@ the server's configured `max_clients`; see [Maximum clients](MEMORY.md#maximum-c
 not timing or packet-rate requirements. A send frame still owned by the OS is
 unavailable to the next fill, even after an application flush.
 
-On a Windows server use `rio`: it is the server transport measured to hold the
-1000-player peak with no refused sends; `iocp` remains available and holds
+On a Windows server use `rio`, with a bind address: with its default five
+lanes it is the server transport measured to hold the 1000-player peak with no
+refused sends; `iocp` remains available and holds
 the average load, but at the peak it refuses a small share of sends
 ([PERFORMANCE.md](PERFORMANCE.md), and [Windows](WINDOWS.md#the-windows-transports)).
 Windows production server `auto` tries rio, iocp, then portable; development
