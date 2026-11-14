@@ -82,6 +82,17 @@ static double rocketnet_fuzz_session_dark;
 static bool rocketnet_fuzz_session_was_up[2];     // [0] the client CONNECTED, [1] the server's slot 0 connected
 static bool rocketnet_fuzz_session_went_down;
 
+// the silence one way (0 client -> server, 1 server -> client) up to now, kept
+// when it is the longest so far; compared by hand, since windows.h defines max
+static void rocketnet_fuzz_session_note_silence( const struct rocketnet_fuzz_pair_t * pair, int direction )
+{
+    const double silence = pair->time - rocketnet_fuzz_session_heard[direction];
+    if ( silence > rocketnet_fuzz_session_dark )
+    {
+        rocketnet_fuzz_session_dark = silence;
+    }
+}
+
 static int rocketnet_fuzz_session_stream_index( int session, int channel )
 {
     return rocketnet_dst_check_stream_index( session, channel, channel );
@@ -273,7 +284,7 @@ static void rocketnet_fuzz_session_update( struct rocketnet_fuzz_pair_t * pair, 
         rocketnet_fuzz_session_went_down = true;
         for ( int direction = 0; direction < 2; direction++ )
         {
-            rocketnet_fuzz_session_dark = std::max( rocketnet_fuzz_session_dark, pair->time - rocketnet_fuzz_session_heard[direction] );
+            rocketnet_fuzz_session_note_silence( pair, direction );
         }
     }
     rocketnet_fuzz_session_was_up[0] = up[0];
@@ -292,7 +303,7 @@ static void rocketnet_fuzz_session_heard_from( const struct rocketnet_fuzz_pair_
     {
         return;
     }
-    rocketnet_fuzz_session_dark = std::max( rocketnet_fuzz_session_dark, pair->time - rocketnet_fuzz_session_heard[direction] );
+    rocketnet_fuzz_session_note_silence( pair, direction );
     rocketnet_fuzz_session_heard[direction] = pair->time;
 }
 
@@ -565,7 +576,7 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
     // (rocketnet_fuzz_session_update), not the quiet the drop itself caused
     for ( int direction = 0; direction < 2 && !rocketnet_fuzz_session_went_down; direction++ )
     {
-        rocketnet_fuzz_session_dark = std::max( rocketnet_fuzz_session_dark, pair->time - rocketnet_fuzz_session_heard[direction] );
+        rocketnet_fuzz_session_note_silence( pair, direction );
     }
 
     // a script the remote endpoint did not forge into (untainted) whose wire
