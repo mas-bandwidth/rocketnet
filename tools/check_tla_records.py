@@ -27,6 +27,12 @@ Rules enforced:
     was measured under the pinned budget of 110 s.
   - Each row's input_sha256 and input_files are the fingerprint its case has
     now (the pinned tlacheck's): a record of other inputs is stale and refused.
+  - A cfg's CHECK_DEADLOCK agrees with its case's deadlock column (FALSE with
+    ignore-terminal, TRUE with check); the cases owed to R are DEADLOCK_OWED.
+  - Every PROPERTY case of a module whose fairness states a []<> ... => []<>
+    delivery assumption, inline or in an operator a Fairness... definition
+    names, has a reversed liveness witness; modules owed to another package
+    are OWED_WITNESSES.
 """
 
 import argparse
@@ -239,31 +245,64 @@ def cfg_properties(config_path):
             if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", prop)]
 
 
-def delivery_assumption_modules(tla_dir):
-    """Modules whose Fairness states an inline []<>... => []<>... assumption.
+DEFINITION_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\))?\s*==", re.ASCII)
+DELIVERY_ASSUMPTION_RE = re.compile(r"\[\]<>.{0,400}?=>.{0,400}?\[\]<>", re.DOTALL)
 
-    Such an antecedent can be vacuous, so each PROPERTY case in the module
-    needs a reversed liveness witness: a temporal case that fails the same
-    property, showing the property is not a tautology.
+
+def module_definitions(text):
+    """{name: body} of a module's definitions that start a line (comments blanked)."""
+    definitions, name, body = {}, None, []
+    for line in strip_comments(text).splitlines():
+        start = DEFINITION_RE.match(line)
+        if start or MODULE_END_RE.match(line) or re.match(r"^\s*-{4,}\s*$", line):
+            if name is not None:
+                definitions[name] = "\n".join(body)
+            name, body = (start.group(1), [line]) if start else (None, [])
+        elif name is not None:
+            body.append(line)
+    if name is not None:
+        definitions[name] = "\n".join(body)
+    return definitions
+
+
+def delivery_assumption_modules(tla_dir):
+    """Modules whose fairness states a []<>... => []<>... assumption.
+
+    The fairness is every definition named Fairness... (Fairness,
+    FairnessTyped), and every definition of the module, or of a module it
+    EXTENDS or INSTANCEs, that one names, followed name by name: RNWindow's
+    Fairness only names AcksLand, which holds the implication. Such an
+    antecedent can be vacuous, so each PROPERTY case in the module needs a
+    reversed liveness witness: a temporal case that fails the same property,
+    showing the property is not a tautology.
     """
-    modules = set()
-    for path in Path(tla_dir).glob("*.tla"):
+    tla_dir = Path(tla_dir)
+    texts = {}
+    for path in tla_dir.glob("*.tla"):
         try:
-            lines = strip_comments(path.read_text(encoding="latin-1")).splitlines()
+            texts[path.name] = path.read_text(encoding="latin-1")
         except OSError:
             continue
-        for i, line in enumerate(lines):
-            if not re.match(r"^Fairness\b[^\n]*==", line):
+    own = {name: module_definitions(text) for name, text in texts.items()}
+    modules = set()
+    for name in texts:
+        definitions = {}
+        for reached in sorted(module_closure(name, tla_dir) - {name}):
+            definitions.update(own.get(reached, {}))
+        definitions.update(own[name])
+        queue = [d for d in own[name] if re.match(r"Fairness[A-Za-z0-9_]*$", d)]
+        seen = set()
+        while queue:
+            d = queue.pop()
+            if d in seen or d not in definitions:
                 continue
-            body = [line]
-            for nxt in lines[i + 1:]:
-                if re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*(?:\([^)]*\))?\s*==", nxt):
-                    break
-                body.append(nxt)
-            fairness = "\n".join(body)
-            if re.search(r"\[\]<>.{0,400}?=>.{0,400}?\[\]<>", fairness, re.DOTALL):
-                modules.add(path.name)
+            seen.add(d)
+            body = definitions[d]
+            if DELIVERY_ASSUMPTION_RE.search(body):
+                modules.add(name)
                 break
+            head = DEFINITION_RE.match(body)
+            queue += re.findall(r"(?<![A-Za-z0-9_!])[A-Za-z_][A-Za-z0-9_]*", body[head.end():] if head else body)
     return modules
 
 
@@ -286,34 +325,144 @@ def module_closure(module, tla_dir):
     return seen
 
 
-def check_property_witnesses(cases, tla_dir):
+# Delivery-assumption modules whose missing witnesses are another package's
+# work, by name, each with its owner. Only a module the checker finds goes
+# here, and it leaves when it stops being found (the check below refuses a
+# stale entry), so the list stays exactly the debt. These four were found
+# when the check began to follow named operators (MA006): RNWindow's
+# Fairness names AcksLand; Link's EventualDelivery and the connections'
+# DeliveryFairTyped are named the same way.
+OWED_WITNESSES = {
+    "RNWindow.tla": "owed to M3: the MCRNWindow temporal witness (MA006)",
+    "Link.tla": "owed to MM210: a reversed witness for each PROPERTY",
+    "ClientConnection.tla": "owed to MM210: a reversed witness for each PROPERTY",
+    "ServerConnection.tla": "owed to MM210: a reversed witness for each PROPERTY",
+}
+
+
+def check_property_witnesses(cases, tla_dir, owed=None):
     """Every PROPERTY case in a delivery-assumption module needs a witness."""
     errors = []
     tla_dir = Path(tla_dir)
+    owed = OWED_WITNESSES if owed is None else owed
     has_tla = tla_dir.is_dir() and any(tla_dir.glob("*.tla"))
-    delivery_modules = delivery_assumption_modules(tla_dir) if has_tla else set()
+    found = delivery_assumption_modules(tla_dir) if has_tla else set()
+    for module, why in sorted(owed.items()):
+        if (tla_dir / module).exists() and module not in found:
+            errors.append(
+                f"{module}: in OWED_WITNESSES ({why}) but its fairness states no delivery "
+                f"assumption the check finds; remove it from OWED_WITNESSES"
+            )
     witnesses = {
         (case["module"], case["property"])
         for case in cases
         if case["expected"] == "temporal"
     }
+    still_owed = set()
     for case in cases:
         props = cfg_properties(tla_dir / case["config"])
         if not props:
             continue
         module_missing = not (tla_dir / case["module"]).exists()
-        module_files = module_closure(case["module"], tla_dir)
-        if has_tla and not module_missing and not (module_files & delivery_modules):
+        hit = module_closure(case["module"], tla_dir) & found
+        if has_tla and not module_missing and not hit:
             continue
-        for prop in props:
-            if (case["module"], prop) in witnesses:
-                continue
+        missing = [prop for prop in props if (case["module"], prop) not in witnesses]
+        if has_tla and not module_missing and missing and hit <= set(owed):
+            still_owed |= hit
+            continue
+        for prop in missing:
             errors.append(
                 f"{case['config']}: property {prop} has no reversed liveness witness "
                 f"in CASES.tsv; add a temporal case for {case['module']} that fails it "
                 f"(TLC: Temporal properties were violated), showing the delivery "
                 f"assumption's antecedent is satisfiable"
             )
+    for module, why in sorted(owed.items()):
+        if module in found and module not in still_owed:
+            errors.append(
+                f"{module}: in OWED_WITNESSES ({why}) but no case it reaches lacks a witness; "
+                f"remove it from OWED_WITNESSES"
+            )
+    return errors
+
+
+def cfg_check_deadlock(config_path):
+    """True or False when a .cfg sets CHECK_DEADLOCK, None when it does not."""
+    try:
+        text = Path(config_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    value = None
+    words = strip_comments(text).split()
+    for i, word in enumerate(words):
+        if word == "CHECK_DEADLOCK" and i + 1 < len(words):
+            value = {"TRUE": True, "FALSE": False}.get(words[i + 1], value)
+    return value
+
+
+# The deadlock column against the cfg (MA005): tlc_nightly adds -deadlock (no
+# deadlock check) only for a case declared ignore-terminal, and TLC reads a
+# cfg's CHECK_DEADLOCK either way, so a cfg that turns the check off while its
+# row says check makes the record claim a check TLC never ran. The cases
+# below set CHECK_DEADLOCK FALSE under deadlock = check; the column is R's to
+# flip to ignore-terminal, and when it is, the case must leave this list in
+# the same change (a stale entry is refused, so the list stays exactly the
+# debt). 21 at the review's pin; main added two by v1.1.55.
+DEADLOCK_OWED = frozenset(
+    {
+        "MCRNSecurityTables.cfg",
+        "MCRNSecurityTablesBindAtRequest.cfg",
+        "MCRNSecurityTablesBindAtRequestAttacker.cfg",
+        "MCRNSecurityTablesBrokenBackwardsWindow.cfg",
+        "MCRNSecurityTablesBrokenGlobalLockout.cfg",
+        "MCRNSecurityTablesBrokenNoCharge.cfg",
+        "MCRNSecurityTablesBrokenReleaseKeepsSlot.cfg",
+        "MCRNSecurityTablesBrokenReleaseTwice.cfg",
+        "MCRNSecurityTablesBrokenRepeat.cfg",
+        "MCRNSecurityTablesBrokenUnfairBudget.cfg",
+        "MCRNSecurityTablesCharge.cfg",
+        "MCRNSecurityTablesClaims.cfg",
+        "MCRNSecurityTablesDeniedConsumesToken.cfg",
+        "MCRNSecurityTablesEvictLiveHistory.cfg",
+        "MCRNSecurityTablesFlood.cfg",
+        "MCRNSecurityTablesFloodBudgetOne.cfg",
+        "MCRNSecurityTablesHoldUntilExpire.cfg",
+        "MCRNSecurityTablesNoPrevious.cfg",
+        "MCRNSecurityTablesNoRefuseAdmitted.cfg",
+        "MCRNSecurityTablesNoRequestExpiry.cfg",
+        "MCRNSecurityTablesNoVerifyCap.cfg",
+        "MCRNSecurityTablesPreviousOutlivesWindow.cfg",
+        "MCRNSecurityTablesRepeat.cfg",
+    }
+)
+
+
+def check_deadlock_directives(cases, tla_dir, owed=DEADLOCK_OWED):
+    """A cfg's CHECK_DEADLOCK agrees with its case's deadlock column."""
+    errors = []
+    tla_dir = Path(tla_dir)
+    for case in cases:
+        cfg = case["config"]
+        directive = cfg_check_deadlock(tla_dir / cfg)
+        declared = case["deadlock"]
+        if declared not in ("check", "ignore-terminal"):
+            errors.append(f"{cfg}: deadlock column {declared!r}, not check or ignore-terminal")
+            continue
+        disagrees = (directive is False and declared == "check") or (directive is True and declared == "ignore-terminal")
+        if disagrees and cfg not in owed:
+            errors.append(
+                f"{cfg}: the cfg sets CHECK_DEADLOCK {'FALSE' if directive is False else 'TRUE'} but CASES.tsv "
+                f"declares deadlock = {declared}; the record would claim a check TLC did not run (or skip one "
+                f"it did): make the column say what the cfg does"
+            )
+        elif cfg in owed and not disagrees and (tla_dir / cfg).exists():
+            errors.append(f"{cfg}: in DEADLOCK_OWED but its cfg and its deadlock column agree; remove it from DEADLOCK_OWED")
+    plan = {case["config"] for case in cases}
+    for cfg in sorted(owed - plan):
+        if not (tla_dir / cfg).exists():
+            continue  # a ledger checked away from the models (the tests' own)
+        errors.append(f"{cfg}: in DEADLOCK_OWED but not a case in CASES.tsv; remove it from DEADLOCK_OWED")
     return errors
 
 
@@ -355,6 +504,7 @@ def check(
     out=sys.stdout,
     forbid_stale=True,
     declared_debt=DECLARED_DEBT,
+    deadlock_owed=DEADLOCK_OWED,
 ):
     errors = []
 
@@ -404,6 +554,7 @@ def check(
                 errors.append(f"{cfg}: {expected} case must name a property, got {prop!r}")
 
     errors.extend(check_property_witnesses(list(plan.values()), Path(cases_path).parent))
+    errors.extend(check_deadlock_directives(list(plan.values()), Path(cases_path).parent, deadlock_owed))
 
     for cfg, case in plan.items():
         if case["debt"].strip() not in ("", "-") and cfg not in declared_debt:

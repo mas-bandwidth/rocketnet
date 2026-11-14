@@ -172,15 +172,25 @@ class CheckTlaRecordsTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("MCEx.cfg: stale record", text)
 
-    def delivery_fixture(self, witness_property="Eventually", witness=True):
-        """A property config in a module with an anonymous delivery implication."""
+    INLINE_FAIRNESS = "Fairness == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)\n"
+    # RNWindow's shape (MA006): Fairness only names the operator holding the implication
+    NAMED_FAIRNESS = (
+        "SendFair == WF_vars(Send)\n"
+        "\\* the assumption, named\n"
+        "AcksLand == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)\n"
+        "Fairness      == SendFair\n"
+        "FairnessTyped == Fairness /\\ AcksLand\n"
+    )
+
+    def delivery_fixture(self, witness_property="Eventually", witness=True, fairness=INLINE_FAIRNESS, owed=None):
+        """A property config in a module with a delivery implication in its fairness."""
         with tempfile.TemporaryDirectory() as tmp:
             tla = Path(tmp)
             (tla / "MCDelivery.tla").write_text(
                 "---- MODULE MCDelivery ----\n"
                 "VARIABLE x\nvars == <<x>>\n"
                 "Send == x' = x\nRecv == x' = x\n"
-                "Fairness == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)\n"
+                + fairness +
                 "Spec == TRUE /\\ [][Send \\/ Recv]_vars /\\ Fairness\n"
                 "SpecSafety == TRUE /\\ [][Send \\/ Recv]_vars\n"
                 "Eventually == <>TRUE\n"
@@ -200,6 +210,10 @@ class CheckTlaRecordsTest(unittest.TestCase):
                 runs.append(run_row(
                     "MCWitness.cfg", "MCDelivery.tla", "temporal", witness_property,
                     "13", "PASS"))
+            if owed is not None:
+                # the witness rule alone, with its own list of owed modules
+                errors = check_tla_records.check_property_witnesses(cases, tla, owed=owed)
+                return (1 if errors else 0), "\n".join(errors)
             write_tsv(tla / "CASES.tsv", check_tla_records.CASES_COLUMNS, cases)
             write_tsv(tla / "RUNS.tsv", check_tla_records.RUNS_COLUMNS, runs)
             out = io.StringIO()
@@ -220,6 +234,69 @@ class CheckTlaRecordsTest(unittest.TestCase):
     def test_property_with_reversed_liveness_witness_passes(self):
         code, text = self.delivery_fixture()
         self.assertEqual(code, 0, text)
+
+    def test_named_delivery_assumption_without_witness_rejected(self):
+        # MA006: the implication sits in an operator FairnessTyped names; the
+        # inline-only check passed this
+        code, text = self.delivery_fixture(witness=False, fairness=self.NAMED_FAIRNESS)
+        self.assertEqual(code, 1)
+        self.assertIn("MCPass.cfg: property Eventually has no reversed liveness witness", text)
+
+    def test_named_delivery_assumption_with_witness_passes(self):
+        code, text = self.delivery_fixture(fairness=self.NAMED_FAIRNESS)
+        self.assertEqual(code, 0, text)
+
+    def test_named_operator_without_implication_needs_no_witness(self):
+        # the control: following the names finds nothing when no named
+        # operator holds an implication
+        fairness = self.NAMED_FAIRNESS.replace(
+            "AcksLand == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)", "AcksLand == WF_vars(Recv)")
+        code, text = self.delivery_fixture(witness=False, fairness=fairness)
+        self.assertEqual(code, 0, text)
+
+    def test_owed_witness_module_is_excused_and_must_stay_owed(self):
+        code, text = self.delivery_fixture(
+            witness=False, fairness=self.NAMED_FAIRNESS, owed={"MCDelivery.tla": "owed to X"})
+        self.assertEqual(code, 0, text)
+        # the owner landed nothing yet the entry would excuse a later miss: a
+        # module whose cases all have witnesses leaves the list
+        code, text = self.delivery_fixture(fairness=self.NAMED_FAIRNESS, owed={"MCDelivery.tla": "owed to X"})
+        self.assertEqual(code, 1)
+        self.assertIn("MCDelivery.tla: in OWED_WITNESSES (owed to X) but no case it reaches lacks a witness", text)
+        fairness = self.NAMED_FAIRNESS.replace(
+            "AcksLand == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)", "AcksLand == WF_vars(Recv)")
+        code, text = self.delivery_fixture(fairness=fairness, owed={"MCDelivery.tla": "owed to X"})
+        self.assertEqual(code, 1)
+        self.assertIn("MCDelivery.tla: in OWED_WITNESSES (owed to X) but its fairness states no delivery", text)
+
+    def test_committed_owed_witness_modules_are_found(self):
+        found = check_tla_records.delivery_assumption_modules(check_tla_records.DEFAULT_CASES.parent)
+        self.assertTrue(set(check_tla_records.OWED_WITNESSES) <= found)
+
+    def deadlock_fixture(self, directive, declared, owed=frozenset()):
+        with tempfile.TemporaryDirectory() as tmp:
+            tla = Path(tmp)
+            (tla / "MCD.cfg").write_text("SPECIFICATION Spec\n" + directive, encoding="utf-8")
+            return check_tla_records.check_deadlock_directives(
+                [case_row("MCD.cfg", "MCD.tla", deadlock=declared)], tla, owed)
+
+    def test_deadlock_directive_against_column(self):
+        # MA005: a cfg that turns the deadlock check off under deadlock = check
+        errors = self.deadlock_fixture("CHECK_DEADLOCK FALSE\n", "check")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("MCD.cfg: the cfg sets CHECK_DEADLOCK FALSE but CASES.tsv declares deadlock = check", errors[0])
+        errors = self.deadlock_fixture("CHECK_DEADLOCK TRUE\n", "ignore-terminal")
+        self.assertIn("MCD.cfg: the cfg sets CHECK_DEADLOCK TRUE but CASES.tsv declares deadlock = ignore-terminal",
+                      errors[0])
+        self.assertEqual(self.deadlock_fixture("CHECK_DEADLOCK FALSE\n", "ignore-terminal"), [])
+        self.assertEqual(self.deadlock_fixture("", "check"), [])
+        self.assertEqual(self.deadlock_fixture("\\* CHECK_DEADLOCK FALSE\n", "check"), [])
+        self.assertIn("not check or ignore-terminal", self.deadlock_fixture("", "maybe")[0])
+
+    def test_deadlock_owed_excuses_and_must_stay_exact(self):
+        self.assertEqual(self.deadlock_fixture("CHECK_DEADLOCK FALSE\n", "check", frozenset({"MCD.cfg"})), [])
+        errors = self.deadlock_fixture("CHECK_DEADLOCK FALSE\n", "ignore-terminal", frozenset({"MCD.cfg"}))
+        self.assertIn("MCD.cfg: in DEADLOCK_OWED but its cfg and its deadlock column agree", errors[0])
 
     def test_property_without_delivery_implication_needs_no_witness(self):
         with tempfile.TemporaryDirectory() as tmp:

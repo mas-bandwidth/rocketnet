@@ -35,3 +35,29 @@ header with the template, so no trace check changes.
    :title "The trace check does not count a record's arguments"
    :text "MM203's held half. The checker ties each recorded argument Next passes as a bound variable, but does not check how many arguments a record carries: tests/tla_trace_bank.cpp (tla_sequence of the Finish and FinishRefused records) records three for FinishRefused(t, k). Record <<t, k>> for FinishRefused there, then add Len(traceArgs) = n to each bound arm in tools/tla_trace_check.py occurrences() and restore the ArgsTooLong domain control (a Drain record with two arguments, rejected bound)."
    :date "2026-11-13" :origin "MODELS-MERGED.md MM203; models/v1.1.x/trace-framework")
+
+## MA005: the deadlock column of the RNSecurityTables cases (R's)
+
+tools/check_tla_records.py now checks a cfg's CHECK_DEADLOCK against the case's
+deadlock column. The 23 MCRNSecurityTables*.cfg cases set CHECK_DEADLOCK FALSE
+under deadlock = check (21 at the review's pin; main added two). They are listed
+by name in DEADLOCK_OWED, so the check stays green.
+
+When R flips their column in CASES.tsv to ignore-terminal, the same change must
+delete those names from DEADLOCK_OWED. The checker refuses an entry whose cfg and
+column agree, so the list cannot outlive the debt. Flipping the column changes
+the cases' fingerprints, so the rnsecuritytables group's records must be run
+again in that change too.
+
+## MA006: witnesses the delivery-assumption check now asks for
+
+The check now follows the operators that a Fairness... definition names. It finds
+four more modules with a delivery assumption. Their missing witnesses are listed
+in OWED_WITNESSES, each with its owner:
+- RNWindow.tla: owed to M3, the MCRNWindow temporal witness.
+- Link.tla, ClientConnection.tla, ServerConnection.tla: owed to MM210, a
+  reversed witness for each PROPERTY.
+
+When an owner lands its witnesses, the same change deletes that module's entry.
+The checker refuses an entry once no case that reaches the module lacks a
+witness, and also refuses a module it no longer finds.
