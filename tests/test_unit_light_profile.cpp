@@ -97,11 +97,15 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // An AddressSanitizer build plans its red zones too (sdk/rocketnet_memory.h):
 // each connection a red zone after each region part and one after its views,
 // and a red zone plus 8 header bytes for each other carved array and each
-// allocation. The fixed term is a bound of mine, 256 such arrays and
+// allocation. The fixed term is a bound of mine, 512 such arrays and
 // allocations; Linux read 7720 bytes of it at 1000 clients (2026-11-12, gcc
 // Debug ASan: actual= 3112964443), the macOS client 3184 bytes over its
-// figure (Apple clang Debug ASan: actual= 15039610). 0 in every other build.
-#define LIGHT_RED_ZONE_BYTES( connections ) ( (size_t) ( connections ) * ( RN_NUM_PARTS + 1 ) * ROCKETNET_RED_ZONE_BYTES + ( ROCKETNET_RED_ZONE_BYTES > 0 ? (size_t) 256 * ( ROCKETNET_RED_ZONE_BYTES + 8 ) : 0 ) )
+// figure (Apple clang Debug ASan: actual= 15039610), and Windows 19656 bytes,
+// 273 of them, with the iocp plan at 16 lanes a server (2026-11-14, MSVC
+// Release ASan: actual=1579591079, the non-ASan figure 1578291423 plus
+// 1280000 for the connections and 19656), past the 256 this bound was before.
+// 0 in every other build.
+#define LIGHT_RED_ZONE_BYTES( connections ) ( (size_t) ( connections ) * ( RN_NUM_PARTS + 1 ) * ROCKETNET_RED_ZONE_BYTES + ( ROCKETNET_RED_ZONE_BYTES > 0 ? (size_t) 512 * ( ROCKETNET_RED_ZONE_BYTES + 8 ) : 0 ) )
 #if defined( _WIN32 )
 // Windows x64, MSVC, Release.
 // The server protocol's cookie reply limit (a 262144-bit bitmap carved with
