@@ -164,3 +164,39 @@ static void test_send_errnos_keep_the_first_other_errno_across_calls()
 }
 
 REGISTER_UNIT_TEST( test_send_errnos_keep_the_first_other_errno_across_calls );
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+// The errnos a connected socket's send call hands back for an ICMP error an
+// earlier datagram drew (Linux icmp_err_convert and icmpv6_err_convert, the
+// hard errors): the call sent nothing, so the message goes again once. A full
+// socket, a signal, a local refusal or a too-long datagram is the message's
+// own answer and never retries.
+
+static void test_send_error_pending_icmp_errnos()
+{
+    rocketnet_unit_check( rocketnet_platform_send_error_is_pending( ECONNREFUSED ) );
+    rocketnet_unit_check( rocketnet_platform_send_error_is_pending( EHOSTUNREACH ) );
+    rocketnet_unit_check( rocketnet_platform_send_error_is_pending( ENETUNREACH ) );
+    rocketnet_unit_check( rocketnet_platform_send_error_is_pending( EHOSTDOWN ) );
+    rocketnet_unit_check( rocketnet_platform_send_error_is_pending( ENOPROTOOPT ) );
+    rocketnet_unit_check( rocketnet_platform_send_error_is_pending( EPROTO ) );
+    rocketnet_unit_check( rocketnet_platform_send_error_is_pending( EACCES ) );
+#if defined( ENONET )
+    rocketnet_unit_check( rocketnet_platform_send_error_is_pending( ENONET ) );
+#endif // #if defined( ENONET )
+
+    rocketnet_unit_check( !rocketnet_platform_send_error_is_pending( 0 ) );
+    rocketnet_unit_check( !rocketnet_platform_send_error_is_pending( EAGAIN ) );
+    rocketnet_unit_check( !rocketnet_platform_send_error_is_pending( ENOBUFS ) );
+    rocketnet_unit_check( !rocketnet_platform_send_error_is_pending( EINTR ) );
+    rocketnet_unit_check( !rocketnet_platform_send_error_is_pending( EPERM ) );
+    rocketnet_unit_check( !rocketnet_platform_send_error_is_pending( EMSGSIZE ) );
+    rocketnet_unit_check( !rocketnet_platform_send_error_is_pending( EINVAL ) );
+    rocketnet_unit_check( !rocketnet_platform_send_error_is_pending( ENETDOWN ) );
+    rocketnet_unit_check( !rocketnet_platform_send_error_is_pending( EDESTADDRREQ ) );
+}
+
+REGISTER_UNIT_TEST( test_send_error_pending_icmp_errnos );
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS

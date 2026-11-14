@@ -1965,6 +1965,29 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
     return true;
 }
 
+// A connected UDP socket holds the ICMP error an earlier datagram drew, and
+// the next send call returns it before it sends anything, clearing it (Linux
+// udp(7) and ip(7): a hard error on a connected socket without IP_RECVERR,
+// which no rocketnet socket sets; xnu's sosend returns so_error the same way).
+// That call failed, not its message, so the message goes again once; a second
+// pending error drops it, counted, as any refused send. Linux queues these for
+// IPv4 (icmp_err_convert, ICMP_PARAMETERPROB): ECONNREFUSED, ENETUNREACH,
+// EHOSTUNREACH, EHOSTDOWN, ENONET, ENOPROTOOPT, EPROTO; for IPv6
+// (icmpv6_err_convert): ECONNREFUSED, EACCES, EPROTO. An unconnected socket
+// never holds one, so only a connected socket's sends retry.
+
+bool rocketnet_platform_send_error_is_pending( int error )
+{
+#if defined( ENONET )
+    if ( error == ENONET )
+    {
+        return true;
+    }
+#endif // #if defined( ENONET )
+    return error == ECONNREFUSED || error == ENETUNREACH || error == EHOSTUNREACH || error == EHOSTDOWN || error == ENOPROTOOPT ||
+           error == EPROTO || error == EACCES;
+}
+
 // One failed send, counted in *failures (send_failures, or on darwin
 // send_replay_failures for the replay of a refused sendmsg_x chunk). Darwin
 // also counts by call and errno: the first of each logs, the destroy logs the
@@ -2005,15 +2028,26 @@ static void rocketnet_platform_send_one( rocketnet_platform_socket_t * socket, c
     }
 
     int error = 0;
-#if ROCKETNET_DEV
-    if ( !rocketnet_platform_send_failure_should_inject( socket, &error ) )
-#endif // #if ROCKETNET_DEV
+    for ( int attempt = 0; attempt < 2; attempt++ )
     {
-        if ( rocketnet_platform_sendto( socket, packet_data, packet_bytes, (const sockaddr *) &storage, storage_bytes ) >= 0 )
+        error = 0;
+#if ROCKETNET_DEV
+        if ( !rocketnet_platform_send_failure_should_inject( socket, &error ) )
+#endif // #if ROCKETNET_DEV
         {
-            return;
+            if ( rocketnet_platform_sendto( socket, packet_data, packet_bytes, (const sockaddr *) &storage, storage_bytes ) >= 0 )
+            {
+                return;
+            }
+            error = errno;
         }
-        error = errno;
+
+        // a pending ICMP error the call consumed, sending nothing: once more
+
+        if ( !socket->connected || !rocketnet_platform_send_error_is_pending( error ) )
+        {
+            break;
+        }
     }
 
     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
@@ -2339,6 +2373,7 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
         }
 
         int sent = 0;
+        int retried = -1;
         while ( sent < count )
         {
             errno = 0;
@@ -2358,6 +2393,16 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
 
             if ( error == EINTR )
             {
+                continue;
+            }
+
+            // a pending ICMP error on the connected socket, consumed by this
+            // call with nothing sent (rocketnet_platform_send_error_is_pending):
+            // the same entry goes again once
+
+            if ( socket->connected && retried != sent && rocketnet_platform_send_error_is_pending( error ) )
+            {
+                retried = sent;
                 continue;
             }
 
@@ -2442,6 +2487,7 @@ int rocketnet_platform_socket_send_packets_mmsg_progress( rocketnet_platform_soc
         }
 
         int sent = 0;
+        int retried = -1;
         while ( sent < count )
         {
             errno = 0;
@@ -2455,6 +2501,11 @@ int rocketnet_platform_socket_send_packets_mmsg_progress( rocketnet_platform_soc
             const int error = errno;
             if ( error == EINTR )
             {
+                continue;
+            }
+            if ( socket->connected && retried != sent && rocketnet_platform_send_error_is_pending( error ) )
+            {
+                retried = sent;
                 continue;
             }
             if ( error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS )

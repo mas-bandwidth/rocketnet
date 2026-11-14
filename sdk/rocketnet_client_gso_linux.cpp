@@ -189,6 +189,7 @@ static int rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const 
 
     int num_messages = rocketnet_client_gso_build( gso, sends, 0, num_packets );
     int sent = 0;
+    int retried = -1;
     while ( sent < num_messages )
     {
         errno = 0;
@@ -238,6 +239,17 @@ static int rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const 
             gso->segment_refusals++;
             num_messages = rocketnet_client_gso_build( gso, sends, gso->message_first_packet[sent], num_packets );
             sent = 0;
+            retried = -1;
+            continue;
+        }
+
+        // a pending ICMP error on the connected socket, consumed by this call
+        // with nothing sent (rocketnet_platform_send_error_is_pending): the
+        // same message, a whole frame's run, goes again once
+
+        if ( retried != sent && rocketnet_platform_send_error_is_pending( error ) )
+        {
+            retried = sent;
             continue;
         }
 
@@ -264,8 +276,8 @@ static int rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const 
         }
 
         // no message went in this call, so the first unsent one is the one
-        // the kernel refused (an ICMP report on the connected socket, say):
-        // drop it and send the rest in order, as the portable batch does
+        // the kernel refused (or a second pending ICMP error answered its
+        // retry): drop it and send the rest in order, as the portable batch does
 
         gso->packet_send_failures.fetch_add( (uint64_t) gso->message_num_packets[sent], std::memory_order_relaxed );
 

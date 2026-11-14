@@ -239,6 +239,13 @@ void rocketnet_platform_socket_send_packet( struct rocketnet_platform_socket_t *
 // the kernel drops datagrams from other sources and sends name no destination, so send only to this endpoint
 bool rocketnet_platform_socket_connect( struct rocketnet_platform_socket_t * socket, const struct rocketnet_address_t * to );
 
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+// true for an errno with which a send call on a connected socket hands back an
+// ICMP error an earlier datagram drew: the call consumed the error and sent
+// nothing, so the message it carried goes again once (Linux, macOS)
+bool rocketnet_platform_send_error_is_pending( int error );
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
 // a result above max_packet_size marks an oversize datagram; only its prefix is stored
 int rocketnet_platform_socket_receive_packet( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, void * packet_data, int max_packet_size );
 
