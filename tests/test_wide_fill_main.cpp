@@ -12,7 +12,8 @@
 //
 // It fails as the unit worker does on a case that returned having run no
 // check (tests/check_count.h), on a named case the registry does not hold,
-// and when it ran no case at all.
+// when it ran no case at all, and when rocketnet_term reports an allocation
+// still live after the cases ran.
 
 #include "test_unit_registry.h"
 #include "../sdk/rocketnet.h"
@@ -67,7 +68,14 @@ int main( int argc, char ** argv )
         ran++;
     }
 
-    rocketnet_term();
+    // every case destroyed what it made: anything still allocated is a leak
+    // the cases' own checks missed, and rocketnet_term says so by its status
+    const enum rocketnet_status_t term = rocketnet_term();
+    if ( term != ROCKETNET_STATUS_OK )
+    {
+        printf( "check failed: rocketnet_term returned %s after the wide fill cases\n", rocketnet_status_name( term ) );
+        return 1;
+    }
     printf( "%d wide fill cases passed\n", ran );
     return ran > 0 ? 0 : 1;
 }

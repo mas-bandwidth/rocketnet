@@ -232,23 +232,30 @@ static void wide_fill_connect_all( wide_fill_world_t * world )
 // the concurrent fill
 // ---------------------------------------------------------------------------
 
-// a message: [kind][slot][seq:4][frame:4] then bytes derived from all three
-#define WIDE_FILL_HEADER_BYTES 10
+// a message: [kind][slot:2][bytes:2][seq:4][frame:4] then bytes derived from
+// all of them. The slot is whole (the full-server case has 1000 clients, so a
+// one-byte slot would let clients 256 apart take each other's messages), the
+// length written lets the receiver refuse a shortened message, and the tail
+// carries the frame, so a changed frame field fails the byte check
+#define WIDE_FILL_HEADER_BYTES 13
 
-static uint8_t wide_fill_byte( int kind, int slot, uint32_t seq, int i )
+static uint8_t wide_fill_byte( int kind, int slot, uint32_t seq, uint32_t frame, int i )
 {
-    return (uint8_t) ( ( kind * 131 ) ^ ( slot * 29 ) ^ (int) ( seq * 7u ) ^ ( i * 13 ) );
+    return (uint8_t) ( ( kind * 131 ) ^ ( slot * 29 ) ^ ( ( slot >> 8 ) * 71 ) ^ (int) ( seq * 7u ) ^ (int) ( frame * 37u ) ^ ( i * 13 ) );
 }
 
 static void wide_fill_write( uint8_t * p, int bytes, int kind, int slot, uint32_t seq, uint32_t frame )
 {
+    const uint16_t slot16 = (uint16_t) slot;
+    const uint16_t bytes16 = (uint16_t) bytes;
     p[0] = (uint8_t) kind;
-    p[1] = (uint8_t) slot;
-    memcpy( p + 2, &seq, 4 );
-    memcpy( p + 6, &frame, 4 );
+    memcpy( p + 1, &slot16, 2 );
+    memcpy( p + 3, &bytes16, 2 );
+    memcpy( p + 5, &seq, 4 );
+    memcpy( p + 9, &frame, 4 );
     for ( int i = WIDE_FILL_HEADER_BYTES; i < bytes; i++ )
     {
-        p[i] = wide_fill_byte( kind, slot, seq, i );
+        p[i] = wide_fill_byte( kind, slot, seq, frame, i );
     }
 }
 
@@ -322,17 +329,26 @@ static void wide_fill_client_receive( wide_fill_world_t * world, int c, wide_fil
         {
             const uint8_t * d = batch->data[i];
             const int bytes = batch->bytes[i];
-            if ( bytes < WIDE_FILL_HEADER_BYTES || d[0] > 2 || d[1] != (uint8_t) slot )
+            uint16_t to = 0;
+            uint16_t written = 0;
+            if ( bytes >= WIDE_FILL_HEADER_BYTES )
+            {
+                memcpy( &to, d + 1, 2 );
+                memcpy( &written, d + 3, 2 );
+            }
+            if ( bytes < WIDE_FILL_HEADER_BYTES || d[0] > 2 || to != (uint16_t) slot || written != (uint16_t) bytes )
             {
                 s->corrupt++;
                 continue;
             }
             const int k = d[0];
             uint32_t seq = 0;
-            memcpy( &seq, d + 2, 4 );
+            uint32_t frame = 0;
+            memcpy( &seq, d + 5, 4 );
+            memcpy( &frame, d + 9, 4 );
             for ( int b = WIDE_FILL_HEADER_BYTES; b < bytes; b++ )
             {
-                if ( d[b] != wide_fill_byte( k, slot, seq, b ) )
+                if ( d[b] != wide_fill_byte( k, slot, seq, frame, b ) )
                 {
                     s->corrupt++;
                     break;
