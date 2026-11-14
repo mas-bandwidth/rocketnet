@@ -17,6 +17,7 @@
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_channel.h"
 #include "../sdk/rocketnet_counters.h"
+#include "../sdk/rocketnet_endpoint.h"
 #include "../sdk/rocketnet_message.h"
 #include "../sdk/rocketnet_packet_builder.h"
 #include "../sdk/rocketnet_window_ack.h"
@@ -24,15 +25,21 @@
 
 static rocketnet_counters_t dispatch_counters;
 
-static rn_arena_t * dispatch_arena = NULL;
-
-static rn_region_t * dispatch_region()
+static rn_arena_t * dispatch_open( const rocketnet_message_config_t * config, rn_region_t ** out_region )
 {
-    if ( !dispatch_arena )
-    {
-        dispatch_arena = rn_unit_arena_create( NULL, 1, &dispatch_counters );
-    }
-    return dispatch_arena ? rn_arena_region( dispatch_arena, 0 ) : NULL;
+    memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
+    rn_arena_t * arena = rn_unit_arena_create( config, 1, &dispatch_counters );
+    rocketnet_unit_check( arena != NULL );
+    *out_region = arena ? rn_arena_region( arena, 0 ) : NULL;
+    rocketnet_unit_check( *out_region != NULL );
+    return arena;
+}
+
+static void dispatch_close( rn_arena_t * arena )
+{
+    rn_unit_arena_destroy( arena );
+    rocketnet_unit_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static void dispatch_record( struct rocketnet_message_record_t * record, int code, uint32_t channel, const uint8_t * data, int bytes )
@@ -50,20 +57,28 @@ static void dispatch_record( struct rocketnet_message_record_t * record, int cod
 
 static void test_dispatch_reaches_each_of_n_channels()
 {
-    rn_region_t * region = dispatch_region();
-    rocketnet_unit_check( region != NULL );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = dispatch_open( NULL, &region );
 
-    rn_channels_t channels;
-    rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
-    rocketnet_unit_check( channels.num_channels == region->num_channels );
-    rocketnet_unit_check( channels.num_channels >= 2 );
+    const uint32_t num_channels = region->num_channels;
+    rocketnet_unit_check( num_channels >= 2 );
 
     static uint8_t payload[16];
     memset( payload, 0xAB, sizeof( payload ) );
 
-    for ( uint32_t c = 0; c < channels.num_channels; c++ )
+    for ( uint32_t c = 0; c < num_channels; c++ )
     {
-        rocketnet_unit_check( region->channel_receive[c].ordered_read == 0 );
+        rn_region_reset( region );
+
+        rn_channels_t channels;
+        rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+        rocketnet_unit_check( channels.num_channels == num_channels );
+
+        for ( uint32_t k = 0; k < channels.num_channels; k++ )
+        {
+            rocketnet_unit_check( region->channel_receive[k].ordered_read == 0 );
+            region->channel_receive[k].sequenced_watermark = 5 + k;
+        }
 
         struct rocketnet_message_record_t record;
         dispatch_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, c, payload, (int) sizeof( payload ) );
@@ -74,24 +89,17 @@ static void test_dispatch_reaches_each_of_n_channels()
 
         rocketnet_unit_check( result == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
         rocketnet_unit_check( delivery.channel == (uint16_t) c );
-        rocketnet_unit_check( region->channel_receive[c].ordered_read == 1 );
 
-        // the coupling: the same transition zeroes the sequenced epoch (7.1)
+        // the coupling zeroes c's sequenced epoch (7.1), and no other channel moved
 
-        rocketnet_unit_check( region->channel_receive[c].sequenced_watermark == 0 );
-
-        // and no other channel moved
-
-        for ( uint32_t k = c + 1; k < channels.num_channels; k++ )
+        for ( uint32_t k = 0; k < channels.num_channels; k++ )
         {
-            if ( k != c )
-            {
-                rocketnet_unit_check( region->channel_receive[k].ordered_read == 0 );
-            }
+            rocketnet_unit_check( region->channel_receive[k].ordered_read == ( k == c ? 1u : 0u ) );
+            rocketnet_unit_check( region->channel_receive[k].sequenced_watermark == ( k == c ? 0u : 5u + k ) );
         }
     }
 
-    rn_region_reset( region );
+    dispatch_close( arena );
 }
 
 // Every type outside the current send mask is refused and counted. The
@@ -104,10 +112,8 @@ static void test_dispatch_reaches_each_of_n_channels()
 
 static void test_disabled_codes_are_refused_and_counted()
 {
-    rn_region_t * region = dispatch_region();
-    rocketnet_unit_check( region != NULL );
-
-    memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = dispatch_open( NULL, &region );
 
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, DISPATCH_NARROW_MASK ) );
@@ -161,7 +167,7 @@ static void test_disabled_codes_are_refused_and_counted()
 
     rocketnet_unit_check( rn_channels_enabled_codes( &channels ) == rocketnet_message_enabled_codes( DISPATCH_NARROW_MASK ) );
 
-    rn_region_reset( region );
+    dispatch_close( arena );
 }
 
 // an unreliable record is delivered as a view into the transport's batch: no
@@ -169,8 +175,8 @@ static void test_disabled_codes_are_refused_and_counted()
 
 static void test_unreliable_delivered_as_a_view()
 {
-    rn_region_t * region = dispatch_region();
-    rocketnet_unit_check( region != NULL );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = dispatch_open( NULL, &region );
 
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
@@ -198,7 +204,7 @@ static void test_unreliable_delivered_as_a_view()
     rn_channels_end_update( &channels );
     rocketnet_unit_check( channels.unreliable_delivered == 0 );
 
-    rn_region_reset( region );
+    dispatch_close( arena );
 }
 
 // the unreliable delivery budget Du (6.3 step 4): once an update has delivered
@@ -208,33 +214,43 @@ static void test_unreliable_delivered_as_a_view()
 
 static void test_unreliable_delivery_budget_drops_and_counts()
 {
-    rn_region_t * region = dispatch_region();
-    rocketnet_unit_check( region != NULL );
-    memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
+    rocketnet_message_config_t defaults;
+    rocketnet_message_default_config( &defaults );
+    rocketnet_unit_check( defaults.unreliable_messages_per_update == 1024 );
+
+    rn_region_t * default_region = NULL;
+    rn_arena_t * default_arena = dispatch_open( NULL, &default_region );
+    rocketnet_unit_check( default_region->delivery_entries - default_region->window == 1024u );
+    dispatch_close( default_arena );
+
+    const uint32_t configured_budget = 5;
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.unreliable_messages_per_update = (int) configured_budget;
+
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = dispatch_open( &config, &region );
 
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
-
-    const uint32_t budget = region->delivery_entries - region->window;      // Du
-    rocketnet_unit_check( budget >= 2 );
 
     static uint8_t batch[8] = { 'a', 'b', 'c', 0, 0, 0, 0, 0 };
     struct rocketnet_message_record_t record;
     dispatch_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE, 0, batch, 3 );
 
     struct rn_delivery_t delivery;
-    for ( uint32_t i = 0; i < budget; i++ )
+    for ( uint32_t i = 0; i < configured_budget; i++ )
     {
         rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
     }
-    rocketnet_unit_check( channels.unreliable_delivered == budget );
+    rocketnet_unit_check( channels.unreliable_delivered == configured_budget );
     rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL] == 0 );
 
     for ( int i = 0; i < 3; i++ )
     {
         rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
     }
-    rocketnet_unit_check( channels.unreliable_delivered == budget );
+    rocketnet_unit_check( channels.unreliable_delivered == configured_budget );
     rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL] == 3 );
     rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
     rocketnet_unit_check( channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
@@ -245,7 +261,7 @@ static void test_unreliable_delivery_budget_drops_and_counts()
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
     rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL] == 3 );
 
-    rn_region_reset( region );
+    dispatch_close( arena );
 }
 
 // an unreliable record never takes a reliable number (I3): no descriptor, no
@@ -253,13 +269,14 @@ static void test_unreliable_delivery_budget_drops_and_counts()
 
 static void test_unreliable_never_takes_a_number()
 {
-    rn_region_t * region = dispatch_region();
-    rocketnet_unit_check( region != NULL );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = dispatch_open( NULL, &region );
 
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
 
     static uint8_t batch[32];
+    memset( batch, 0x3C, sizeof( batch ) );
     struct rocketnet_message_record_t record;
     dispatch_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE, 1, batch, 16 );
 
@@ -275,12 +292,103 @@ static void test_unreliable_never_takes_a_number()
     rocketnet_unit_check( region->channel_receive[1].ordered_read == read_before );
     rocketnet_unit_check( delivery.serial == 0 );
 
-    // an unreliable send is refused a number the same way: the builder's item
-    // carries ROCKETNET_PACKET_NUMBER_NONE and takes no sent-map entry
+    // an unreliable send is refused a number by the send window, written
+    // without carrying any reliable number in the packet builder, and leaves
+    // no entry in the sent-packet map when committed
 
-    rocketnet_unit_check( ROCKETNET_PACKET_NUMBER_NONE == 0xFFFFFFFFFFFFFFFFull );
+    rn_window_send_t send;
+    rn_window_send_init( &send, region, 0 );
 
-    rn_region_reset( region );
+    rn_window_ack_t ack;
+    rn_window_ack_init( &ack, &send, region, NULL );
+
+    uint64_t assigned_number = 77;
+    uint64_t ring_start = 88;
+    rocketnet_unit_check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_UNRELIABLE, 16,
+                                                      RN_DESCRIPTOR_NONE, &assigned_number, &ring_start ) == RN_WINDOW_SEND_UNRELIABLE );
+    rocketnet_unit_check( send.next == 0 );
+
+    rn_packet_builder_t builder;
+    rocketnet_unit_check( rn_packet_builder_init( &builder, region, &ack, NULL, 1, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
+
+    rn_packet_item_t item;
+    memset( &item, 0, sizeof( item ) );
+    item.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;
+    item.send_class = ROCKETNET_SEND_CLASS_UNRELIABLE;
+    item.channel = 1;
+    item.priority = ROCKETNET_PRIORITY_MEDIUM;
+    item.number = ROCKETNET_PACKET_NUMBER_NONE;
+    item.descriptor = RN_DESCRIPTOR_NONE;
+    item.data = batch;
+    item.bytes = 16;
+
+    alignas( 16 ) uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t * payloads[1] = { frame };
+
+    rocketnet_unit_check( rn_packet_builder_write( &builder, &item, 1, payloads, 1 ) == 1 );
+    rocketnet_unit_check( item.taken == 1 );
+    rocketnet_unit_check( builder.packet[0].records == 1 );
+    rocketnet_unit_check( builder.packet[0].count == 0 );
+
+    const uint64_t packet_id = 7001;
+    rn_packet_builder_commit( &builder, 0, packet_id, 100.0 );
+    rocketnet_unit_check( ack.pkt_head == ack.pkt_tail );
+    rocketnet_unit_check( rn_channels_feed_acks( &ack, &packet_id, 1, 100.01 ) == 0 );
+    rocketnet_unit_check( send.next == 0 );
+    rocketnet_unit_check( send.U == 0 );
+
+    // end-to-end queued unreliable send through layer 7's rn_endpoint_t,
+    // exercising rn_endpoint_unreliable_items (the sole sdk/ producer of
+    // ROCKETNET_PACKET_NUMBER_NONE) and decoding the emitted wire payload
+
+    rocketnet_message_config_t message_config;
+    rocketnet_message_default_config( &message_config );
+
+    rn_endpoint_config_t endpoint_config;
+    memset( &endpoint_config, 0, sizeof( endpoint_config ) );
+    endpoint_config.config = &message_config;
+
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, region, &endpoint_config );
+    rn_endpoint_reset( &endpoint, 0.0 );
+
+    rocketnet_unit_check( rn_endpoint_send( &endpoint, batch, 16, ROCKETNET_RELIABILITY_UNRELIABLE,
+                                            ROCKETNET_PRIORITY_MEDIUM, 1, 0 ) != 0 );
+    rocketnet_unit_check( endpoint.unreliable_count == 1 );
+    rocketnet_unit_check( endpoint.ordered.send.next == 0 );
+
+    rn_endpoint_begin_flush( &endpoint );
+    const int planned_bytes = rn_endpoint_next_packet_bytes( &endpoint, 100.0 );
+    rocketnet_unit_check( planned_bytes > 0 );
+
+    alignas( 16 ) uint8_t endpoint_frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    const uint64_t endpoint_packet_id = 7002;
+    const int written_bytes = rn_endpoint_write_packet( &endpoint, endpoint_frame, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
+                                                        endpoint_packet_id, 100.0 );
+    rocketnet_unit_check( written_bytes > 0 && written_bytes <= planned_bytes );
+    rocketnet_unit_check( endpoint.unreliable_builder.packet[0].records == 1 );
+    rocketnet_unit_check( endpoint.unreliable_builder.packet[0].count == 0 );
+
+    rn_endpoint_packet_sent( &endpoint, endpoint_packet_id, written_bytes, 100.0 );
+    rocketnet_unit_check( endpoint.unreliable_count == 0 );
+    rocketnet_unit_check( endpoint.ordered.send.next == 0 );
+    rocketnet_unit_check( endpoint.ordered.send.U == 0 );
+    rocketnet_unit_check( endpoint.ordered.ack.pkt_head == endpoint.ordered.ack.pkt_tail );
+    rocketnet_unit_check( rn_channels_feed_acks( &endpoint.ordered.ack, &endpoint_packet_id, 1, 100.01 ) == 0 );
+
+    struct rocketnet_message_reader_t reader;
+    struct rocketnet_message_record_t decoded;
+    rocketnet_unit_check( rocketnet_message_reader_begin( &reader, endpoint_frame, written_bytes,
+                                                          &endpoint.ordered.limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    rocketnet_unit_check( rocketnet_message_reader_next( &reader, &decoded ) == 1 );
+    rocketnet_unit_check( decoded.code == ROCKETNET_MESSAGE_CODE_UNRELIABLE );
+    rocketnet_unit_check( decoded.channel == 0 ); // wire code 0 carries no channel field (standard/MESSAGES.md m3)
+    rocketnet_unit_check( decoded.bytes == 16 );
+    rocketnet_unit_check( decoded.number == 0 );
+    rocketnet_unit_check( memcmp( decoded.data, batch, 16 ) == 0 );
+    rocketnet_unit_check( rocketnet_message_reader_next( &reader, &decoded ) == 0 );
+
+    dispatch_close( arena );
 }
 
 // R1: the transport's packet ids are the only acks, and they mark exactly the
@@ -290,8 +398,8 @@ static void test_unreliable_never_takes_a_number()
 #if ROCKETNET_DEV
 static void test_ack_feed_marks_only_carried_numbers()
 {
-    rn_region_t * region = dispatch_region();
-    rocketnet_unit_check( region != NULL );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = dispatch_open( NULL, &region );
 
     rn_window_send_t send;
     rn_window_send_init( &send, region, 0 );
@@ -356,7 +464,7 @@ static void test_ack_feed_marks_only_carried_numbers()
     rocketnet_unit_check( rn_channels_feed_acks( &ack, &transport_id, 1, now + 0.06 ) == 0 );
     rocketnet_unit_check( rn_channels_feed_acks( &ack, NULL, 0, now + 0.07 ) == 0 );
 
-    rn_region_reset( region );
+    dispatch_close( arena );
 }
 #endif // #if ROCKETNET_DEV
 
@@ -365,17 +473,17 @@ static void test_ack_feed_marks_only_carried_numbers()
 
 static void test_rnchannel_witness_replays()
 {
-    rn_region_t * region = dispatch_region();
-    rocketnet_unit_check( region != NULL );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = dispatch_open( NULL, &region );
 
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
 
     static uint8_t payload[16];
 
-    // BrokenOutOfOrder: an ordered record delivered out of its channel's order.
-    // The record ahead of its turn is not delivered; the one behind is a
-    // violation, because layer 3 already caught the duplicates.
+    // BrokenOutOfOrder: an ordered record ahead of its turn is held, not
+    // delivered; the in-turn record releases both; a record behind the
+    // advanced read index is refused and counted as a protocol violation.
 
     struct rocketnet_message_record_t ahead;
     dispatch_record( &ahead, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, payload, (int) sizeof( payload ) );
@@ -386,21 +494,26 @@ static void test_rnchannel_witness_replays()
     rocketnet_unit_check( region->channel_receive[0].ordered_read == 0 );
     rocketnet_unit_check( channels.deliveries == 0 );
 
-    struct rocketnet_message_record_t behind;
-    dispatch_record( &behind, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, payload, (int) sizeof( payload ) );
-    behind.ordering = 0;
-    rocketnet_unit_check( rn_channels_dispatch( &channels, &behind, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    struct rocketnet_message_record_t in_turn;
+    dispatch_record( &in_turn, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, payload, (int) sizeof( payload ) );
+    in_turn.ordering = 0;
+    rocketnet_unit_check( rn_channels_dispatch( &channels, &in_turn, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
 
     // the record held ahead is released by the drain in the same call (7.2)
 
     rocketnet_unit_check( region->channel_receive[0].ordered_read == 2 );
     rocketnet_unit_check( channels.deliveries == 2 );
+    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_ORDERING_BEHIND] == 0 );
+    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
+    rocketnet_unit_check( channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
 
-    struct rocketnet_message_record_t late;
-    dispatch_record( &late, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, payload, (int) sizeof( payload ) );
-    late.ordering = 0;
-    rocketnet_unit_check( rn_channels_dispatch( &channels, &late, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
-    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_ORDERING_BEHIND] >= 1 );
+    struct rocketnet_message_record_t behind;
+    dispatch_record( &behind, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, payload, (int) sizeof( payload ) );
+    behind.ordering = 0;
+    rocketnet_unit_check( rn_channels_dispatch( &channels, &behind, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_ORDERING_BEHIND] == 1 );
+    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
+    rocketnet_unit_check( channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
 
     rn_region_reset( region );
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
@@ -425,15 +538,42 @@ static void test_rnchannel_witness_replays()
     twice.ordering = 0;
     rocketnet_unit_check( rn_channels_dispatch( &channels, &twice, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &twice, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_ORDERING_BEHIND] == 1 );
     rocketnet_unit_check( region->channel_receive[2].ordered_read == 1 );
 
-    // a bad channel is refused, never delivered
+    rn_region_reset( region );
+    rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+    memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
+
+    // the last valid channel is accepted; both the exact boundary num_channels
+    // and num_channels + 1 are refused and counted, never delivered
+
+    struct rocketnet_message_record_t edge_ok;
+    dispatch_record( &edge_ok, ROCKETNET_MESSAGE_CODE_UNRELIABLE, channels.num_channels - 1, payload, (int) sizeof( payload ) );
+    rocketnet_unit_check( rn_channels_dispatch( &channels, &edge_ok, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL] == 0 );
+    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
+    rocketnet_unit_check( channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
 
     struct rocketnet_message_record_t bad;
-    dispatch_record( &bad, ROCKETNET_MESSAGE_CODE_UNRELIABLE, channels.num_channels + 1, payload, (int) sizeof( payload ) );
+    dispatch_record( &bad, ROCKETNET_MESSAGE_CODE_UNRELIABLE, channels.num_channels, payload, (int) sizeof( payload ) );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &bad, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL] == 1 );
+    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 1 );
+    rocketnet_unit_check( channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+    rocketnet_unit_check( channels.deliveries == 1 );
 
-    rn_region_reset( region );
+    rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+
+    struct rocketnet_message_record_t beyond;
+    dispatch_record( &beyond, ROCKETNET_MESSAGE_CODE_UNRELIABLE, channels.num_channels + 1, payload, (int) sizeof( payload ) );
+    rocketnet_unit_check( rn_channels_dispatch( &channels, &beyond, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL] == 2 );
+    rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 2 );
+    rocketnet_unit_check( channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+    rocketnet_unit_check( channels.deliveries == 0 );
+
+    dispatch_close( arena );
 }
 
 // The bad-ring, collision and double-ordering refusals of
@@ -445,8 +585,8 @@ static void test_rnchannel_witness_replays()
 
 static void test_ordered_dispatch_refuses_collisions_and_bad_rings()
 {
-    rn_region_t * region = dispatch_region();
-    rocketnet_unit_check( region != NULL );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = dispatch_open( NULL, &region );
 
     static uint8_t payload[16];
     memset( payload, 0xAB, sizeof( payload ) );
@@ -572,7 +712,7 @@ static void test_ordered_dispatch_refuses_collisions_and_bad_rings()
         rocketnet_unit_check( region->channel_receive[0].ordered_read == 0 );
     }
 
-    rn_region_reset( region );
+    dispatch_close( arena );
 }
 
 // The first version's mask enables all eight types; a caller's narrower mask
@@ -580,10 +720,8 @@ static void test_ordered_dispatch_refuses_collisions_and_bad_rings()
 
 static void test_default_mask_enables_all_eight_types()
 {
-    rn_region_t * region = dispatch_region();
-    rocketnet_unit_check( region != NULL );
-
-    memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = dispatch_open( NULL, &region );
 
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
@@ -603,7 +741,7 @@ static void test_default_mask_enables_all_eight_types()
                           ROCKETNET_CHANNEL_SEND_TYPE_NOT_ENABLED );
     rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED] == 1 );
 
-    rn_region_reset( region );
+    dispatch_close( arena );
 }
 
 // A block whose numbers cross 2^24 is released whole at the end of the update:
@@ -614,11 +752,8 @@ static void test_default_mask_enables_all_eight_types()
 
 static void test_channel_release_block_across_u24_wrap()
 {
-    rn_region_t * region = dispatch_region();
-    rocketnet_unit_check( region != NULL );
-
-    rn_region_reset( region );
-    memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = dispatch_open( NULL, &region );
 
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
@@ -688,7 +823,7 @@ static void test_channel_release_block_across_u24_wrap()
         rocketnet_unit_check( dispatch_counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION] == 0 );
     }
 
-    rn_region_reset( region );
+    dispatch_close( arena );
 }
 
 REGISTER_UNIT_TEST( test_channel_release_block_across_u24_wrap );
@@ -702,11 +837,8 @@ REGISTER_UNIT_TEST( test_channel_release_block_across_u24_wrap );
 
 static void test_channel_hostile_chunks_refused()
 {
-    rn_region_t * region = dispatch_region();
-    rocketnet_unit_check( region != NULL );
-
-    rn_region_reset( region );
-    memset( &dispatch_counters, 0, sizeof( dispatch_counters ) );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = dispatch_open( NULL, &region );
 
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
@@ -764,7 +896,7 @@ static void test_channel_hostile_chunks_refused()
     rocketnet_unit_check( channels.deliveries == 0 );
 
     rn_channels_end_update( &channels );
-    rn_region_reset( region );
+    dispatch_close( arena );
 }
 
 REGISTER_UNIT_TEST( test_channel_hostile_chunks_refused );
@@ -926,7 +1058,7 @@ static void test_channel_queue_fill_refuses_and_keeps_the_queue()
     rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 2 );
     rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 0 );
 
-    rn_unit_arena_destroy( arena );
+    dispatch_close( arena );
 }
 
 static void test_channel_config_front_ready_rotation_and_work()
@@ -973,7 +1105,7 @@ static void test_channel_config_front_ready_rotation_and_work()
     rocketnet_unit_check( channels->ready_tail == 0 );
     rocketnet_unit_check( region->channel_send[0].ready_ticket != region->channel_send[1].ready_ticket );
     rocketnet_unit_check( region->channel_send[0].ready_ticket != 0 && region->channel_send[1].ready_ticket != 0 );
-    rn_unit_arena_destroy( arena );
+    dispatch_close( arena );
 
     arena = schedule_arena( &config );
     region = rn_arena_region( arena, 0 );
@@ -1001,7 +1133,7 @@ static void test_channel_config_front_ready_rotation_and_work()
     rocketnet_unit_check( region->send_descriptors[wrapped_next[2]].ordering == 0x1000000u );
     rocketnet_unit_check( ( region->send_descriptors[wrapped_next[2]].ordering & 0xFFFFFFu ) == 0 );
     rocketnet_unit_check( region->channel_send[0].ordered_write == 0x1000001u );
-    rn_unit_arena_destroy( arena );
+    dispatch_close( arena );
 }
 
 REGISTER_UNIT_TEST( test_channel_queue_fill_refuses_and_keeps_the_queue );

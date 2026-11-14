@@ -18,15 +18,21 @@
 
 static rocketnet_counters_t sequenced_counters;
 
-static rn_arena_t * sequenced_arena = NULL;
-
-static rn_region_t * sequenced_region()
+static rn_arena_t * sequenced_open( rn_region_t ** out_region )
 {
-    if ( !sequenced_arena )
-    {
-        sequenced_arena = rn_unit_arena_create( NULL, 1, &sequenced_counters );
-    }
-    return sequenced_arena ? rn_arena_region( sequenced_arena, 0 ) : NULL;
+    memset( &sequenced_counters, 0, sizeof( sequenced_counters ) );
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &sequenced_counters );
+    rocketnet_unit_check( arena != NULL );
+    *out_region = arena ? rn_arena_region( arena, 0 ) : NULL;
+    rocketnet_unit_check( *out_region != NULL );
+    return arena;
+}
+
+static void sequenced_close( rn_arena_t * arena )
+{
+    rn_unit_arena_destroy( arena );
+    rocketnet_unit_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static void sequenced_record( rocketnet_message_record_t * record, int code, uint32_t channel,
@@ -41,11 +47,8 @@ static void sequenced_record( rocketnet_message_record_t * record, int code, uin
     record->bytes = 1;
 }
 
-static void test_older_dropped_newest_delivered()
+static void sequenced_run_older_dropped_newest_delivered( rn_region_t * region )
 {
-    rn_region_t * region = sequenced_region();
-    rocketnet_unit_check( region != NULL );
-
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
 
@@ -65,11 +68,16 @@ static void test_older_dropped_newest_delivered()
     rn_region_reset( region );
 }
 
-static void test_watermark_resets_on_ordered_delivery()
+static void test_older_dropped_newest_delivered()
 {
-    rn_region_t * region = sequenced_region();
-    rocketnet_unit_check( region != NULL );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = sequenced_open( &region );
+    sequenced_run_older_dropped_newest_delivered( region );
+    sequenced_close( arena );
+}
 
+static void sequenced_run_watermark_resets_on_ordered_delivery( rn_region_t * region )
+{
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
 
@@ -87,11 +95,16 @@ static void test_watermark_resets_on_ordered_delivery()
     rn_region_reset( region );
 }
 
-static void test_held_newest_ahead_of_epoch()
+static void test_watermark_resets_on_ordered_delivery()
 {
-    rn_region_t * region = sequenced_region();
-    rocketnet_unit_check( region != NULL );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = sequenced_open( &region );
+    sequenced_run_watermark_resets_on_ordered_delivery( region );
+    sequenced_close( arena );
+}
 
+static void sequenced_run_held_newest_ahead_of_epoch( rn_region_t * region )
+{
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
 
@@ -113,10 +126,18 @@ static void test_held_newest_ahead_of_epoch()
     rn_region_reset( region );
 }
 
+static void test_held_newest_ahead_of_epoch()
+{
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = sequenced_open( &region );
+    sequenced_run_held_newest_ahead_of_epoch( region );
+    sequenced_close( arena );
+}
+
 static void test_reliable_sequenced_uses_shared_watermark()
 {
-    rn_region_t * region = sequenced_region();
-    rocketnet_unit_check( region != NULL );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = sequenced_open( &region );
 
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
@@ -132,7 +153,7 @@ static void test_reliable_sequenced_uses_shared_watermark()
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
     rocketnet_unit_check( out.code == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED && out.descriptor == 0 );
     rocketnet_unit_check( region->channel_receive[0].sequenced_watermark == 1 );
-    rn_region_reset( region );
+    sequenced_close( arena );
 }
 
 static void test_hold_full_drops_and_counts()
@@ -158,13 +179,13 @@ static void test_hold_full_drops_and_counts()
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
     rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] == 1 );
     rocketnet_unit_check( region->channel_receive[1].held_sequenced == RN_DESCRIPTOR_NONE );
-    rn_unit_arena_destroy( arena );
+    sequenced_close( arena );
 }
 
 static void test_large_future_state_drops_without_violation()
 {
-    rn_region_t * region = sequenced_region();
-    rocketnet_unit_check( region != NULL );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = sequenced_open( &region );
 
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
@@ -192,7 +213,7 @@ static void test_large_future_state_drops_without_violation()
     rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] == before + 2 );
     rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED] == superseded );
     rocketnet_unit_check( region->sequenced_message_payloads[region->channel_receive[0].held_sequenced].data[0] == small );
-    rn_region_reset( region );
+    sequenced_close( arena );
 }
 
 static void test_never_takes_a_reliable_number()
@@ -229,6 +250,8 @@ static void test_never_takes_a_reliable_number()
     }
 
     rn_message_object_destroy( object );
+    rocketnet_unit_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static int sequenced_large_start_calls;
@@ -282,6 +305,8 @@ static void test_large_state_promotes_to_reliable_sequenced()
     rocketnet_unit_check( connection->unreliable_count == 0 );
     rocketnet_unit_check( object->counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == 0 );
     rn_message_object_destroy( object );
+    rocketnet_unit_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
 static void test_sequenced_drain_refusal_counts_stale()
@@ -289,8 +314,8 @@ static void test_sequenced_drain_refusal_counts_stale()
     // the ordered record opens the epoch; the drain then refuses the held
     // record's sequencing (upper half) and must count it, not drop it silently
 
-    rn_region_t * region = sequenced_region();
-    rocketnet_unit_check( region != NULL );
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = sequenced_open( &region );
 
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
@@ -307,7 +332,7 @@ static void test_sequenced_drain_refusal_counts_stale()
     rocketnet_unit_check( channels.deliveries == 1 );
     rocketnet_unit_check( region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
     rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == stale_before + 1 );
-    rn_region_reset( region );
+    sequenced_close( arena );
 }
 
 static void test_sequenced_hold_due_on_a_full_table_returns_its_slot()
@@ -361,62 +386,84 @@ static void test_sequenced_hold_due_on_a_full_table_returns_its_slot()
 
     rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] == 0 );
     rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == 0 );
-    rn_unit_arena_destroy( arena );
+    sequenced_close( arena );
 }
 
 static void test_rnchannel_sequenced_witness_replays()
 {
     // The reversed traces in README-RNChannelTypes: reject backwards state,
     // reset the watermark on the ordered drain, and keep one future state.
-    // Keep this combined run because the last case must see ordered_read reset
-    // after the middle case advances it to 1; otherwise ordering 1 is delivered
-    // instead of held. The cases reuse the same static region.
+    // Keep this combined run on one shared region so the last step verifies
+    // rn_region_reset cleared ordered_read after the middle step advanced it
+    // to 1; otherwise ordering 1 would be delivered instead of held.
 
-    test_older_dropped_newest_delivered();
-    test_watermark_resets_on_ordered_delivery();
-    test_held_newest_ahead_of_epoch();
+    rn_region_t * region = NULL;
+    rn_arena_t * arena = sequenced_open( &region );
+
+    sequenced_run_older_dropped_newest_delivered( region );
+    sequenced_run_watermark_resets_on_ordered_delivery( region );
+    sequenced_run_held_newest_ahead_of_epoch( region );
+
+    sequenced_close( arena );
 }
 
-static uint64_t sequenced_allocations;
+static uint64_t sequenced_malloc_calls;
+static uint64_t sequenced_free_calls;
 
 static void * sequenced_counting_malloc( void * context, size_t bytes )
 {
     (void) context;
-    sequenced_allocations++;
+    sequenced_malloc_calls++;
     return malloc( bytes );
 }
 
 static void sequenced_counting_free( void * context, void * memory )
 {
     (void) context;
-    sequenced_allocations++;
+    sequenced_free_calls++;
     free( memory );
 }
 
 static void test_sequenced_no_allocation_after_create()
 {
-    rocketnet_term();
+    sequenced_malloc_calls = 0;
+    sequenced_free_calls = 0;
+    rocketnet_unit_check( rocketnet_term() == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL, sequenced_counting_malloc, sequenced_counting_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( sequenced_malloc_calls == 0 );
+    rocketnet_unit_check( sequenced_free_calls == 0 );
 
     rn_arena_t * arena = rn_unit_arena_create( NULL, 1, &sequenced_counters );
     rocketnet_unit_check( arena != NULL );
+
+    const uint64_t mallocs_after_create = sequenced_malloc_calls;
+    const uint64_t frees_after_create = sequenced_free_calls;
+    rocketnet_unit_check( mallocs_after_create > 0 );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
 
-    const uint64_t after_create = sequenced_allocations;
-    const uint8_t state = 5, ordered = 6;
+    const uint8_t state = 5, newer_state = 6, ordered = 7;
     rocketnet_message_record_t record;
     rn_delivery_t out;
     sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 0, &state );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 1, &newer_state );
+    rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
     sequenced_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, 0, 0, &ordered );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    rocketnet_unit_check( channels.deliveries == 2 );
     rn_channels_end_update( &channels );
-    rocketnet_unit_check( sequenced_allocations == after_create );
+
+    rocketnet_unit_check( sequenced_malloc_calls == mallocs_after_create );
+    rocketnet_unit_check( sequenced_free_calls == frees_after_create );
+
     rn_unit_arena_destroy( arena );
-    rocketnet_term();
+    rocketnet_unit_check( sequenced_free_calls > frees_after_create );
+    rocketnet_unit_check( sequenced_malloc_calls == sequenced_free_calls );
+
+    rocketnet_unit_check( rocketnet_term() == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
@@ -478,7 +525,7 @@ static void test_sequenced_delivery_spends_the_unreliable_allowance()
         rn_channels_end_update( &channels );
     }
 
-    rn_unit_arena_destroy( arena );
+    sequenced_close( arena );
 }
 
 REGISTER_UNIT_TEST( test_sequenced_delivery_spends_the_unreliable_allowance );
