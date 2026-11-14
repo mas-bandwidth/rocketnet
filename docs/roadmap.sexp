@@ -938,4 +938,89 @@
    :title "DST: messages up to the fragment ceiling"
    :text "DST caps messages at 16384 bytes (tests/dst_checks.h) and draws sizes from 14 to 16384 (rocketnet_dst_draw_size in tests/dst_harness.h), so it reaches about 15 fragments and never the 57-fragment default, the 64-fragment ceiling, or the resend bitmap words past them. 16384 is an input to the budget slack derivation (dst_checks.h, dst_harness.h), so raising it means deriving that slack again, not changing one constant."
    :date "2026-11-13" :origin "Tests review TA030 (P12)")
+
+  (item "dst-handshake-escaped-request" :group "review-v1-2" :area "tests"
+   :title "DST handshake rows: a state-2 request that left before the outage ends the attempt with -4"
+   :text "Since W2-51 (e04c7f45, the next handshake packet goes out in the update a reply advances the client) nightly-dst fails 450 handshake rows per OS, the same on Linux, macOS and Windows: every row in tests/dst_outage_grid.h with start=2 and dark=c2s. 400 end with client state -4 (CONNECTION_RESPONSE_TIMED_OUT), which the CONNECT_OR_RETRY branch at tests/dst_outage.h:1107 does not allow; 50 (T=10, rtt=150) fail 'the client never connected' at :982. The state-2 request now leaves in the update that enters state 2, before the harness goes dark, so the server answers and the client reaches state 3. Smallest fix: record a request_escaped flag the way response_escaped is recorded at :971-975, and for such a row allow -4 (and survival) as the state-3 rows do. Test only; the library behaves as W2-51 intends."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-dst 43586901457 at a1a426851; first red a15a98cf1")
+
+  (item "env-pinned-placement-cast" :group "review-v1-2" :area "tests"
+   :title "Placement cases cast an env-pinned portable server to gso or io_uring"
+   :text "nightly.yml:213 runs the Linux functional nightly tier with ROCKETNET_SERVER_TRANSPORT=portable. The environment pin wins over config.transport, so rocketnet_test_placement_server (tests/functional/rocketnet_functional_tests.cpp:9575) returns a portable server, and rocketnet_test_placement_gso_or_uring (:9692) and the refused-pin case (:9782) cast its transport to rocketnet_server_gso_t or rocketnet_server_uring_t. Result: signal 11 in the three gso placement cases (registered with a NULL predicate at :17254-17257) and check failures in the io_uring ones (predicate rocketnet_server_uring_available only, :17281). Smallest fix: register these rows with a predicate that requires no transport pin and the transport available. About 10 to 15 lines in one file."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly 43577137425 at a1a426851; first red a15a98cf1")
+
+  (item "check-memory-worker-table" :group "review-v1-2" :area "tools"
+   :title "check_memory.py hard-codes each transport's worker count"
+   :text "tools/check_memory.py:24 fixes the one-queue worker count per transport ('iocp': 3) and asserts it at :55, :87 and :112. The library's count moves with the plan: at a15a98cf1 the plan had 3 against a table of 2; 5677b4bf set 3; v1.1.61's sizing commits (81352192, 65e48f4f) made it 2, so the Windows Debug job fails with AssertionError ('iocp', 2). Smallest fix: take the expected count from the plan the server prints (its 'N workers'), and keep only the invariants that do not depend on sizing."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly windows / Debug at a1a426851 and a15a98cf1")
+
+  (item "windows-commit-lock-machine-wide" :group "review-v1-2" :area "tests"
+   :title "The Windows test commit lock is machine-wide, so two runner slots wait on each other"
+   :text "tests/suite_runner.h:1725 takes the mutex Global\\rocketnet-test-commit-bound and waits up to SUITE_COMMIT_LOCK_WAIT_SECONDS (1800, :1720). Both runner slots on an aws-win host share it, so a long holder on one slot fails the other: test_secrets_wiped_destroy_writes_only_keys 'waited 1800 s for the machine-wide commit lock' in nightly-soak windows (a1a426851) and Nightly CI windows unit 1/2 (21543f689). GUESS on the holder: a long ASan unit run on the sibling slot. Smallest fix: name the mutex per runner work directory (a hash of the working directory), and print the holder's pid when a wait passes 60 s. About 5 to 10 lines in one file."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14")
+
+  (item "s390x-real-time-bounds" :group "review-v1-2" :area "tests"
+   :title "The s390x guest trips wall-clock bounds under emulation"
+   :text "nightly-bigendian-system runs the suite in an emulated s390x guest on a loaded host (load1 23.7). On a1a426851 test_gso_transport_posix_destroy_under_traffic_100 aborted on the fixed 10 s shutdown bound (examples/shutdown.h:30-37) and then passed alone 3 of 3 (346 to 445 s each). On ef00a6d10 (11-13) other bounds tripped: tests/functional/live_matrix.cpp:1606 and posix_hard_killed_client.cpp:631. Class TEST, GUESS against a rare shutdown stall; a dump of the shutdown state at the timeout settles it. Smallest fix: scale the real-time bounds by a guest factor in that workflow, or run there only cases that use no real time."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-bigendian-system 43589436444 and 43416070005")
+
+  (item "planted-self-test-wsl-bash" :group "review-v1-2" :area "tools"
+   :title "planted_violations.py self-test fails on the captain Windows runners"
+   :text "python tools/planted_violations.py --self-test fails 6 expectations on captain (catching check is PLANT-RED, matrix step filled in is PLANT-RED, the relative --scratch GITHUB_ENV case, lazy check is PLANT-GREEN and two more) and 1 on aws-win (relative --scratch). GUESS: :460 starts subprocess.Popen(['bash', ...]); Windows searches System32 before PATH, so on a host with WSL bash resolves to C:\\Windows\\System32\\bash.exe and the checks run in Linux against Windows paths. Settled by printing shutil.which('bash') and bash -c uname in the step on captain. Smallest fix: start bash by the path shutil.which returns, or name Git bash."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: planted-violations Windows on captain-1 and captain-3")
+
+  (item "nightly-runner-setup-gaps" :group "review-v1-2" :area "fleet"
+   :title "Nightly jobs red on runner setup, not code"
+   :text "Five scheduled jobs fail before testing anything: nightly-framework (FRAMEWORK_READ_TOKEN not set); nightly-toolchains v141, v143 and v145 (runs-on [self-hosted, Windows, X64, rocketnet-windows] matches runners without the toolset: MSB8020, or MSVC 14.52 not installed); nightly-windows-sanitizers appverif (NETWORK SERVICE cannot write the HKLM IFEO key); nightly-ubuntu-lts-vms 24.04 (gpg-agent fails in the cloud image verify step); nightly-real-load (no inventory file on the runner). Smallest fix: a toolset label per matrix row on the runners that hold it, the secret, the account right, the gpg setup and the inventory file, each through the fleet's own tooling."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14")
+
+  (item "examples-windows-symlink-privilege" :group "review-v1-2" :area "tools"
+   :title "Nightly examples on Windows: symlink needs a privilege the runner lacks"
+   :text "tools/run_examples.py:153 calls link.symlink_to(binary); on the aws-win runner account it raises OSError WinError 1314 (a required privilege is not held). Green on 11-13. Smallest fix: copy the binary when the symlink is refused."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-examples 43566223627")
+
+  (item "fuzz-execs-floor-loaded-hosts" :group "review-v1-2" :area "tests"
+   :title "Nightly fuzz macOS falls under its executions floor"
+   :text "FUZZ-EXECS-FLOOR on mini-m5-1 and mini-m5-2 at a1a426851: client 4408 of 6003, server 4430 of 9000 per second; the Windows legs failed the same way at earlier shas; green on 11-12. GUESS: a floor measured on idle hosts and read on shared ones, not a regression. Settled by one run on an idle host. Fix then: a floor per host class, or a void on host load as the frame budget does."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: fuzz-nightly 43570535426")
+
+  (item "planted-frame-budget-void" :group "review-v1-2" :area "tools"
+   :title "Planted macOS row for the frame budget voids under the planted run's own load"
+   :text "PLANT-GREEN nightly-frame-budget/macos: the gate printed VOID (host load 9.83 over 8 on studio-3; 36 on mini-m5-2 earlier), measured nothing and so could not catch its plant; the self-test then fails 'a GREEN row exits 1'. The planted run's parallel slots load the host. Smallest fix: run the frame-budget row alone, or count a VOID there as unmeasured rather than green."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: planted-violations 43594770983")
+
+  (item "clang-cl-test-build-warnings" :group "review-v1-2" :area "tests"
+   :title "clang-cl builds of the tests fail under -Werror and at link"
+   :text "nightly clang-cl x64 and nightly-windows-sanitizers clangcl-asan: tests/functional/windows_socket_errors.cpp 'missing field client initializer' (lines 559 to 918 across commits); lld cannot resolve __cpu_model in client_frame_time.vcxproj; duplicate operator new and delete in test.vcxproj under ASan; tests/load/harden_load.cpp -Wshorten-64-to-32 and -Wsign-conversion. Red on 11-13 too. Smallest fix: name the client field in those initializers, cast at the harden_load lines, and link clang_rt.builtins (or avoid __builtin_cpu_supports) under clang-cl; where __cpu_model comes from is a GUESS."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14")
+
+  (item "mutation-slice-survivors" :group "review-v1-2" :area "tests"
+   :title "Mutation campaign: the daily slices are not baselined"
+   :text "nightly linux / mutation reports 194 new survivors (150 on 11-13) against the 181 rows of tools/mutation/survivors.tsv, and 46 of 515 mutants do not compile. The daily slices were never triaged into the baseline. Fix: triage each slice's survivors into a test or a survivors.tsv row with its reason."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly 43577137425")
+
+  (item "channel-seed-block-resend-cost" :group "review-v1-2" :area "tests"
+   :title "Channel seeds: test_block_resend_cost_over_long_path fails on rolling seeds"
+   :text "nightly-channel-seeds fails test_block_resend_cost_over_long_path with reason=one at seed 4917323 (a1a426851) and 4914435 (21543f689); red on 11-12 and 11-13 too. GUESS on the class: what 'one' asserts was not read. Settled by replaying seed 4917323 alone."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-channel-seeds 43580939573")
+
+  (item "linux-transport-cells-x50" :group "review-v1-2" :area "tests"
+   :title "Linux transport cells x50: every cell red, cause only in the artifacts"
+   :text "nightly linux / transport cells x50 and ASan fails every suite cell (portable/portable, auto, gso, io_uring, loopback) on amd-1-1 and vision-1, and was red on 11-13. The failing case is printed only in the per-cell suite logs uploaded as artifacts. GUESS: the env-pinned placement cases (env-pinned-placement-cast) or an ASan report. Settled by the artifacts; fix then: print each cell's first failing check into the job log."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly 43577137425")
+
+  (item "macos-soak-selftest-send-fault" :group "review-v1-2" :area "tools"
+   :title "macOS platform selftest: the soak summary selftest fails at its send-fault leg"
+   :text "Nightly CI platform selftests / macos (mini-m5-1, 21543f689) failed the soak argument and summary selftest at leg 9 (send fault): --seconds 3 exited 1. Green at cbad53d3b. GUESS: a TEST tool timing leg on a loaded host. Settled by the leg-9 output on its next failure."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-ci 43554956087")
+
+  (item "macos-oversize-datagram-watchdog" :group "review-v1-2" :area "tests"
+   :title "test_receive_drops_oversize_datagram times out on loaded macOS runners"
+   :text "Nightly CI macos Release functional_production (studio-4, 21543f689) failed check packet_bytes == ROCKETNET_RECEIVE_CEILING + 1 (tests/functional/rocketnet_functional_tests.cpp:2906 at c2df6bc8e) after the case's watchdog: the oversize datagram over real loopback was not seen in time. Green at cbad53d3b. Fix: send again until seen, through the loss gate (tests/kernel_drops.h), as the reply cases do."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-ci 43554956087")
+
+  (item "trace-plant-never-fires" :group "trace-check" :area "tools"
+   :title "Trace check: on some rolling seeds the plant never fires"
+   :text "tlc.yml TLA+ trace check (rolling seeds) at cbad53d3b failed 21 reruns: for layers msgxsendruns, receive, receive-handoff-xdp and xdp-reply-macs some seeds print 'the plant never fired: its trace proves nothing' and 'the plant changed no record: its trace is the clean one'; one msgxsendruns seed had no behaviour from TLC (tlc-plant-behaviour-not-printed). The seed's walk never reaches the planted step. Smallest fix in tools/tla_trace_check.py: draw the next seed until the plant fires, within a bound, and fail only when no seed in the bound fires it."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: tlc 43559610142")
  ))
