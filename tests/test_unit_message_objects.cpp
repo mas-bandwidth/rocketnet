@@ -2255,7 +2255,7 @@ static bool mo_region_bookkeeping_equal( const rn_region_t * a, const rn_region_
     {
         const rn_store_class_t * x = &a->store.classes[c];
         const rn_store_class_t * y = &b->store.classes[c];
-        if ( x->num_chunks != y->num_chunks || x->free_head != y->free_head || x->free_count != y->free_count || x->fresh != y->fresh )
+        if ( x->num_chunks != y->num_chunks || x->free_top != y->free_top || x->free_count != y->free_count || x->fresh != y->fresh )
         {
             return false;
         }

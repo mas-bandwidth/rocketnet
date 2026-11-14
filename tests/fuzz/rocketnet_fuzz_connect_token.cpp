@@ -225,8 +225,13 @@ static void rocketnet_fuzz_token_checks( const uint8_t * token_data, int touched
 }
 
 // the client-side parse: connect runs the pre-send checks and either enters
-// _requesting cookie_ or dies to the terminal that names why -- both are
-// legal, anything else is a crash the fuzzer keeps
+// _requesting cookie_ or dies to the terminal that names why. Which one is
+// the standard's, so it is an oracle here, an abort like the server half's:
+// a token whose zero pads are not zero (TRANSPORT.md t1 rule 3, t6.2, t6.3)
+// or that fails a pre-send check (t11 rule 2: address flags, create after
+// expire, timeout zero or below, another version) must die to invalid connect
+// token; an otherwise good token at or past its expiry must die to connect
+// token expired; every other token must enter requesting cookie
 
 static void rocketnet_fuzz_client_connect( const uint8_t * token_data, uint64_t current_timestamp )
 {
@@ -262,6 +267,35 @@ static void rocketnet_fuzz_client_connect( const uint8_t * token_data, uint64_t 
     }
 
     const int connected = rocketnet_client_protocol_connect( &client, token_data, 100.0, current_timestamp );
+
+    const int outer_pad_offset = ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES + 2 * ROCKETNET_KEY_BYTES;
+    const int signed_pad_offset = ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES;
+    bool pads_zero = true;
+    for ( int i = outer_pad_offset; i < ROCKETNET_CONNECT_TOKEN_BYTES; i++ )
+    {
+        pads_zero = pads_zero && token_data[i] == 0;
+    }
+    for ( int i = signed_pad_offset; i < ROCKETNET_SIGNED_CONNECT_DATA_BYTES; i++ )
+    {
+        pads_zero = pads_zero && token_data[i] == 0;
+    }
+    const bool fields_valid = flags != 0 && ( flags & ~( ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6 ) ) == 0 &&
+                              signed_fields.create_timestamp <= signed_fields.expire_timestamp &&
+                              signed_fields.timeout_seconds > 0 &&
+                              signed_fields.version == ROCKETNET_WIRE_VERSION;
+    int expected = ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE;
+    if ( !pads_zero || !fields_valid )
+    {
+        expected = ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN;
+    }
+    else if ( signed_fields.expire_timestamp <= current_timestamp )
+    {
+        expected = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED;
+    }
+    if ( (int) client.state != expected || ( connected != 0 ) != ( expected == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE ) )
+    {
+        abort();
+    }
 
     if ( !connected )
     {

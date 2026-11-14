@@ -13,8 +13,9 @@
 (* cheap rung behind a crypto rung, removing the token claim, writing the  *)
 (* claim at its check rung before the signature, charging the work budget  *)
 (* at the cookie gate, leaving a claim behind on mapping removal, response *)
-(* binding or replacement, or replacing a half-open mapping before any     *)
-(* check has run; TLC must reject them.                                    *)
+(* binding or replacement, replacing a half-open mapping before any       *)
+(* check has run, or turning the repeat rung off; TLC must                *)
+(* reject them.  UpdateStart empties the repeat rung's table.              *)
 (***************************************************************************)
 EXTENDS ReceiveOrder
 
@@ -45,6 +46,11 @@ MCWorkBudgetAtCookie == FALSE
 \* the claim written as the request passes its check rung, before the
 \* signature: the code before the check/write split
 MCClaimWriteAtCheck == "claim"
+
+\* no repeat rung: a token refused past the verify for a client id already
+\* connected or a full server is verified again in the same update, the
+\* code before 2026-11-13
+MCRepeatRungOff == FALSE
 
 Done == outcome /= "pending"
 
@@ -83,6 +89,8 @@ NewRequest ==
     /\ spentKpAtRefusal' = FALSE
     /\ claimWritten' = FALSE
     /\ verified' = FALSE
+    /\ wasRepeat' = (reqToken' \in repeated)
+    /\ UNCHANGED repeated
     /\ IF ReplaceAtRequest /\ maps[reqAddr'] /= None
          THEN /\ maps' = [maps EXCEPT ![reqAddr'] = None]
               /\ claims' = [u \in Tokens |-> IF u = maps[reqAddr'] THEN None ELSE claims[u]]
@@ -110,7 +118,7 @@ ClaimExpire ==
         /\ stale' = stale \cup {a \in Addrs : a = claims[t] /\ maps[a] = t}
     /\ UNCHANGED <<pos, fault, spent, spentKp, outcome, refusedRung,
                    spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken,
-                   maps, claimWritten, verified>>
+                   maps, claimWritten, verified, repeated, wasRepeat>>
 
 \* the update's sweep removes every stale mapping, each releasing its
 \* token's claim only when its own address holds it
@@ -125,7 +133,7 @@ Sweep ==
     /\ stale' = {}
     /\ UNCHANGED <<pos, fault, spent, spentKp, outcome, refusedRung,
                    spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken,
-                   claimWritten, verified>>
+                   claimWritten, verified, repeated, wasRepeat>>
 
 \* a half-open mapping leaves alone before its handshake deadline -- the
 \* idle timeout or the integrity limit in the code -- and its token's claim
@@ -143,7 +151,7 @@ IdleRemove ==
        /\ stale' = stale \ {a}
        /\ UNCHANGED <<pos, fault, spent, spentKp, outcome, refusedRung,
                       spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken,
-                      claimWritten, verified>>
+                      claimWritten, verified, repeated, wasRepeat>>
 
 \* An opened response binds an unexpired token and ends its request claim.
 ResponseBind ==
@@ -157,7 +165,17 @@ ResponseBind ==
                          THEN [claims EXCEPT ![t] = None] ELSE claims
         /\ UNCHANGED <<pos, fault, spent, spentKp, outcome, refusedRung,
                        spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken,
-                       maps, claimWritten, verified>>
+                       maps, claimWritten, verified, repeated, wasRepeat>>
+
+\* the start of an update (rocketnet_server_protocol_update): the repeat
+\* rung's table empties with the work budget, so a token refused in one
+\* update is verified again in the next
+UpdateStart ==
+    /\ Done
+    /\ repeated' = {}
+    /\ UNCHANGED <<pos, fault, spent, spentKp, outcome, refusedRung,
+                   spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken,
+                   claims, maps, claimWritten, verified, wasRepeat>>
 
 \* held is the half-open mapping the current request's address held as it
 \* began; a step that moves the table on for other reasons ends that view
@@ -171,6 +189,7 @@ MCNext == ((Next \/ Terminating) /\ UNCHANGED <<bound, held>>
           \/ (ClaimExpire /\ UNCHANGED <<bound, held>>)
           \/ ((Sweep \/ IdleRemove) /\ UNCHANGED bound /\ held' = None)
           \/ (ResponseBind /\ held' = None /\ UNCHANGED stale)
+          \/ (UpdateStart /\ UNCHANGED <<bound, held, stale>>)
 
 MCInit == Init /\ bound = [t \in Tokens |-> None] /\ held = None /\ stale = {}
 MCSpec == MCInit /\ [][MCNext]_MCVars

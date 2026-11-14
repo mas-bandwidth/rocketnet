@@ -51,9 +51,26 @@ rn_span_cost_t rn_span_cost_read() { return rn_span_cost; }
 #define RN_SPAN_COST_VISIT() ( (void) 0 )
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
+static thread_local rn_store_cost_t rn_store_cost;
+void rn_store_cost_reset() { memset( &rn_store_cost, 0, sizeof( rn_store_cost ) ); }
+rn_store_cost_t rn_store_cost_read() { return rn_store_cost; }
+#define RN_STORE_COST_VISIT() ( rn_store_cost.choice_visits++ )
+#else
+#define RN_STORE_COST_VISIT() ( (void) 0 )
+#endif // #if ROCKETNET_DEV
+
 static uint64_t rn_align64( uint64_t value )
 {
     return ( value + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) & ~(uint64_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 );
+}
+
+// a store class's part of S: its chunks, one u32 of meta per chunk and one u32
+// of free stack per chunk, 64-aligned (the plan and the carve share it)
+
+static uint64_t rn_store_class_bytes( uint64_t chunks, uint32_t chunk_bytes )
+{
+    return rn_align64( chunks * ( chunk_bytes + 2 * sizeof( uint32_t ) ) );
 }
 
 static void rn_count( rocketnet_counters_t * counters, int counter )
@@ -158,7 +175,7 @@ bool rn_region_reserve_sizes( const rocketnet_message_config_t * config, rn_regi
         }
 
         chunks[c] = (uint32_t) count;
-        S += rn_align64( count * ( chunk_bytes[c] + sizeof( uint32_t ) ) );
+        S += rn_store_class_bytes( count, chunk_bytes[c] );
     }
 
     // keep all original store headroom, including its alignment slack
@@ -292,7 +309,8 @@ uint32_t rn_send_store_chunks_for( uint64_t store_bytes, int class_index )
 {
     rocketnet_assert( class_index >= 0 && class_index < RN_STORE_NUM_CLASSES );
 
-    // each chunk with its u32 of meta, both inside the class's third
+    // each chunk with its u32 of meta, both inside the class's third; the
+    // free stack's u32 per chunk is planned on top (rn_store_class_bytes)
 
     return (uint32_t) ( rn_send_store_third( store_bytes ) / ( rn_class_bytes[class_index] + sizeof( uint32_t ) ) );
 }
@@ -326,24 +344,19 @@ static void rn_send_store_init_counts( rn_send_store_t * store, uint8_t * memory
         cls->num_chunks = counts[c];
         cls->data = memory + offset;
         cls->meta = (uint32_t *) ( cls->data + (uint64_t) cls->num_chunks * cls->chunk_bytes );
-        cls->free_head = 0;
+        cls->free_stack = cls->meta + cls->num_chunks;
+        cls->free_top = 0;
         cls->free_count = cls->num_chunks;
         cls->fresh = 0;
-        offset += rn_align64( (uint64_t) cls->num_chunks * ( cls->chunk_bytes + sizeof( uint32_t ) ) );
+        offset += rn_store_class_bytes( cls->num_chunks, cls->chunk_bytes );
     }
 }
 
-// a chunk is free when it was never taken (at or past the watermark, whose
-// meta is never read) or its meta's live bit is clear
-
-static bool rn_store_chunk_is_free( const rn_store_class_t * cls, uint32_t i )
-{
-    return i >= cls->fresh || ( cls->meta[i] & RN_META_LIVE ) == 0;
-}
-
-// proofs/tla/RNSendStoreLayout.tla Alloc's guard and Refuse: the lowest free
-// chunk, scanned from free_head, which no free chunk lies below; the scan
-// meets at most the held chunks between free_head and fresh, then fresh itself
+// proofs/tla/RNSendStoreLayout.tla Alloc's guard and Refuse: the chunk on top
+// of the free stack (the free chunk freed last), else the first chunk never
+// taken. At most one stack entry is read and no meta word: the choice costs
+// the same whatever chunks are held (finding W2-86: the receiver's acks
+// choose which chunks are freed, so a scan over held chunks was its to steer).
 
 bool rn_send_store_find( const rn_send_store_t * store, int bytes, uint32_t * out_index )
 {
@@ -360,21 +373,25 @@ bool rn_send_store_find( const rn_send_store_t * store, int bytes, uint32_t * ou
         return false;
     }
 
-    for ( uint32_t i = cls->free_head; i < cls->num_chunks; i++ )
+    if ( cls->free_top > 0 )
     {
-        if ( rn_store_chunk_is_free( cls, i ) )
-        {
-            *out_index = i;
-            return true;
-        }
+        RN_STORE_COST_VISIT();
+        *out_index = cls->free_stack[cls->free_top - 1];
+        return true;
+    }
+
+    if ( cls->fresh < cls->num_chunks )
+    {
+        *out_index = cls->fresh;
+        return true;
     }
 
     return false;
 }
 
-// proofs/tla/RNSendStoreLayout.tla Alloc: the chunk is marked live under its
-// next generation, and the watermark and the cursor move past it
-// (proofs/tla/RNSendStore.tla Alloc)
+// proofs/tla/RNSendStoreLayout.tla Alloc: the chunk is popped off the free
+// stack (or is the first fresh one, and the watermark moves past it) and is
+// marked live under its next generation (proofs/tla/RNSendStore.tla Alloc)
 
 uint32_t rn_send_store_take( rn_send_store_t * store, int bytes, uint32_t index )
 {
@@ -382,12 +399,18 @@ uint32_t rn_send_store_take( rn_send_store_t * store, int bytes, uint32_t index 
 
     const int c = rn_send_store_class_for( bytes );
     rn_store_class_t * cls = &store->classes[c];
-    rocketnet_assert( index < cls->num_chunks && index <= cls->fresh && rn_store_chunk_is_free( cls, index ) );
+    rocketnet_assert( index < cls->num_chunks && index <= cls->fresh );
 
     uint32_t generation = 1;
 
     if ( index < cls->fresh )
     {
+        // the chunk rn_send_store_find returned: the stack's top
+
+        rocketnet_assert( cls->free_top > 0 && cls->free_stack[cls->free_top - 1] == index );
+        rocketnet_assert( ( cls->meta[index] & RN_META_LIVE ) == 0 );
+        cls->free_top--;
+
         // 0 is never a live name (proofs/tla/RNSendStoreLayout.tla HeldGenerationPositive): the tag wraps to 1
 
         generation = ( cls->meta[index] + 1 ) & RN_META_GENERATION;
@@ -398,21 +421,21 @@ uint32_t rn_send_store_take( rn_send_store_t * store, int bytes, uint32_t index 
     }
     else
     {
+        rocketnet_assert( cls->free_top == 0 );
         cls->fresh = index + 1;
     }
 
     cls->meta[index] = RN_META_LIVE | generation;
     cls->free_count--;
-    cls->free_head = index + 1;
 
     return ( (uint32_t) c << 30 ) | index;
 }
 
 // proofs/tla/RNSendStoreLayout.tla Free: a held chunk's live bit cleared, its
-// generation kept, and the cursor lowered to it. A handle that names no held
-// chunk (RN_CHUNK_NONE, a class past the last, a chunk never taken, a chunk
-// already free) is refused with nothing changed (proofs/tla/RNSendStore.tla
-// Free and FreeAgain).
+// generation kept, and its index pushed on the free stack. A handle that
+// names no held chunk (RN_CHUNK_NONE, a class past the last, a chunk never
+// taken, a chunk already free) is refused with nothing changed
+// (proofs/tla/RNSendStore.tla Free and FreeAgain).
 
 bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
 {
@@ -440,13 +463,14 @@ bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
         return false;
     }
 
-    cls->meta[i] &= RN_META_GENERATION;
-    cls->free_count++;
+    // a held chunk below fresh: the stack holds the other free chunks below
+    // fresh, so it has room for this one
 
-    if ( i < cls->free_head )
-    {
-        cls->free_head = i;
-    }
+    rocketnet_assert( cls->free_top < cls->fresh );
+    cls->meta[i] &= RN_META_GENERATION;
+    cls->free_stack[cls->free_top] = i;
+    cls->free_top++;
+    cls->free_count++;
 
     return true;
 }

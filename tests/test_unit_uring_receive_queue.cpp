@@ -15,6 +15,7 @@
 
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_uring_receive_queue.h"
+#include "../sdk/rocketnet_memory.h"
 
 #if defined( __linux__ ) && ROCKETNET_DEV
 #include <linux/io_uring.h>
@@ -328,6 +329,23 @@ static void test_uring_receive_queue_banks_and_drains()
 }
 
 REGISTER_UNIT_TEST( test_uring_receive_queue_banks_and_drains );
+
+#if ROCKETNET_RED_ZONES
+// ASan development builds: each carved array is followed by a poisoned red
+// zone (sdk/rocketnet_memory.h): a write one past the slot records, the slot
+// frames or the provided buffers is reported, not landed in the next array
+static void test_uring_receive_queue_carves_red_zones()
+{
+    struct rocketnet_uring_receive_queue_t * queue = receive_queue_create( 4, 4, false, false );
+    check( !__asan_address_is_poisoned( &queue->slot[3] ) );
+    check( __asan_address_is_poisoned( &queue->slot[4] ) );
+    check( __asan_address_is_poisoned( queue->slot_data + 4 * (size_t) ROCKETNET_FRAME_STRIDE ) );
+    check( __asan_address_is_poisoned( queue->buffer + (size_t) queue->buffers * (size_t) queue->buffer_bytes ) );
+    rocketnet_uring_receive_queue_destroy( queue );
+}
+
+REGISTER_UNIT_TEST( test_uring_receive_queue_carves_red_zones );
+#endif // #if ROCKETNET_RED_ZONES
 
 // the bank is full at slots positions past head: the datagram is counted
 // BANK_FULL, never written; the slots a drain hands main stay theirs until

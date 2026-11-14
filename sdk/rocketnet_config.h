@@ -147,7 +147,13 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_current(
 // token_timestamp is the Unix time the token's expire check reads at connect
 // (rn_client_connect); 0 reads it as an internal create does
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_resolved( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, uint64_t memory_budget_bytes, uint64_t token_timestamp, int * status );
-struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved( void * context, const char * address, const struct rocketnet_server_transport_config_t * config, uint64_t memory_budget_bytes, int * status );
+// retained: NULL, or the owner's slot a failed create hands its transport to
+// when the transport's worker has not exited a second after the stop; the
+// owner then destroys it once rocketnet_server_transport_failed_create_stopped
+// is true. With NULL a failed create waits for the worker without a deadline.
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved( void * context, const char * address, const struct rocketnet_server_transport_config_t * config, uint64_t memory_budget_bytes, int * status,
+                                                                                  struct rocketnet_server_transport_t ** retained );
+bool rocketnet_server_transport_failed_create_stopped( struct rocketnet_server_transport_t * transport );
 struct rocketnet_message_client_t * rocketnet_message_client_create_resolved( void * context, const uint8_t * connect_token,
                                                                               const struct rocketnet_client_transport_config_t * transport_config,
                                                                               const struct rocketnet_message_config_t * message_config,
@@ -157,7 +163,7 @@ struct rocketnet_message_server_t * rocketnet_message_server_create_resolved( vo
                                                                               const struct rocketnet_server_transport_config_t * transport_config,
                                                                               const struct rocketnet_message_config_t * message_config,
                                                                               void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited,
-                                                                              uint64_t memory_budget_bytes );
+                                                                              uint64_t memory_budget_bytes, struct rocketnet_server_transport_t ** retained_transport );
 void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config );
 
 // validate a config struct against the descriptors: numeric ranges (zero

@@ -44,6 +44,13 @@ struct rocketnet_loopback_endpoint_t
     uint32_t count;
     uint32_t capacity;                  // a power of two: the queue's datagrams, fixed at hub create
     rocketnet_loopback_packet_t * packets;
+    // a client's wake (an event-only platform wake, owned from create to
+    // destroy; NULL for the server and where the platform has none). A send
+    // that makes the queue non-empty sets it while wake_armed, under the hub
+    // mutex; close disarms it under the mutex before closing its handles, so
+    // no send writes to a closed wake
+    rocketnet_platform_wake_t * wake;
+    bool wake_armed;
     bool live;
 };
 
@@ -173,6 +180,10 @@ static bool loopback_hub_usable( const rocketnet_loopback_hub_t * hub, const cha
 static bool loopback_test_send_contention = false;
 
 void rocketnet_loopback_test_send_contention( bool busy ) { loopback_test_send_contention = busy; }
+
+static std::atomic<uint64_t> loopback_test_client_empty_receives( 0 );
+
+uint64_t rocketnet_loopback_test_client_empty_receives() { return loopback_test_client_empty_receives.load( std::memory_order_relaxed ); }
 
 void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, uint32_t * tail, uint32_t * capacity )
 {
@@ -328,6 +339,24 @@ static rocketnet_loopback_packet_t * loopback_queue_tail( rocketnet_loopback_end
     }
 
     return &dst->packets[dst->tail & ( dst->capacity - 1 )];
+}
+
+static void loopback_queue_push( rocketnet_loopback_endpoint_t * dst )
+{
+    // the slot loopback_queue_tail gave is written: enqueue it, under the hub
+    // mutex the caller holds. A queue that was empty wakes its client: the
+    // client's I/O thread waits on the wake while its queue is empty
+    // (loopback_client_wait), and drains the whole queue once woken, so only
+    // the empty to non-empty step needs a set. proofs/tla/LoopbackWake.tla
+    // Send: a send to an empty queue sets the level-triggered wake.
+
+    ++dst->tail;
+    ++dst->count;
+
+    if ( dst->count == 1 && dst->wake_armed )
+    {
+        rocketnet_platform_wake_set( dst->wake );
+    }
 }
 
 static void loopback_queue_pop( rocketnet_loopback_endpoint_t * ep )
@@ -561,7 +590,7 @@ enum rocketnet_status_t rocketnet_loopback_hub_destroy( rocketnet_loopback_hub_t
 // proofs/tla/RNLoopbackBindLayout.tla Create: a held family port refused, a
 // port shared across families with a dual-stack wildcard refused, the record taken, a port 0 bind given the next port neither family holds
 // (refused when there is none), and the entry written as the record index plus one
-static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address_t * bind, bool server )
+static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address_t * bind, bool server, rocketnet_platform_wake_t * wake )
 {
     // proofs/tla/LoopbackHub.tla RegisterServer and RegisterClient: the server takes
     // record 0, a client the first free record after it; a full hub refuses
@@ -674,6 +703,8 @@ static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address
     ep->head = 0;
     ep->tail = 0;
     ep->count = 0;
+    ep->wake = wake;
+    ep->wake_armed = wake != NULL;
     ep->live = true;
     ++hub->registered;
     *loopback_bound_entry( hub, bind->type, bind->port ) = (uint16_t) ( slot + 1 );
@@ -683,12 +714,33 @@ static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address
 
 static void * loopback_server_create( void *, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    return loopback_create( config && config->transport ? config->transport->loopback_hub : NULL, bind, true );
+    return loopback_create( config && config->transport ? config->transport->loopback_hub : NULL, bind, true, NULL );
 }
 
-static void * loopback_client_create( void *, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
+static void * loopback_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    return loopback_create( config && config->transport ? config->transport->loopback_hub : NULL, bind, false );
+    // the client's wake, made before its record is taken so a refused wake
+    // leaves the hub untouched: the client I/O thread waits on it while the
+    // queue is empty, and a send to the client sets it (loopback_queue_push)
+
+    rocketnet_platform_wake_t * wake = NULL;
+#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+    wake = rocketnet_platform_wake_create( context, NULL, config ? config->status : NULL );
+    if ( !wake )
+    {
+        return NULL;
+    }
+#else
+    (void) context;
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+
+    void * ep = loopback_create( config && config->transport ? config->transport->loopback_hub : NULL, bind, false, wake );
+    if ( !ep && wake )
+    {
+        rocketnet_platform_wake_destroy( wake );
+    }
+
+    return ep;
 }
 
 // proofs/tla/RNLoopbackBindLayout.tla Destroy: the entry cleared only when it
@@ -713,8 +765,91 @@ static void loopback_destroy( void * transport )
     ep->head = 0;
     ep->tail = 0;
     ep->count = 0;
+    ep->wake = NULL;
+    ep->wake_armed = false;
     ep->live = false;
     --hub->registered;
+}
+
+static void loopback_client_destroy( void * transport )
+{
+    // the record goes back to the hub first, so no send can reach the wake,
+    // then the wake is freed (closing its handles if close did not)
+
+    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t *) transport;
+    rocketnet_platform_wake_t * wake = ep->wake;
+
+    loopback_destroy( transport );
+
+    if ( wake )
+    {
+        rocketnet_platform_wake_destroy( wake );
+    }
+}
+
+static void loopback_client_close( void * transport )
+{
+    // the reading thread, after its last wait: disarm the wake under the hub
+    // mutex, so a send that follows sets nothing, then close its handles; the
+    // memory stays for destroy
+
+    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t *) transport;
+    if ( !ep->wake )
+    {
+        return;
+    }
+
+    rocketnet_platform_mutex_acquire( &ep->hub->mutex );
+    ep->wake_armed = false;
+    rocketnet_platform_mutex_release( &ep->hub->mutex );
+
+    rocketnet_platform_wake_close( ep->wake );
+}
+
+static bool loopback_client_wait( void * transport, bool readable, double timeout_seconds )
+{
+    // proofs/tla/LoopbackWake.tla Check, Enter and Wake: the queue checked
+    // under the hub mutex, the block on the wake, and its return.
+    // proofs/tla/RNBufferHandoff.tla WorkerWait and WorkerWakes: an idle I/O
+    // thread blocks until a send makes its queue non-empty, a hand-off or
+    // stop wakes it, or the timeout passes. readable stands for the queue
+    // being non-empty: with it true a queued datagram returns at once; with it
+    // false (the I/O thread's buffer is full) this waits on the wake alone. A
+    // send between the check and the wait set the wake, which stays pending.
+
+    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t *) transport;
+
+    if ( readable )
+    {
+        rocketnet_platform_mutex_acquire( &ep->hub->mutex );
+        const bool queued = ep->count > 0;
+        rocketnet_platform_mutex_release( &ep->hub->mutex );
+
+        if ( queued )
+        {
+            return true;
+        }
+    }
+
+    if ( !ep->wake )
+    {
+        // a platform with no wake polls, as every loopback client did
+        rocketnet_platform_sleep( timeout_seconds < 0.001 ? timeout_seconds : 0.001 );
+        return false;
+    }
+
+    return rocketnet_platform_wake_wait( ep->wake, false, timeout_seconds );
+}
+
+static void loopback_client_wake( void * transport )
+{
+    // any thread, never a lock (the wake contract): hand-off and stop
+    // (proofs/tla/LoopbackWake.tla Handoff)
+    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t *) transport;
+    if ( ep->wake )
+    {
+        rocketnet_platform_wake_set( ep->wake );
+    }
 }
 
 static void loopback_stop( void * ) {}
@@ -759,8 +894,7 @@ static void loopback_send( void * transport, const rocketnet_address_t * to, con
     packet->bytes = bytes;
     packet->from = loopback_sender_address( sender->bind, *to );
     memcpy( packet->data, data, (size_t) bytes );
-    ++dst->tail;
-    ++dst->count;
+    loopback_queue_push( dst );
 
     rocketnet_platform_mutex_release( &hub->mutex );
 }
@@ -821,8 +955,7 @@ static void loopback_server_send_batch_impl( void * transport, const rocketnet_p
         slot->bytes = packet.packet_bytes;
         slot->from = loopback_sender_address( sender->bind, *packet.to );
         memcpy( slot->data, packet.packet_data, (size_t) packet.packet_bytes );
-        ++dst->tail;
-        ++dst->count;
+        loopback_queue_push( dst );
     }
 
     rocketnet_platform_mutex_release( &hub->mutex );
@@ -882,11 +1015,16 @@ static int loopback_client_receive( void * transport, rocketnet_address_t * from
         *from = packet->from;
         const int bytes = packet->bytes;
         memcpy( data, packet->data, (size_t) bytes );
-        loopback_queue_pop( ep );        // proofs/tla/LoopbackQueue.tla Receive
+        loopback_queue_pop( ep );        // proofs/tla/LoopbackQueue.tla Receive; proofs/tla/LoopbackWake.tla Pop
 
         return bytes;
     }
 
+#if ROCKETNET_DEV
+    loopback_test_client_empty_receives.fetch_add( 1, std::memory_order_relaxed );
+#endif // #if ROCKETNET_DEV
+
+    // proofs/tla/LoopbackWake.tla Drained: the queue is empty, the step idles
     return 0;
 }
 
@@ -898,8 +1036,11 @@ static const rocketnet_server_transport_io_operations_t loopback_server_operatio
 
 // no connect: the loopback router is the hub shared by every endpoint, with
 // no socket to connect; the client's own source check
-// (rocketnet_client_process_packet) is the only filter on this transport
-static const rocketnet_client_transport_io_operations_t loopback_client_operations = { loopback_client_create, loopback_destroy, loopback_send, loopback_client_receive, NULL, NULL, NULL, NULL, loopback_send_failures, NULL, NULL, NULL };
+// (rocketnet_client_process_packet) is the only filter on this transport.
+// wait and wake: the client I/O thread sleeps until a datagram is queued for
+// it, it is handed work or stopped (sdk/rocketnet_client_io.h)
+static const rocketnet_client_transport_io_operations_t loopback_client_operations = { loopback_client_create, loopback_client_destroy, loopback_send, loopback_client_receive, NULL, NULL,
+                                                                                       loopback_client_wait, loopback_client_wake, loopback_send_failures, NULL, loopback_client_close, NULL };
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport = { &loopback_server_operations, &loopback_client_operations };
 

@@ -382,6 +382,16 @@ static enum rocketnet_client_state_t reached_handshake_stall( enum rocketnet_cli
 
         rocketnet_client_update( client, time );
         rocketnet_client_send_packets( client );
+
+        // the update that advances the client also sends the packet of the
+        // new state (TRANSPORT.md t11 rule 7): the server must not run again,
+        // or it would answer that packet and the stall would never start
+
+        if ( rocketnet_client_state( client ) >= handshake_state )
+        {
+            break;
+        }
+
         rocketnet_server_update( server, time );
         rocketnet_server_send_packets( server );
         time += 0.01;
