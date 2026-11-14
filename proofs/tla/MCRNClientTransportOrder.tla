@@ -6,8 +6,10 @@
 (* MCRNClientTransportOrderPin.cfg are the passing controls.                        *)
 (* MCRNClientTransportOrderBrokenNoFallback.cfg,                                    *)
 (* MCRNClientTransportOrderBrokenOomFalls.cfg,                                      *)
-(* MCRNClientTransportOrderBrokenIgnoresToken.cfg and                               *)
-(* MCRNClientTransportOrderBrokenBudgetOpens.cfg are the reversed witnesses.        *)
+(* MCRNClientTransportOrderBrokenIgnoresToken.cfg,                                  *)
+(* MCRNClientTransportOrderBrokenBudgetOpens.cfg and                                *)
+(* MCRNClientTransportOrderBrokenBudgetIgnoresCustom.cfg are the reversed           *)
+(* witnesses.                                                                       *)
 (* README-RNClientTransportOrder.md has the traces TLC printed.                     *)
 (***************************************************************************)
 EXTENDS RNClientTransportOrder

@@ -22,11 +22,15 @@ handshake that follows or the family race that runs after an IPv6 grant
   every combination.
 - **The budget.** `budget[r]` is candidate `r`'s memory plan against the
   operator budget (`rocketnet_client_transport_resolve`): `"fits"`,
-  `"refused"` (the plan exceeds a non-zero budget) or `"unknown"` (the
-  transport has no plan; neither refused nor counted as fitting). The
-  environment chooses it once, at Init. When some candidate is refused and
-  none fits, the create is refused before the first allocation
-  (`NO_TRANSPORT_FOUND`, result `"nobudget"`).
+  `"refused"` (the plan exceeds a non-zero budget), `"unknown"` (a built-in
+  transport with no plan; neither refused nor counted as fitting) or
+  `"custom"` (a row from `ROCKETNET_TRANSPORT_REGISTRY_HEADER`, which has no
+  SDK plan: not refused, and still tried). The environment chooses it once,
+  at Init. When some candidate is refused and none fits or is custom, the
+  create is refused before the first allocation (`NO_TRANSPORT_FOUND`, result
+  `"nobudget"`; `rocketnet_transport_budget_count` and
+  `rocketnet_transport_budget_refuses` in `sdk/rocketnet_driver.h`, which the
+  server resolve takes too).
 - **TryPrimary.** A candidate the budget refused is skipped, with no
   socket, and the transport order falls to the next candidate (the
   `budget_refused` check at the top of the transport order loop). Otherwise
@@ -51,6 +55,9 @@ handshake that follows or the family race that runs after an IPv6 grant
   IPv4 fallback next, no such candidate skipped.
 - `NoSocketForRefusedPlan`: no socket is opened for a candidate the budget
   refused.
+- `NoBudgetOnlyWhenNoneTryable`: the budget refuses the create only when
+  every candidate was refused or is a built-in with no plan; never while a
+  candidate fits or a custom transport is listed.
 - `NoExhaustWhileReachable`: the transport order exhausts only when no socket the
   token names, on any candidate the budget did not refuse, would have been
   granted.
@@ -77,6 +84,18 @@ handshake that follows or the family race that runs after an IPv6 grant
   transport order loop's `budget_refused[candidate]` check `continue`s
   before any socket is opened; without it the candidate's allocations
   would run past the budget the plan loop refused.
+- `proofs/tla/MCRNClientTransportOrderBrokenBudgetIgnoresCustom.cfg` violates
+  `NoBudgetOnlyWhenNoneTryable`. `Broken = {"budgetignorescustom"}` is the
+  v1.1.58 rule: only a fitting plan counts against the refusal. TLC's trace
+  is the initial state: candidate 1 refused, candidate 2 custom, result
+  `"nobudget"`. In the v1.1.58 code the custom row's plan lookup returned
+  false, so it was counted neither refused nor allowed, and
+  `budget_refused_total > 0 && budget_allowed == 0` refused the create
+  before the transport order reached it; the walk itself skips only
+  `budget_refused` candidates and would have opened it. The unit cases are
+  in `tests/test_unit_transport_budget.cpp`; the driver extension's
+  `external_transport_budget_fallback` runs it end to end with a real
+  custom row on both endpoints.
 - `proofs/tla/MCRNClientTransportOrderBrokenNoFallback.cfg` violates
   `NoExhaustWhileReachable`. `Broken = {"nofallback"}` falls to the next
   candidate on an IPv6 refusal. TLC's trace: a token naming both families,
