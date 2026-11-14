@@ -359,11 +359,6 @@
    :text "The worker counts a cancel it submitted when its completion arrives (rocketnet_uring_queue_worker_reap_one, ROCKETNET_URING_TAG_CANCEL). A cancel the kernel answers -EALREADY (the target already completed) reads the same as one that took effect; the model (RNUringQueueWorker.tla CancelRecv, CancelWake, CancelPoll) has one outcome. Check the worker against the answers and add the case to the model."
    :date "2026-11-13" :origin "Review of the io_uring transport work")
 
-  (item "flaky-reply-opens-a-later-update" :group "audit-remaining" :area "tests"
-   :title "test_transport_reply_opens_a_later_update: the delivery assertion is fixed; the ordering proof is weak"
-   :text "The case sent each request and each answer once, as unreliable datagrams over real loopback, so one lost datagram failed it. It failed this way on PR #1124's CI (43476345841, line 10204). It failed on main at a8cf53bc8 and 3218cf5f6, both before v1.1.60, and at dc8c1e6de (v1.1.61, run 43564179693, both attempts). On the studio under the looping functional suite it failed 1 of 500 on main and 0 of 500 on v1.1.60, so v1.1.61 is not involved. The one failure lost two contiguous blocks: 10 answers that the server sent and 45 requests that never reached it. Fixed on fix/v1.1.x/reply-opens-tolerates-loss: a missing request is opened again through the loss gate (tests/kernel_drops.h), and every round has a hard bound of 12000 passes and 15 s, so the case always ends, red by name or green, within 4 rounds. What remains is item reply-opens-ordering-proof-weak, and the gate's macOS evidence (loss-gate-macos-machine-wide-evidence)."
-   :date "2026-11-14" :origin "PR #1124 CI; main run 43564179693; studio runs 2026-11-14")
-
   (item "uring-offline-cpu-holes" :group "audit-remaining" :area "sdk"
    :title "Offline cpu holes in the io_uring pin"
    :text "rocketnet_uring_pin_check refuses a cpu at or past the online count, but a machine with cpus offline has holes below that count (cpu 5 offline, cpu 6 online). A pin to a hole is refused by the kernel, counted, and the worker is confined to its own mask past the OS's cpus (rocketnet_uring_pin_confine_words, which never names a hole), so it is placed but not where the config said. Read the online mask (sched_getaffinity or /sys/devices/system/cpu/online) and place the workers on online cpus past the OS's."
