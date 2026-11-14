@@ -22,10 +22,13 @@
     The connect phase is held to the clean-run rule (rocketnet_counters_refusals,
     tests/counters_expect.h): every refusal counter of the server and every
     client reads 0 when the traffic starts, except socket send drops and
-    COOKIE_REPLY_WITHHELD while its cookie reasons exceed it (the cookie reply
-    limit, t12 rule 7, withheld copies of a request it answered; the client
-    sends again). The traffic's refusals are counted from the start of
-    traffic. Two server updates without sends follow the traffic, so the
+    COOKIE_REPLY_WITHHELD. That counter counts the cookie requests the cookie
+    reply limit (t12 rule 7) left unanswered because the bit of their source's
+    keyed hash was already set in that update: by an earlier reply to the same
+    source, or to a different source whose hash shares the bit; the client
+    sends again. It passes only while the cookie-request reasons (NO_COOKIE,
+    COOKIE_DID_NOT_VERIFY, COOKIE_EXPIRED) exceed it. The traffic's refusals
+    are counted from the start of traffic. Two server updates without sends follow the traffic, so the
     payloads of the last period are read before the counts are taken.
     It is absent from the default suite unless ROCKETNET_LOW_TICK_MEASURE=1.
     Linux only: the socket drop count is read from procfs.
