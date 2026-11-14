@@ -96,7 +96,8 @@ and are not committed:
 | `MappingsBounded` | the map stays inside its capacity (S:2760-2764, the 2x table; `sdk/rocketnet_server_transport.cpp`) |
 | `OneConnectionPerToken` | the same token never admits two clients (S:2648, S:2788-2791) |
 | `NonceFresh` | no two live mappings share keys (S:32-33, no key or nonce outlives one connection; S:2656-2658) |
-| `StoredChallengeNeverReplaced` | every live mapping holds the one challenge fixed at its creation: the salt and nonce a request sees are the stored ones, never replaced (S:2691-2697) |
+| `StoredChallengeNeverReplaced` | every live mapping holds the one challenge fixed at its creation (`csalt`, `cnonce`, written only when the mapping is made); on its own this holds by construction (S:2691-2697) |
+| `StoredChallengeResent` (action) | the challenge a half-open mapping actually puts on the wire for a request carrying its salt or its token is that stored one, so the client derives the keys the mapping opens under (the code copies `mapping->challenge_packet`); reversed witness `MCServerConnectionBrokenResendFromRequest.cfg` answers under the request's salt |
 | `TimeoutHonoured`, `DeadlineHonoured`, `HalfOpenIdleHonoured` | the idle timeout and the handshake deadline fire when due, for an established mapping and for a half-open one |
 | `PacketsReachOwnSlotOnly` | a client's packets never reach another client's slot: a client packet that touches a used slot (its record, or the mapping behind it) came from that slot's address and opened under that mapping's keys; after an address change the client's packets come from an address with no mapping, or another client's, and touch nothing |
 | `SessionNeverAnswered` | a session packet never provokes a send (S:2852-2853, a disconnect is never answered); the keep-alive is timer driven (S:2894, keep-alive generation reads the clocks, never an arrival) |
@@ -212,6 +213,7 @@ holds each one's measured result. Every case is on a FIFO link without duplicati
 | `MCServerConnectionBrokenSweepKeepsMapping.cfg` | `Timers` with `SweepRemovesMapping = FALSE` | `SlotMappingBijection` | fails (invariant) |
 | `MCServerConnectionMove.cfg` | one client, any token, two attempts, one address change | `SafetyInvariants`, `PacketsReachOwnSlotOnly`, `SessionNeverAnswered` | pass |
 | `MCServerConnectionBrokenAddressNotIdentity.cfg` | `Move` with `AddressIsIdentity = FALSE` | `PacketsReachOwnSlotOnly` | fails (action) |
+| `MCServerConnectionBrokenResendFromRequest.cfg` | `Move` with the resend under the request's salt (`ResendFromRequest`) | `StoredChallengeResent` | fails (action) |
 | `MCServerConnectionSameId.cfg` | `SameId = TRUE`, two slots, two nonces, no disconnects | `SafetyInvariants` | pass |
 | `MCServerConnectionBrokenClientIdNoCheck.cfg` | `SameId` with both client-id checks off | `OneSlotPerClientId` | fails (invariant) |
 | `MCServerConnectionHistoryNone.cfg` | one token shared by two clients, two slots, `History = "none"` | `SafetyInvariants` | pass |
