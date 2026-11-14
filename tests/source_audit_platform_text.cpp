@@ -82,6 +82,17 @@ REGISTER_UNIT_TEST( test_platform_spin_lock_backoff_source );
 // the receive-reset read take the guarded branch instead of the compare-exchange
 // fallback the 32-bit targets still need.
 
+// true when only blanks (a blanked comment) remain before the end of the line
+// at, so a matched directive is the whole condition and not a prefix of a wider one
+static bool platform_text_line_ends_at( const std::string & text, size_t at )
+{
+    while ( at < text.size() && ( text[at] == ' ' || text[at] == '\t' ) )
+    {
+        at++;
+    }
+    return at == text.size() || text[at] == '\n' || text[at] == '\r';
+}
+
 static void platform_text_check_relaxed_u64_load( const std::string & source, const char * start_name, const char * end_name )
 {
     // code only: a name in a comment is not the operation the branch takes
@@ -117,6 +128,8 @@ static void platform_text_check_relaxed_u64_load( const std::string & source, co
     {
         return;
     }
+    check( platform_text_line_ends_at( body, taken_at ) );
+    check( platform_text_line_ends_at( body, elif_at + older_guard.size() ) );
     check( body.find( "#", taken_at ) == elif_at );
     check( body.find( "#", elif_at + 1 ) == else_at );
     check( body.find( "#", else_at + 1 ) == endif_at );
