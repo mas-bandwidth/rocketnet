@@ -235,8 +235,8 @@ static inline uint32_t rocketnet_msgx_address_hash( const struct rocketnet_addre
 // rocketnet_malloc aligns; init constructs the table at its start, wires its
 // arrays after it and returns it
 inline struct rocketnet_msgx_socket_table_t * rocketnet_msgx_socket_table_init( void * block, int capacity, int num_holders, int opens_per_update,
-                                                                               int ( *open )( void *, const struct rocketnet_address_t * ),
-                                                                               void ( *close )( void *, int ), void * user )
+                                                                                int ( *open )( void *, const struct rocketnet_address_t * ),
+                                                                                void ( *close )( void *, int ), void * user )
 {
     rocketnet_assert( block );
     rocketnet_assert( capacity >= 1 && capacity <= ROCKETNET_MSGX_TABLE_MAX_SLOTS );

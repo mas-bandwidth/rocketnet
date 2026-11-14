@@ -284,7 +284,7 @@ static struct rocketnet_server_msgx_receiver_t * rocketnet_server_msgx_receiver_
         receiver->banks[b].refused = 0;
         receiver->banks[b].from = (rocketnet_address_t *) ( base + layout.from[b] );
         receiver->banks[b].packet_bytes = (int *) ( base + layout.packet_bytes[b] );
-        receiver->banks[b].packet_data = (uint8_t( * )[ROCKETNET_FRAME_STRIDE]) ( base + layout.packet_data[b] );
+        receiver->banks[b].packet_data = ( uint8_t( * )[ROCKETNET_FRAME_STRIDE] )( base + layout.packet_data[b] );
     }
     rocketnet_receive_drop_tally_reset( &receiver->tally );
     ROCKETNET_RED_ZONE_CARVE( base, rocketnet_server_msgx_receiver_layout( max_clients, &layout ) );
