@@ -35,7 +35,7 @@ One TCG run at 4 vCPUs and 4G RAM:
 - `./bin/functional` on the automatic transport order takes 149 seconds
 - `./bin/functional` with the portable transport pin takes 126 seconds
 
-The functional suite kills a single test at 120 seconds on a native Release host. The guest build sets `ROCKETNET_TEST_EMULATED`, so the same cap is scaled five times, to 600 seconds, by `tests/time_scale.h`; the Release workloads themselves are unchanged. A socket test that never receives its reply ends there and the suite continues. It does not hold the job open.
+The functional suite kills a single test at 120 seconds on a native Release host. The guest build sets `ROCKETNET_TEST_EMULATED`, so the same cap is scaled five times, to 600 seconds, by `tests/time_scale.h`; the Release workloads themselves are unchanged. The guest run also sets `ROCKETNET_TEST_CASE_TIME_SCALE=4`, which scales the cases' own fixed real-time bounds there (the 10 second shutdown bound in `examples/shutdown.h`, the hard-killed client's 5 second handshake, the live matrix's wall bound) by `rocketnet_test_emulated_bound_scale`; on real hardware those bounds keep their native values. A socket test that never receives its reply ends there and the suite continues. It does not hold the job open.
 
 ## The cross-endian run
 

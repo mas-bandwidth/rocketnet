@@ -494,11 +494,33 @@ static inline uint64_t rocketnet_loss_gate_drops( const struct rocketnet_loss_ga
 // a case is short of `missing` datagrams after its wait: true when the kernel
 // counted at least that many receive drops not yet used by an earlier resend,
 // and the case has resends left. The caller sends the missing ones again.
+//
+// rocketnet_loss_gate_resend_counted adds `send_failures`: the datagrams the
+// sending transports counted as ROCKETNET_COUNTER_SEND_FAILED since the case
+// began (the send call refused them, EAGAIN from a full send buffer under host
+// load). The library counted each of those, so a datagram missing for that
+// reason is accounted for, not lost silently; a loss neither the kernel nor
+// the library counted still fails the case.
+
+static inline bool rocketnet_loss_gate_resend_counted( struct rocketnet_loss_gate_t * gate, int missing, uint64_t send_failures );
 
 static inline bool rocketnet_loss_gate_resend( struct rocketnet_loss_gate_t * gate, int missing )
 {
-    const uint64_t drops = rocketnet_loss_gate_drops( gate );
+    return rocketnet_loss_gate_resend_counted( gate, missing, 0 );
+}
+
+static inline bool rocketnet_loss_gate_resend_counted( struct rocketnet_loss_gate_t * gate, int missing, uint64_t send_failures )
+{
+    const uint64_t kernel_drops = rocketnet_loss_gate_drops( gate );
+    const uint64_t drops = kernel_drops + send_failures;
     const uint64_t unused = drops >= gate->drops_used ? drops - gate->drops_used : 0;
+
+    if ( send_failures > 0 )
+    {
+        printf( "%s: the sending transports counted %llu SEND_FAILED datagrams since the case began, beside %llu kernel receive drops\n", gate->name,
+                (unsigned long long) send_failures, (unsigned long long) kernel_drops );
+        fflush( stdout );
+    }
 
     if ( missing <= 0 )
     {

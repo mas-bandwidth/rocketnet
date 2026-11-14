@@ -263,6 +263,14 @@ jobs:
           "${SSH[@]}" bash -s << 'GUEST' || suite_rc=$?
           set +e
           export ROCKETNET_NIGHTLY_NO_TIMEOUT=1
+          # The guest shares a loaded host (load1 23.7 on 43589436444), so a
+          # case's own real-time bounds get the environment's scale on top of
+          # the build's 5x (tests/time_scale.h): the 10 s shutdown bound
+          # (examples/shutdown.h) aborted test_gso_transport_posix_destroy_under_traffic_100,
+          # the 5 s handshake (posix_hard_killed_client.cpp) and the live
+          # matrix's 600 s wall bound tripped on 11-13, and each passed alone.
+          # Native runs never read this scale on those bounds.
+          export ROCKETNET_TEST_CASE_TIME_SCALE=4
           cd ~/src
           # The guest kernel's socket buffer ceiling is the stock 256 KiB, so
           # the 8 MiB receive buffer the suite asks for is clamped and a

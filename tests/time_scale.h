@@ -53,7 +53,8 @@
 // limit), the nightly Linux threaded TSan leg sets 4 (nightly.yml), the
 // nightly Linux Debug and LSan functional runs set 2 (ci.yml under full,
 // nightly-leaks.yml), the Windows development Debug functional run sets 2,
-// or 4 in the nightly tier (docs/WINDOWS.md); every other run leaves it unset
+// or 4 in the nightly tier (docs/WINDOWS.md), and the s390x full-system guest
+// sets 4 (nightly-bigendian-system.yml); every other run leaves it unset
 // or empty. Unset or empty, the scale is 1.
 // Set, it is a number over 0 and at most 1000; anything else returns 0 with
 // the scale at 1, and the caller refuses to run. The suite runner's case
@@ -77,6 +78,26 @@ static inline int rocketnet_test_case_env_time_scale( double * scale )
     *scale = parsed;
 
     return 1;
+}
+
+// The scale on a case's own fixed real-time bounds (a shutdown that must
+// finish within 10 s, a handshake within 5 s) in a full-system emulated guest:
+// ROCKETNET_TEST_CASE_TIME_SCALE times the environment's scale above. Every
+// other build returns 1, so on real hardware those bounds keep their native
+// values whatever the build or the environment. The s390x nightly sets the
+// environment's scale for the guest (nightly-bigendian-system.yml).
+static inline double rocketnet_test_emulated_bound_scale()
+{
+#if defined( ROCKETNET_TEST_EMULATED )
+    double scale = 1.0;
+    if ( !rocketnet_test_case_env_time_scale( &scale ) )
+    {
+        scale = 1.0; // the suite runner refuses a bad value before any case runs
+    }
+    return ROCKETNET_TEST_CASE_TIME_SCALE * scale;
+#else
+    return 1.0;
+#endif // #if defined( ROCKETNET_TEST_EMULATED )
 }
 
 #endif // ROCKETNET_TESTS_TIME_SCALE_H

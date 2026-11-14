@@ -7917,10 +7917,47 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     const int PAYLOAD_BYTES = 300;
     const int TOTAL = FRAMES * PACKETS_PER_FRAME;
 
+    // Each tag is one datagram over a real socket, and a loaded host can lose
+    // one on receive, where the kernel counts it. So the exchange runs in
+    // rounds of round_seconds. At the end of a round with tags missing, the
+    // case prints the round and both transports' counters and fails by name
+    // when the client is no longer connected; otherwise it asks the loss gate
+    // (tests/kernel_drops.h) with the kernel's receive drops of this process's
+    // sockets since the exchange began, and sends the missing tags again only
+    // when that count covers them, at most
+    // ROCKETNET_LOSS_GATE_RESENDS times: the case ends, red by name or green,
+    // within (1 + resends) rounds, 40 s. A tag is received at most as many
+    // times as it was sent, every byte of every copy is checked, and every tag
+    // is received in the end.
+    //
+    // SEND_FAILED is not loss the gate admits. Under load on aws-mut-2 (600
+    // runs at once, 2026-11-14) every SEND_FAILED here was the portable
+    // server's send handoff dropping on its no-free-bank path (the producer
+    // bank full and every other bank in flight, sdk/rocketnet_driver_builtin.cpp
+    // portable_tx_drop): no send call and no errno, not a full socket. No
+    // counter separates a full socket's EAGAIN or ENOBUFS from the other
+    // refusals SEND_FAILED counts, so the gate takes none of them
+    // (docs/roadmap.sexp exact-delivery-asserts).
+
     static uint8_t server_seen[FRAMES * PACKETS_PER_FRAME];
     static uint8_t client_seen[FRAMES * PACKETS_PER_FRAME];
+    static uint8_t server_sends_of[FRAMES * PACKETS_PER_FRAME];
+    static uint8_t client_sends_of[FRAMES * PACKETS_PER_FRAME];
     memset( server_seen, 0, sizeof( server_seen ) );
     memset( client_seen, 0, sizeof( client_seen ) );
+    memset( server_sends_of, 0, sizeof( server_sends_of ) );
+    memset( client_sends_of, 0, sizeof( client_sends_of ) );
+
+    // the tags each side sends next, in order: every tag first, then a
+    // round's missing tags after the gate admits them
+    std::vector<int> client_queue, server_queue;
+    for ( int tag = 0; tag < TOTAL; tag++ )
+    {
+        client_queue.push_back( tag );
+        server_queue.push_back( tag );
+    }
+    size_t client_next = 0;
+    size_t server_next = 0;
 
     int server_received = 0;
     int client_received = 0;
@@ -7928,16 +7965,67 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     int client_sent = 0;
     int server_sent = 0;
 
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, "gso_client_wire_exchange" );
+    const double round_seconds = 10.0;
+    int round = 1;
+
     start = rocketnet_platform_time();
-    while ( ( server_received < TOTAL || client_received < TOTAL ) && rocketnet_platform_time() - start < 10.0 )
+    double round_start = start;
+    while ( server_received < TOTAL || client_received < TOTAL )
     {
+        if ( rocketnet_platform_time() - round_start >= round_seconds )
+        {
+            const int missing_at_server = TOTAL - server_received;
+            const int missing_at_client = TOTAL - client_received;
+            const int state = rocketnet_client_transport_state( client );
+            printf( "gso_client_wire_exchange: round %d ended after %.3f s: %d missing at the server, %d at the client (sent %d, %d), client state %d\n",
+                    round, rocketnet_platform_time() - round_start, missing_at_server, missing_at_client, client_sent, server_sent, state );
+            for ( int t = 0; t < TOTAL; t++ )
+            {
+                if ( !server_seen[t] )
+                {
+                    printf( "gso_client_wire_exchange first tag missing at the server: %d\n", t );
+                    break;
+                }
+            }
+            for ( int t = 0; t < TOTAL; t++ )
+            {
+                if ( !client_seen[t] )
+                {
+                    printf( "gso_client_wire_exchange first tag missing at the client: %d\n", t );
+                    break;
+                }
+            }
+            gso_exchange_print_counters( "server", rocketnet_server_transport_counters( server ) );
+            gso_exchange_print_counters( "client", rocketnet_client_transport_counters( client ) );
+            fflush( stdout );
+            rocketnet_check( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+            rocketnet_check( client_next == client_queue.size() && server_next == server_queue.size() );
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, missing_at_server + missing_at_client ) );
+            for ( int tag = 0; tag < TOTAL; tag++ )
+            {
+                if ( !server_seen[tag] )
+                {
+                    client_queue.push_back( tag );
+                }
+                if ( !client_seen[tag] )
+                {
+                    server_queue.push_back( tag );
+                }
+            }
+            round++;
+            round_start = rocketnet_platform_time();
+        }
+
         // a frame's worth each way, a tag in the first two bytes and a
         // pattern of the tag after it; a refused start (a full ring) leaves
-        // the rest of the frame for the next pass, so no tag is lost or sent twice
+        // the rest of the frame for the next pass, so no tag is skipped or
+        // sent twice in one round
 
-        for ( int i = 0; i < PACKETS_PER_FRAME && client_sent < TOTAL; i++ )
+        for ( int i = 0; i < PACKETS_PER_FRAME && client_next < client_queue.size(); i++ )
         {
-            const int tag = client_sent;
+            const int tag = client_queue[client_next];
             struct rocketnet_packet_context_t context = {};
             uint8_t * payload = rocketnet_client_transport_start_packet( client, PAYLOAD_BYTES, &context );
             if ( !payload )
@@ -7953,12 +8041,14 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
             }
 
             rocketnet_check( rocketnet_client_transport_finish_packet( client, &context, PAYLOAD_BYTES ) > PAYLOAD_BYTES );
+            client_sends_of[tag]++;
+            client_next++;
             client_sent++;
         }
 
-        for ( int i = 0; i < PACKETS_PER_FRAME && server_sent < TOTAL; i++ )
+        for ( int i = 0; i < PACKETS_PER_FRAME && server_next < server_queue.size(); i++ )
         {
-            const int tag = server_sent;
+            const int tag = server_queue[server_next];
             struct rocketnet_packet_context_t context;
             uint8_t * packet = rocketnet_server_transport_start_packet( server, 0, PAYLOAD_BYTES, &context );
             if ( !packet )
@@ -7974,6 +8064,8 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
             }
 
             rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, PAYLOAD_BYTES ) > 0 );
+            server_sends_of[tag]++;
+            server_next++;
             server_sent++;
         }
 
@@ -7997,9 +8089,13 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
                 rocketnet_check( payload[j] == (uint8_t) ( tag * 31 + j ) );
             }
 
-            rocketnet_check( !server_seen[tag] );
-            server_seen[tag] = 1;
-            server_received++;
+            // never more copies of a tag than the client sent
+            rocketnet_check( server_seen[tag] < client_sends_of[tag] );
+            if ( !server_seen[tag] )
+            {
+                server_received++;
+            }
+            server_seen[tag]++;
         }
 
         static uint8_t received[ROCKETNET_RECEIVE_PAYLOAD_BYTES];
@@ -8015,9 +8111,13 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
                 rocketnet_check( received[j] == (uint8_t) ( tag * 17 + j ) );
             }
 
-            rocketnet_check( !client_seen[tag] );
-            client_seen[tag] = 1;
-            client_received++;
+            // never more copies of a tag than the server sent
+            rocketnet_check( client_seen[tag] < server_sends_of[tag] );
+            if ( !client_seen[tag] )
+            {
+                client_received++;
+            }
+            client_seen[tag]++;
         }
 
         // with the simulator on, a pass every 10 ms keeps the packets it
@@ -8039,27 +8139,6 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
                 (unsigned long long) ( udp_after[6] - udp_before[6] ),
                 (unsigned long long) ( rocketnet_client_gso_test_segment_messages_sent.load() - segment_messages_before ),
                 (unsigned long long) ( rocketnet_client_gso_test_gro_batches.load() - gro_batches_before ) );
-        if ( server_received != TOTAL || client_received != TOTAL )
-        {
-            for ( int t = 0; t < TOTAL; t++ )
-            {
-                if ( !server_seen[t] )
-                {
-                    printf( "gso_client_wire_exchange first tag missing at the server: %d\n", t );
-                    break;
-                }
-            }
-            for ( int t = 0; t < TOTAL; t++ )
-            {
-                if ( !client_seen[t] )
-                {
-                    printf( "gso_client_wire_exchange first tag missing at the client: %d\n", t );
-                    break;
-                }
-            }
-            gso_exchange_print_counters( "server", rocketnet_server_transport_counters( server ) );
-            gso_exchange_print_counters( "client", rocketnet_client_transport_counters( client ) );
-        }
     }
     rocketnet_check( server_received == TOTAL );
     rocketnet_check( client_received == TOTAL );
@@ -9297,25 +9376,60 @@ static void rocketnet_test_server_uring_wire_gro( const char * address_string, b
     const int num_bursts = 3;
 
     int expected_bytes[128];
+    int burst_first[3];
     int num_expected = 0;
-
-    static uint8_t super[65000];
 
     for ( int b = 0; b < num_bursts; b++ )
     {
         const int segments = bursts[b][0] + ( bursts[b][2] > 0 ? 1 : 0 );
+        burst_first[b] = num_expected;
+        for ( int i = 0; i < segments; i++ )
+        {
+            expected_bytes[num_expected++] = i < bursts[b][0] ? bursts[b][1] : bursts[b][2];
+        }
+    }
+
+    // Each burst is one UDP_SEGMENT send over a real socket, and a loaded host
+    // can drop it on receive (the clang-18 nightly saw a tag skipped here). So
+    // the receive runs in rounds of the case's 5 s. At the end of a round with datagrams missing, the
+    // missing bursts are sent again, whole, only when the loss gate
+    // (tests/kernel_drops.h: the drops of this process's sockets) counts the
+    // loss: a coalesced burst is one datagram to the kernel, so the gate is
+    // asked for the missing bursts there, else for the missing datagrams; at
+    // most ROCKETNET_LOSS_GATE_RESENDS times, so the case ends red by name or
+    // green within 20 s.
+    //
+    // The order stays exact: the datagrams arrive as a subsequence of what was
+    // sent, in send order, each sent copy at most once, and where the host
+    // coalesces a burst's datagrams arrive all or none (the split never loses a
+    // segment). The bytes, sizes and source of every datagram are checked.
+
+    std::vector<int> sent_tags;     // every datagram sent, in send order
+    std::vector<int> sent_burst_at; // the send each entry belongs to
+    std::vector<int> send_burst;    // the burst of each send
+    std::vector<int> send_arrived;  // the datagrams of each send that arrived
+
+    static uint8_t super[65000];
+
+    auto send_burst_once = [&]( int b )
+    {
+        const int segments = bursts[b][0] + ( bursts[b][2] > 0 ? 1 : 0 );
+        const int send = (int) send_burst.size();
+        send_burst.push_back( b );
+        send_arrived.push_back( 0 );
         int bytes = 0;
         for ( int i = 0; i < segments; i++ )
         {
-            const int segment_bytes = i < bursts[b][0] ? bursts[b][1] : bursts[b][2];
-            const int tag = num_expected;
+            const int tag = burst_first[b] + i;
+            const int segment_bytes = expected_bytes[tag];
             super[bytes] = (uint8_t) tag;
             for ( int j = 1; j < segment_bytes; j++ )
             {
                 super[bytes + j] = (uint8_t) ( tag * 13 + j );
             }
 
-            expected_bytes[num_expected++] = segment_bytes;
+            sent_tags.push_back( tag );
+            sent_burst_at.push_back( send );
             bytes += segment_bytes;
         }
 
@@ -9343,22 +9457,100 @@ static void rocketnet_test_server_uring_wire_gro( const char * address_string, b
         const uint16_t stride = (uint16_t) bursts[b][1];
         memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) );
         rocketnet_check( sendmsg( client_socket->handle, &msg, 0 ) == (ssize_t) bytes );
+    };
+
+    struct rocketnet_loss_gate_t gate;
+    rocketnet_loss_gate_begin( &gate, __func__ );
+
+    for ( int b = 0; b < num_bursts; b++ )
+    {
+        send_burst_once( b );
     }
 
-    // every datagram byte-exact and in arrival order: the bursts are one flow
+    // every datagram byte-exact and in send order: the bursts are one flow
     // into one queue, so the bank holds them in the order they were sent
 
-    int num_seen = 0;
+    const bool coalesces = rocketnet_test_gso_host_coalesces();
+    std::vector<int> tag_arrivals( (size_t) num_expected, 0 );
+    int num_seen = 0;     // datagrams received, every copy
+    int num_distinct = 0; // tags received at least once
+    size_t cursor = 0;    // the next sent entry an arrival may match
+    int round = 1;
     double start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 5.0 && num_seen < num_expected )
+    while ( num_distinct < num_expected )
     {
+        if ( rocketnet_platform_time() - start >= 5.0 )
+        {
+            // a coalesced burst arrives whole or not at all
+            if ( coalesces )
+            {
+                for ( size_t s = 0; s < send_burst.size(); s++ )
+                {
+                    const int b = send_burst[s];
+                    const int segments = bursts[b][0] + ( bursts[b][2] > 0 ? 1 : 0 );
+                    if ( send_arrived[s] != 0 && send_arrived[s] != segments )
+                    {
+                        printf( "%s: send %d (burst %d) arrived %d of its %d coalesced datagrams\n", __func__, (int) s, b, send_arrived[s], segments );
+                        fflush( stdout );
+                    }
+                    rocketnet_check( send_arrived[s] == 0 || send_arrived[s] == segments );
+                }
+            }
+
+            int missing_bursts = 0;
+            int missing_datagrams = 0;
+            std::vector<int> resend;
+            for ( int b = 0; b < num_bursts; b++ )
+            {
+                const int segments = bursts[b][0] + ( bursts[b][2] > 0 ? 1 : 0 );
+                int missing = 0;
+                for ( int i = 0; i < segments; i++ )
+                {
+                    missing += tag_arrivals[(size_t) ( burst_first[b] + i )] == 0 ? 1 : 0;
+                }
+                if ( missing )
+                {
+                    missing_bursts++;
+                    missing_datagrams += missing;
+                    resend.push_back( b );
+                }
+            }
+            printf( "%s: round %d ended after %.3f s: %d of %d datagrams received, %d missing in %d bursts (host coalesces: %d)\n", __func__, round,
+                    rocketnet_platform_time() - start, num_distinct, num_expected, missing_datagrams, missing_bursts, coalesces ? 1 : 0 );
+            fflush( stdout );
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, coalesces ? missing_bursts : missing_datagrams ) );
+            for ( size_t r = 0; r < resend.size(); r++ )
+            {
+                send_burst_once( resend[r] );
+            }
+            round++;
+            start = rocketnet_platform_time();
+        }
+
         rocketnet_server_uring_receive_packets( uring );
 
         struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_uring_process_packets( uring );
         for ( int i = 0; i < received->num_packets; i++ )
         {
             const int tag = received->packet_data[i][0];
-            rocketnet_check( tag == num_seen );
+            rocketnet_check( tag >= 0 && tag < num_expected );
+
+            // the next sent copy of this tag at or after the cursor: arrivals
+            // keep the send order, and no copy arrives twice
+            size_t match = cursor;
+            while ( match < sent_tags.size() && sent_tags[match] != tag )
+            {
+                match++;
+            }
+            if ( match == sent_tags.size() )
+            {
+                printf( "%s: tag %d arrived out of send order (cursor %d of %d sent)\n", __func__, tag, (int) cursor, (int) sent_tags.size() );
+                fflush( stdout );
+            }
+            rocketnet_check( match < sent_tags.size() );
+            cursor = match + 1;
+            send_arrived[(size_t) sent_burst_at[match]]++;
+
             rocketnet_check( received->packet_bytes[i] == expected_bytes[tag] );
             for ( int j = 1; j < expected_bytes[tag]; j++ )
             {
@@ -9367,17 +9559,20 @@ static void rocketnet_test_server_uring_wire_gro( const char * address_string, b
 
             rocketnet_check( received->from[i].type == ( ipv6 ? ROCKETNET_ADDRESS_IPV6 : ROCKETNET_ADDRESS_IPV4 ) );
             rocketnet_check( received->from[i].port == client_address.port );
+            if ( tag_arrivals[(size_t) tag]++ == 0 )
+            {
+                num_distinct++;
+            }
             num_seen++;
         }
 
         rocketnet_platform_sleep( 0.001 );
     }
 
-    rocketnet_check( num_seen == num_expected );
-
+    // the counter counts every datagram the transport received, every copy
     uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_uring_counters( uring, counters );
-    rocketnet_check( counters[ROCKETNET_COUNTER_URING_PACKETS_RECEIVED] == (uint64_t) num_expected );
+    rocketnet_check( counters[ROCKETNET_COUNTER_URING_PACKETS_RECEIVED] == (uint64_t) num_seen );
     rocketnet_check( counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SIZE] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_OVERFLOW] == 0 );
     rocketnet_check( counters[ROCKETNET_COUNTER_URING_GRO_CMSG_FAULTS] == 0 );
@@ -15335,6 +15530,9 @@ static void rocketnet_test_server_stop_disconnects_every_client( const char * tr
     memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
     server_config.max_clients = num_clients;
     server_config.transport = transport;
+    // the hub is read only when a pin names loopback, as the CI transport
+    // matrix's loopback cell does
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     // a transport this host cannot run is a named skip in the registry (its
     // runs_here predicate); here a create or start that fails is a failure
@@ -15356,6 +15554,7 @@ static void rocketnet_test_server_stop_disconnects_every_client( const char * tr
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_client_t * clients[8] = {};
     for ( int i = 0; i < num_clients; i++ )
@@ -16904,6 +17103,19 @@ static bool rocketnet_test_server_pin_is_not_xdp()
     return !rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", pin, sizeof( pin ) ) || strcmp( pin, "xdp" ) != 0;
 }
 static bool rocketnet_test_a_transport_pin_is_set_and_not_xdp() { return rocketnet_test_a_transport_pin_is_set() && rocketnet_test_server_pin_is_not_xdp(); }
+
+// the bind cases (server_bind_address.cpp) check what the kernel does with a
+// socket's bind: a held port, an address that is not this host's. A
+// whole-suite server pin of loopback carries datagrams in process and binds
+// no socket, so it takes them out of the suite
+static bool rocketnet_test_server_pin_is_not_loopback()
+{
+    char pin[256];
+    return !rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", pin, sizeof( pin ) ) || strcmp( pin, "loopback" ) != 0;
+}
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+static bool rocketnet_test_uring_available_and_server_pin_is_not_loopback() { return rocketnet_server_uring_available() && rocketnet_test_server_pin_is_not_loopback(); }
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static bool rocketnet_test_server_pin_allows_iocp() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "iocp" ); }
 static bool rocketnet_test_server_pin_allows_rio() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "rio" ); }
@@ -17133,6 +17345,9 @@ static void rocketnet_latency_pair_server( struct rocketnet_latency_pair_t * pai
     server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
     server_config.transport = "portable";
+    // the hub is read only when a pin names loopback, as the CI transport
+    // matrix's loopback cell does
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
     pair->server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     rocketnet_check( pair->server );
     rocketnet_check( rocketnet_server_start( pair->server ) == ROCKETNET_STATUS_OK );
@@ -17148,6 +17363,7 @@ static void rocketnet_latency_pair_connect( struct rocketnet_latency_pair_t * pa
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     pair->client = rocketnet_client_create( NULL, &client_config, NULL );
     rocketnet_check( pair->client );
     rocketnet_check( rocketnet_client_connect( pair->client, token ) == ROCKETNET_STATUS_OK );
@@ -17760,10 +17976,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_small_server_sessions_rio", rocketnet_test_small_server_sessions_rio, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    { "test_server_bind_refused_portable", rocketnet_test_server_bind_refused_portable, NULL },
+    { "test_server_bind_refused_portable", rocketnet_test_server_bind_refused_portable, rocketnet_test_server_pin_is_not_loopback },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    { "test_server_bind_refused_msgx", rocketnet_test_server_bind_refused_msgx, NULL },
+    { "test_server_bind_refused_msgx", rocketnet_test_server_bind_refused_msgx, rocketnet_test_server_pin_is_not_loopback },
     { "test_server_bind_dual_stack_ipv4_held", rocketnet_test_server_bind_dual_stack_ipv4_held, NULL },
     { "test_server_bind_dual_stack_port_zero", rocketnet_test_server_bind_dual_stack_port_zero, NULL },
 #if ROCKETNET_DEV
@@ -17775,10 +17991,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_server_bind_refused_rio", rocketnet_test_server_bind_refused_rio, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    { "test_server_bind_address_not_reached_on_another_address", rocketnet_test_server_bind_address_not_reached_on_another_address, NULL },
-    { "test_server_bind_refused_gso", rocketnet_test_server_bind_refused_gso, NULL },
-    { "test_server_bind_refused_io_uring", rocketnet_test_server_bind_refused_io_uring, rocketnet_server_uring_available },
-    { "test_server_bind_refused_default_transports", rocketnet_test_server_bind_refused_default_transports, rocketnet_server_uring_available },
+    { "test_server_bind_address_not_reached_on_another_address", rocketnet_test_server_bind_address_not_reached_on_another_address, rocketnet_test_server_pin_allows_portable },
+    { "test_server_bind_refused_gso", rocketnet_test_server_bind_refused_gso, rocketnet_test_server_pin_is_not_loopback },
+    { "test_server_bind_refused_io_uring", rocketnet_test_server_bind_refused_io_uring, rocketnet_test_uring_available_and_server_pin_is_not_loopback },
+    { "test_server_bind_refused_default_transports", rocketnet_test_server_bind_refused_default_transports, rocketnet_test_uring_available_and_server_pin_is_not_loopback },
     { "test_session_reconnect_isolation_gso", rocketnet_test_session_reconnect_isolation_gso, NULL },
     { "test_session_reconnect_isolation_io_uring", rocketnet_test_session_reconnect_isolation_io_uring, rocketnet_server_uring_available },
 #if ROCKETNET_XDP
@@ -17955,6 +18171,10 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     {
         return "rocketnet_test_server_pin_allows_io_uring";
     }
+    if ( predicate == rocketnet_test_uring_available_and_server_pin_is_not_loopback )
+    {
+        return "rocketnet_test_uring_available_and_server_pin_is_not_loopback";
+    }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if defined( __linux__ ) && ROCKETNET_XDP
     if ( predicate == rocketnet_test_xdp_veth_runs_here )
@@ -17993,6 +18213,10 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     if ( predicate == rocketnet_test_a_transport_pin_is_set_and_not_xdp )
     {
         return "rocketnet_test_a_transport_pin_is_set_and_not_xdp";
+    }
+    if ( predicate == rocketnet_test_server_pin_is_not_loopback )
+    {
+        return "rocketnet_test_server_pin_is_not_loopback";
     }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( predicate == rocketnet_test_server_pin_allows_iocp )

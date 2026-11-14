@@ -65,6 +65,14 @@
 #
 #   SUITE <server>/<client> runs=1 pass=P fail=F
 #
+# and, under a failed SUITE line, the suite log's first five check lines
+# (`check failed: ...`, the runner's own ones included), each as
+#
+#   SUITE-CHECK <server>/<client> <line>
+#
+# or one `SUITE-CHECK <server>/<client> none` when the log has none, so the
+# failing case is in the job log and not only in the uploaded log.
+#
 # The xdp cell has no SUITE line: its server needs root and a veth pair, so
 # under --asan it runs its cells' cases in the guest like every other mode.
 #
@@ -405,6 +413,12 @@ if [ "$asan" = 1 ]; then
             echo "SUITE $server/$client runs=1 pass=1 fail=0 log=$log"
         else
             echo "SUITE $server/$client runs=1 pass=0 fail=1 exit=$rc log=$log"
+            checks=$(grep -m 5 'check failed' "$log")
+            if [ -n "$checks" ]; then
+                printf '%s\n' "$checks" | sed "s|^|SUITE-CHECK $server/$client |"
+            else
+                echo "SUITE-CHECK $server/$client none"
+            fi
             failed=1
         fi
     done <<< "$cells"

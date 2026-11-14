@@ -193,7 +193,7 @@
 
   (item "exact-delivery-asserts" :group "after-v1-0-1" :area "tests"
    :title "Functional cases that assert exact delivery over real sockets"
-   :text "Windows functional cases and the gso and io_uring functional cases assert exact delivery over real sockets, so a host dropping a datagram under load turns them red. Assert what the library promises instead."
+   :text "Functional cases that count datagrams over a real socket and assert every one arrived, with no resend and no loss accounting, so a host dropping a datagram under load turns them red. gso_client_wire_exchange and server_uring_wire_gro now resend only what the loss gate in tests/kernel_drops.h admits from the kernel's receive drops (3c6b00056). The gate does not admit SEND_FAILED: under load on aws-mut-2 (600 runs at once, 2026-11-14) every SEND_FAILED in gso_client_wire_exchange was the portable server's send handoff dropping on its no-free-bank path (sdk/rocketnet_driver_builtin.cpp portable_tx_drop; no send call, no errno), and no counter separates a full socket's EAGAIN or ENOBUFS from the other refusals SEND_FAILED counts, so that case stays red when the handoff drops: a library finding, owed its own counter or a fix. Still exact, in tests/functional/rocketnet_functional_tests.cpp: pump_chaff_exchange (received == sent_real), server_gso_wire_exchange (num_seen == ROCKETNET_GSO_TEST_PACKETS twice, num_segments_seen == gro_segments), server_uring_wire_exchange_flags (num_seen == ROCKETNET_URING_TEST_PACKETS twice), server_uring_gro_cmsg_faults_counted (num_seen == datagrams), xdp_max_size_both_ways (server_received == count), xdp_over_mtu_refused (received_small == count); Windows: server_rio_wire (num_seen == last twice), iocp_exchange (num_seen == ROCKETNET_IOCP_TEST_PACKETS), iocp_client_send_and_collect and iocp_client_receive_from_server (received == num_packets; the gate reads no counter on Windows, so these need the iocp transports' SEND_FAILED at least). Fix each the same way."
    :date "2026-11-11" :origin "v1.0.1 review")
 
   (item "fault-counters-public" :group "after-v1-0-1" :area "rocketnet"
@@ -396,7 +396,7 @@
 
   (item "tlc-plant-behaviour-not-printed" :group "trace-check" :area "tools"
    :title "Find why TLC sometimes prints no behaviour for a plant's violation"
-   :text "TLC 2.19 exits 12 on a plant trace and reports the invariant violated, then sometimes prints no behaviour; the statistics lines that follow are printed, so the log is not cut off. tools/tla_trace_check.py reruns such a plant up to five times and prints PLANT-ATTEMPTS (#1106). Ruled out on byte-identical inputs of the msgxsendruns seed 1 plant (one Linux host, 2026-11-13): TLC's -seed and -fp index (both pinned, -workers 1: a behaviour in 5/10, 6/10 and 7/10 runs for three pairs) and a shared or reused metadir (a fresh directory and -metadir each run). Start from a TLC-side cause: the trace file's write and read-back at the violation."
+   :text "TLC 2.19 exits 12 on a plant trace and reports the invariant violated, then sometimes prints no behaviour; the statistics lines that follow are printed, so the log is not cut off. tools/tla_trace_check.py reruns such a plant up to five times and prints PLANT-ATTEMPTS (#1106). Ruled out on byte-identical inputs of the msgxsendruns seed 1 plant (one Linux host, 2026-11-13): TLC's -seed and -fp index (both pinned, -workers 1: a behaviour in 5/10, 6/10 and 7/10 runs for three pairs) and a shared or reused metadir (a fresh directory and -metadir each run). Start from a TLC-side cause: the trace file's write and read-back at the violation. The check no longer depends on it (5ac01acce): when all five attempts print none, the last matched record is read from TLC's counts, only when its state graph is one chain. At integration 70b94e882 the rolling seeds 21352-21415 of msgxsendruns printed no behaviour 5 of 5 on seeds 21369 and 21377 (aws-mut-2, 2026-11-14), both read from the counts; the TLC log ends 'Error: Invariant TraceConsistent is violated.' then the statistics, one stream for both of TLC's outputs (nova-tools pkg/tlc Execute), so nothing is lost on the way to the log."
    :date "2026-11-13" :origin "#1093 trace shard 0/6")
 
   (item "reconcile-sndbuf-resends" :group "after-v1-0-1" :area "tests/load"
@@ -943,16 +943,6 @@
    :text "DST caps messages at 16384 bytes (tests/dst_checks.h) and draws sizes from 14 to 16384 (rocketnet_dst_draw_size in tests/dst_harness.h), so it reaches about 15 fragments and never the 57-fragment default, the 64-fragment ceiling, or the resend bitmap words past them. 16384 is an input to the budget slack derivation (dst_checks.h, dst_harness.h), so raising it means deriving that slack again, not changing one constant."
    :date "2026-11-13" :origin "Tests review TA030 (P12)")
 
-  (item "check-memory-worker-table" :group "review-v1-2" :area "tools"
-   :title "check_memory.py hard-codes each transport's worker count"
-   :text "tools/check_memory.py:24 fixes the one-queue worker count per transport ('iocp': 3) and asserts it at :55, :87 and :112. The library's count moves with the plan: at a15a98cf1 the plan had 3 against a table of 2; 5677b4bf set 3; v1.1.61's sizing commits (81352192, 65e48f4f) made it 2, so the Windows Debug job fails with AssertionError ('iocp', 2). Smallest fix: take the expected count from the plan the server prints (its 'N workers'), and keep only the invariants that do not depend on sizing."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly windows / Debug at a1a426851 and a15a98cf1")
-
-  (item "s390x-real-time-bounds" :group "review-v1-2" :area "tests"
-   :title "The s390x guest trips wall-clock bounds under emulation"
-   :text "nightly-bigendian-system runs the suite in an emulated s390x guest on a loaded host (load1 23.7). On a1a426851 test_gso_transport_posix_destroy_under_traffic_100 aborted on the fixed 10 s shutdown bound (examples/shutdown.h:30-37) and then passed alone 3 of 3 (346 to 445 s each). On ef00a6d10 (11-13) other bounds tripped: tests/functional/live_matrix.cpp:1606 and posix_hard_killed_client.cpp:631. Class TEST, GUESS against a rare shutdown stall; a dump of the shutdown state at the timeout settles it. Smallest fix: scale the real-time bounds by a guest factor in that workflow, or run there only cases that use no real time."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-bigendian-system 43589436444 and 43416070005")
-
   (item "nightly-runner-setup-gaps" :group "review-v1-2" :area "fleet"
    :title "Nightly jobs red on runner setup, not code"
    :text "Five scheduled jobs fail before testing anything: nightly-framework (FRAMEWORK_READ_TOKEN not set); nightly-toolchains v141, v143 and v145 (runs-on [self-hosted, Windows, X64, rocketnet-windows] matches runners without the toolset: MSB8020, or MSVC 14.52 not installed); nightly-windows-sanitizers appverif (NETWORK SERVICE cannot write the HKLM IFEO key); nightly-ubuntu-lts-vms 24.04 (gpg-agent fails in the cloud image verify step); nightly-real-load (no inventory file on the runner). Smallest fix: a toolset label per matrix row on the runners that hold it, the secret, the account right, the gpg setup and the inventory file, each through the fleet's own tooling."
@@ -963,19 +953,14 @@
    :text "FUZZ-EXECS-FLOOR on mini-m5-1 and mini-m5-2 at a1a426851: client 4408 of 6003, server 4430 of 9000 per second; the Windows legs failed the same way at earlier shas; green on 11-12. GUESS: a floor measured on idle hosts and read on shared ones, not a regression. Settled by one run on an idle host. Fix then: a floor per host class, or a void on host load as the frame budget does."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: fuzz-nightly 43570535426")
 
+  (item "packets-received-counter-gso-uring" :group "review-v1-2" :area "sdk"
+   :title "Server stats packets_received misses datagrams the gso and io_uring workers drop"
+   :text "sdk/rocketnet.h documents rocketnet_server_stats_t packets_received as 'UDP datagrams received'. A raw socket sending a 100-byte then a 7-byte non-protocol datagram to a wildcard server (tests/functional/server_bind_address.cpp) reads 2 on portable; on gso the stats field reads 0 while the transport's ROCKETNET_COUNTER_PACKETS_RECEIVED reads 2, and on io_uring the stats field reads 0 while the counter reads 1 with PREFILTER_TOO_SHORT 1 (aws-mut-2, 2026-11-14, a temporary print in rn_server_running_counts). The field is main's count (rocketnet_server_wire_totals_add_received), and the queue workers' prefilter drops reach only the counters (sdk/rocketnet_receive_prefilter.h); on io_uring one of the two is in neither. Fix the field or its documentation, and find io_uring's missing datagram; then test_server_bind_address_not_reached_on_another_address can run under every Linux server pin."
+   :date "2026-11-14" :origin "Cold read of known-defects-linux at f89c21e87")
+
   (item "mutation-slice-survivors" :group "review-v1-2" :area "tests"
    :title "Mutation campaign: the daily slices are not baselined"
    :text "nightly linux / mutation reports 194 new survivors (150 on 11-13) against the 181 rows of tools/mutation/survivors.tsv, and 46 of 515 mutants do not compile. The daily slices were never triaged into the baseline. Fix: triage each slice's survivors into a test or a survivors.tsv row with its reason."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly 43577137425")
-
-  (item "channel-seed-block-resend-cost" :group "review-v1-2" :area "tests"
-   :title "Channel seeds: test_block_resend_cost_over_long_path fails on rolling seeds"
-   :text "nightly-channel-seeds fails test_block_resend_cost_over_long_path with reason=one at seed 4917323 (a1a426851) and 4914435 (21543f689); red on 11-12 and 11-13 too. GUESS on the class: what 'one' asserts was not read. Settled by replaying seed 4917323 alone."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-channel-seeds 43580939573")
-
-  (item "linux-transport-cells-x50" :group "review-v1-2" :area "tests"
-   :title "Linux transport cells x50: every cell red, cause only in the artifacts"
-   :text "nightly linux / transport cells x50 and ASan fails every suite cell (portable/portable, auto, gso, io_uring, loopback) on amd-1-1 and vision-1, and was red on 11-13. The failing case is printed only in the per-cell suite logs uploaded as artifacts. GUESS: the env-pinned placement cases (env-pinned-placement-cast) or an ASan report. Settled by the artifacts; fix then: print each cell's first failing check into the job log."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly 43577137425")
 
   (item "macos-soak-selftest-send-fault" :group "review-v1-2" :area "tools"
@@ -987,11 +972,6 @@
    :title "macOS loss gate: the lo0 drop evidence is still machine-wide"
    :text "The macOS loss gate (tests/kernel_drops.h) admits the smaller of this process's sent-not-received and the rise in lo0's drops. lo0's drops are machine-wide, so on a loaded host a library datagram sent to a port none of this process's sockets has bound is still admitted (own 1, lo0 1 or more from other traffic). And a full receive buffer never shows in lo0 (measured: 1776 lost, lo0 +0); the gate refuses that only through the own count. Evidence: the cold reader's probe, scratchpad/lo0probe/main.go (2026-11-14). Next step: per-socket evidence, so that only a drop at this process's own sockets is admitted."
    :date "2026-11-14" :origin "Cold read of fix/v1.1.x/known-defects-macos at a75d81bd5")
-
-  (item "trace-plant-never-fires" :group "trace-check" :area "tools"
-   :title "Trace check: on some rolling seeds the plant never fires"
-   :text "tlc.yml TLA+ trace check (rolling seeds) at cbad53d3b failed 21 reruns: for layers msgxsendruns, receive, receive-handoff-xdp and xdp-reply-macs some seeds print 'the plant never fired: its trace proves nothing' and 'the plant changed no record: its trace is the clean one'; one msgxsendruns seed had no behaviour from TLC (tlc-plant-behaviour-not-printed). The seed's walk never reaches the planted step. Smallest fix in tools/tla_trace_check.py: draw the next seed until the plant fires, within a bound, and fail only when no seed in the bound fires it."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: tlc 43559610142")
 
   (item "rio-interrupt-placement-warning" :group "review-v1-2" :area "sdk"
    :title "rio: warn at start when an adapter queue interrupt lands on a lane worker or the main thread"

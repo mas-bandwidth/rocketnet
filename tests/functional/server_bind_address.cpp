@@ -15,6 +15,14 @@
 // (the IP and UDP headers), the same for both datagrams, so the control's
 // extra bytes are the far datagram's 100 plus that overhead.
 //
+// The case selects the portable server. A whole-suite server pin overrides
+// that, and the gso and io_uring servers report neither raw datagram in
+// rocketnet_server_stats' packets_received (0 of 2 for the wildcard control)
+// while their PACKETS_RECEIVED counter counts them: the documented field is
+// short on those transports (docs/roadmap.sexp
+// packets-received-counter-gso-uring). Until that is fixed a pin that
+// excludes portable takes the case out of the suite (its runs_here predicate).
+//
 // Real sockets and real time: a functional test.
 
 #include "rocketnet.h"

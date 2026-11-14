@@ -37,8 +37,6 @@
 # (reply-opens). nightly-ci ubuntu 22.04 container and the 22.04 VM were the
 # gcc 11 warning fixed by 2b8c6106 and go green at their next scheduled run.
 fuzz-nightly.yml	nightly fuzz macOS (	glenn	2026-11-14	GUESS: FUZZ-EXECS-FLOOR on loaded macOS hosts (client 4408/6003, server 4430/9000), not a measured regression; roadmap fuzz-execs-floor-loaded-hosts
-nightly-bigendian-system.yml	s390x full system	glenn	2026-11-14	fixed 10 s shutdown bound (examples/shutdown.h:30) and other real-time bounds trip in the emulated guest; alone it passes 3/3; roadmap s390x-real-time-bounds
-nightly-channel-seeds.yml	channel-seed-sweep	glenn	2026-11-14	GUESS: test_block_resend_cost_over_long_path reason=one on rolling seeds (4917323, 4914435), class not read; roadmap channel-seed-block-resend-cost
 nightly-ci.yml	full / windows / Release / unit	glenn	2026-11-14	test waited 1800 s for the commit lock, machine-wide by design (it bounds the host's commit, so both runner slots share it); a wait now names its holder (pid, executable, case, since) every 60 s and at the bound; GUESS on the holder: the sibling slot's clang-cl ASan test_server_stats_current_every_update, seen holding it 26 min on aws-win-ci-3 2026-11-14; roadmap windows-commit-lock-slot-starvation
 nightly-ci.yml	full / platform selftests / macos	glenn	2026-11-14	soak argument and summary selftest, leg 2: --seconds 3 exited 1 on honest loopback loss (LINK WITNESS FAILED missing=2 each way, 1 in 20 loaded on the studio); roadmap macos-soak-selftest-send-fault
 nightly-framework.yml	framework on rocketnet main	glenn	2026-11-14	FRAMEWORK_READ_TOKEN is not set for the workflow; roadmap nightly-runner-setup-gaps
@@ -46,10 +44,6 @@ nightly-real-load.yml	1000 clients over the LAN	glenn	2026-11-14	no inventory fi
 nightly-soak.yml	soak (main / windows)	glenn	2026-11-14	test_secrets_wiped_destroy_writes_only_keys waited 1800 s for the commit lock, machine-wide by design; a wait now names its holder every 60 s and at the bound; GUESS on the holder: the sibling slot's clang-cl ASan test_server_stats_current_every_update (26 min on aws-win-ci-3 2026-11-14); roadmap windows-commit-lock-slot-starvation
 nightly-toolchains.yml	windows / v145	glenn	2026-11-14	Configure: MSVC 14.52 not installed on the runner the label picked; roadmap nightly-runner-setup-gaps
 nightly-toolchains.yml	windows / v143	glenn	2026-11-14	MSB8020: toolset v143 missing on the runner the label picked (aws-win; captain has no v143 either); roadmap nightly-runner-setup-gaps
-nightly-toolchains.yml	linux / clang-18	glenn	2026-11-14	exact delivery over real sockets under host load (rocketnet_functional_tests.cpp:9171 tag == num_seen; earlier 1201/1280 with SEND_FAILED=79); roadmap exact-delivery-asserts
 nightly-ubuntu-lts-vms.yml	ubuntu 24.04 vm	glenn	2026-11-14	gpg-agent fails in the cloud image verify step on the runner; roadmap nightly-runner-setup-gaps
 nightly-windows-sanitizers.yml	windows appverif	glenn	2026-11-14	APPVERIF-REFUSED: NETWORK SERVICE cannot write the HKLM IFEO key; roadmap nightly-runner-setup-gaps
 nightly.yml	linux / mutation	glenn	2026-11-14	194 new survivors in the daily slice against tools/mutation/survivors.tsv; roadmap mutation-slice-survivors
-nightly.yml	linux / transport cells x50	glenn	2026-11-14	GUESS: every suite cell red, the failing case is only in the per-cell artifacts; roadmap linux-transport-cells-x50
-nightly.yml	windows / Debug	glenn	2026-11-14	tools/check_memory.py:24 hard-codes iocp workers (3); v1.1.61 plans 2; roadmap check-memory-worker-table
-tlc.yml	TLA+ trace check	glenn	2026-11-14	rolling seeds where the plant never fires or changes no record, and one no-behaviour plant; roadmap trace-plant-never-fires, tlc-plant-behaviour-not-printed

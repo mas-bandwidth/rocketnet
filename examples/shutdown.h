@@ -15,7 +15,7 @@
 // One bounded wait shared by every cleanup helper here and in
 // tests/native_shutdown.h. The caller supplies the completion query, an
 // optional step that progresses a step-driven object, and the clock and
-// sleep to wait on; this helper owns only the 10 second bound. Keeping the
+// sleep to wait on; this helper owns only the 10 second bound (below). Keeping the
 // clock and sleep as caller-supplied functions means including this header
 // brings no clock, sleep, socket or thread into a caller that does not pass
 // them: a unit test that includes tests/native_shutdown.h gets this helper's
@@ -25,15 +25,27 @@ typedef void ( *rn_cli_step_fn )( void * object );
 typedef double ( *rn_cli_now_fn )( void );
 typedef void ( *rn_cli_sleep_fn )( double seconds );
 
+// The bound is 10 seconds. Only the repository's own full-system emulated
+// test build (ROCKETNET_TEST_EMULATED, the s390x nightly, where a program
+// gets a fraction of a CPU) scales it, by tests/time_scale.h; every other
+// build, and every program built from these examples, keeps 10 seconds.
+#if defined( ROCKETNET_TEST_EMULATED )
+#include "../tests/time_scale.h"
+#define RN_CLI_SHUTDOWN_BOUND_SECONDS ( 10.0 * rocketnet_test_emulated_bound_scale() )
+#else
+#define RN_CLI_SHUTDOWN_BOUND_SECONDS 10.0
+#endif // #if defined( ROCKETNET_TEST_EMULATED )
+
 static inline void rn_cli_bounded_wait( void * object, rn_cli_stopped_fn stopped, rn_cli_step_fn step, rn_cli_now_fn now, rn_cli_sleep_fn sleep_fn, const char * what )
 {
-    const double deadline = now() + 10.0;
+    const double bound = RN_CLI_SHUTDOWN_BOUND_SECONDS;
+    const double deadline = now() + bound;
 
     while ( !stopped( object ) )
     {
         if ( now() >= deadline )
         {
-            fprintf( stderr, "%s shutdown did not complete within 10 seconds\n", what );
+            fprintf( stderr, "%s shutdown did not complete within %.0f seconds\n", what, bound );
             abort();
         }
 
