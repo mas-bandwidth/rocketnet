@@ -948,40 +948,20 @@
    :text "tools/check_memory.py:24 fixes the one-queue worker count per transport ('iocp': 3) and asserts it at :55, :87 and :112. The library's count moves with the plan: at a15a98cf1 the plan had 3 against a table of 2; 5677b4bf set 3; v1.1.61's sizing commits (81352192, 65e48f4f) made it 2, so the Windows Debug job fails with AssertionError ('iocp', 2). Smallest fix: take the expected count from the plan the server prints (its 'N workers'), and keep only the invariants that do not depend on sizing."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly windows / Debug at a1a426851 and a15a98cf1")
 
-  (item "windows-commit-lock-machine-wide" :group "review-v1-2" :area "tests"
-   :title "The Windows test commit lock is machine-wide, so two runner slots wait on each other"
-   :text "tests/suite_runner.h:1725 takes the mutex Global\\rocketnet-test-commit-bound and waits up to SUITE_COMMIT_LOCK_WAIT_SECONDS (1800, :1720). Both runner slots on an aws-win host share it, so a long holder on one slot fails the other: test_secrets_wiped_destroy_writes_only_keys 'waited 1800 s for the machine-wide commit lock' in nightly-soak windows (a1a426851) and Nightly CI windows unit 1/2 (21543f689). GUESS on the holder: a long ASan unit run on the sibling slot. Smallest fix: name the mutex per runner work directory (a hash of the working directory), and print the holder's pid when a wait passes 60 s. About 5 to 10 lines in one file."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14")
-
   (item "s390x-real-time-bounds" :group "review-v1-2" :area "tests"
    :title "The s390x guest trips wall-clock bounds under emulation"
    :text "nightly-bigendian-system runs the suite in an emulated s390x guest on a loaded host (load1 23.7). On a1a426851 test_gso_transport_posix_destroy_under_traffic_100 aborted on the fixed 10 s shutdown bound (examples/shutdown.h:30-37) and then passed alone 3 of 3 (346 to 445 s each). On ef00a6d10 (11-13) other bounds tripped: tests/functional/live_matrix.cpp:1606 and posix_hard_killed_client.cpp:631. Class TEST, GUESS against a rare shutdown stall; a dump of the shutdown state at the timeout settles it. Smallest fix: scale the real-time bounds by a guest factor in that workflow, or run there only cases that use no real time."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-bigendian-system 43589436444 and 43416070005")
-
-  (item "planted-self-test-wsl-bash" :group "review-v1-2" :area "tools"
-   :title "planted_violations.py self-test fails on the captain Windows runners"
-   :text "python tools/planted_violations.py --self-test fails 6 expectations on captain (catching check is PLANT-RED, matrix step filled in is PLANT-RED, the relative --scratch GITHUB_ENV case, lazy check is PLANT-GREEN and two more) and 1 on aws-win (relative --scratch). GUESS: :460 starts subprocess.Popen(['bash', ...]); Windows searches System32 before PATH, so on a host with WSL bash resolves to C:\\Windows\\System32\\bash.exe and the checks run in Linux against Windows paths. Settled by printing shutil.which('bash') and bash -c uname in the step on captain. Smallest fix: start bash by the path shutil.which returns, or name Git bash."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: planted-violations Windows on captain-1 and captain-3")
 
   (item "nightly-runner-setup-gaps" :group "review-v1-2" :area "fleet"
    :title "Nightly jobs red on runner setup, not code"
    :text "Five scheduled jobs fail before testing anything: nightly-framework (FRAMEWORK_READ_TOKEN not set); nightly-toolchains v141, v143 and v145 (runs-on [self-hosted, Windows, X64, rocketnet-windows] matches runners without the toolset: MSB8020, or MSVC 14.52 not installed); nightly-windows-sanitizers appverif (NETWORK SERVICE cannot write the HKLM IFEO key); nightly-ubuntu-lts-vms 24.04 (gpg-agent fails in the cloud image verify step); nightly-real-load (no inventory file on the runner). Smallest fix: a toolset label per matrix row on the runners that hold it, the secret, the account right, the gpg setup and the inventory file, each through the fleet's own tooling."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14")
 
-  (item "examples-windows-symlink-privilege" :group "review-v1-2" :area "tools"
-   :title "Nightly examples on Windows: symlink needs a privilege the runner lacks"
-   :text "tools/run_examples.py:153 calls link.symlink_to(binary); on the aws-win runner account it raises OSError WinError 1314 (a required privilege is not held). Green on 11-13. Smallest fix: copy the binary when the symlink is refused."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-examples 43566223627")
-
   (item "fuzz-execs-floor-loaded-hosts" :group "review-v1-2" :area "tests"
    :title "Nightly fuzz macOS falls under its executions floor"
    :text "FUZZ-EXECS-FLOOR on mini-m5-1 and mini-m5-2 at a1a426851: client 4408 of 6003, server 4430 of 9000 per second; the Windows legs failed the same way at earlier shas; green on 11-12. GUESS: a floor measured on idle hosts and read on shared ones, not a regression. Settled by one run on an idle host. Fix then: a floor per host class, or a void on host load as the frame budget does."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: fuzz-nightly 43570535426")
-
-  (item "clang-cl-test-build-warnings" :group "review-v1-2" :area "tests"
-   :title "clang-cl builds of the tests fail under -Werror and at link"
-   :text "nightly clang-cl x64 and nightly-windows-sanitizers clangcl-asan: tests/functional/windows_socket_errors.cpp 'missing field client initializer' (lines 559 to 918 across commits); lld cannot resolve __cpu_model in client_frame_time.vcxproj; duplicate operator new and delete in test.vcxproj under ASan; tests/load/harden_load.cpp -Wshorten-64-to-32 and -Wsign-conversion. Red on 11-13 too. Smallest fix: name the client field in those initializers, cast at the harden_load lines, and link clang_rt.builtins (or avoid __builtin_cpu_supports) under clang-cl; where __cpu_model comes from is a GUESS."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14")
 
   (item "mutation-slice-survivors" :group "review-v1-2" :area "tests"
    :title "Mutation campaign: the daily slices are not baselined"
@@ -1007,11 +987,6 @@
    :title "Trace check: on some rolling seeds the plant never fires"
    :text "tlc.yml TLA+ trace check (rolling seeds) at cbad53d3b failed 21 reruns: for layers msgxsendruns, receive, receive-handoff-xdp and xdp-reply-macs some seeds print 'the plant never fired: its trace proves nothing' and 'the plant changed no record: its trace is the clean one'; one msgxsendruns seed had no behaviour from TLC (tlc-plant-behaviour-not-printed). The seed's walk never reaches the planted step. Smallest fix in tools/tla_trace_check.py: draw the next seed until the plant fires, within a bound, and fail only when no seed in the bound fires it."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: tlc 43559610142")
-
-  (item "windows-lifecycle-handle-count-unjudged" :group "review-v1-2" :area "tests"
-   :title "Windows: judge the process handle count per create/destroy cycle"
-   :text "The iocp soak now allows the handle count to end up to 2 per completion worker above its post-warmup count (Winsock's per-thread copy of the thread handle and one event; tests/soak/soak.c, THE WINSOCK THREAD HANDLES), so a one-time leak of up to 4 handles after the baseline passes it, and nothing else catches one. tests/functional/windows_lifecycle_stress.cpp does not judge the process handle count: windows_counts_flat (354-377) leaves it out, line 800 prints it as UNATTRIBUTED, and only the SDK identity ledger of the handles the library tracks is compared (rocketnet_lifecycle_track_read, 808; windows_ledger_same_live and windows_ledger_result, 817-876). On iocp that ledger holds the sockets and the completion ports, registered at sdk/rocketnet_server_iocp_windows.cpp:2842 and :2983. tests/test_iocp.cpp (386-412) checks the count only over failed creates, with 2 handles of slack. Fix: judge the process handle count per create/destroy cycle in the lifecycle stress test, with the same Winsock per-thread allowance stated once and shared with the soak."
-   :date "2026-11-14" :origin "Cold review of fix/v1.1.x/soak-iocp-winsock-handles at 4990c1df0")
 
   (item "rio-interrupt-placement-warning" :group "review-v1-2" :area "sdk"
    :title "rio: warn at start when an adapter queue interrupt lands on a lane worker or the main thread"

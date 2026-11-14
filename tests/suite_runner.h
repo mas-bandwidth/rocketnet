@@ -61,6 +61,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <limits>
 #include <string>
 #include <thread>
@@ -1705,9 +1706,17 @@ inline std::string suite_commit_text()
 //
 // So a run takes one machine-wide lock for each such case it starts, and
 // releases it when the case ends; a run that dies leaves the lock abandoned,
-// which the next wait takes. Global\ reaches every session (the runners are
-// services in session 0); a process that may not create Global\ objects
-// falls back to its own session's Local\ name.
+// which the next wait takes at once and says so. Global\ reaches every session
+// (the runners are services in session 0); a process that may not create
+// Global\ objects falls back to its own session's Local\ name.
+//
+// The holder writes who it is (process id, executable, case, start time) into
+// a small named file mapping beside the mutex, written and cleared only while
+// it holds the lock. A waiter reads it, so it says every 60 s whom it waits
+// for, fails by that name at the bound, and names a dead holder when it takes
+// an abandoned lock. The record is a diagnostic: a waiter copies it without
+// the lock and only prints it. Without it, two waiters failed after 1800 s
+// naming nobody (nightly-soak windows and Nightly CI windows unit, 2026-11-14).
 //
 // Holding the lock, the run then checks the case's planned commit (its
 // declared bound) against the commit available. A host whose whole limit is
@@ -1718,16 +1727,105 @@ inline std::string suite_commit_text()
 // inside it.
 
 #define SUITE_COMMIT_LOCK_WAIT_SECONDS 1800
+#define SUITE_COMMIT_LOCK_REPORT_SECONDS 60
 #define SUITE_COMMIT_WAIT_SECONDS 120
+
+// who holds the commit lock; pid 0 is nobody
+struct suite_commit_holder_t
+{
+    DWORD pid;
+    long long start; // when it took the lock, time() seconds
+    char name[128];  // the case it holds the lock for
+    char exe[260];   // the run's executable, whose path names its runner slot
+};
+
+inline suite_commit_holder_t *& suite_commit_holder_view()
+{
+    static suite_commit_holder_t * view = NULL;
+    return view;
+}
 
 inline HANDLE suite_commit_lock_open()
 {
+    const wchar_t * record = L"Global\\rocketnet-test-commit-bound-holder";
     HANDLE lock = CreateMutexW( NULL, FALSE, L"Global\\rocketnet-test-commit-bound" );
     if ( !lock )
     {
         lock = CreateMutexW( NULL, FALSE, L"Local\\rocketnet-test-commit-bound" );
+        record = L"Local\\rocketnet-test-commit-bound-holder";
+    }
+    // The record lives as long as any run has it open, so it outlives each
+    // holder; the first creator's pages start zeroed (nobody). A run that
+    // cannot map it still takes the lock, and its waiters print the holder
+    // as unrecorded.
+    HANDLE mapping = CreateFileMappingW( INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, (DWORD) sizeof( suite_commit_holder_t ), record );
+    if ( mapping )
+    {
+        suite_commit_holder_view() = (suite_commit_holder_t *) MapViewOfFile( mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof( suite_commit_holder_t ) );
     }
     return lock;
+}
+
+inline std::string suite_commit_holder_text()
+{
+    suite_commit_holder_t holder;
+    if ( !suite_commit_holder_view() )
+    {
+        return "a holder this run cannot name (no holder record)";
+    }
+    memcpy( &holder, suite_commit_holder_view(), sizeof( holder ) );
+    holder.name[sizeof( holder.name ) - 1] = '\0';
+    holder.exe[sizeof( holder.exe ) - 1] = '\0';
+    if ( holder.pid == 0 )
+    {
+        return "a holder that left no record";
+    }
+    const char * state = ", process state unreadable";
+    HANDLE process = OpenProcess( SYNCHRONIZE, FALSE, holder.pid );
+    if ( process )
+    {
+        state = WaitForSingleObject( process, 0 ) == WAIT_OBJECT_0 ? ", process exited" : "";
+        CloseHandle( process );
+    }
+    else if ( GetLastError() == ERROR_INVALID_PARAMETER )
+    {
+        state = ", process no longer running";
+    }
+    const time_t start = (time_t) holder.start;
+    struct tm start_tm;
+    char start_text[32] = "?";
+    if ( gmtime_s( &start_tm, &start ) == 0 )
+    {
+        strftime( start_text, sizeof( start_text ), "%Y-%m-%dT%H:%M:%SZ", &start_tm );
+    }
+    char text[600];
+    snprintf( text, sizeof( text ), "pid %lu (%s) running %s, holding it since %s (%lld s)%s", (unsigned long) holder.pid, holder.exe,
+              holder.name, start_text, (long long) time( NULL ) - holder.start, state );
+    return text;
+}
+
+inline void suite_commit_holder_write( const std::string & name )
+{
+    suite_commit_holder_t holder;
+    memset( &holder, 0, sizeof( holder ) );
+    holder.pid = GetCurrentProcessId();
+    holder.start = (long long) time( NULL );
+    snprintf( holder.name, sizeof( holder.name ), "%s", name.c_str() );
+    GetModuleFileNameA( NULL, holder.exe, (DWORD) sizeof( holder.exe ) );
+    if ( suite_commit_holder_view() )
+    {
+        memcpy( suite_commit_holder_view(), &holder, sizeof( holder ) );
+    }
+}
+
+inline void suite_commit_lock_release( HANDLE lock )
+{
+    suite_commit_holder_t * view = suite_commit_holder_view();
+    if ( view )
+    {
+        memset( view, 0, sizeof( *view ) );
+    }
+    ReleaseMutex( lock );
 }
 
 inline bool suite_commit_lock_take( HANDLE lock, const std::string & name, long planned_mb, std::string & detail )
@@ -1738,16 +1836,37 @@ inline bool suite_commit_lock_take( HANDLE lock, const std::string & name, long 
         return false;
     }
 
+    // wait in slices, saying whom for after each, up to the bound
     const auto start = std::chrono::steady_clock::now();
-    const DWORD wait = WaitForSingleObject( lock, SUITE_COMMIT_LOCK_WAIT_SECONDS * 1000 );
-    const double waited = std::chrono::duration<double>( std::chrono::steady_clock::now() - start ).count();
-    if ( wait != WAIT_OBJECT_0 && wait != WAIT_ABANDONED )
+    DWORD wait = WAIT_TIMEOUT;
+    double waited = 0.0;
+    while ( wait == WAIT_TIMEOUT && waited < SUITE_COMMIT_LOCK_WAIT_SECONDS )
     {
+        const double left = SUITE_COMMIT_LOCK_WAIT_SECONDS - waited;
+        wait = WaitForSingleObject( lock, (DWORD) ( 1000.0 * ( left < SUITE_COMMIT_LOCK_REPORT_SECONDS ? left : SUITE_COMMIT_LOCK_REPORT_SECONDS ) ) + 1 );
+        waited = std::chrono::duration<double>( std::chrono::steady_clock::now() - start ).count();
+        if ( wait == WAIT_TIMEOUT )
+        {
+            printf( "commit lock: %s has waited %.0f s of %d s for %s\n", name.c_str(), waited, SUITE_COMMIT_LOCK_WAIT_SECONDS,
+                    suite_commit_holder_text().c_str() );
+            fflush( stdout );
+        }
+    }
+    if ( wait == WAIT_ABANDONED )
+    {
+        // the holder ended without releasing it; its record is still the last one written
+        printf( "commit lock: %s took the lock abandoned by %s\n", name.c_str(), suite_commit_holder_text().c_str() );
+        fflush( stdout );
+    }
+    else if ( wait != WAIT_OBJECT_0 )
+    {
+        const unsigned long error = wait == WAIT_FAILED ? (unsigned long) GetLastError() : 0;
         char text[128];
-        snprintf( text, sizeof( text ), " waited %.0f s for the machine-wide commit lock (wait %lu)", waited, (unsigned long) wait );
-        detail = name + text;
+        snprintf( text, sizeof( text ), " waited %.0f s for the machine-wide commit lock (wait %lu, error %lu), held by ", waited, (unsigned long) wait, error );
+        detail = name + text + suite_commit_holder_text();
         return false;
     }
+    suite_commit_holder_write( name );
     if ( waited >= 1.0 )
     {
         printf( "commit lock: %s waited %.1f s for another run's full-capacity case\n", name.c_str(), waited );
@@ -1771,7 +1890,7 @@ inline bool suite_commit_lock_take( HANDLE lock, const std::string & name, long 
                       planned_mb, (unsigned long long) ( status.ullAvailPageFile >> 20 ),
                       (unsigned long long) ( status.ullTotalPageFile >> 20 ), short_s );
             detail = name + text;
-            ReleaseMutex( lock );
+            suite_commit_lock_release( lock );
             return false;
         }
         Sleep( 1000 );
@@ -2637,7 +2756,7 @@ inline int suite_main( int argc, char ** argv,
                     result.detail = item.name + suite_spawn_failure_text( "CreatePipe", error );
                     if ( commit_held )
                     {
-                        ReleaseMutex( commit_lock );
+                        suite_commit_lock_release( commit_lock );
                         commit_held = false;
                     }
                     continue;
@@ -2670,7 +2789,7 @@ inline int suite_main( int argc, char ** argv,
                 result.detail = item.name + suite_spawn_failure_text( "CreateProcessW", error );
                 if ( commit_held )
                 {
-                    ReleaseMutex( commit_lock );
+                    suite_commit_lock_release( commit_lock );
                     commit_held = false;
                 }
                 continue;
@@ -2762,7 +2881,7 @@ inline int suite_main( int argc, char ** argv,
             result.done = true;
             if ( running[i].alone && commit_held )
             {
-                ReleaseMutex( commit_lock );
+                suite_commit_lock_release( commit_lock );
                 commit_held = false;
             }
             running.erase( running.begin() + (std::ptrdiff_t) i );
@@ -2786,7 +2905,7 @@ inline int suite_main( int argc, char ** argv,
 
     if ( commit_held )
     {
-        ReleaseMutex( commit_lock );
+        suite_commit_lock_release( commit_lock );
     }
     if ( commit_lock )
     {

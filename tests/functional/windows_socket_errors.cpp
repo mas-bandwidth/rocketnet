@@ -568,7 +568,7 @@ static void windows_server_counts_prefilter_size( const windows_socket_errors_tr
 
 static void windows_server_counts_oversize_as_prefilter_too_large_iocp_case()
 {
-    windows_socket_errors_transport_t transport = { "iocp", false };
+    windows_socket_errors_transport_t transport = { "iocp", false, NULL };
     std::vector<windows_socket_errors_datagram_t> datagrams;
     windows_socket_errors_oversize( datagrams );
     windows_server_counts_prefilter_size( &transport, "windows_server_counts_oversize_as_prefilter_too_large_iocp", datagrams,
@@ -577,7 +577,7 @@ static void windows_server_counts_oversize_as_prefilter_too_large_iocp_case()
 
 static void windows_server_counts_oversize_as_prefilter_too_large_rio_case()
 {
-    windows_socket_errors_transport_t transport = { "rio", false };
+    windows_socket_errors_transport_t transport = { "rio", false, NULL };
     std::vector<windows_socket_errors_datagram_t> datagrams;
     windows_socket_errors_oversize( datagrams );
     windows_server_counts_prefilter_size( &transport, "windows_server_counts_oversize_as_prefilter_too_large_rio", datagrams,
@@ -586,7 +586,7 @@ static void windows_server_counts_oversize_as_prefilter_too_large_rio_case()
 
 static void windows_server_counts_runt_as_prefilter_too_short_rio_case()
 {
-    windows_socket_errors_transport_t transport = { "rio", false };
+    windows_socket_errors_transport_t transport = { "rio", false, NULL };
     std::vector<windows_socket_errors_datagram_t> datagrams;
     windows_socket_errors_datagram_t empty;
     windows_socket_errors_datagram_t one;
@@ -854,7 +854,7 @@ static void windows_per_packet_receive_counts_empty_datagram( bool ipv6 )
 // bank: rio never drops for one.
 static void windows_server_rio_failed_receives_reach_the_server_case()
 {
-    windows_socket_errors_transport_t transport = { "rio", false };
+    windows_socket_errors_transport_t transport = { "rio", false, NULL };
     windows_socket_errors_session_t session;
     windows_socket_errors_session_start( &session, &transport );
 
@@ -908,12 +908,12 @@ void windows_server_rio_failed_receives_reach_the_server() { windows_server_rio_
 #endif // #if ROCKETNET_DEV
 
 #define WINDOWS_SOCKET_ERRORS_CASES( name )                                                                     \
-    void name##_portable_ipv4() { windows_socket_errors_transport_t t = { "portable", false }; name( &t ); }   \
-    void name##_portable_ipv6() { windows_socket_errors_transport_t t = { "portable", true };  name( &t ); }   \
-    void name##_iocp_ipv4()     { windows_socket_errors_transport_t t = { "iocp", false };     name( &t ); }   \
-    void name##_iocp_ipv6()     { windows_socket_errors_transport_t t = { "iocp", true };      name( &t ); }   \
-    void name##_rio_ipv4()      { windows_socket_errors_transport_t t = { "rio", false };      name( &t ); }   \
-    void name##_rio_ipv6()      { windows_socket_errors_transport_t t = { "rio", true };       name( &t ); }
+    void name##_portable_ipv4() { windows_socket_errors_transport_t t = { "portable", false, NULL }; name( &t ); }   \
+    void name##_portable_ipv6() { windows_socket_errors_transport_t t = { "portable", true, NULL };  name( &t ); }   \
+    void name##_iocp_ipv4()     { windows_socket_errors_transport_t t = { "iocp", false, NULL };     name( &t ); }   \
+    void name##_iocp_ipv6()     { windows_socket_errors_transport_t t = { "iocp", true, NULL };      name( &t ); }   \
+    void name##_rio_ipv4()      { windows_socket_errors_transport_t t = { "rio", false, NULL };      name( &t ); }   \
+    void name##_rio_ipv6()      { windows_socket_errors_transport_t t = { "rio", true, NULL };       name( &t ); }
 
 WINDOWS_SOCKET_ERRORS_CASES( windows_server_drops_oversize_datagram )
 WINDOWS_SOCKET_ERRORS_CASES( windows_server_drops_runt_and_garbage )

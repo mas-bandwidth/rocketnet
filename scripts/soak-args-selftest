@@ -47,8 +47,10 @@
 #   7  impairment fault -- ROCKETNET_SOAK_FAULT_IMPAIRMENT=1 creates the ends
 #                          unimpaired: --assert-flat must fail "link impairment
 #                          not observed".
-#   8  leak fault       -- ROCKETNET_SOAK_FAULT_LEAK_FD=1 holds one file open
-#                          past the end sample: --assert-flat must fail on fds.
+#   8  leak fault       -- ROCKETNET_SOAK_FAULT_LEAK_FD=1 holds files open past
+#                          the end sample (one more than the handle allowance):
+#                          --assert-flat must fail on fds. On Windows, 8b runs
+#                          it against an iocp server too.
 
 set -u
 
@@ -279,6 +281,16 @@ elif ! grep -q -- '--assert-flat FAILED: \(fds\|handles\)' "$WORK/flat_leak.txt"
     fail "the leaking run failed (exit $status) but never named the fd or handle count"
 else
     echo "leg 8  --assert-flat against a leaked file: red, exit $status, $( grep -m1 -- '--assert-flat FAILED' "$WORK/flat_leak.txt" | cut -c1-90 )"
+fi
+# the same plant against an iocp server, whose handle check allows Winsock's per-thread handles
+if [ "$SOAK" = ./bin/Release/soak.exe ]; then
+    env ROCKETNET_SERVER_TRANSPORT=iocp ROCKETNET_SOAK_FAULT_LEAK_FD=1 "$SOAK" --seconds "$FLAT_SECONDS" --assert-flat > "$WORK/flat_leak_iocp.txt" 2>&1
+    status=$?
+    if [ "$status" -eq 0 ] || ! grep -q -- '--assert-flat FAILED: handles' "$WORK/flat_leak_iocp.txt"; then
+        fail "files were leaked on purpose against an iocp server and --assert-flat did not fail on the handle count (exit $status)"
+    else
+        echo "leg 8b --assert-flat against leaked files, iocp server: red, exit $status, $( grep -m1 -- '--assert-flat FAILED' "$WORK/flat_leak_iocp.txt" | cut -c1-90 )"
+    fi
 fi
 fi # MODE = flat
 
