@@ -1440,4 +1440,235 @@ WINDOWS_LIFECYCLE_CELL_CASES( rio )
 #undef WINDOWS_LIFECYCLE_CELL_CASES
 #undef WINDOWS_LIFECYCLE_CELL_CASE
 
+// ---------------------------------------------------------------
+// auto past a refusing iocp (functional: real sockets, threads and ports)
+// ---------------------------------------------------------------
+//
+// A server's auto on Windows is iocp, rio, then portable in every build. Each
+// scenario makes the candidates ahead of the expected one refuse, through the
+// iocp create seam (sdk/rocketnet_driver_builtin.cpp: the real create, failed
+// at its test stage 4, after its workers started and its first receive was
+// posted, so its whole rollback runs) or a real condition (rio asked for two
+// lanes on the wildcard; a port another socket holds exclusively), and creates
+// the server on auto 50 times after one warm cycle. Each create grants the
+// expected transport, or fails with the expected status when every candidate
+// refuses; each refusal logs its line at warn or error; and after the last
+// destroy the process handle count, the case heap and the SDK identity ledger
+// are where the warm cycle left them.
+
+#include "rocketnet_server_iocp.h"
+
+extern void rocketnet_server_iocp_set_create_for_test( rocketnet_server_iocp_t * ( *function )( void *, rocketnet_address_t *, int, int, int, int, int, int * ) );
+
+// defined in tests/functional/rocketnet_functional_tests.cpp: the suite's log function back
+void rocketnet_functional_restore_log_function();
+
+#define WINDOWS_AUTO_FALL_CYCLES 50
+
+static rocketnet_server_iocp_t * windows_iocp_fails_at_stage_4( void * context, rocketnet_address_t * bind_address, int workers, int send_threads,
+                                                                int max_clients, int fail_stage, int flags, int * status )
+{
+    (void) fail_stage;
+    return rocketnet_server_iocp_create_threads( context, bind_address, workers, send_threads, max_clients, 4, flags, status );
+}
+
+struct windows_auto_fall_t
+{
+    const char * name;
+    const char * address; // "hold" binds 127.0.0.1 on a port a socket of this case holds exclusively
+    int rio_lanes;
+    bool iocp_fails;
+    const char * granted; // NULL: every candidate refuses
+    int status;           // the create's status when granted is NULL
+    bool iocp_refuses;
+    bool rio_refuses;
+    bool portable_refuses;
+};
+
+static std::atomic<int> windows_auto_fall_iocp_lines( 0 );
+static std::atomic<int> windows_auto_fall_rio_lines( 0 );
+static std::atomic<int> windows_auto_fall_portable_lines( 0 );
+
+static bool windows_auto_fall_has( const char * message, size_t length, const char * needle )
+{
+    const size_t needle_bytes = strlen( needle );
+    for ( size_t i = 0; i + needle_bytes <= length; i++ )
+    {
+        if ( memcmp( message + i, needle, needle_bytes ) == 0 )
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void windows_auto_fall_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    if ( level != ROCKETNET_LOG_LEVEL_WARN && level != ROCKETNET_LOG_LEVEL_ERROR )
+    {
+        return;
+    }
+    if ( windows_auto_fall_has( message, length, "iocp transport refused" ) || windows_auto_fall_has( message, length, "iocp transport create failed" ) )
+    {
+        windows_auto_fall_iocp_lines.fetch_add( 1 );
+    }
+    if ( windows_auto_fall_has( message, length, "rio transport refused" ) || windows_auto_fall_has( message, length, "rio transport create failed" ) )
+    {
+        windows_auto_fall_rio_lines.fetch_add( 1 );
+    }
+    if ( windows_auto_fall_has( message, length, "portable" ) )
+    {
+        windows_auto_fall_portable_lines.fetch_add( 1 );
+    }
+}
+
+// one create on auto, then stop and destroy what it granted
+static void windows_auto_fall_cycle( const windows_auto_fall_t * scenario, const char * address, int cycle )
+{
+    windows_auto_fall_iocp_lines.store( 0 );
+    windows_auto_fall_rio_lines.store( 0 );
+    windows_auto_fall_portable_lines.store( 0 );
+
+    struct rocketnet_server_transport_config_t config;
+    rocketnet_server_transport_dev_config( &config );
+    config.max_clients = 4;
+    config.num_rio_lanes = scenario->rio_lanes;
+    snprintf( config.transport, sizeof( config.transport ), "%s", "auto" );
+
+    int status = ROCKETNET_STATUS_OK;
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_internal( NULL, address, &config, rocketnet_platform_time(), &status );
+    const char * granted = server ? rocketnet_server_transport_io_name( server ) : NULL;
+    const bool granted_ok = scenario->granted ? ( server && strcmp( granted, scenario->granted ) == 0 ) : ( !server && status == scenario->status );
+    const bool lines_ok = ( windows_auto_fall_iocp_lines.load() > 0 ) == scenario->iocp_refuses && ( windows_auto_fall_rio_lines.load() > 0 ) == scenario->rio_refuses &&
+                          ( !scenario->portable_refuses || windows_auto_fall_portable_lines.load() > 0 );
+    if ( cycle == 0 || !granted_ok || !lines_ok )
+    {
+        printf( "auto_fall [%s] at %s cycle %d: %s, status %s; refusal lines iocp %d, rio %d, portable %d\n", scenario->name, address, cycle,
+                granted ? granted : "no transport", rocketnet_status_name( (enum rocketnet_status_t) status ), windows_auto_fall_iocp_lines.load(),
+                windows_auto_fall_rio_lines.load(), windows_auto_fall_portable_lines.load() );
+        fflush( stdout );
+    }
+    if ( server )
+    {
+        rn_native_server_transport_stop_and_destroy( server );
+    }
+    windows_lifecycle_check( granted_ok );
+    windows_lifecycle_check( lines_ok );
+}
+
+// a UDP socket bound exclusively to 127.0.0.1 on a port the system picks;
+// address gets "127.0.0.1:<port>"
+static SOCKET windows_auto_fall_hold_port( char * address, size_t address_bytes )
+{
+    const SOCKET held = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    windows_lifecycle_check( held != INVALID_SOCKET );
+    BOOL exclusive = TRUE;
+    windows_lifecycle_check( setsockopt( held, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &exclusive, (int) sizeof( exclusive ) ) == 0 );
+
+    struct sockaddr_in bound;
+    memset( &bound, 0, sizeof( bound ) );
+    bound.sin_family = AF_INET;
+    bound.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    windows_lifecycle_check( bind( held, (const struct sockaddr *) &bound, (int) sizeof( bound ) ) == 0 );
+    int bound_bytes = (int) sizeof( bound );
+    windows_lifecycle_check( getsockname( held, (struct sockaddr *) &bound, &bound_bytes ) == 0 );
+    snprintf( address, address_bytes, "127.0.0.1:%u", (unsigned) ntohs( bound.sin_port ) );
+    return held;
+}
+
+// the after counts: polled until the handles are back at or under the before
+// count and the heap and private bytes are flat, or WINDOWS_SETTLE_SECONDS
+static windows_resource_counts_t windows_auto_fall_settled( const windows_resource_counts_t * before, double seconds )
+{
+    const double deadline = rocketnet_platform_time() + WINDOWS_SETTLE_SECONDS;
+    windows_resource_counts_t current = windows_read_counts();
+    while ( ( current.handles > before->handles || !windows_counts_flat( before, &current, seconds ) ) && rocketnet_platform_time() < deadline )
+    {
+        rocketnet_platform_sleep( 0.001 );
+        current = windows_read_counts();
+    }
+    return current;
+}
+
+static bool windows_auto_fall_scenario( const windows_auto_fall_t * scenario )
+{
+    char address[64];
+    SOCKET held = INVALID_SOCKET;
+    if ( strcmp( scenario->address, "hold" ) == 0 )
+    {
+        held = windows_auto_fall_hold_port( address, sizeof( address ) );
+    }
+    else
+    {
+        snprintf( address, sizeof( address ), "%s", scenario->address );
+    }
+    rocketnet_server_iocp_set_create_for_test( scenario->iocp_fails ? windows_iocp_fails_at_stage_4 : NULL );
+
+    rocketnet_lifecycle_resources_t initial_resources;
+    windows_ledger_read( &initial_resources );
+    windows_auto_fall_cycle( scenario, address, 0 );
+
+    const windows_resource_counts_t before = windows_stable_counts();
+    rocketnet_lifecycle_resources_t before_resources;
+    windows_ledger_read( &before_resources );
+
+    const double start = windows_run_clock();
+    for ( int i = 1; i <= WINDOWS_AUTO_FALL_CYCLES; i++ )
+    {
+        windows_auto_fall_cycle( scenario, address, i );
+    }
+    const double seconds = windows_run_clock() - start;
+
+    const windows_resource_counts_t after = windows_auto_fall_settled( &before, seconds );
+    rocketnet_lifecycle_resources_t after_resources;
+    windows_ledger_read( &after_resources );
+    rocketnet_server_iocp_set_create_for_test( NULL );
+
+    const windows_cell_t cell = { scenario->name, "auto" };
+    const bool counts_ok = windows_case_result( "auto_fall_50", &cell, &before, &after, seconds );
+    const bool handles_ok = after.handles <= before.handles;
+    printf( "auto_fall_50 [%s]: process handles %lld -> %lld%s\n", scenario->name, (long long) before.handles, (long long) after.handles,
+            handles_ok ? "" : " FAIL handles left behind" );
+    const bool loop_ok = windows_ledger_result( "auto_fall_50", &cell, &before_resources, &after_resources, "after loop" );
+    const bool full_ok = windows_ledger_result( "auto_fall_50", &cell, &initial_resources, &after_resources, "after warm and loop" );
+    if ( held != INVALID_SOCKET )
+    {
+        closesocket( held );
+    }
+    return counts_ok && handles_ok && loop_ok && full_ok;
+}
+
+void rocketnet_test_windows_auto_falls_past_iocp();
+void rocketnet_test_windows_auto_falls_past_iocp()
+{
+    static const windows_auto_fall_t scenarios[] = {
+        // iocp's create fails after its workers start: rio is granted
+        { "iocp fails late, rio granted", "127.0.0.1:0", 0, true, "rio", ROCKETNET_STATUS_OK, true, false, false },
+        // iocp fails late and rio refuses two lanes on the wildcard: portable
+        { "iocp fails late, rio refuses, portable granted", "0.0.0.0:0", 2, true, "portable", ROCKETNET_STATUS_OK, true, true, false },
+        // another socket holds the port: every candidate refuses the bind
+        { "port held, every candidate refuses", "hold", 0, false, NULL, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED, true, true, true },
+    };
+
+    rocketnet_lifecycle_track_begin();
+    windows_clear_transport_env();
+    windows_library_heap_begin();
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_function( windows_auto_fall_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
+
+    bool ok = true;
+    for ( int i = 0; i < (int) ( sizeof( scenarios ) / sizeof( scenarios[0] ) ); i++ )
+    {
+        ok = windows_auto_fall_scenario( &scenarios[i] ) && ok;
+    }
+
+    rocketnet_log_level( saved_level );
+    rocketnet_functional_restore_log_function();
+    windows_lifecycle_check( ok );
+    windows_library_heap_end();
+    rocketnet_lifecycle_track_end();
+}
+
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS

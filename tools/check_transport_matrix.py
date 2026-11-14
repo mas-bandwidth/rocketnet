@@ -118,11 +118,11 @@ def check_doc_orders(orders, problems):
         elif got != want:
             problems.append(f"{doc}: {label} {endpoint} auto order is '{got}', registry renders '{want}'")
 
-    # sdk/rocketnet.h: Development/Production servers try ...; Linux/macOS/Windows clients try ...
+    # sdk/rocketnet.h: Servers try ... in development and production builds alike; Linux/macOS/Windows clients try ...
     header = norm_doc(read("sdk/rocketnet.h").replace("///", ""))
-    for kind, endpoint in (("Development", "server-development"), ("Production", "server-production")):
-        m = re.search(kind + r" servers try (.+?) on Linux; (.+?) on macOS; and (.+?) on Windows", header)
-        groups = m.groups() if m else (None, None, None)
+    m = re.search(r"Servers try (.+?) on Linux; (.+?) on macOS; and (.+?) on Windows, in development and production builds alike", header)
+    groups = m.groups() if m else (None, None, None)
+    for endpoint in ("server-development", "server-production"):
         for label, got in zip(("Linux", "macOS", "Windows"), groups):
             compare("sdk/rocketnet.h", label, endpoint, norm_order(got) if got else None)
     m = re.search(r"Linux clients try (.+?); macOS clients try (.+?); and Windows clients try (.+?)\.", header)
@@ -130,21 +130,13 @@ def check_doc_orders(orders, problems):
     for label, got in zip(("Linux", "macOS", "Windows"), groups):
         compare("sdk/rocketnet.h", label, "client", norm_order(got) if got else None)
 
-    # docs/USAGE.md: server prod sentence with dev in parentheses (dev differs only on Windows), then client sentence.
+    # docs/USAGE.md: one server sentence for both builds, then the client sentence.
     usage = norm_doc(read("docs/USAGE.md"))
-    m = re.search(r"The server's auto order is (.+?) on Linux; (.+?) on macOS; and (.+?) on Windows in production builds \((.+?) in development builds\)", usage)
-    if not m:
-        for label in ("Linux", "macOS", "Windows"):
-            compare("docs/USAGE.md", label, "server-production", None)
-            compare("docs/USAGE.md", label, "server-development", None)
-    else:
-        prod_linux, prod_macos, prod_windows, dev_windows = (norm_order(g) for g in m.groups())
-        compare("docs/USAGE.md", "Linux", "server-production", prod_linux)
-        compare("docs/USAGE.md", "macOS", "server-production", prod_macos)
-        compare("docs/USAGE.md", "Windows", "server-production", prod_windows)
-        compare("docs/USAGE.md", "Linux", "server-development", prod_linux)
-        compare("docs/USAGE.md", "macOS", "server-development", prod_macos)
-        compare("docs/USAGE.md", "Windows", "server-development", dev_windows)
+    m = re.search(r"The server's auto order is (.+?) on Linux; (.+?) on macOS; and (.+?) on Windows, in development and production builds alike", usage)
+    groups = m.groups() if m else (None, None, None)
+    for endpoint in ("server-development", "server-production"):
+        for label, got in zip(("Linux", "macOS", "Windows"), groups):
+            compare("docs/USAGE.md", label, endpoint, norm_order(got) if got else None)
     m = re.search(r"The client's auto order is [^.]*?: (.+?) on Linux; (.+?) on macOS; (.+?) on Windows\.", usage)
     groups = m.groups() if m else (None, None, None)
     for label, got in zip(("Linux", "macOS", "Windows"), groups):

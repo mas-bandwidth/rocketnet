@@ -15,8 +15,9 @@ the order xdp, io_uring, gso, so a Linux server without root runs io_uring
 where the build and the kernel have it and gso otherwise; macOS production
 servers have msgx; Windows production servers have iocp and rio. Portable
 servers and clients are also available on every platform; the portable server
-is a fallback, not a production server transport. Production server
-auto selection ranks portable after the native transports. Loopback is on every platform and is selected
+is a fallback, not a production server transport. Server auto selection
+ranks portable after the native transports in development and production
+builds alike (Windows: iocp, rio, then portable). Loopback is on every platform and is selected
 only by name. The transport walks an ordered candidate
 list when client connect or server start activates I/O. Public create parses
 and resolves the configured list before that activation. The list rides the config's transport field or the
@@ -24,7 +25,7 @@ per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 environment variables (precedence: default < struct < env):
 
     ./bin/functional                                # auto: the platform's recommended transport order
-                                                #   (production linux: xdp,io_uring,gso,portable — falls on refusal)
+                                                #   (linux, either build: xdp,io_uring,gso,portable — falls on refusal)
     ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
                                                 #   portable server is available in both build modes
                                                 # a one-element list is a pin: that transport
@@ -88,8 +89,8 @@ the server's configured `max_clients`; see [Maximum clients](MEMORY.md#maximum-c
 not timing or packet-rate requirements. A send frame still owned by the OS is
 unavailable to the next fill, even after an application flush.
 
-Windows production server `auto` tries iocp, rio, then portable; development
-builds try portable, iocp, then rio. Windows CI runs both configurations, plus
+Windows server `auto` tries iocp, rio, then portable, in development and
+production builds alike. Windows CI runs both configurations, plus
 completion-lifetime, allocation-failure and shutdown tests with IOCP selected.
 Compilation and loopback correctness do not establish NIC
 line-rate performance; that requires measurements on suitable Windows hardware.

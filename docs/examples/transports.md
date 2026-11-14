@@ -8,7 +8,7 @@ a client exchange over the loopback interface, `127.0.0.1`.
 Three kinds of `transport` setting, each created in turn on a server:
 - **auto** (`NULL`): the platform's recommended transport order from `sdk/rocketnet_drivers.inc`. A Linux server tries
   `xdp`, then `io_uring`, then `gso`, then `portable`; macOS tries `msgx`, then `portable`;
-  Windows tries `iocp`, then `rio`, then `portable` in production builds (`portable`, then `iocp`, then `rio` in development builds). Clients on `auto` try `gso`, then `portable` on Linux; `msgx`, then `portable` on macOS; and `iocp`, then `portable` on Windows. The first transport that starts wins.
+  Windows tries `iocp`, then `rio`, then `portable`, in development and production builds alike. Clients on `auto` try `gso`, then `portable` on Linux; `msgx`, then `portable` on macOS; and `iocp`, then `portable` on Windows. The first transport that starts wins.
 - **a pin**: one name available for this endpoint and platform. The server
   gets that transport or start fails. A known name unavailable for this
   endpoint is skipped; if nothing remains, resolution falls back to `auto`
@@ -65,8 +65,9 @@ The environment overrides the config struct at create, with precedence
 default < struct < environment:
 
 `portable` is available to clients and servers in development and production
-builds on every platform. Production server auto selection prefers native
-transports, with portable as the final fallback.
+builds on every platform. Server auto selection prefers native transports,
+with portable as the final fallback, in development and production builds
+alike.
 
 ```sh
 ROCKETNET_SERVER_TRANSPORT=portable ./my_server

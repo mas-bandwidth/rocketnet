@@ -77,7 +77,7 @@ build, the Xcode generator and the deployment target.
 ## The macOS transports
 
 The transport registry has two rows that build on macOS: `portable` (every
-platform; server rank 30 in development builds and 50 in production, client
+platform; server rank 50, client
 rank 30; the `PORTABLE` registry entry in `sdk/rocketnet_drivers.inc`)
 and `msgx` (macOS, server and client rank 10; the `MSGX` registry entry);
 lower ranks win. Server and client `auto` ask for `msgx` first and fall to `portable`

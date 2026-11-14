@@ -692,13 +692,16 @@ jobs:
       - name: IOCP allocation, completion lifetime, concurrency and shutdown
         run: ./bin/Debug/test_iocp.exe
 
-      - name: Run functional suite (RSS enforced)
+      # pinned to portable: auto on Windows is iocp first in every build, which
+      # the next step pins, so this run keeps the portable server covered
+      - name: Run functional suite with portable selected (RSS enforced)
         shell: bash
         env:
           ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
+          ROCKETNET_SERVER_TRANSPORT: portable
         run: |
           set -euo pipefail
-          bash tools/run_functional.sh dev ./bin/Debug/functional.exe
+          bash tools/run_functional.sh dev-portable ./bin/Debug/functional.exe
 
       - name: Functional suite with IOCP selected
         shell: bash
@@ -795,14 +798,15 @@ jobs:
         run: python tools/check_driver_extension.py build --config Release
 
   # Windows MSVC AddressSanitizer over unit, lifecycle, IOCP/RIO transport and
-  # functional suites (portable, iocp and rio transports) on the native Windows
+  # functional suites (portable, iocp and rio, each pinned) on the native Windows
   # fleet runner. Configured via -DROCKETNET_SANITIZE_ADDRESS=ON (adds
   # /fsanitize=address /Zi and link /DEBUG /INCREMENTAL:NO on every target and
   # stages clang_rt.asan_dynamic-x86_64.dll beside the built executables).
   # Measured on the Windows fleet member, one suite at a time: configure and
   # Release build from a clean tree 180 s, test.exe 62 s,
   # test_lifecycle.exe 3 s, test_iocp.exe 5 s, functional.exe 23 s
-  # (default), 28 s (iocp) and 20 s (rio): about 5.5 minutes end to end.
+  # (then unpinned, which ran portable), 28 s (iocp) and 20 s (rio): about 5.5
+  # minutes end to end.
   build-and-test-windows-asan:
     name: windows / Release ASan
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
@@ -862,11 +866,15 @@ jobs:
           set -euo pipefail
           ./bin/Release/test_iocp.exe
 
-      - name: Run functional suite under ASan (default)
+      # pinned to portable: auto on Windows is iocp first in every build, which
+      # the next step pins
+      - name: Run functional suite under ASan (ROCKETNET_SERVER_TRANSPORT=portable)
         shell: bash
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
         run: |
           set -euo pipefail
-          bash tools/run_functional.sh dev-sanitized ./bin/Release/functional.exe
+          bash tools/run_functional.sh dev-sanitized-portable ./bin/Release/functional.exe
 
       - name: Run functional suite under ASan (ROCKETNET_SERVER_TRANSPORT=iocp)
         shell: bash

@@ -2514,6 +2514,8 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
 #endif // #if ROCKETNET_DEV
     if ( !bind_address || ( bind_address->type != ROCKETNET_ADDRESS_IPV4 && bind_address->type != ROCKETNET_ADDRESS_IPV6 ) )
     {
+        rocketnet_warn( "iocp transport refused: the bind address is %s (address type %d), not IPv4 or IPv6", bind_address ? "of another family" : "missing",
+                        bind_address ? (int) bind_address->type : -1 );
         return NULL;
     }
     if ( num_workers < 1 || num_workers > ROCKETNET_IOCP_MAX_WORKERS )
@@ -2530,6 +2532,10 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
     rocketnet_iocp_sized_layout_t layout;
     if ( !rocketnet_iocp_sized_layout( max_clients, num_workers, &layout ) )
     {
+        // the counts were checked above, so only a size past the address space
+        // reaches here
+        rocketnet_warn( "iocp transport refused: the memory layout for %d clients and %d workers does not fit the address space", max_clients,
+                        num_workers );
         return NULL;
     }
     const int send_threads = rocketnet_server_iocp_send_threads_for( num_send_threads, layout.num_lanes );

@@ -11,7 +11,11 @@ wins. Read the result with `rocketnet_server_transport_name` or
 (`sdk/rocketnet_drivers.inc`); a lower rank is tried first, "pin only" means
 `auto` never picks it and only a list of that one name selects it (in a
 longer list it is skipped), and "-" means that endpoint
-does not have the transport.
+does not have the transport. A transport an embedding project adds sorts
+among these by the same ranks in every build: a server rank below 50 is tried
+before `portable`, and a rank equal to a built-in one is tried after it, so 50
+stays after `portable`
+([TRANSPORT-INTERNALS.md](TRANSPORT-INTERNALS.md#adding-a-backend-without-editing-the-transport)).
 
 | Transport | Platform | Server rank | Client rank | What it needs from the host |
 | --- | --- | --- | --- | --- |
@@ -19,7 +23,7 @@ does not have the transport.
 | `io_uring` | Linux | 15 | - | nothing privileged; a build configured with liburing, and a kernel that allows io_uring (Linux 6.0 or later, not disabled by `kernel.io_uring_disabled` or a seccomp profile); `num_io_uring_workers` at most 32 |
 | `gso` | Linux | 20 | 10 | nothing privileged; uses UDP GSO and GRO where the kernel has them, plain `sendmmsg`/`recvmmsg` where it does not; `num_gso_workers` at most 32 |
 | `msgx` | macOS | 10 | 10 | the Darwin `sendmsg_x`/`recvmsg_x` batch calls; see [docs/MACOS.md](MACOS.md) |
-| `portable` | every platform | development 30, production 50 | 30 | UDP sockets only |
+| `portable` | every platform | 50 | 30 | UDP sockets only |
 | `iocp` | Windows | 40 | 10 | Winsock overlapped I/O; uses UDP send and receive offload where the stack has them; see [docs/WINDOWS.md](WINDOWS.md) |
 | `rio` | Windows | 45 | - | the Winsock Registered I/O extension, and one registered memory region; see [docs/WINDOWS.md](WINDOWS.md) |
 | `loopback` | every platform | pin only | pin only | nothing: both ends in one process, no socket; for tests and tools |
@@ -30,10 +34,10 @@ So `auto` resolves to:
 | --- | --- | --- | --- |
 | Linux | `xdp`, `io_uring`, `gso`, `portable` | `xdp`, `io_uring`, `gso`, `portable` | `gso`, `portable` |
 | macOS | `msgx`, `portable` | `msgx`, `portable` | `msgx`, `portable` |
-| Windows | `portable`, `iocp`, `rio` | `iocp`, `rio`, `portable` | `iocp`, `portable` |
+| Windows | `iocp`, `rio`, `portable` | `iocp`, `rio`, `portable` | `iocp`, `portable` |
 
-On Linux the order runs from the most direct transport to the weakest, with
-`portable` last. `xdp` needs root, so without root (a GameLift or other
+Each platform tries its most efficient transport first and `portable` last,
+the same in development and production builds. `xdp` needs root, so without root (a GameLift or other
 managed fleet, a container) a Linux server runs `io_uring` where the build and
 the kernel have it, and `gso` where they do not. A Linux build without liburing
 has no `io_uring` row, and a kernel or seccomp profile that refuses io_uring

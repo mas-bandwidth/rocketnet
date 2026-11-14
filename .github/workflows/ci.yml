@@ -2283,10 +2283,11 @@ jobs:
       # is the per-commit law and is not raised; the suite moved instead,
       # unchanged, to nightly.yml, which is exempt from the time rule:
       #   windows / Debug (build-and-test-windows-debug): "Run functional
-      #       suite" and "Functional suite with IOCP selected", the same two
-      #       steps with the same pin and the same env-pin grep;
+      #       suite with portable selected" and "Functional suite with IOCP
+      #       selected" (the unpinned run now pins portable: auto is iocp first
+      #       on Windows in every build, which the second step pins);
       #   windows / Release ASan (build-and-test-windows-asan): the Release
-      #       functional.exe under default, iocp and rio.
+      #       functional.exe pinned to portable, iocp and rio.
       # The short per-case functional runs stay here: the lifecycle binary
       # below and leg (b)'s transport family matrix.
 
