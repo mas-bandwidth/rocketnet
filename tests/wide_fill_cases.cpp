@@ -1117,6 +1117,86 @@ static void test_wide_fill_check_stop_read_once()
     rocketnet_assert_function( NULL );
 }
 
+// The same for the checked calls that are not made every frame: a
+// disconnect of one client, a disconnect of all and a client's send rate.
+// Each is held at its check's entry while a whole stop runs (nested, as
+// above), then finds the server stopped and does nothing: no API misuse, no
+// assert, the retiring run kept. Before, each read the running server again
+// inside its check and found NULL. Each disconnect took the address of a
+// member through it for its kick, which is undefined behaviour that only a
+// build with -fsanitize=null reports (the kick then returned on NULL); the
+// disconnect of one client and the send rate also passed that NULL on and
+// counted API misuse for a NULL the game never passed (asserting in a debug
+// build), so the disconnect of all was red only under the sanitizer.
+
+enum wide_fill_stopped_call_t
+{
+    WIDE_FILL_STOPPED_DISCONNECT_CLIENT,
+    WIDE_FILL_STOPPED_DISCONNECT_ALL,
+    WIDE_FILL_STOPPED_SET_SEND_KBPS,
+};
+
+static void wide_fill_check_call_after_inside_stop( wide_fill_stopped_call_t call )
+{
+    rocketnet_assert_function( wide_fill_assert_hook );
+    g_wide_fill_asserts = 0;
+
+    wide_fill_world_t world;
+    wide_fill_world_create( &world, 1 );
+    wide_fill_connect_all( &world );
+    wide_fill_opt_in( &world );
+    rocketnet_server_send_packets( world.server );      // a main thread call: the opt-in's claim ends
+    const int slot = rocketnet_client_index( world.clients[0] );
+    check( slot >= 0 );
+
+    struct rocketnet_message_server_t * running = rocketnet_server_message_server( world.server );
+    check( running != NULL );
+    const uint64_t misuse = rocketnet_api_misuse_count();
+
+    wide_fill_stop_inside_t inside;
+    inside.server = world.server;
+    inside.armed = true;
+    inside.stops = 0;
+    rocketnet_fill_phase_set_trace( wide_fill_stop_inside_hook, &inside );
+    if ( call == WIDE_FILL_STOPPED_DISCONNECT_CLIENT )
+    {
+        rocketnet_server_disconnect_client( world.server, slot );
+    }
+    else if ( call == WIDE_FILL_STOPPED_DISCONNECT_ALL )
+    {
+        rocketnet_server_disconnect_all_clients( world.server );
+    }
+    else
+    {
+        check( rocketnet_server_set_send_kbps( world.server, slot, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS ) == ROCKETNET_STATUS_OK );
+    }
+    rocketnet_fill_phase_set_trace( NULL, NULL );
+    check( inside.stops == 1 );
+
+    check( !rocketnet_server_running( world.server ) );
+    check( rocketnet_server_message_server( world.server ) == running );
+    check( rocketnet_api_misuse_count() == misuse );
+    check( g_wide_fill_asserts == 0 );
+
+    wide_fill_world_destroy( &world );
+    rocketnet_assert_function( NULL );
+}
+
+static void test_wide_fill_check_disconnect_client_read_once()
+{
+    wide_fill_check_call_after_inside_stop( WIDE_FILL_STOPPED_DISCONNECT_CLIENT );
+}
+
+static void test_wide_fill_check_disconnect_all_read_once()
+{
+    wide_fill_check_call_after_inside_stop( WIDE_FILL_STOPPED_DISCONNECT_ALL );
+}
+
+static void test_wide_fill_check_set_send_kbps_read_once()
+{
+    wide_fill_check_call_after_inside_stop( WIDE_FILL_STOPPED_SET_SEND_KBPS );
+}
+
 #endif // #if ROCKETNET_DEV
 
 // the public server: refusals reach the server's counters, and a refused
@@ -2513,6 +2593,9 @@ REGISTER_UNIT_TEST( test_wide_fill_check_armed_across_restart );
 REGISTER_UNIT_TEST( test_wide_fill_check_nested_never_torn );
 REGISTER_UNIT_TEST( test_wide_fill_check_running_read_once );
 REGISTER_UNIT_TEST( test_wide_fill_check_stop_read_once );
+REGISTER_UNIT_TEST( test_wide_fill_check_disconnect_client_read_once );
+REGISTER_UNIT_TEST( test_wide_fill_check_disconnect_all_read_once );
+REGISTER_UNIT_TEST( test_wide_fill_check_set_send_kbps_read_once );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_wide_fill_check_public );
 REGISTER_UNIT_TEST( test_wide_fill_open_per_client );

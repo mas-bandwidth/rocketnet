@@ -3079,6 +3079,7 @@ struct rocketnet_server_t * rocketnet_server_create( void * context, const char 
 
 static void rn_server_finish_stop( struct rocketnet_server_t * server );
 static void rn_server_arm_one_thread_a_client( struct rocketnet_message_server_t * running );
+static struct rocketnet_fill_phase_t * rn_server_fill_phase( struct rocketnet_message_server_t * running );
 
 // proofs/tla/ServerSession.tla Start: from STOPPED only, a new message server and
 // server transport in the block (a fresh used-token history, every slot's
@@ -3157,25 +3158,29 @@ void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server
         return;
     }
 
-    struct rocketnet_server_transport_t * transport = rn_server_transport( server );
-    if ( !transport )
+    // the running server read once, and that copy used throughout
+
+    struct rocketnet_message_server_t * running = rn_server_sending( server );
+    if ( !running )
     {
         return;
     }
+    struct rocketnet_server_transport_t * transport = rocketnet_message_server_transport( running );
 
     // one main-thread operation, checked whole before any client is touched:
     // the kicks and the transport disconnects inside are its own work
-    // (sdk/rocketnet_fill_phase.h)
+    // (sdk/rocketnet_fill_phase.h). A stop on another thread that ran whole
+    // between the read and this check left nothing to disconnect.
 
     rocketnet_fill_phase_main_scope_t phase( rocketnet_server_transport_fill_phase( transport ) );
-    if ( !phase.entered )
+    if ( !phase.entered || rn_server( server ) != running )
     {
         return;
     }
 
     for ( int i = 0; i < server->max_clients; i++ )
     {
-        rn_message_object_kick( &rn_server( server )->object, i, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+        rn_message_object_kick( &running->object, i, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
 
         if ( rocketnet_server_transport_is_client_connected( transport, i ) )
         {
@@ -3775,17 +3780,27 @@ void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, int
         return;
     }
 
-    // one main-thread operation: the kick and the transport disconnect are its own work
+    // the running server read once, and that copy used throughout
 
-    rocketnet_fill_phase_main_scope_t phase( rocketnet_server_transport_fill_phase( rn_server_transport( server ) ) );
-    if ( !phase.entered )
+    struct rocketnet_message_server_t * running = rn_server_sending( server );
+    if ( !running )
     {
         return;
     }
 
-    rn_message_object_kick( &rn_server( server )->object, slot, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+    // one main-thread operation: the kick and the transport disconnect are
+    // its own work. A stop on another thread that ran whole between the read
+    // and this check left nothing to disconnect.
 
-    rocketnet_server_transport_disconnect_client( rn_server_transport( server ), slot );
+    rocketnet_fill_phase_main_scope_t phase( rn_server_fill_phase( running ) );
+    if ( !phase.entered || rn_server( server ) != running )
+    {
+        return;
+    }
+
+    rn_message_object_kick( &running->object, slot, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
+
+    rocketnet_server_transport_disconnect_client( rocketnet_message_server_transport( running ), slot );
 }
 
 enum rocketnet_disconnect_reason_t rocketnet_server_disconnect_reason( const struct rocketnet_server_t * server, int client_index )
@@ -4117,9 +4132,11 @@ enum rocketnet_status_t rocketnet_server_set_send_kbps( struct rocketnet_server_
         return range;
     }
 
-    // a stopped server has nothing to set, a plain no-op
+    // a stopped server has nothing to set, a plain no-op; the running server
+    // read once, and that copy used throughout
 
-    if ( !live )
+    struct rocketnet_message_server_t * running = live ? rn_server_sending( server ) : NULL;
+    if ( !running )
     {
         return ROCKETNET_STATUS_OK;
     }
@@ -4128,21 +4145,29 @@ enum rocketnet_status_t rocketnet_server_set_send_kbps( struct rocketnet_server_
     // (sdk/rocketnet_fill_phase.h): made while a fill call runs it is refused
     // and counted on a connected slot and an empty one alike
 
-    rocketnet_fill_phase_main_scope_t phase( rocketnet_server_transport_fill_phase( rn_server_transport( server ) ) );
+    rocketnet_fill_phase_main_scope_t phase( rn_server_fill_phase( running ) );
     if ( !phase.entered )
     {
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     }
 
-    // a slot with no CONNECTED client has no budget to set, a plain no-op:
-    // the slot's reset starts each connection at the config's rate
+    // a stop on another thread that ran whole between the read and this
+    // check left the server stopped: nothing to set, as for any stopped server
 
-    if ( !rocketnet_message_server_client_connected( rn_server( server ), slot ) )
+    if ( rn_server( server ) != running )
     {
         return ROCKETNET_STATUS_OK;
     }
 
-    return rocketnet_message_server_set_send_kbps( rn_server( server ), slot, resolved ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
+    // a slot with no CONNECTED client has no budget to set, a plain no-op:
+    // the slot's reset starts each connection at the config's rate
+
+    if ( !rocketnet_message_server_client_connected( running, slot ) )
+    {
+        return ROCKETNET_STATUS_OK;
+    }
+
+    return rocketnet_message_server_set_send_kbps( running, slot, resolved ) ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
 }
 
 // One read of the running server's transport stats and counter blocks.
