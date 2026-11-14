@@ -50,7 +50,7 @@ the SDK into a game's own build.
 | --- | --- | --- | --- |
 | `portable` | server and client | server: development 30, production 50; client 30 | one UDP socket; two workers on the server, one I/O worker on the client |
 | `iocp` | server and client | server 40; client 10 | server: `num_iocp_completion_workers` completion workers (2 on a bind address, 1 on the wildcard) and `num_iocp_send_threads` send threads (2); client: one I/O worker on its own completion port |
-| `rio` | server | 45 | Winsock Registered I/O: per lane (`num_rio_lanes`: 5 on a bind address, 1 on the wildcard) one socket, one registered memory region and one I/O worker polling its completion queues |
+| `rio` | server | 45 | Winsock Registered I/O: per lane (`num_rio_lanes`: 6 on a bind address, 1 on the wildcard) one socket, one registered memory region and one I/O worker polling its completion queues |
 | `loopback` | server and client | pin only | in-process, no socket; for tests and tools |
 
 A production server's `auto` is **iocp, then rio, then portable**; a
@@ -89,7 +89,7 @@ processor each on the cores after the workers'.
 `rio` loads the Registered I/O function table from Winsock, allocates and
 registers one memory region for every send and receive buffer of each lane,
 and starts one I/O worker for each lane. The lanes are `num_rio_lanes`
-(`ROCKETNET_SERVER_NUM_RIO_LANES`, 1 to 32; default 5 on a specific bind
+(`ROCKETNET_SERVER_NUM_RIO_LANES`, 1 to 32; default 6 on a specific bind
 address, 1 on the wildcard). With more than one lane, lane `l` takes the
 first logical processor of core `l` from core 0 up, in the same order as
 `iocp`, and its worker the other logical processors of that core; more lanes
@@ -106,7 +106,7 @@ TRANSPORTS.md, "The RIO server transport".
 
 ### To reach 10 Gb/s on Windows set a bind address
 
-The defaults are 5 RIO lanes, or 2 IOCP completion workers with 2 send
+The defaults are 6 RIO lanes, or 2 IOCP completion workers with 2 send
 threads: the counts that sent the peak load to 1000 players at 60 Hz, about
 900,000 packets a second (an estimated 9.39 Gb/s, from the packet rate), on
 the machines in [PERFORMANCE.md](PERFORMANCE.md). Measure yours. More than
@@ -285,7 +285,7 @@ client object can be reused, is the separate inventory in
 
 A server's socket count depends on its transport: one for `portable`, one for
 each completion worker for `iocp` (2 on a bind address by default, 1 on the
-wildcard; its send threads add none) and one for each lane for `rio` (5 on a
+wildcard; its send threads add none) and one for each lane for `rio` (6 on a
 bind address by default, 1 on the wildcard). That is a few sockets, not one a
 client, so there is no descriptor limit to raise. The limit that matters is
 memory: per-client state grows with `max_clients`, the send staging and receive buffers of each
@@ -311,7 +311,7 @@ the `rocketnet_server_required_memory` of every server, and the
 `rocketnet_client_required_memory` of every client, in the process fits.
 Threads are two for
 `portable`; for `iocp` the completion workers plus the send threads (4 on a
-bind address by default, 3 on the wildcard); for `rio` one a lane (5 on a bind
+bind address by default, 3 on the wildcard); for `rio` one a lane (6 on a bind
 address by default, 1 on the wildcard); each with the executable's default
 stack reserve (1 MiB unless the game links with another). Each RIO lane has
 its own registered region, so more lanes raise the plan: ask for the figure
