@@ -134,8 +134,8 @@ acts are the runtime resources (its embedded BPF program loaded and attached, AF
 the memlock rlimit). Provisioning uses `scripts/rocketnet-provision`, an operator
 step; no application using XDP reconstructs it. The
 script's header carries the authoritative
-condition list; the pre-flight checks exactly those conditions, except R8
-(the real-time throttle), which only the script checks.
+condition list; the pre-flight checks exactly those conditions, R8 (the
+real-time throttle) included.
 
 `xdp` runs one thread per NIC queue, so the NIC is provisioned to the
 server's thread count before the server starts. In order:
@@ -167,6 +167,9 @@ after the interface name for more):
     # 1. BOOT TIER (once, then reboot): edit GRUB_CMDLINE_LINUX in /etc/default/grub
     #    to carry: nosmt irqaffinity=0 isolcpus=1-15 nohz_full=1-15
     #    then: update-grub && reboot
+    #    (irqaffinity= may be any cpu list naming no isolated cpu: with
+    #    ROCKETNET_SERVER_NUM_OS_CPUS=2 the XDP threads start at cpu 2, so
+    #    irqaffinity=0-1 isolcpus=2-15 nohz_full=2-15)
     #    (the NIC driver needs AF_XDP zero copy: on an X710 the in-tree i40e
     #    of Ubuntu's 7.0.0-43-generic binds it, while Intel's i40e 2.30.18
     #    compiles it out on Ubuntu; LINUX.md section 6 has what was measured)
@@ -176,9 +179,23 @@ after the interface name for more):
     #    The interface is the one carrying the public address. On one
     #    802.1Q VLAN device (eth0.300) the script resolves it to the parent
     #    NIC and provisions that (R2), and the server attaches there and tags
-    #    what it sends; QinQ, 802.1ad and VLANs on bonds or bridges are
-    #    refused by name (LINUX.md section 6, "A VLAN"). Native XDP only: a
-    #    NIC without it refuses an xdp pin, and auto falls to the next rung.
+    #    what it sends. The filter tells the server's VLAN by the 802.1Q tag
+    #    in the frame, so the script also turns the parent's receive VLAN
+    #    offload off (ethtool -K eth0 rxvlan off) and reads it back; with it
+    #    on, the parent would hand the filter every VLAN's frames untagged,
+    #    and the pre-flight refuses xdp (auto falls to the next rung). The
+    #    setting does not survive a reboot or a driver reload: re-run this
+    #    script after either. Give the script the VLAN device (eth0.300),
+    #    never the bare parent: only then does it check the offload, in
+    #    provision and in verify. A passed check is not a guarantee of VLAN
+    #    isolation (a veth parent, 802.1ad stripping and untagged frames on
+    #    the parent's segment are not covered), and an untagged server on a
+    #    NIC that carries other VLANs with the offload on takes their frames
+    #    for its address and port: LINUX.md section 6, "A VLAN" and "An
+    #    untagged server on a trunk". QinQ, 802.1ad and VLANs on bonds or
+    #    bridges are refused by name (LINUX.md section 6, "A VLAN"). Native
+    #    XDP only: a NIC without it refuses an xdp pin, and auto falls to the
+    #    next rung.
     #    The socket transports pay for connection tracking under a stateful
     #    firewall; LINUX.md section 6 gives the notrack rule and what the
     #    ruleset must accept with it.
@@ -200,15 +217,43 @@ after the interface name for more):
     # 4a. ON IXGBE (and any NIC whose XDP attach resets the port): the attach
     #    rebuilds the interrupt vectors after the pre-flight has passed, and
     #    with irqaffinity=0 every queue vector lands on cpu 0, away from the
-    #    worker that polls it. Once the server is up, as root:
+    #    worker that polls it. The library never changes interrupt affinity;
+    #    after its attach it reads the queue vectors again and, when one has
+    #    left its worker's cpu, logs one warning naming this step:
+    #
+    #      xdp: attaching server_xdp moved 1 of eth0's 1 queue interrupts off
+    #      their xdp threads' cpus (irq 120, queue 0, on '0', want cpu 1): ...
+    #      run sudo scripts/rocketnet-provision eth0 1 repin now (docs/DEPLOYING.md, step 4a)
+    #
+    #    Once the server is up, as root:
     scripts/rocketnet-provision eth0 repin
     #    It waits (ROCKETNET_REPIN_WAIT_SECONDS, default 60) for the attached
     #    program, the carrier and one queue vector a thread, pins <if>-TxRx-k
-    #    to the k-th isolated cpu (the cpu XDP worker k pins itself to),
+    #    to cpu num_os_cpus + k (the cpu XDP worker k pins itself to; give the
+    #    script the server's ROCKETNET_SERVER_NUM_OS_CPUS when it is not 1),
     #    moves any other vector of the port off the worker cpus, and reads
-    #    them back. It writes only smp_affinity_list, so it runs beside the
-    #    live server. Provision itself runs R7 (channels) before R4 (IRQs), so
+    #    back every vector it pinned or moved. It writes only
+    #    smp_affinity_list, so it runs beside the live server. Provision itself runs R7 (channels) before R4 (IRQs), so
     #    a port left with many channels provisions on the first run.
+    #
+    #    On such a NIC the order is always: provision, start the server,
+    #    repin. A RESTART needs provision first again: the old server's
+    #    detach rebuilds the vectors once more, and they come back on cpu 0.
+    #    Skip it and the new server's pre-flight refuses R4, one line a
+    #    vector, then the summary, and `auto` falls to gso:
+    #
+    #      xdp pre-flight: irq 120 (queue 0 of eth0) affinity is '0', want cpu 1, the cpu xdp thread 0 pins to (R4): run sudo scripts/rocketnet-provision eth0 1
+    #      xdp pre-flight failed: this machine is not provisioned ...
+    #
+    #    Provision refuses to unload rocketnet's own program while a
+    #    rocketnet server on this host is live (R3), on any interface (the
+    #    pin roots do not record one): stop every rocketnet server on the
+    #    host, then run provision. A crashed server does not block it: its
+    #    pin root names a pid that is gone, or that was recycled (another
+    #    start time), or another boot, and provision unloads its program as
+    #    before (step 5). If provision still names a pid and no rocketnet
+    #    server is running, run the sweep below: it prints each pin root it
+    #    keeps and why; remove one by hand once you have judged it stale.
 
     # 5. AFTER A CRASH (a server that died without destroy): its XDP program
     #    stays ATTACHED to the interface, and it is NOT inert: it drops every

@@ -11689,7 +11689,10 @@ static int rocketnet_xdp_veth_mtu = 1500;     // both ends; a case may lower it 
 // client's frames reach the server: true, the far end's tx VLAN offload is
 // off and the tag is in the frame's bytes, as a NIC without rx VLAN offload
 // delivers it; false, the offload is on, the tag travels beside the frame and
-// the program sees it untagged, as ixgbe and i40e deliver it by default.
+// the program sees it untagged, as ixgbe and i40e deliver it by default. A
+// veth never puts a tag that travels beside the frame back into it, whatever
+// the near end's rx VLAN offload (which the case turns off, as the pre-flight
+// requires), so false is the sender a veth parent's flag cannot show.
 // The capture then takes only frames tagged with the ID. Teardown resets
 // both.
 
@@ -11908,6 +11911,12 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
         snprintf( command, sizeof( command ), "ip -n %s link add link %s name %s type vlan id %d", net.netns, net.far_name, far_device, rocketnet_xdp_veth_vlan );
         rocketnet_xdp_veth_run( command );
         snprintf( command, sizeof( command ), "ip netns exec %s ethtool -K %s txvlan %s >/dev/null", net.netns, net.far_name, rocketnet_xdp_veth_vlan_tag_in_data ? "off" : "on" );
+        rocketnet_xdp_veth_run( command );
+
+        // the near end's rx VLAN offload off, as a provisioned parent carries
+        // it: the pre-flight refuses a VLAN server whose parent has it on (R2)
+
+        snprintf( command, sizeof( command ), "ethtool -K %s rxvlan off >/dev/null", net.near_name );
         rocketnet_xdp_veth_run( command );
         rocketnet_printf( ROCKETNET_LOG_LEVEL_NONE, "%s: addresses on 802.1Q VLAN %d (%s, %s); the client's tag %s", case_name, rocketnet_xdp_veth_vlan, near_device, far_device,
                           rocketnet_xdp_veth_vlan_tag_in_data ? "is in the frame data" : "travels beside the frame (tx VLAN offload on)" );
@@ -13211,12 +13220,11 @@ static int rocketnet_xdp_veth_count_lines( const char * path, const char * text,
 //      program passed, has every one. The redirected counter does not move,
 //      and the server delivers none.
 //   3. on the bare far end: untagged. The program redirects each frame to the
-//      server, which delivers it. This is the design, not a gap. A NIC with
-//      rx-vlan-offload on strips the tag before XDP runs, so a frame of the
-//      server's own VLAN reaches the program untagged and cannot be told from
-//      a frame sent with no tag (docs/LINUX.md, "A VLAN": the transport
-//      "takes only frames tagged with that VLAN ID (and untagged frames, which
-//      is how a NIC with rx-vlan-offload on delivers them)").
+//      server, which delivers it: the filter takes an untagged frame for the
+//      server's address and port on either server (docs/LINUX.md, "A VLAN").
+//      With the parent's rx-vlan-offload off, which the pre-flight requires,
+//      such a frame was sent with no tag; with it on, a frame of any VLAN
+//      would arrive the same way, which is why the pre-flight refuses that.
 //
 // The far-end capture shows each phase's frames on the wire as tagged 77,
 // tagged 78 and untagged. A static neighbor entry takes the place of ARP,
@@ -13404,7 +13412,8 @@ void rocketnet_test_xdp_vlan_other_vid_and_untagged_ipv4()
 // the stacked devices the transport refuses by name: QinQ, an 802.1ad VLAN,
 // a VLAN on a device that is neither a NIC nor veth, and the address on a
 // bond, a bridge or a macvlan. Each pin on xdp is refused with the reason;
-// each "auto" logs it and is granted the next transport.
+// each "auto" logs it and is granted the next transport. Then a VLAN on a
+// parent with rx VLAN offload on, refused by the pre-flight the same way.
 
 #define ROCKETNET_XDP_STACK_LOWER "rnxdpstk0"
 #define ROCKETNET_XDP_STACK_FAR  "rnxdpstk1"
@@ -13501,6 +13510,41 @@ void rocketnet_test_xdp_vlan_stacked_devices_refused()
     rocketnet_xdp_stack_refused( "10.77.14.1:40413", "rnxdpbond", "kind bond" );
     rocketnet_xdp_stack_refused( "10.77.15.1:40413", "rnxdpbr", "kind bridge" );
     rocketnet_xdp_stack_refused( "10.77.16.1:40413", "rnxdpmv", "kind macvlan" );
+
+    // a VLAN the transport takes, on a parent whose rx-vlan-offload flag is
+    // on (a veth's is when made). The pre-flight judges the flag, so it
+    // refuses the server by name (R2); with the flag off that refusal is gone
+
+    rocketnet_xdp_veth_run( "ip addr add 10.77.17.1/24 dev rnxdpq.10" );
+    rocketnet_xdp_veth_run( "ethtool -K " ROCKETNET_XDP_STACK_LOWER " rxvlan on" );
+
+    const char * stripped = "strips the 802.1Q tag on receive (rx-vlan-offload on)";
+    struct rocketnet_server_transport_t * pinned = rocketnet_xdp_link_create( "xdp", "10.77.17.1:40413" );
+    const bool pinned_named = strstr( rocketnet_test_captured_log, stripped ) != NULL && strstr( rocketnet_test_captured_log, "ethtool -K " ROCKETNET_XDP_STACK_LOWER " rxvlan off" ) != NULL;
+    if ( pinned )
+    {
+        rn_native_server_transport_stop_and_destroy( pinned );
+    }
+    rocketnet_check( pinned == NULL );
+    rocketnet_check( pinned_named );
+
+    struct rocketnet_server_transport_t * automatic = rocketnet_xdp_link_create( "auto", "10.77.17.1:40413" );
+    const bool auto_fell = automatic != NULL && strcmp( rocketnet_server_transport_io_name( automatic ), "xdp" ) != 0 && strstr( rocketnet_test_captured_log, stripped ) != NULL &&
+                           strstr( rocketnet_test_captured_log, "server transport xdp refused. trying the next candidate" ) != NULL;
+    if ( automatic )
+    {
+        rn_native_server_transport_stop_and_destroy( automatic );
+    }
+    rocketnet_check( auto_fell );
+
+    rocketnet_xdp_veth_run( "ethtool -K " ROCKETNET_XDP_STACK_LOWER " rxvlan off" );
+    struct rocketnet_server_transport_t * offload_off = rocketnet_xdp_link_create( "xdp", "10.77.17.1:40413" );
+    const bool off_unnamed = strstr( rocketnet_test_captured_log, stripped ) == NULL;
+    if ( offload_off )
+    {
+        rn_native_server_transport_stop_and_destroy( offload_off );
+    }
+    rocketnet_check( off_unnamed );
 
     rocketnet_xdp_stack_teardown();
 }

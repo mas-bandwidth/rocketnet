@@ -349,18 +349,18 @@ refuses by name on any unmet condition (`BUILDING.md`,
 
 | condition | what | script |
 | --- | --- | --- |
-| B1 | `/proc/cmdline` carries `irqaffinity=0 isolcpus=<range> nohz_full=<range>` (and `nosmt`); grub and reboot | `:27-37` |
-| B2 | `/sys/devices/system/cpu/isolated` is non-empty | `:38-39` |
-| B3 | a NIC driver with AF_XDP zero copy (reported, not verified) | `:40-45` |
-| R1 | euid 0 | `:49` |
-| R2 | the interface exists and is UP; an 802.1Q VLAN device resolves to its parent NIC, where R3 to R7 act; the pre-flight checks it carries the public address | `:50-53` |
-| R3 | no XDP program already attached | `:54-64` |
-| R4 | each queue IRQ pinned to its own isolated CPU | `:65-74` |
-| R5 | `napi_defer_hard_irqs` 2, `gro_flush_timeout` 200000 | `:75-77` |
-| R6 | SMT off | `:78-81` |
-| R7 | the NIC's combined channel count equals the server's `num_xdp_threads` | `:82-85` |
-| R8 | `kernel.sched_rt_runtime_us` -1 on a kernel before 6.12; checked by the script only (below) | `:86-95` |
-| K1 | the kernel grants an AF_XDP socket and a BPF program load (pre-flight only) | `:97-101` |
+| B1 | `/proc/cmdline` carries `irqaffinity=0 isolcpus=<range> nohz_full=<range>` (and `nosmt`); `irqaffinity=` may be any cpu list with no isolated cpu; grub and reboot | `:27-39` |
+| B2 | `/sys/devices/system/cpu/isolated` is a non-empty cpu list | `:40-41` |
+| B3 | a NIC driver with AF_XDP zero copy (reported, not verified) | `:42-47` |
+| R1 | euid 0 | `:51` |
+| R2 | the interface exists and is UP; an 802.1Q VLAN device resolves to its parent NIC, where R3 to R7 act, and the parent's `rx-vlan-offload` is off so the tag reaches the filter; the pre-flight checks it carries the public address | `:52-59` |
+| R3 | no XDP program already attached | `:60-79` |
+| R4 | each queue IRQ (`<iface>-TxRx-<k>`) pinned to cpu `num_os_cpus + k`, the cpu its XDP thread pins to, and the interface's other IRQs off those cpus; a NIC without queue names: each IRQ on its own isolated CPU | `:80-95` |
+| R5 | `napi_defer_hard_irqs` 2, `gro_flush_timeout` 200000 | `:96-98` |
+| R6 | SMT off | `:99-102` |
+| R7 | the NIC's combined channel count equals the server's `num_xdp_threads` | `:103-106` |
+| R8 | `kernel.sched_rt_runtime_us` -1 on a kernel before 6.12, or a later one built with `CONFIG_RT_GROUP_SCHED` (read from `/boot/config-<release>`) (below) | `:107-119` |
+| K1 | the kernel grants an AF_XDP socket and a BPF program load (pre-flight only) | `:121-125` |
 
 The script's modes are `provision` (the default), `verify`, `sweep` and
 `selftest` (`scripts/rocketnet-provision:103-127`, parsed at `:135-156`). The
@@ -420,11 +420,52 @@ attaches natively in the CI guest.
 (`eth0.300`, created with `ip link add link eth0 name eth0.300 type vlan id 300`)
 whose parent is a physical NIC or a veth. A VLAN device has no native XDP of its
 own, so the transport attaches to the parent (logging
-`xdp: eth0.300 is 802.1Q VLAN 300 on eth0`), takes only frames tagged with that
-VLAN ID (and untagged frames, which is how a NIC with `rx-vlan-offload` on
-delivers them), passes frames of any other VLAN up the stack, and tags every
-frame it sends. Run the provisioning script on either name: given `eth0.300` it
-says `R3 to R7 act on eth0` and provisions the parent (R2). These are refused by
+`xdp: eth0.300 is 802.1Q VLAN 300 on eth0`) and tags every frame it sends.
+
+What the filter checks is the 802.1Q tag in the frame's bytes. A frame tagged
+with the server's VLAN ID is taken; a frame tagged with any other ID, a second
+tag, or a tag cut short passes up the stack untouched. An untagged frame is
+read as on an untagged server: taken when it is addressed to the server's
+address and port. So the tag must reach the program in the frame. A NIC with
+`rx-vlan-offload` on (the i40e and ixgbe default) strips it before XDP runs,
+and then a frame from any VLAN on that NIC addressed to the server's address
+and port would be taken as the server's. The
+pre-flight therefore refuses a VLAN server whose parent has the offload on
+(`eth0 strips the 802.1Q tag on receive (rx-vlan-offload on) ... run
+ethtool -K eth0 rxvlan off`): a pin on `xdp` refuses the create, and `auto`
+falls to the next transport. The provisioning script turns it off
+(`ethtool -K eth0 rxvlan off`) and reads it back; `verify` reports it unmet
+when it is on, and a NIC whose flag reads `on [fixed]` cannot carry a VLAN
+server on this transport. With the offload off, a frame of another VLAN
+reaches the program tagged and passes up the stack. What stays open: a VLAN
+server still takes an untagged frame from the parent's untagged segment
+addressed to its address and port. Two cases the flag does not settle: a veth
+parent, which leaves a tag that the sender's `tx-vlan-offload` put beside the
+frame outside the frame, so the program sees that frame untagged whatever the
+parent's flag (on a veth the sender must put the tag in the frame, which the
+library cannot read from here); and a NIC that also strips 802.1ad outer tags
+(`rx-vlan-stag-hw-parse` on), which this flag does not cover. A passed flag
+check is that observation, not a guarantee of VLAN isolation: on these paths
+the server's VLAN is not an isolation boundary, and one that matters needs it
+enforced upstream (the switch port) or a NIC that carries only that VLAN.
+Reading the stripped tag from the receive metadata is on the roadmap
+(`xdp-vlan-stripped-tags`).
+
+**An untagged server on a trunk.** The same holds without a VLAN device: an
+untagged server whose NIC also carries tagged VLANs and has `rx-vlan-offload`
+on sees their frames untagged, and takes any addressed to its address and
+port. Neither the pre-flight nor the script refuses this (there is no VLAN to
+check for). Give such a server a port that carries no other VLAN, turn the
+offload off by hand (`ethtool -K eth0 rxvlan off`, after which other VLANs'
+frames reach the filter tagged and pass up the stack), or enforce the
+separation upstream.
+
+Run the provisioning script on the VLAN device: given `eth0.300` it says
+`R3 to R7 act on eth0`, provisions the parent (R2) and checks the parent's
+`rx-vlan-offload` for VLAN 300. Given the bare parent `eth0` it does the same
+parent work but has no VLAN to check for, so it neither turns the offload off
+nor reports it; `verify` on a VLAN server is run on the VLAN device too, and
+its retry line names the device it was given. These are refused by
 name, by the pre-flight and by the script: an 802.1ad (QinQ outer) tag, a VLAN
 on a VLAN, a VLAN on a bond, bridge, team, macvlan or other stacked device, a
 parent in another network namespace, and an address on a bond, bridge, team,
@@ -577,8 +618,13 @@ echo 'kernel.sched_rt_runtime_us = -1' | sudo tee /etc/sysctl.d/90-rocketnet-xdp
 ```
 
 `scripts/rocketnet-provision` sets the running value and `verify` reports it
-unmet; only the file keeps it across a reboot. The library's pre-flight does
-not check it. What it costs: an ordinary task on a worker's CPU no longer
+unmet; only the file keeps it across a reboot. The library's pre-flight
+checks the same rule from the same files and refuses `xdp` while it is unmet:
+a kernel of 6.12 or later passes unless `/boot/config-<release>` carries
+`CONFIG_RT_GROUP_SCHED=y`, and one whose `/boot` config cannot be read is
+unmet unless the value is already -1. A container usually has no `/boot`:
+there, set the value to -1 on the host (the sysctl is not per namespace)
+before starting the server. What it costs: an ordinary task on a worker's CPU no longer
 gets any time while the worker spins. On the isolated CPUs of this layout
 that leaves only per-CPU kernel work there, which waits too, so keep every
 other thread and IRQ off the worker CPUs. From 6.12 the throttle is gone: a

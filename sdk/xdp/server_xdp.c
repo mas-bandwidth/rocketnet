@@ -482,14 +482,25 @@ int server_xdp_filter( struct xdp_md * ctx )
 
     if ( (__u8 *) eth + sizeof( struct ethhdr ) <= data_end )
     {
+        // a destination MAC starting ff:ff (broadcast, and any other address
+        // with that prefix) passes: the AF_XDP frame reader refuses it
+        // (rocketnet_xdp_frame_parse_vlan), so it must never take a ring
+        // slot; the kernel judges it, as it does for the socket transports
+
+        if ( eth->h_dest[0] == 0xff && eth->h_dest[1] == 0xff )
+        {
+            return XDP_PASS;
+        }
+
         // one 802.1Q tag: a server on a VLAN (config vlan_id, nonzero) takes
         // a frame tagged with its VLAN ID, and reads the rest of it as an
         // untagged frame 4 bytes on. A frame tagged with any other VLAN ID,
         // any tag on an untagged server, a second tag (QinQ) and a tag cut by
         // the frame end pass untouched, as any other frame for someone else.
-        // An untagged frame is read as before on either server: a NIC that
-        // strips the tag on receive (rx VLAN offload) hands this program the
-        // frame without it
+        // An untagged frame is read as before on either server. A NIC that
+        // strips the tag on receive (rx VLAN offload) hands this program
+        // every VLAN's frames without it, so the pre-flight refuses a VLAN
+        // server whose parent has that offload on (R2)
 
         __be16 h_proto = eth->h_proto;
         __u8 * l3 = data + sizeof( struct ethhdr );
@@ -521,6 +532,14 @@ int server_xdp_filter( struct xdp_md * ctx )
             {
                 debug_printf( "smaller than ipv4 header" );
                 return XDP_DROP;
+            }
+
+            // a version nibble other than 4 passes: the frame reader refuses
+            // it, and the kernel drops it
+
+            if ( ip->version != 4 )
+            {
+                return XDP_PASS;
             }
 
             // a fragment (more-fragments set or a nonzero offset): only the
@@ -602,6 +621,14 @@ int server_xdp_filter( struct xdp_md * ctx )
             {
                 debug_printf( "smaller than ipv6 header" );
                 return XDP_DROP;
+            }
+
+            // a version nibble other than 6 passes: the frame reader refuses
+            // it, and the kernel drops it
+
+            if ( ip6->version != 6 )
+            {
+                return XDP_PASS;
             }
 
             if ( ip6->nexthdr == IPPROTO_UDP ) // UDP directly after the fixed header only

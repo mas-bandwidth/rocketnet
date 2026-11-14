@@ -114,6 +114,8 @@ struct xdp_host_frame_t
     int override_ip_len = -1;               // >= 0: override the IPv4 total length or IPv6 payload length field
     int pad_bytes = 0;                      // zero bytes after the UDP payload (link-layer padding)
     uint16_t vlan_tci = 42;                 // the tag control information of an 802.1Q or 802.1ad ethertype: VLAN 42, priority 0
+    int ip_version = -1;                    // >= 0: the IP header's version nibble (else the family's own)
+    const uint8_t * destination_mac = NULL; // NULL: the server's MAC
 };
 
 static void xdp_host_put16( std::vector<uint8_t> & out, uint16_t value )
@@ -130,7 +132,8 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
 
     const uint8_t server_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
     const uint8_t client_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
-    out.insert( out.end(), server_mac, server_mac + 6 );
+    const uint8_t * destination_mac = f.destination_mac ? f.destination_mac : server_mac;
+    out.insert( out.end(), destination_mac, destination_mac + 6 );
     out.insert( out.end(), client_mac, client_mac + 6 );
 
     const uint16_t ethertype = f.ethertype != 0 ? f.ethertype : ( f.family == 4 ? 0x0800 : 0x86dd );
@@ -151,7 +154,7 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
         // protocol, checksum (unchecked by the filter), source, destination
 
         const int header_bytes = f.ipv4_ihl * 4;
-        out.push_back( (uint8_t) ( 0x40 | ( f.ipv4_ihl & 0x0f ) ) );
+        out.push_back( (uint8_t) ( ( ( f.ip_version >= 0 ? f.ip_version : 4 ) << 4 ) | ( f.ipv4_ihl & 0x0f ) ) );
         out.push_back( 0x00 );
         xdp_host_put16( out, (uint16_t) ( f.override_ip_len >= 0 ? f.override_ip_len : header_bytes + udp_bytes ) );
         xdp_host_put16( out, 0x0000 );
@@ -182,7 +185,7 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
         }
 
         const uint8_t first_next_header = fragment ? 44 : ( !f.ipv6_extensions.empty() ? (uint8_t) ( f.ipv6_extensions[0] & 0xff ) : f.protocol );
-        out.push_back( 0x60 );
+        out.push_back( (uint8_t) ( ( f.ip_version >= 0 ? f.ip_version : 6 ) << 4 ) );
         out.push_back( 0x00 );
         out.push_back( 0x00 );
         out.push_back( 0x00 );
@@ -1492,6 +1495,73 @@ static void test_xdp_transport_host_vlan_server_takes_its_tag()
     xdp_host_run_rows( rows );
 }
 
+// The filter and the AF_XDP frame reader agree on the two frame kinds the
+// reader refuses before it reads a port: an IP version nibble that is not the
+// ethertype's own, and a destination MAC starting ff:ff (broadcast). Each such
+// frame, otherwise one the server takes, passes uncounted (the kernel judges
+// it, as for the socket transports) and the reader refuses it, untagged and
+// behind a VLAN server's own tag; it never spends a ring slot
+
+static void test_xdp_transport_host_version_and_broadcast_pass_as_the_reader_refuses()
+{
+    std::vector<xdp_host_row_t> rows;
+    const int families[2] = { 4, 6 };
+    static const uint8_t broadcast[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+    static const uint8_t broadcast_prefix[6] = { 0xff, 0xff, 0x00, 0x00, 0x00, 0x01 };
+
+    for ( int f = 0; f < 2; f++ )
+    {
+        for ( int tagged = 0; tagged < 2; tagged++ )
+        {
+            xdp_host_row_t base = xdp_host_row( tagged ? "VLAN server, its tag:" : "untagged:", families[f] );
+            if ( tagged )
+            {
+                base.config.vlan_id = 42;
+                base.frame.ethertype = 0x8100;
+            }
+
+            for ( int version = 0; version < 16; version++ )
+            {
+                if ( version == families[f] )
+                {
+                    continue;
+                }
+                xdp_host_row_t row = base;
+                row.label += " IP version " + std::to_string( version ) + " in an IPv" + std::to_string( families[f] ) + " frame";
+                row.frame.ip_version = version;
+                rows.push_back( xdp_host_expect( row, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
+            }
+
+            xdp_host_row_t all = base;
+            all.label += " destination MAC ff:ff:ff:ff:ff:ff";
+            all.frame.destination_mac = broadcast;
+            rows.push_back( xdp_host_expect( all, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
+
+            xdp_host_row_t prefix = base;
+            prefix.label += " destination MAC ff:ff:00:00:00:01";
+            prefix.frame.destination_mac = broadcast_prefix;
+            rows.push_back( xdp_host_expect( prefix, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
+        }
+    }
+
+    // the reader refuses every one of them
+
+    for ( size_t i = 0; i < rows.size(); i++ )
+    {
+        const std::vector<uint8_t> bytes = xdp_host_frame_bytes( rows[i].frame );
+        rocketnet_address_t from;
+        const uint8_t * payload = NULL;
+        int payload_bytes = 0;
+        if ( rocketnet_xdp_frame_parse_vlan( bytes.data(), bytes.size(), rows[i].config.vlan_id, &from, &payload, &payload_bytes ) )
+        {
+            printf( "the reader parses: %s\n", rows[i].label.c_str() );
+        }
+        rocketnet_unit_check( !rocketnet_xdp_frame_parse_vlan( bytes.data(), bytes.size(), rows[i].config.vlan_id, &from, &payload, &payload_bytes ) );
+    }
+
+    xdp_host_run_rows( rows );
+}
+
 // ---------------------------------------------------------------------------
 // drops on the server's port: each counted by its reason
 
@@ -2155,6 +2225,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_host_ipv6_first_fragment_drops_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_host_icmpv6_passes_uncounted );
 REGISTER_UNIT_TEST( test_xdp_transport_host_vlan_tagged_passes );
 REGISTER_UNIT_TEST( test_xdp_transport_host_vlan_server_takes_its_tag );
+REGISTER_UNIT_TEST( test_xdp_transport_host_version_and_broadcast_pass_as_the_reader_refuses );
 REGISTER_UNIT_TEST( test_xdp_transport_host_too_small_drops );
 REGISTER_UNIT_TEST( test_xdp_transport_host_too_large_drops );
 REGISTER_UNIT_TEST( test_xdp_transport_host_wrong_epoch_drops );
