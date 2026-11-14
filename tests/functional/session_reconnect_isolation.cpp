@@ -862,10 +862,9 @@ static void small_server_pump( rocketnet_server_t * server, rocketnet_client_t *
                 }
             }
         }
+        // receipts stay readable until the next update (rocketnet.h): one read a pass
         struct rocketnet_receipt_t receipts[64];
-        while ( rocketnet_client_receipts( clients[c], receipts, 64 ) > 0 )
-        {
-        }
+        (void) rocketnet_client_receipts( clients[c], receipts, 64 );
         rocketnet_client_send_packets( clients[c] );
     }
     rocketnet_server_update( server, now );
@@ -885,9 +884,7 @@ static void small_server_pump( rocketnet_server_t * server, rocketnet_client_t *
     for ( int slot = 0; slot < rocketnet_server_max_clients( server ); ++slot )
     {
         struct rocketnet_receipt_t receipts[64];
-        while ( rocketnet_server_receipts( server, slot, receipts, 64 ) > 0 )
-        {
-        }
+        (void) rocketnet_server_receipts( server, slot, receipts, 64 );
     }
     rocketnet_server_send_packets( server );
     rocketnet_sleep( 0.001 );
