@@ -287,20 +287,20 @@ Witness traces, checked by hand against the code:
   is not as it was. In this trace the first span is alone, so freeing it
   empties the ring and nothing is lost; with an older span live beside it,
   an abort of the first span could no longer give its bytes back. In the code
-  `rn_span_link` writes `span_tail_undo = span_tail` (1033) and
-  `rn_span_unlink` of the newest span restores the tail and stores the
-  sentinel (1083 to 1090); the span is linked only after the fit and the
+  `rn_span_link` writes `span_tail_undo = span_tail` (1057, at main
+  ca673f3b4) and `rn_span_unlink` of the newest span restores the tail and
+  stores the sentinel (1107 to 1114); the span is linked only after the fit and the
   descriptor take in `rn_region_send_alloc_span`, so no refused start
   touches either.
 
 ## RNSendSpans: the carve keeps dead descriptor bytes (models fix round, 2026-11-13)
 
 - **`Reset`** is `rn_region_carve`'s span part (`sdk/rocketnet_allocator.cpp`
-  594 to 703, the span roots at 666 to 669): the roots and `exhausted`
-  only. A descriptor keeps its `span_start`, length and links as dead
-  bytes; the carve's `descriptors_fresh = 0` (650) forgets every descriptor,
-  and a later take (`rn_region_descriptor_take`, whose `memset` at 805
-  clears the descriptor) and link (`rn_span_link`, 1013 to 1019) write every
+  618 to 727 at main ca673f3b4, the span roots at 689 to 693): the roots and
+  `exhausted` only. A descriptor keeps its `span_start`, length and links as
+  dead bytes; the carve's `descriptors_fresh = 0` (674) forgets every
+  descriptor, and a later take (`rn_region_descriptor_take`, whose `memset`
+  at 829 clears the descriptor) and link (`rn_span_link`, 1037 to 1043) write every
   span field before anything reads it, which `Alloc` does in one step. The
   old `Reset` zeroed every descriptor, which the code never does, and
   `ListInAllocationOrder` checked that a dead descriptor's links were NONE;

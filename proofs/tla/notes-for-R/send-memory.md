@@ -47,36 +47,20 @@ the carve move to Connect:
 - tests/test_unit_message_objects.cpp (the section banner, base line 2043): `// RNSlots ResetFree, RNConnectionMemory Reuse: a reused slot starts exactly as`
   becomes `// RNSlots ResetFree and Observe, RNConnectionMemory Reuse and Connect: a reused slot starts exactly as`
 
-MM065 area (handed up as code-wrong, codewrong/send-memory-MM065.md): if the
-lead takes the claim fix rather than a code fix,
-sdk/rocketnet_server_transport.cpp (above
-rocketnet_server_payload_ring_take, base lines 4797 to 4801) and
-tests/test_unit_server_send_reserve.cpp (above
-test_server_fill_ring_chunk_lost_install_keeps_start_order, base lines 729
-to 734) narrow "the slots a thread
-takes only rise" to "a lost install never makes a thread's slots fall" and say
-that a chunk claimed before the guard and installed after it can give a thread
-a slot below the single slots it took (the file has the trace).
+MM065 area (handed up as code-wrong, codewrong/send-memory-MM065.md): no
+re-citation from this package. Rowan narrowed the ring-order comment and
+added its roadmap entry on branch send-ring-order-comment (74d401ffb).
 
-## For R: docs/TLA-INVENTORY.md
+## For R: docs/TLA-INVENTORY.md (line numbers at main ca673f3b4)
 
-- Line 72 (server payload ring), the claim column becomes:
+- Line 70 (server payload ring), the claim column becomes:
   `no slot at or past the send capacity handed out or read, each flush sends exactly the slots finished since the last (a lost chunk install and every line's unused chunk marked empty), a slot held by one thread at its own frame, a line's chunk below the capacity and the counter`
 - Line 34 (send store and descriptor pool): "a refusal or connection kick
   only when exhausted" is stale since revision 1.1 (a send with no room is
   refused and changes nothing; only the receive side exhausts). It becomes:
-  `no chunk or descriptor handed out while live, exact free counts, free stack and span ring, a refused send changing nothing, a kick only on the receive side's exhaustion, no read of never-taken memory, live generations never 0 across a wrap`
+  `no chunk or descriptor handed out while live, exact free counts, free stacks and span ring, a chunk chosen by one stack entry whatever is held, a refused send changing nothing, a kick only on the receive side's exhaustion, no read of never-taken memory, live generations never 0 across a wrap`
 
 ## For R: proofs/tla/README.md
 
 No line changes: the group rows for rnsendstore, rnpacketlease and
 rnserverpayloadringlayout name their READMEs, which carry the changes.
-
-## Roadmap entries (sexp text, for docs/roadmap.sexp)
-
-Only if the lead does not take the code-wrong file into a fix now:
-
-      (item "payload-ring-slots-rise" :group "after-v1-1-landing" :area "sdk"
-       :title "Payload ring: keep one thread's slots rising across the fill guard"
-       :text "rocketnet_server_payload_ring_take (sdk/rocketnet_server_transport.cpp) says the slots a thread takes only rise, so the flush sends one client's packets in start order. A chunk claimed before the guard and installed after it breaks that: two threads on one fill line, send_capacity 512 to 519; one claims 0..7 and stops before its install; the other finds the line empty, the guard trips at 8, and it takes 8 and 9 by the single fetch-add; the install lands, and the second thread's next start takes 1 from the line. Read against the code, not run. Fix: narrow the claim in the code and test comments, or keep the line's late chunk from takers once a single take has happened on it; then RNServerPayloadRingLayout gains SlotsRise with the guard path as its reversed witness."
-       :date "2026-11-13" :origin "Models fix round, package M5b (send-memory), found correcting MM065")
