@@ -18,8 +18,11 @@
 // hard TX wakeup error (ENETDOWN) can never drain its ring, even though its
 // producer buffer still holds frames; the drain must release it so
 // rocketnet_server_stop reaches rocketnet_server_stopped. These cases run the
-// real transport stop over a fake staged io whose send_idle is the XDP seam:
-// no socket, thread, clock or kernel resource is involved.
+// real transport stop over a fake staged io whose send_idle is composed here
+// from the XDP release rule (rocketnet_xdp_send_queue_released): no socket,
+// thread, clock or kernel resource is involved. The shipped per-queue order
+// of rocketnet_server_socket_send_idle is run by
+// test_xdp_transport_send_idle_releases_before_the_buffer below (Linux).
 
 //
 // The TX ring cases add a fake ring and the worker's stall watch: every stop
@@ -528,6 +531,24 @@ static void test_xdp_transport_send_packets_flushes_simulator_window()
 REGISTER_UNIT_TEST( test_xdp_transport_send_packets_flushes_simulator_window );
 
 #endif // #if ROCKETNET_DEV
+
+#if ROCKETNET_XDP && ROCKETNET_DEV
+
+// The stop cases above compose their own send_idle from
+// rocketnet_xdp_send_queue_released. This one runs the shipped
+// rocketnet_server_socket_send_idle over one queue whose producer buffer
+// still holds a packet: a hard TX wakeup error or a stalled ring releases the
+// queue before the buffer and mutex are looked at, and neither releases it
+// once cleared. Moving that release below the buffer check hangs a real stop
+// and fails here.
+static void test_xdp_transport_send_idle_releases_before_the_buffer()
+{
+    rocketnet_unit_check( rocketnet_server_socket_test_send_idle_hard_error() );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_send_idle_releases_before_the_buffer );
+
+#endif // #if ROCKETNET_XDP && ROCKETNET_DEV
 
 // The helper returns each in-range packet index and refuses and counts every
 // claim beyond the queue limit. Resetting the counters restores those results;

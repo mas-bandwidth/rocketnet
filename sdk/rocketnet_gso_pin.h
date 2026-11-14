@@ -26,11 +26,19 @@
 #define ROCKETNET_GSO_PIN_OUTSIDE_SET 1 // the cpu is outside the cpu_set_t (0 .. set_size - 1)
 #define ROCKETNET_GSO_PIN_OFFLINE 2     // the cpu is not online (0 .. online - 1)
 
+// the cpus the OS keeps: the server's num_os_cpus, never fewer than 1 (cpu 0
+// is the OS's on Linux, whatever the config says)
+
+static inline int rocketnet_gso_pin_os_cpus( int num_os_cpus )
+{
+    return num_os_cpus < 1 ? 1 : num_os_cpus;
+}
+
 // queue q's cpu: num_os_cpus + q, the XDP transport's own rule
 
 static inline int rocketnet_gso_pin_cpu( int queue, int num_os_cpus )
 {
-    return num_os_cpus + queue;
+    return rocketnet_gso_pin_os_cpus( num_os_cpus ) + queue;
 }
 
 // The cpu a Linux transport's network thread number worker takes (xdp, gso,

@@ -169,10 +169,22 @@ static void test_ipv6_max_payload_is_1452_and_fits_1514()
     const int payload = ROCKETNET_MAX_PACKET_BYTES;
     rocketnet_unit_check( payload == 1452 );
 
-    memcpy( frame + 62, frame + 1000, 0 ); // no-op; payload stays as placed
     int len = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src, &dst, payload );
     rocketnet_unit_check( len == 14 + 40 + 8 + payload );
     rocketnet_unit_check( len == 1514 );
+
+    // the payload stays where it was placed, at the IPv6 header offset 62,
+    // and the frame parses back to all 1452 bytes of it
+    for ( int i = 62; i < len; i++ )
+    {
+        rocketnet_unit_check( frame[i] == 0xAB );
+    }
+    rocketnet_address_t from;
+    const uint8_t * parsed = NULL;
+    int parsed_bytes = 0;
+    rocketnet_unit_check( rocketnet_xdp_frame_parse( frame, (size_t) len, &from, &parsed, &parsed_bytes ) );
+    rocketnet_unit_check( parsed == frame + 62 );
+    rocketnet_unit_check( parsed_bytes == payload );
 }
 
 // the largest frame of each family fits a 1500-byte link and not a
@@ -328,6 +340,21 @@ static void test_parse_refuses_extension_headers()
 
     frame[14] = 0x46;
     rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame, 46, &from, &payload, &payload_bytes ) );
+
+    frame[14] = 0x45;
+    rocketnet_unit_check( rocketnet_xdp_frame_parse( frame, 46, &from, &payload, &payload_bytes ) );
+
+    // a broadcast destination (ff:ff:...) is refused; the same frame to
+    // ff:fe:... is not, so the refusal is the broadcast MAC's alone
+
+    uint8_t destination[6];
+    memcpy( destination, frame, sizeof( destination ) );
+    memset( frame, 0xFF, 6 );
+    rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame, 46, &from, &payload, &payload_bytes ) );
+    frame[1] = 0xFE;
+    rocketnet_unit_check( rocketnet_xdp_frame_parse( frame, 46, &from, &payload, &payload_bytes ) );
+    memcpy( frame, destination, sizeof( destination ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_parse( frame, 46, &from, &payload, &payload_bytes ) );
 
     // a non-IP ethertype is refused
 

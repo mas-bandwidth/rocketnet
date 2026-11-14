@@ -321,7 +321,8 @@ static void test_rocketnet_msgx_socket_table_dead_report()
     rocketnet_unit_check( slot >= 0 );
     const int fd = test.table->slots[slot].fd;
 
-    // a report about an older generation of the slot is ignored
+    // a report about a generation the slot is not at is ignored: here a newer
+    // one (the sweep compares for equality, so older and newer are alike)
     rocketnet_msgx_socket_table_holder_begin( test.table, 0 );
     rocketnet_msgx_socket_table_report_dead( test.table, slot, generation + 5 );
     rocketnet_msgx_socket_table_holder_end( test.table, 0 );

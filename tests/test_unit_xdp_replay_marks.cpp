@@ -18,6 +18,7 @@
 #include "../sdk/rocketnet_wire.h"
 #include "../sdk/rocketnet_xdp_limits.h"
 #include "../sdk/rocketnet_xdp_replay_marks.h"
+#include "../sdk/rocketnet_xdp_replay_sink.h"
 #include "../sdk/rocketnet_client_slots.h"
 #include "../sdk/rocketnet_encryption_map.h"
 #include "../sdk/rocketnet_server_replay_marks.h"
@@ -90,55 +91,6 @@ static void test_xdp_transport_replay_key_matches_golden_bytes()
     struct rocketnet_server_xdp_replay_key_t key4b;
     rocketnet_xdp_replay_key_from_address( &a4b, &key4b );
     rocketnet_unit_check( memcmp( &key4, &key4b, 20 ) != 0 );
-}
-
-static void test_xdp_transport_replay_marks_commit_forgets_before_marks()
-{
-    struct rocketnet_xdp_replay_marks_t marks;
-    replay_marks_bind( &marks );
-
-    struct rocketnet_address_t a = replay_marks_ipv4( 50000 );
-    struct rocketnet_address_t b = replay_marks_ipv4( 50001 );
-
-    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
-    rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &a, 41 ) );
-    rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &b, 7 ) );
-
-    uint32_t forget_count = 0;
-    uint32_t mark_count = 0;
-    const struct rocketnet_server_xdp_replay_key_t * forget_keys = NULL;
-    const struct rocketnet_server_xdp_replay_key_t * mark_keys = NULL;
-    const struct rocketnet_server_xdp_replay_value_t * mark_values = NULL;
-
-    rocketnet_xdp_replay_marks_forgets( &marks, &forget_keys, &forget_count );
-    rocketnet_unit_check( forget_count == 1 );
-
-    // the one forget is A, in insertion order
-
-    struct rocketnet_server_xdp_replay_key_t key_a;
-    struct rocketnet_server_xdp_replay_key_t key_b;
-    rocketnet_xdp_replay_key_from_address( &a, &key_a );
-    rocketnet_xdp_replay_key_from_address( &b, &key_b );
-
-    rocketnet_unit_check( memcmp( &forget_keys[0], &key_a, 20 ) == 0 );
-
-    // the two marks are A at 41 and B at 7, in insertion order
-
-    rocketnet_xdp_replay_marks_marks( &marks, &mark_keys, &mark_values, &mark_count );
-    rocketnet_unit_check( mark_count == 2 );
-    rocketnet_unit_check( memcmp( &mark_keys[0], &key_a, 20 ) == 0 );
-    rocketnet_unit_check( mark_values[0].high_water == 41 );
-    rocketnet_unit_check( memcmp( &mark_keys[1], &key_b, 20 ) == 0 );
-    rocketnet_unit_check( mark_values[1].high_water == 7 );
-
-    // reset empties both lists
-
-    rocketnet_xdp_replay_marks_reset( &marks );
-    rocketnet_xdp_replay_marks_forgets( &marks, &forget_keys, &forget_count );
-    rocketnet_unit_check( forget_count == 0 );
-
-    rocketnet_xdp_replay_marks_marks( &marks, &mark_keys, &mark_values, &mark_count );
-    rocketnet_unit_check( mark_count == 0 );
 }
 
 static void test_xdp_transport_replay_marks_full_refuses_and_counts()
@@ -370,7 +322,20 @@ struct replay_fake_map_t
     bool present[REPLAY_FAKE_MAP_ENTRIES];
     int delete_refusals;
     int update_refusals;
+
+    // every call the commit made, in order: 'd' a delete, 'u' an update
+    char calls[64];
+    int num_calls;
 };
+
+static void replay_fake_map_log( struct replay_fake_map_t * map, char call )
+{
+    if ( map->num_calls < (int) sizeof( map->calls ) )
+    {
+        map->calls[map->num_calls] = call;
+    }
+    map->num_calls++;
+}
 
 static int replay_fake_map_find( const struct replay_fake_map_t * map, const struct rocketnet_server_xdp_replay_key_t * key )
 {
@@ -387,6 +352,7 @@ static int replay_fake_map_find( const struct replay_fake_map_t * map, const str
 
 static bool replay_fake_map_delete( struct replay_fake_map_t * map, const struct rocketnet_server_xdp_replay_key_t * key )
 {
+    replay_fake_map_log( map, 'd' );
     if ( map->delete_refusals > 0 )
     {
         map->delete_refusals--;
@@ -404,6 +370,7 @@ static bool replay_fake_map_delete( struct replay_fake_map_t * map, const struct
 
 static bool replay_fake_map_update( struct replay_fake_map_t * map, const struct rocketnet_server_xdp_replay_key_t * key, uint32_t high_water )
 {
+    replay_fake_map_log( map, 'u' );
     if ( map->update_refusals > 0 )
     {
         map->update_refusals--;
@@ -430,23 +397,145 @@ static bool replay_fake_map_update( struct replay_fake_map_t * map, const struct
     return true;
 }
 
-// The transport's commit against the fake map, in the order of
-// rocketnet_server_socket_replay_commit: every forget, then every mark, then
-// the reset keeping the refused forgets no applied mark superseded.
+// The transport's own commit, rocketnet_xdp_replay_commit
+// (sdk/rocketnet_xdp_replay_sink.h, the one rocketnet_server_socket_replay_commit
+// calls), over the fake map's calls: every forget, then every mark, then the
+// reset keeping the refused forgets no applied mark superseded. The batch
+// calls stop as the kernel's generic batch does, at a refusal or, for a
+// delete, a missing key; the single delete of a missing key succeeds.
 
-static void replay_fake_commit( struct rocketnet_xdp_replay_marks_t * marks, struct replay_fake_map_t * map )
+struct replay_fake_commit_t
+{
+    struct rocketnet_xdp_replay_marks_t * marks;
+    struct replay_fake_map_t * map;
+};
+
+static bool replay_fake_delete_single( void * context, uint32_t index )
+{
+    replay_fake_commit_t * c = (replay_fake_commit_t *) context;
+    return replay_fake_map_delete( c->map, &c->marks->forgets[index] );
+}
+
+static bool replay_fake_delete_batch( void * context, uint32_t first, uint32_t * batch_count )
+{
+    replay_fake_commit_t * c = (replay_fake_commit_t *) context;
+    const uint32_t count = *batch_count;
+    for ( uint32_t i = 0; i < count; i++ )
+    {
+        const struct rocketnet_server_xdp_replay_key_t * key = &c->marks->forgets[first + i];
+        if ( c->map->delete_refusals > 0 || replay_fake_map_find( c->map, key ) < 0 )
+        {
+            *batch_count = i;
+            return false;
+        }
+        replay_fake_map_delete( c->map, key );
+    }
+    return true;
+}
+
+static bool replay_fake_update_single( void * context, uint32_t index )
+{
+    replay_fake_commit_t * c = (replay_fake_commit_t *) context;
+    return replay_fake_map_update( c->map, &c->marks->mark_keys[index], c->marks->mark_values[index].high_water );
+}
+
+static bool replay_fake_update_batch( void * context, uint32_t first, uint32_t * batch_count )
+{
+    replay_fake_commit_t * c = (replay_fake_commit_t *) context;
+    const uint32_t count = *batch_count;
+    for ( uint32_t i = 0; i < count; i++ )
+    {
+        if ( c->map->update_refusals > 0 )
+        {
+            *batch_count = i;
+            return false;
+        }
+        if ( !replay_fake_map_update( c->map, &c->marks->mark_keys[first + i], c->marks->mark_values[first + i].high_water ) )
+        {
+            *batch_count = i;
+            return false;
+        }
+    }
+    return true;
+}
+
+static uint64_t replay_fake_commit( struct rocketnet_xdp_replay_marks_t * marks, struct replay_fake_map_t * map, bool * zero_mark_refused = NULL,
+                                    bool * hold_all_greetings = NULL )
 {
     static bool forget_failed[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
     static bool mark_applied[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
-    for ( uint32_t i = 0; i < marks->forget_count; i++ )
-    {
-        forget_failed[i] = !replay_fake_map_delete( map, &marks->forgets[i] );
-    }
-    for ( uint32_t i = 0; i < marks->mark_count; i++ )
-    {
-        mark_applied[i] = replay_fake_map_update( map, &marks->mark_keys[i], marks->mark_values[i].high_water );
-    }
-    rocketnet_xdp_replay_marks_reset_keeping( marks, forget_failed, mark_applied );
+    bool zero = false;
+    bool hold = false;
+    replay_fake_commit_t c = { marks, map };
+    return rocketnet_xdp_replay_commit( marks, forget_failed, mark_applied, replay_fake_delete_batch, replay_fake_delete_single, replay_fake_update_batch,
+                                        replay_fake_update_single, &c, zero_mark_refused ? zero_mark_refused : &zero,
+                                        hold_all_greetings ? hold_all_greetings : &hold );
+}
+
+static void test_xdp_transport_replay_marks_commit_forgets_before_marks()
+{
+    struct rocketnet_xdp_replay_marks_t marks;
+    replay_marks_bind( &marks );
+
+    struct rocketnet_address_t a = replay_marks_ipv4( 50000 );
+    struct rocketnet_address_t b = replay_marks_ipv4( 50001 );
+
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_forget( &marks, &a ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &a, 41 ) );
+    rocketnet_unit_check( rocketnet_xdp_replay_marks_mark( &marks, &b, 7 ) );
+
+    uint32_t forget_count = 0;
+    uint32_t mark_count = 0;
+    const struct rocketnet_server_xdp_replay_key_t * forget_keys = NULL;
+    const struct rocketnet_server_xdp_replay_key_t * mark_keys = NULL;
+    const struct rocketnet_server_xdp_replay_value_t * mark_values = NULL;
+
+    rocketnet_xdp_replay_marks_forgets( &marks, &forget_keys, &forget_count );
+    rocketnet_unit_check( forget_count == 1 );
+
+    // the one forget is A, in insertion order
+
+    struct rocketnet_server_xdp_replay_key_t key_a;
+    struct rocketnet_server_xdp_replay_key_t key_b;
+    rocketnet_xdp_replay_key_from_address( &a, &key_a );
+    rocketnet_xdp_replay_key_from_address( &b, &key_b );
+
+    rocketnet_unit_check( memcmp( &forget_keys[0], &key_a, 20 ) == 0 );
+
+    // the two marks are A at 41 and B at 7, in insertion order
+
+    rocketnet_xdp_replay_marks_marks( &marks, &mark_keys, &mark_values, &mark_count );
+    rocketnet_unit_check( mark_count == 2 );
+    rocketnet_unit_check( memcmp( &mark_keys[0], &key_a, 20 ) == 0 );
+    rocketnet_unit_check( mark_values[0].high_water == 41 );
+    rocketnet_unit_check( memcmp( &mark_keys[1], &key_b, 20 ) == 0 );
+    rocketnet_unit_check( mark_values[1].high_water == 7 );
+
+    // the shipped commit (rocketnet_xdp_replay_commit, through
+    // replay_fake_commit) against a map that holds A at 30: the delete of A
+    // goes first, then the two updates, so A ends at 41 and B at 7. Updates
+    // before the delete would leave A deleted
+
+    struct replay_fake_map_t kernel;
+    memset( &kernel, 0, sizeof( kernel ) );
+    rocketnet_unit_check( replay_fake_map_update( &kernel, &key_a, 30 ) );
+    kernel.num_calls = 0;
+
+    rocketnet_unit_check( replay_fake_commit( &marks, &kernel ) == 0 );
+    rocketnet_unit_check( kernel.num_calls == 3 );
+    rocketnet_unit_check( kernel.calls[0] == 'd' && kernel.calls[1] == 'u' && kernel.calls[2] == 'u' );
+    const int entry_a = replay_fake_map_find( &kernel, &key_a );
+    const int entry_b = replay_fake_map_find( &kernel, &key_b );
+    rocketnet_unit_check( entry_a >= 0 && kernel.high_water[entry_a] == 41 );
+    rocketnet_unit_check( entry_b >= 0 && kernel.high_water[entry_b] == 7 );
+
+    // every call landed: the commit empties both lists
+
+    rocketnet_xdp_replay_marks_forgets( &marks, &forget_keys, &forget_count );
+    rocketnet_unit_check( forget_count == 0 );
+
+    rocketnet_xdp_replay_marks_marks( &marks, &mark_keys, &mark_values, &mark_count );
+    rocketnet_unit_check( mark_count == 0 );
 }
 
 static bool replay_fake_sink_forget( void * context, const struct rocketnet_address_t * address )

@@ -63,6 +63,13 @@ static const uint8_t other_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x99 };
 struct netlink_datagram_t
 {
     std::vector<uint8_t> bytes;
+
+    // how the fake's recvmsg hands it over (fake_netlink_recvmsg): a
+    // refused read with this errno instead of the bytes, MSG_TRUNC set, or
+    // a sender other than the kernel (port id 0)
+    int recv_errno = 0;
+    bool truncated = false;
+    uint32_t sender = 0;
 };
 
 static void netlink_append( netlink_datagram_t * datagram, const void * data, size_t bytes )
@@ -501,12 +508,14 @@ static void test_xdp_transport_gateway_netlink_ipv4_multipath_first_next_hop()
     check( parse_route( ours, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
     check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
 
-    // this interface as the second next hop: that hop is the route
+    // both hops carry a gateway: the first, on this interface, is the route,
+    // never the later one (this interface as the second hop is
+    // test_xdp_transport_gateway_netlink_ipv4_multipath_later_next_hop)
 
-    netlink_datagram_t second;
-    netlink_multipath_route( &second, AF_INET, other_interface, gateway_ipv4_other, server_interface, gateway_ipv4 );
-    netlink_done( &second );
-    check( parse_route( second, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    netlink_datagram_t both;
+    netlink_multipath_route( &both, AF_INET, server_interface, gateway_ipv4, server_interface, gateway_ipv4_other );
+    netlink_done( &both );
+    check( parse_route( both, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
     check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
 }
 
@@ -530,6 +539,136 @@ static void test_xdp_transport_gateway_netlink_ipv4_multipath_later_next_hop()
     netlink_done( &datagram );
     check( parse_route( datagram, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
     check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
+}
+
+// a multipath default route with no hop on this interface is not this
+// interface's route: the dump reads on, and a default route on this
+// interface listed after it is the answer; alone, it is no gateway
+
+static void test_xdp_transport_gateway_netlink_multipath_no_hop_on_this_interface()
+{
+    for ( int f = 0; f < 2; f++ )
+    {
+        const int family = f == 0 ? AF_INET : AF_INET6;
+        const bool ipv4 = family == AF_INET;
+        const uint8_t * other = ipv4 ? gateway_ipv4_other : gateway_ipv6_other;
+        const uint8_t * want = ipv4 ? gateway_ipv4 : gateway_ipv6;
+
+        uint8_t gateway[16];
+        int error = -1;
+
+        netlink_datagram_t alone;
+        netlink_multipath_route( &alone, family, other_interface, other, other_interface + 1, other );
+        netlink_done( &alone );
+        check( parse_route( alone, family, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_DONE );
+        check( error == 0 );
+
+        netlink_datagram_t then;
+        netlink_multipath_route( &then, family, other_interface, other, other_interface + 1, other );
+        netlink_route_t route;
+        route.family = family;
+        route.gateway = want;
+        netlink_route( &then, route );
+        netlink_done( &then );
+        check( parse_route( then, family, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+        check( memcmp( gateway, want, netlink_address_bytes( family ) ) == 0 );
+    }
+}
+
+// a multipath default route whose RTA_MULTIPATH holds the given bytes as its
+// next hop records
+
+static void netlink_multipath_raw( netlink_datagram_t * datagram, int family, const std::vector<uint8_t> & hops )
+{
+    const size_t start = netlink_begin( datagram, RTM_NEWROUTE, NLM_F_MULTI );
+    struct rtmsg message;
+    memset( &message, 0, sizeof( message ) );
+    message.rtm_family = (unsigned char) family;
+    message.rtm_table = RT_TABLE_MAIN;
+    message.rtm_type = RTN_UNICAST;
+    netlink_append( datagram, &message, sizeof( message ) );
+    netlink_attribute_u32( datagram, RTA_TABLE, RT_TABLE_MAIN );
+    netlink_attribute( datagram, RTA_MULTIPATH, hops.data(), hops.size() );
+    netlink_end( datagram, start );
+}
+
+// one rtnexthop record on interface_index whose rtnh_len says length, then
+// the bytes of an RTA_GATEWAY of gateway_ipv4
+
+static void netlink_hop_bytes( std::vector<uint8_t> * hops, int interface_index, size_t length )
+{
+    struct rtnexthop hop;
+    memset( &hop, 0, sizeof( hop ) );
+    hop.rtnh_len = (unsigned short) length;
+    hop.rtnh_ifindex = interface_index;
+    const uint8_t * h = (const uint8_t *) &hop;
+    hops->insert( hops->end(), h, h + sizeof( hop ) );
+
+    struct rtattr attribute;
+    attribute.rta_len = (unsigned short) RTA_LENGTH( 4 );
+    attribute.rta_type = RTA_GATEWAY;
+    const uint8_t * a = (const uint8_t *) &attribute;
+    hops->insert( hops->end(), a, a + sizeof( attribute ) );
+    hops->insert( hops->end(), gateway_ipv4, gateway_ipv4 + 4 );
+}
+
+// a next hop record that is short, or whose length is below its own header
+// or past the attribute, refuses: never read as no route, even with a good
+// hop on this interface after it
+
+static void test_xdp_transport_gateway_netlink_multipath_malformed_record_refuses()
+{
+    const size_t whole = sizeof( struct rtnexthop ) + RTA_LENGTH( 4 );
+
+    uint8_t gateway[16];
+    int error = -1;
+
+    // fewer bytes than an rtnexthop header
+
+    {
+        std::vector<uint8_t> hops;
+        hops.resize( sizeof( struct rtnexthop ) - 4, 0 );
+        netlink_datagram_t datagram;
+        netlink_multipath_raw( &datagram, AF_INET, hops );
+        netlink_done( &datagram );
+        check( parse_route( datagram, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+    }
+
+    // rtnh_len below the header, on another interface, then a good hop here
+
+    {
+        std::vector<uint8_t> hops;
+        netlink_hop_bytes( &hops, other_interface, sizeof( struct rtnexthop ) - 1 );
+        netlink_hop_bytes( &hops, server_interface, whole );
+        netlink_datagram_t datagram;
+        netlink_multipath_raw( &datagram, AF_INET, hops );
+        netlink_done( &datagram );
+        check( parse_route( datagram, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+    }
+
+    // rtnh_len past the end of the attribute
+
+    {
+        std::vector<uint8_t> hops;
+        netlink_hop_bytes( &hops, other_interface, whole + 64 );
+        netlink_datagram_t datagram;
+        netlink_multipath_raw( &datagram, AF_INET, hops );
+        netlink_done( &datagram );
+        check( parse_route( datagram, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+    }
+
+    // the same records, well formed: the hop here is the route
+
+    {
+        std::vector<uint8_t> hops;
+        netlink_hop_bytes( &hops, other_interface, whole );
+        netlink_hop_bytes( &hops, server_interface, whole );
+        netlink_datagram_t datagram;
+        netlink_multipath_raw( &datagram, AF_INET, hops );
+        netlink_done( &datagram );
+        check( parse_route( datagram, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+        check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
+    }
 }
 
 // a gateway attribute that is not the family's address size refuses
@@ -982,6 +1121,20 @@ struct fake_netlink_t
     const uint8_t * route_gateway = NULL;
     std::vector<std::pair<const uint8_t *, const uint8_t *>> neighbors;    // IPv4 address, MAC
     size_t answered = 0;
+
+    // scripted refusals: a call with a nonzero errno here fails with it
+    // (setsockopt only on its setsockopt_fail_call'th call, from 1); the
+    // send refusals are send_errno and send_short above
+    int socket_errno = 0;
+    int setsockopt_errno = 0;
+    int setsockopt_fail_call = 0;
+    int setsockopt_calls = 0;
+    int bind_errno = 0;
+    int getsockname_errno = 0;
+
+    // read for every receive once the script is spent, when not empty
+    netlink_datagram_t endless;
+    int receives = 0;
 };
 
 static fake_netlink_t * fake_netlink = NULL;
@@ -1020,6 +1173,11 @@ static netlink_datagram_t fake_kernel_answer( const netlink_datagram_t & request
 
 static int fake_netlink_socket( int, int type, int )
 {
+    if ( fake_netlink->socket_errno != 0 )
+    {
+        errno = fake_netlink->socket_errno;
+        return -1;
+    }
     fake_netlink->nonblocking = ( type & SOCK_NONBLOCK ) != 0;
     fake_netlink->sockets++;
     return 100 + fake_netlink->sockets;
@@ -1027,16 +1185,32 @@ static int fake_netlink_socket( int, int type, int )
 
 static int fake_netlink_setsockopt( int, int, int, const void *, socklen_t )
 {
+    fake_netlink->setsockopt_calls++;
+    if ( fake_netlink->setsockopt_errno != 0 && fake_netlink->setsockopt_calls == fake_netlink->setsockopt_fail_call )
+    {
+        errno = fake_netlink->setsockopt_errno;
+        return -1;
+    }
     return 0;
 }
 
 static int fake_netlink_bind( int, const struct sockaddr *, socklen_t )
 {
+    if ( fake_netlink->bind_errno != 0 )
+    {
+        errno = fake_netlink->bind_errno;
+        return -1;
+    }
     return 0;
 }
 
 static int fake_netlink_getsockname( int, struct sockaddr * address, socklen_t * address_bytes )
 {
+    if ( fake_netlink->getsockname_errno != 0 )
+    {
+        errno = fake_netlink->getsockname_errno;
+        return -1;
+    }
     struct sockaddr_nl local;
     memset( &local, 0, sizeof( local ) );
     local.nl_family = AF_NETLINK;
@@ -1068,6 +1242,7 @@ static ssize_t fake_netlink_sendto( int, const void * data, size_t bytes, int fl
 
 static ssize_t fake_netlink_recvmsg( int, struct msghdr * message, int flags )
 {
+    fake_netlink->receives++;
     if ( !fake_netlink->nonblocking && ( flags & MSG_DONTWAIT ) == 0 )
     {
         fake_netlink->blocking_receives++;
@@ -1085,6 +1260,16 @@ static ssize_t fake_netlink_recvmsg( int, struct msghdr * message, int flags )
     {
         datagram = fake_netlink->script[fake_netlink->next++];
     }
+    else if ( !fake_netlink->endless.bytes.empty() )
+    {
+        datagram = fake_netlink->endless;
+    }
+
+    if ( datagram.recv_errno != 0 )
+    {
+        errno = datagram.recv_errno;
+        return -1;
+    }
 
     // an empty datagram: nothing queued for this read
 
@@ -1098,9 +1283,10 @@ static ssize_t fake_netlink_recvmsg( int, struct msghdr * message, int flags )
     struct sockaddr_nl kernel;
     memset( &kernel, 0, sizeof( kernel ) );
     kernel.nl_family = AF_NETLINK;
+    kernel.nl_pid = datagram.sender;
     memcpy( message->msg_name, &kernel, sizeof( kernel ) );
     message->msg_namelen = sizeof( kernel );
-    message->msg_flags = 0;
+    message->msg_flags = datagram.truncated ? MSG_TRUNC : 0;
     return (ssize_t) datagram.bytes.size();
 }
 
@@ -1270,6 +1456,182 @@ static void test_xdp_transport_gateway_netlink_short_send_is_eproto()
     check( error == EPROTO );
     check( fake.send_flags == 0 );
 
+    fake_netlink = NULL;
+}
+
+// the route query on a fake whose scripted refusal is already set: the
+// default route is queued, so a query that went on would find it
+
+static int refused_route_query( fake_netlink_t * fake, int * error )
+{
+    fake->script.push_back( default_route_datagram() );
+    fake_netlink = fake;
+    uint8_t gateway[16];
+    memset( gateway, 0, sizeof( gateway ) );
+    *error = -1;
+    const int result = rocketnet_gateway_netlink_route_with( &fake_netlink_system, AF_INET, server_interface, gateway, error );
+    fake_netlink = NULL;
+    return result;
+}
+
+// a socket the kernel refuses to open, set up, bind or name is SYSTEM with
+// the call's errno, and every descriptor opened is closed once; nothing is
+// sent or read
+
+static void test_xdp_transport_gateway_netlink_open_and_setup_refusals_close()
+{
+    int error = -1;
+
+    {
+        fake_netlink_t fake;
+        fake.socket_errno = EMFILE;
+        check( refused_route_query( &fake, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
+        check( error == EMFILE );
+        check( fake.sockets == 0 && fake.closes == 0 );
+        check( fake.requests.empty() && fake.receives == 0 );
+    }
+
+    for ( int call = 1; call <= 2; call++ )
+    {
+        fake_netlink_t fake;
+        fake.setsockopt_errno = ENOPROTOOPT;
+        fake.setsockopt_fail_call = call;
+        check( refused_route_query( &fake, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
+        check( error == ENOPROTOOPT );
+        check( fake.setsockopt_calls == call );
+        check( fake.sockets == 1 && fake.closes == 1 );
+        check( fake.requests.empty() && fake.receives == 0 );
+    }
+
+    {
+        fake_netlink_t fake;
+        fake.bind_errno = EADDRINUSE;
+        check( refused_route_query( &fake, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
+        check( error == EADDRINUSE );
+        check( fake.sockets == 1 && fake.closes == 1 );
+        check( fake.requests.empty() && fake.receives == 0 );
+    }
+
+    {
+        fake_netlink_t fake;
+        fake.getsockname_errno = ENOBUFS;
+        check( refused_route_query( &fake, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
+        check( error == ENOBUFS );
+        check( fake.sockets == 1 && fake.closes == 1 );
+        check( fake.requests.empty() && fake.receives == 0 );
+    }
+}
+
+// a refused send is SYSTEM with its errno, and a send that took less than
+// the request is SYSTEM too: either way the socket is closed and nothing is
+// read
+
+static void test_xdp_transport_gateway_netlink_send_refusals_close()
+{
+    int error = -1;
+
+    {
+        fake_netlink_t fake;
+        fake.send_errno = EPERM;
+        check( refused_route_query( &fake, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
+        check( error == EPERM );
+        check( fake.sockets == 1 && fake.closes == 1 && fake.receives == 0 );
+    }
+
+    {
+        fake_netlink_t fake;
+        fake.send_short = 1;
+        check( refused_route_query( &fake, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
+        check( fake.sockets == 1 && fake.closes == 1 && fake.receives == 0 );
+    }
+}
+
+// the reads: an interrupted read is read again; a refused read is SYSTEM
+// with its errno; a datagram cut short (MSG_TRUNC) is MALFORMED with
+// EMSGSIZE. Each closes the socket once
+
+static void test_xdp_transport_gateway_netlink_read_paths()
+{
+    int error = -1;
+
+    {
+        fake_netlink_t fake;
+        netlink_datagram_t interrupted;
+        interrupted.recv_errno = EINTR;
+        fake.script.push_back( interrupted );
+        fake.script.push_back( interrupted );
+        check( refused_route_query( &fake, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+        check( error == 0 );
+        check( fake.receives == 3 && fake.sockets == 1 && fake.closes == 1 );
+    }
+
+    {
+        fake_netlink_t fake;
+        netlink_datagram_t refused;
+        refused.recv_errno = ENOBUFS;
+        fake.script.push_back( refused );
+        check( refused_route_query( &fake, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
+        check( error == ENOBUFS );
+        check( fake.receives == 1 && fake.sockets == 1 && fake.closes == 1 );
+    }
+
+    {
+        fake_netlink_t fake;
+        netlink_datagram_t cut = default_route_datagram();
+        cut.truncated = true;
+        fake.script.push_back( cut );
+        check( refused_route_query( &fake, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
+        check( error == EMSGSIZE );
+        check( fake.receives == 1 && fake.sockets == 1 && fake.closes == 1 );
+    }
+}
+
+// a datagram from a sender other than the kernel is skipped: it names
+// another gateway, and the kernel's datagram after it is the answer
+
+static void test_xdp_transport_gateway_netlink_foreign_sender_skipped()
+{
+    fake_netlink_t fake;
+    netlink_datagram_t foreign;
+    netlink_route_t route;
+    route.gateway = gateway_ipv4_other;
+    netlink_route( &foreign, route );
+    netlink_done( &foreign );
+    foreign.sender = netlink_port_id + 1;
+    fake.script.push_back( foreign );
+    fake.script.push_back( default_route_datagram() );
+
+    fake_netlink = &fake;
+    uint8_t gateway[16];
+    memset( gateway, 0, sizeof( gateway ) );
+    int error = -1;
+    check( rocketnet_gateway_netlink_route_with( &fake_netlink_system, AF_INET, server_interface, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
+    check( fake.receives == 2 && fake.closes == 1 );
+    fake_netlink = NULL;
+}
+
+// a dump that never ends refuses after ROCKETNET_GATEWAY_NETLINK_MAX_READS
+// (4096, sdk/rocketnet_gateway_netlink_linux.cpp) reads: SYSTEM with E2BIG,
+// the socket closed
+
+static void test_xdp_transport_gateway_netlink_read_bound()
+{
+    const int max_reads = 4096;
+
+    fake_netlink_t fake;
+    netlink_route_t subnet;
+    subnet.destination_length = 24;
+    subnet.destination = subnet_ipv4;
+    netlink_route( &fake.endless, subnet );
+
+    fake_netlink = &fake;
+    uint8_t gateway[16];
+    int error = -1;
+    check( rocketnet_gateway_netlink_route_with( &fake_netlink_system, AF_INET, server_interface, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_SYSTEM );
+    check( error == E2BIG );
+    check( fake.receives == max_reads );
+    check( fake.sockets == 1 && fake.closes == 1 );
     fake_netlink = NULL;
 }
 
@@ -1962,6 +2324,8 @@ REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_only_the_main_unicast_def
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_multipath_first_next_hop );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv6_multipath_found );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_multipath_later_next_hop );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_multipath_no_hop_on_this_interface );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_multipath_malformed_record_refuses );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_gateway_wrong_size_refuses );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_lladdr_found );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_wrong_interface );
@@ -1979,6 +2343,11 @@ REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_interrupted_dump_bounded 
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_error_not_retried );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_short_local_address );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_short_send_is_eproto );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_open_and_setup_refusals_close );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_send_refusals_close );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_read_paths );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_foreign_sender_skipped );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_read_bound );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_asked_directly );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_missing_entry );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_refresh_reads_the_route_every_period );
@@ -2189,9 +2558,130 @@ static void test_xdp_transport_gateway_netlink_nexthop_gateway_wrong_size_refuse
     check( nexthop_route_query( &fake, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
 }
 
+// one dump datagram of IPv4 default routes, each naming the nexthop object
+// of its id, then NLMSG_DONE
+
+static netlink_datagram_t nexthop_routes_datagram( const std::vector<uint32_t> & ids )
+{
+    netlink_datagram_t datagram;
+    for ( size_t i = 0; i < ids.size(); i++ )
+    {
+        const size_t start = netlink_begin( &datagram, RTM_NEWROUTE, NLM_F_MULTI );
+        struct rtmsg message;
+        memset( &message, 0, sizeof( message ) );
+        message.rtm_family = AF_INET;
+        message.rtm_table = RT_TABLE_MAIN;
+        message.rtm_protocol = RTPROT_BOOT;
+        message.rtm_scope = RT_SCOPE_UNIVERSE;
+        message.rtm_type = RTN_UNICAST;
+        netlink_append( &datagram, &message, sizeof( message ) );
+        netlink_attribute_u32( &datagram, RTA_TABLE, RT_TABLE_MAIN );
+        netlink_attribute_u32( &datagram, RTA_NH_ID, ids[i] );
+        netlink_end( &datagram, start );
+    }
+    netlink_done( &datagram );
+    return datagram;
+}
+
+// the ids the RTM_GETNEXTHOP requests after the dump asked, in order
+
+static std::vector<uint32_t> nexthop_ids_asked( const fake_netlink_t & fake )
+{
+    std::vector<uint32_t> ids;
+    for ( size_t i = 0; i < fake.requests.size(); i++ )
+    {
+        struct nlmsghdr header;
+        memcpy( &header, fake.requests[i].bytes.data(), sizeof( header ) );
+        if ( header.nlmsg_type != RTM_GETNEXTHOP )
+        {
+            continue;
+        }
+        uint32_t id = 0;
+        memcpy( &id, fake.requests[i].bytes.data() + NLMSG_SPACE( sizeof( struct nhmsg ) ) + RTA_LENGTH( 0 ), sizeof( id ) );
+        ids.push_back( id );
+    }
+    return ids;
+}
+
+// routes that name the same nexthop object ask it once
+
+static void test_xdp_transport_gateway_netlink_nexthop_repeated_id_asked_once()
+{
+    fake_netlink_t fake;
+    std::vector<uint32_t> ids;
+    ids.push_back( nexthop_id );
+    ids.push_back( nexthop_id );
+    ids.push_back( nexthop_id + 1 );
+    ids.push_back( nexthop_id );
+    fake.script.push_back( nexthop_routes_datagram( ids ) );
+
+    netlink_nexthop_t first;
+    first.output_interface = other_interface;
+    fake.script.push_back( nexthop_reply( first ) );
+
+    netlink_nexthop_t second;
+    second.id = nexthop_id + 1;
+    fake.script.push_back( nexthop_reply( second ) );
+
+    uint8_t gateway[16];
+    int error = -1;
+    check( nexthop_route_query( &fake, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
+
+    const std::vector<uint32_t> asked = nexthop_ids_asked( fake );
+    check( asked.size() == 2 );
+    check( asked.size() == 2 && asked[0] == nexthop_id && asked[1] == nexthop_id + 1 );
+    check( fake.sockets == 3 && fake.closes == 3 );
+}
+
+// at most ROCKETNET_GATEWAY_NETLINK_MAX_NEXTHOP_IDS (8,
+// sdk/rocketnet_gateway_netlink_linux.cpp) objects are asked, the first eight
+// distinct ids of the dump: a ninth is never asked, and with none of the
+// eight resolving the answer is no gateway
+
+static void test_xdp_transport_gateway_netlink_nexthop_ids_capped()
+{
+    const uint32_t max_nexthop_ids = 8;
+
+    fake_netlink_t fake;
+    std::vector<uint32_t> ids;
+    for ( uint32_t i = 0; i <= max_nexthop_ids; i++ )
+    {
+        ids.push_back( 100 + i );
+    }
+    fake.script.push_back( nexthop_routes_datagram( ids ) );
+    for ( uint32_t i = 0; i < max_nexthop_ids; i++ )
+    {
+        netlink_datagram_t missing;
+        netlink_error( &missing, -ENOENT );
+        fake.script.push_back( missing );
+    }
+
+    // were the ninth asked, this reply would answer it with a gateway here
+    netlink_nexthop_t ninth;
+    ninth.id = 100 + max_nexthop_ids;
+    fake.script.push_back( nexthop_reply( ninth ) );
+
+    uint8_t gateway[16];
+    int error = -1;
+    check( nexthop_route_query( &fake, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_DONE );
+    check( error == 0 );
+
+    const std::vector<uint32_t> asked = nexthop_ids_asked( fake );
+    check( asked.size() == max_nexthop_ids );
+    for ( size_t i = 0; i < asked.size(); i++ )
+    {
+        check( asked[i] == 100 + (uint32_t) i );
+    }
+    check( fake.next == 1 + max_nexthop_ids );
+    check( fake.sockets == fake.closes );
+}
+
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_nexthop_object_resolved );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv6_nexthop_object_resolved );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_nexthop_object_unresolved_is_no_gateway );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_nexthop_gateway_wrong_size_refuses );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_nexthop_repeated_id_asked_once );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_nexthop_ids_capped );
 
 #endif // #if ROCKETNET_XDP
