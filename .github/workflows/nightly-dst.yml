@@ -20,18 +20,19 @@
 #
 # The reference trace changes only when the harness or the library changes what
 # a run does; a change that moves it updates DST_REFERENCE_TRACE and docs/DST.md
-# in the same commit, from three equal PASS lines (Linux, macOS, Windows). The
-# fixed range 1-2050 and each schedule step compare their whole PASS line to a
-# pin the same way (DST_FIXED_TRACE, DST_TRACE_<SCHEDULE>), so a run that
-# diverges on one OS past seed 50 is red that night, not only printed; the pins
-# move by the same rule, from three equal lines. The sweep's trace is not
+# in the same commit. The fixed range 1-2050 and each schedule step compare
+# their whole PASS line to a pin the same way (DST_FIXED_TRACE,
+# DST_TRACE_<SCHEDULE>), so a run that diverges on one OS past seed 50 is red
+# that night, not only printed; the pins move with the reference. The current
+# values are measured on Linux (see the env block below), so this workflow's
+# macOS and Windows legs are their first comparison. The sweep's trace is not
 # compared: its range rolls nightly and differs per OS
 # (tools/printed_values_allowlist.txt). Every step after the build runs even
 # when an earlier one is red (a red reference no longer skips the sweep).
 #
 # Nightlies are exempt from the two-minute rule. Each sweep is sized to about
-# 1200 s from a Release measurement on that OS, and each range was run once
-# at the commit that set DST_REFERENCE_TRACE:
+# 1200 s from a Release measurement on that OS, each range run once at an
+# earlier reference than the current one (docs/DST.md names the sources):
 #   Linux   10950 seeds PASS in 1384 s (0.13 s/seed)
 #   macOS   13950 seeds PASS in 1218 s (0.087 s/seed)
 #   Windows 5950 seeds  PASS in 1348 s (0.23 s/seed); 1273 s (0.21 s/seed) at 809ad504
