@@ -52,7 +52,7 @@ shared machine or a guarantee that a later build accepts the same settings.
   - queues (Combined): 1 for xdp at 1 thread, 2 for every other row. Set by
     `scripts/rocketnet-provision eno2 N`, which also sets gro_flush_timeout 200000, checks smt off,
     and pins queue IRQs.
-  - Recorded settings: GRO on, LRO off (fixed), rx-vlan-offload on, tx-vlan-offload on. These are measurement settings, not a deployment recommendation: the VLAN preflight may refuse receive-tag stripping. Follow the current [Linux provisioning requirements](../LINUX.md); the VLAN-offload measurement is still pending.
+  - Recorded settings: GRO on, LRO off (fixed), rx-vlan-offload on, tx-vlan-offload on. These are measurement settings, not a deployment recommendation: the VLAN preflight may refuse receive-tag stripping. Follow the current [Linux provisioning requirements](../LINUX.md); the VLAN-specific measured settings are recorded below.
   - qdisc: mq root with fq_codel children (limit 10240p, target 5ms, interval 100ms,
     memory_limit 32Mb, ecn, drop_batch 64). net.core.default_qdisc = fq_codel.
 - rmem_max/wmem_max: 25000000/1000000 on gso and io_uring rows, 4194304/4194304 on xdp rows (as found).
@@ -187,7 +187,9 @@ rows measure that fix; no assembled release result is implied.
 | M-4b | main | average | half | 3 | PASS 3/3 | 480.3k | 4.94 | 0 | 2-4 | 0/0 | 8.4-11.7 | 13.8-18.7 | 0.19-0.41% | 0.42-0.43 / 0.45-0.51 |
 | M-4b | main | average | none | 3 | PASS 3/3 | 480.3k | 4.94 | 0 | 0 | 0/0 | 10.3-11.5 | 16.2-17.3 | 0.25-0.37% | 0.41 / 0.44-0.45 |
 
-io_uring on main has full throughput and no added receive delay. At peak with half game, fq_codel drops
+The measured io_uring rows reach the offered rate with a low late-input share
+(0.17–0.41%), consistent with no regular extra-update hold while retaining
+the reported tail. At peak with half game, fq_codel drops
 whole 15-packet GSO skbs as sojourn drops. 7 of 9 fq_codel rows lost 15-210 s2c messages (at most
 0.0004% of the 54M sent). In one qdisc-test run the NIC snapshot was missed, so its Gb/s is not in
 the range. The pfifo comparison is pending (QDISC2).
@@ -243,12 +245,10 @@ XV = main e0f1a0fae + fix/v1.1.x/xdp-vlan-offload 7a2b24365 + harness, tree f81a
 It carries the XDP filter change (destination MAC ff:ff and IP version checks) and the xdp
 pre-flight and provision work (R2/R3/R4/R8).
 
-The rows are xdp at 1 thread with eno2 at 1 queue, and the server address is on VLAN eno2.2195. The
-setting was changed once each way, and the offload-off rows took turns, main and XV.
+The rows use one XDP thread and one eno2 queue, with the server address
+on VLAN eno2.2195. They cover receive VLAN offload enabled and disabled.
 
 **Pre-flight starts:**
-- **main, offload on:** starts (the M54 rows above).
-- **main, offload off:** starts.
 - **XV, offload on:** refuses to start (one probe run):
   `xdp pre-flight: eno2 strips the 802.1Q tag on receive (rx-vlan-offload on), so the filter cannot tell VLAN 2195's frames from other VLANs' (R2): run 'ethtool -K eno2 rxvlan off', or scripts/rocketnet-provision`,
   then `xdp pre-flight failed: this machine is not provisioned for the XDP data plane`.
@@ -260,11 +260,13 @@ setting was changed once each way, and the offload-off rows took turns, main and
 | XV | hot-path | off | peak | none | 3 | PASS 3/3 | 900.3k | 9.27 | 0 | 0 | 0/0 | 25.5-27.6 | 33.3 | 85.0-86.9% | 0.43 / 0.45-0.46 |
 | XV | hot-path | on | peak | half | 1 | refuses to start (pre-flight R2) | - | - | - | - | - | - | - | - | - |
 
-XV has the same throughput, receive delay and main-thread work as main. It carries no receive-delay
-fix, so main's one-update delay remains.
+XV reaches the peak rate with receive VLAN offload disabled, but its
+84.6–99.8% late-input share shows the receive delay remains. This recipe does
+not include the receive-handoff fix. Qualification of the combined VLAN and
+receive-handoff changes requires a measurement of their assembled tree.
 
 ## Qualification still required
 
 The assembled hot-path tree still needs its complete measurement. The row
-owner also has pending VLAN-offload, port-0, send-queue, io_uring qdisc and XDP
+owner also has pending port-0, send-queue, io_uring qdisc and XDP
 replay checks. These rows qualify only their measured recipes.
