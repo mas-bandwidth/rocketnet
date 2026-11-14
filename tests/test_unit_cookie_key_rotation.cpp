@@ -460,40 +460,48 @@ static void test_cookie_rotation_receive_after_stall_rejects_outgoing_key()
 // reaches the signature verify (the check under "the handshake work budget"
 // in rocketnet_server_protocol_process_connection_request).
 
+// Spend the whole handshake budget of one update: each of budget requests,
+// from its own address with a fresh cookie, is answered with a challenge (it
+// passed the signature verify, so it spent budget; a request refused on any
+// earlier rung would not), and the next one is refused for budget alone. The
+// table has room for every half-open mapping, since a full table refuses
+// before the verify.
+
+static void rocketnet_rotation_spend_handshake_budget( struct rocketnet_rotation_server_t * test, int budget )
+{
+    rocketnet_encryption_map_destroy( test->server.encryption_map );
+    test->server.encryption_map = rocketnet_encryption_map_create( NULL, 2 * ( budget + 2 ) );
+    rocketnet_unit_check( test->server.encryption_map );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+
+    for ( int i = 0; i < budget; ++i )
+    {
+        rocketnet_rotation_set_client_address( test, i );
+        rocketnet_rotation_build_request_with_key( test, request, UINT64_C( 0x10000 ) + (uint64_t) i, test->server.cookie_key );
+        rocketnet_unit_check( rocketnet_rotation_process_from_client_address( test, request ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    }
+
+    rocketnet_rotation_set_client_address( test, budget );
+    rocketnet_rotation_build_request_with_key( test, request, UINT64_C( 0x10000 ) + (uint64_t) budget, test->server.cookie_key );
+    rocketnet_unit_check( rocketnet_rotation_process_from_client_address( test, request ) == ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
+    rocketnet_unit_check( test->counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 1 );
+}
+
 static void test_handshake_budget_reopens_after_update()
 {
     struct rocketnet_rotation_server_t test;
     rocketnet_rotation_server_setup( &test, 0 );
 
     const int budget = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
-
-    // room for every request's half-open mapping: a full table refuses
-    // before the verify, and only a request that reaches it spends budget
-    rocketnet_encryption_map_destroy( test.server.encryption_map );
-    test.server.encryption_map = rocketnet_encryption_map_create( NULL, 2 * ( budget + 2 ) );
-    rocketnet_unit_check( test.server.encryption_map );
-
-    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-
-    for ( int i = 0; i < budget; ++i )
-    {
-        rocketnet_rotation_set_client_address( &test, i );
-        rocketnet_rotation_build_request_with_key( &test, request, UINT64_C( 0x10000 ) + (uint64_t) i, test.server.cookie_key );
-
-        int result = rocketnet_rotation_process_from_client_address( &test, request );
-        rocketnet_unit_check( result != ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
-    }
-
-    rocketnet_rotation_set_client_address( &test, budget );
-    rocketnet_rotation_build_request_with_key( &test, request, 0x10000ULL + (uint64_t) budget, test.server.cookie_key );
-    rocketnet_unit_check( rocketnet_rotation_process_from_client_address( &test, request ) == ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
-    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 1 );
+    rocketnet_rotation_spend_handshake_budget( &test, budget );
 
     rocketnet_server_protocol_update( &test.server, 1000.0 );
 
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     rocketnet_rotation_set_client_address( &test, budget + 1 );
-    rocketnet_rotation_build_request_with_key( &test, request, 0x10000ULL + (uint64_t) ( budget + 1 ), test.server.cookie_key );
-    rocketnet_unit_check( rocketnet_rotation_process_from_client_address( &test, request ) != ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
+    rocketnet_rotation_build_request_with_key( &test, request, UINT64_C( 0x10000 ) + (uint64_t) ( budget + 1 ), test.server.cookie_key );
+    rocketnet_unit_check( rocketnet_rotation_process_from_client_address( &test, request ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 1 );
 
     rocketnet_rotation_server_teardown( &test );
@@ -510,29 +518,9 @@ static void test_cookie_requests_spend_no_handshake_budget()
     rocketnet_rotation_server_setup( &test, 0 );
 
     const int budget = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
-
-    // room for every request's half-open mapping: a full table refuses
-    // before the verify, and only a request that reaches it spends budget
-    rocketnet_encryption_map_destroy( test.server.encryption_map );
-    test.server.encryption_map = rocketnet_encryption_map_create( NULL, 2 * ( budget + 2 ) );
-    rocketnet_unit_check( test.server.encryption_map );
+    rocketnet_rotation_spend_handshake_budget( &test, budget );
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-
-    for ( int i = 0; i < budget; ++i )
-    {
-        rocketnet_rotation_set_client_address( &test, i );
-        rocketnet_rotation_build_request_with_key( &test, request, UINT64_C( 0x10000 ) + (uint64_t) i, test.server.cookie_key );
-
-        int result = rocketnet_rotation_process_from_client_address( &test, request );
-        rocketnet_unit_check( result != ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
-    }
-
-    rocketnet_rotation_set_client_address( &test, budget );
-    rocketnet_rotation_build_request_with_key( &test, request, 0x10000ULL + (uint64_t) budget, test.server.cookie_key );
-    rocketnet_unit_check( rocketnet_rotation_process_from_client_address( &test, request ) == ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
-    rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 1 );
-
     rocketnet_unit_check( rocketnet_address_parse( &test.client_address, "10.200.0.1:56789" ) );
     rocketnet_rotation_build_request_no_cookie( request, 0x20000ULL );
     rocketnet_unit_check( rocketnet_rotation_process_from_client_address( &test, request ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );

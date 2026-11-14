@@ -34,6 +34,7 @@
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_server.h"
 #include "rocketnet_ack.h"
+#include "rocketnet_crypto_tally.h"
 
 #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
@@ -253,6 +254,59 @@ static inline void signed_token_expect_refused( const struct signed_token_spec_t
     rocketnet_unit_check( signed_token_send( &test, &address, signed_connect_data, signature ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( test.counters.values[counter] == before.values[counter] + 1 );
     rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE] == 0 );
+    rocketnet_unit_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
+
+    signed_token_server_teardown( &test );
+}
+
+#if ROCKETNET_DEV
+extern uint64_t rocketnet_server_cookie_mac_count();
+#endif // #if ROCKETNET_DEV
+
+// signed_token_expect_refused, for a rung that sits before the cookie gate:
+// the refusal spends none of the work past it. No request reaches the
+// handshake work budget, in every build; in a development build the cookie
+// MAC is never computed and neither the signature verify nor the sealed
+// block's open runs.
+
+static inline void signed_token_expect_refused_unworked( const struct signed_token_spec_t * spec, int counter )
+{
+    struct signed_token_server_t test;
+    signed_token_server_setup( &test, rocketnet_test_backend_public_key );
+
+    uint8_t signed_connect_data[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
+    uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
+    signed_token_mint( spec, signed_connect_data, signature );
+
+    struct rocketnet_address_t address;
+    rocketnet_unit_check( rocketnet_address_parse( &address, "198.51.100.7:56789" ) );
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    signed_token_request( request, signed_connect_data, signature, &address, test.server.cookie_key );
+
+#if ROCKETNET_DEV
+    const uint64_t macs_before = rocketnet_server_cookie_mac_count();
+    rocketnet_crypto_tally_reset();
+#endif // #if ROCKETNET_DEV
+
+    const struct rocketnet_counters_t before = test.counters;
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = -1;
+    rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &address,
+                                                                                request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                                ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                                response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    rocketnet_unit_check( response_bytes == 0 );
+    rocketnet_unit_check( test.counters.values[counter] == before.values[counter] + 1 );
+    rocketnet_unit_check( test.server.counters->handshakes_processed_this_update == 0 );
+
+#if ROCKETNET_DEV
+    const struct rocketnet_crypto_tally_t tally = rocketnet_crypto_tally_get();
+    rocketnet_unit_check( rocketnet_server_cookie_mac_count() == macs_before );
+    rocketnet_unit_check( tally.signature_verify == 0 );
+    rocketnet_unit_check( tally.seal_open == 0 );
+#endif // #if ROCKETNET_DEV
+
     rocketnet_unit_check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
 
     signed_token_server_teardown( &test );

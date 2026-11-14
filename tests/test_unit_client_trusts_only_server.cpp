@@ -20,7 +20,11 @@
 // before anything is sent or received, so the kernel drops datagrams from
 // any other source; a refused connect refuses the transport. The fake
 // client driver (tests/fake_client_driver.h) stands in for the socket here;
-// tests/functional/platform_primitives.cpp checks the real socket over loopback.
+// the real connected socket's drop of foreign sources is checked over loopback
+// by rocketnet_test_posix_client_drops_foreign_sources in
+// tests/functional/posix_socket_errors.cpp and by
+// windows_client_drops_oversize_and_garbage in
+// tests/functional/windows_socket_errors.cpp.
 // Time is an argument; the clock starts at 1000.0 and nothing here sleeps,
 // opens a socket or reads a clock.
 
