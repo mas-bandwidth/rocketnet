@@ -112,7 +112,16 @@ static int rocketnet_functional_worker( const char * name )
     {
         plan_rss_report();
     }
-    rocketnet_term();
+
+    // a case that leaves an allocation live fails here; a case that ended the
+    // library itself is answered NOT_INITIALIZED, which is not a leak
+
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status == ROCKETNET_STATUS_LIVE_ALLOCATIONS )
+    {
+        printf( "check failed: %s: rocketnet_term returned %d (%s)\n", name, (int) term_status, rocketnet_status_name( term_status ) );
+        result = 1;
+    }
     fflush( stdout );
 
     return result;

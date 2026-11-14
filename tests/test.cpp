@@ -370,7 +370,16 @@ static int rocketnet_unit_worker( const char * name )
     {
         result = 1;
     }
-    rocketnet_term();
+    // a case that leaves an allocation live fails here: term's answer is the
+    // case's leak check. A case that ended the library itself (a lifecycle or
+    // refusing-allocator case) is answered NOT_INITIALIZED, which is not a leak
+
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status == ROCKETNET_STATUS_LIVE_ALLOCATIONS )
+    {
+        printf( "check failed: %s: rocketnet_term returned %d (%s)\n", name, (int) term_status, rocketnet_status_name( term_status ) );
+        result = 1;
+    }
     fflush( stdout );
 
     return result;
