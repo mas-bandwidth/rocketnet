@@ -1,7 +1,7 @@
 # Windows soak, native server transports
 
 The iocp and rio server cells of `soak-windows` (`.github/workflows/nightly-soak.yml`)
-each ran once for 1800 seconds on the fleet's Windows bench, at one head, one
+each ran once for 1800 seconds on one Windows bench, at one head, one
 after the other inside one exclusive hold of the bench, as same-host loopback
 runs (correctness only; no NIC is exercised). Both cells PASSED
 `--assert-flat`, and the verdict is LAND.
@@ -93,8 +93,13 @@ SOAK cell=rio PASS server=rio seconds=1800
 
 ## Reading
 
-The requested impairment was applied at both ends and left its trace: about
-2.5% of the payloads in each direction never arrived and every planted
+The requested impairment was applied at both ends and left its trace: the link
+witness counted 55898 client-to-server and 56326 server-to-client payloads
+that never arrived on the iocp cell, and 55955 and 56469 on the rio cell. The
+summary's `sent` adds both directions together, so with roughly balanced
+traffic each direction lost approximately 5% of what it sent, the requested
+loss (an exact per-direction share needs per-direction send totals, which
+this record does not have). Every planted
 duplicate was refused as already received, so the flat lines below were taken
 under loss, jitter and duplication, not on a clean link. Every received payload
 verified. Threads, private bytes and library bytes are flat on both cells. The

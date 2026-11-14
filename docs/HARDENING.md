@@ -38,62 +38,19 @@ GCC analysis. Historical triage records below retain their original scope.
 
 ## Source audits and executed verification passes
 
-Source inspections and executed campaigns serve different roles and are recorded
-separately under `docs/audits/`:
-
-- **Source-reading area and sweep audits** inspect code paths and record
-  findings for follow-up repair, but do not by themselves constitute an executed
-  pass gate:
-  [config and API](audits/2026-10-24-area-config-api.md),
-  [connect tokens and handshake](audits/2026-10-24-area-connect-tokens-handshake.md),
-  [encryption, keys and replay](audits/2026-10-24-area-encryption-keys-replay.md),
-  [acks and fragments](audits/2026-10-24-area-protocol-acks-fragments.md),
-  [channels and messages](audits/2026-10-24-area-protocol-channels-messages.md),
-  [Linux AF_XDP](audits/2026-10-24-area-transports-linux-af-xdp.md),
-  [Linux portable, GSO and io_uring](audits/2026-10-24-area-transports-linux-portable-gso-uring.md),
-  [macOS transports](audits/2026-10-24-area-transports-macos.md),
-  [Windows transports](audits/2026-10-24-area-transports-windows.md),
-  [code quality A](audits/2026-10-24-code-quality-a.md),
-  [code quality B](audits/2026-10-24-code-quality-b.md),
-  [assert-only guards](audits/2026-10-24-sweep-assert-only-guards.md),
-  [monotonic clock](audits/2026-10-24-sweep-clock-monotonic.md),
-  [count-before-success](audits/2026-10-24-sweep-count-before-success.md),
-  [integer narrowing](audits/2026-10-24-sweep-int-narrowing.md), and
-  [silent discard](audits/2026-10-24-sweep-silent-discard.md).
-- **Executed verification and static-analysis records** document the exact
-  tested commit, tool invocation, observed outcome, and remaining limits:
-  - [Release-build (`-DNDEBUG`) fuzz campaign](audits/2026-10-24-fuzz-ndebug.md)
-    at `6ac80bfb59eb3b9e3e6f748c1973c6b6c8f0b228`: ran all 11 `tests/fuzz/` harnesses
-    on Linux with `-DNDEBUG`, AddressSanitizer, and UndefinedBehaviorSanitizer
-    for 600 seconds each so bounds enforced only by debug assertions are tested
-    under release compilation.
-  - [Core protocol mutation testing](audits/2026-10-24-mutation-testing.md)
-    at `44ab971773c8a05dd00f63e77b7159d6b489a76c`: ran `tools/mutation/run_mutants.py`
-    with `./bin/test` as the oracle on Linux Release across ack, fragment,
-    protocol, window, and quality-tracker units to identify surviving mutants
-    and oracle gaps.
-  - [Deterministic simulation fault schedules](audits/2026-10-24-dst-fault-schedules.md)
-    at `b0e281c4126c43f268b5129ee29539b416b17a9c`: ran `./bin/dst --seeds 1-1000`
-    across named fault schedules on Linux Release, recording passing schedules
-    and replaying failing seeds (`clock-back`, `reorder-burst`, `dup-storm`, etc.)
-    for targeted fixes.
-  - [Production-path line coverage](audits/2026-10-24-coverage-production-paths.md)
-    at `aa193eb3bab05b0f384ecdd1f0229c1ccbe41774`: measured `sdk/` line coverage
-    via `tools/coverage_split.py`, separating production-exercised lines from
-    unit-only and unreached guards (and recording an `example_game_loop` failure
-    during the run).
-  - [Static-analysis baseline triage](audits/2026-10-24-static-analysis.md)
-    at `53cbafcf843fc9f08b7a5de5325c254cd47f9a5d`,
-    [zero-unresolved static-analysis triage](audits/2026-10-26-static-analysis-triage.md),
-    and [workflow and shell lint](audits/2026-10-26-workflow-shell-lint.md):
-    dispositioned GCC `-fanalyzer`, `clang-tidy`, `cppcheck`, `actionlint`, and
-    `shellcheck` diagnostics on Linux without claiming that source triage alone
-    replaces runtime gates.
+The project's engineering history keeps dated records of source-reading
+audits and of executed campaigns (release-build fuzzing, mutation testing,
+deterministic simulation fault schedules, line coverage and static-analysis
+triage) under `docs/audits/`. Each names the commit it covered. A
+source-reading audit records findings for repair; it is not an executed pass
+gate. None of these records qualifies a later commit: the evidence for a
+release is the set of required checks in [TESTING.md](TESTING.md), run on that
+release's commit.
 
 ## Red-team engagement: October 2026
 
-Alex led protocol red teaming, with independent review of the retained source
-and execution evidence. The work exercised malformed traffic, handshake and
+Protocol red teaming had independent review of the retained source and
+execution evidence. The work exercised malformed traffic, handshake and
 replay behavior, session lifetime, hostile clients or servers, and recovery
 after adverse traffic. It included native socket transports and Linux guest
 AF_XDP runs.
@@ -148,8 +105,11 @@ The historical blaster qualification plan covered the non-portable server transp
 `xdp`, `gso`, `io_uring`, `msgx`, `iocp` and `rio`. Portable remains part of
 correctness and security testing, but is not expected to meet the 1,000-player
 performance target. Profile support or a successful tool build is not a passed
-load test. This record does not establish physical 10 Gb/s or final integrated
-1,000-player qualification; those limits do not create new deliverable scope.
+load test. That plan's record does not itself establish 10 Gb/s or
+1,000-player qualification. The measured 1,000-player rows for `xdp`, `gso`,
+`io_uring`, `iocp` and `rio`, with the machines, workloads, development
+builds and commits they qualify, are in [PERFORMANCE.md](PERFORMANCE.md). These limits do not create new deliverable
+scope.
 
 Recorded load, soak, and dataplane runs establish the following specific results
 and limits:
@@ -167,7 +127,9 @@ and limits:
     clients for 300s against a bare-metal server on its shared 10G uplink
     (`--xdp-uplink`); connection and payload delivery passed, while the merger's
     timing verdict failed. Windows `iocp` and `rio` LAN cells remain unmade in
-    [docs/runs/lan-1000-proof.md](runs/lan-1000-proof.md).
+    [docs/runs/lan-1000-proof.md](runs/lan-1000-proof.md); the Windows
+    1,000-player rows in [PERFORMANCE.md](PERFORMANCE.md) ran on cloud
+    machines, outside this LAN proof.
 - **AF_XDP dataplane and guest runs:**
   - [AF_XDP zero-copy qualification](runs/xdp-zero-copy.md) at
     `010c8167de062d24dafcdf9153577b2b8e078760`: **HOLD** — the available Intel

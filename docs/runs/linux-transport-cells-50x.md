@@ -2,7 +2,7 @@
 
 The record of one run of `scripts/transport-cells-repeat --runs 50` and one
 run of `scripts/transport-cells-repeat --asan` on a Linux bench, for the
-final-deliverable row "Linux: every transport cell fifty times in a row with
+qualification item "Linux: every transport cell fifty times in a row with
 zero flakes, and the functional suite under ASan per transport". The cells
 and the cases are read from ci.yml's `TRANSPORT_MATRIX_LINUX` step: in each
 socket cell, IPv4 (`test_loopback_transport_udp`), IPv6
@@ -14,10 +14,10 @@ socket cell, IPv4 (`test_loopback_transport_udp`), IPv6
 - Head: ac4206a69acd83840c27d2ea024f6cc3712d734f (at `git log --oneline -1`, `ac4206a6 carry attempt 5's work (99c1a25a12f0) onto the tip of main (1dbdfcacd634)`); every run below is at this head
 - Machine: `hostname` <16-core Linux bench>; `uname -r` 6.8.0-139-generic; 16 processors; `/proc/sys/kernel/io_uring_disabled` 0 (the io_uring cell ran, it was not skipped)
 - NIC: none; every socket cell runs over the loopback interface, so no `ethtool` line applies
-- Load: the bench is shared and other cards' builds and runners were active.
+- Load: the bench is shared and other jobs' builds and runners were active.
   The 50-run cells ran at load 4 to 5 on 16 processors. The ASan suites ran
   while the load climbed to 84 (load average 84.70 at the end), driven by
-  other cards' builds on the same machine. The ASan results below are taken
+  other jobs' builds on the same machine. The ASan results below are taken
   at that load.
 
 ## Commands
@@ -37,9 +37,9 @@ cell is not selected (see below).
 ## The xdp cell
 
 `xdp/portable` (`test_xdp_transport_max_size_both_ways_ipv4`,
-`test_xdp_transport_max_size_both_ways_ipv6`): not made. This card was cut
-to the Linux socket cells; the xdp cell belongs on the dedicated XDP machine
-in a virtme-ng guest and is owed to its own card.
+`test_xdp_transport_max_size_both_ways_ipv6`): not made. This run covered
+the Linux socket cells only; the xdp cell runs on a dedicated XDP machine in
+a virtme-ng guest and was not part of this run.
 
 ## Result: fifty runs per cell
 
@@ -111,8 +111,8 @@ The two failures, each recorded once and not retried:
 
 A failed check ends the suite, so the cases after each failure did not run
 under that cell's transports under ASan. Both failures are at this head, and
-both were taken while other cards' builds held the load at 44 to 85 on this
-16-processor bench; each is a defect for its own card (a functional case that
+both were taken while other jobs' builds held the load at 44 to 85 on this
+16-processor bench; each is a defect to repair on its own (a functional case that
 is not clean under load), never a reason to loosen its bound.
 
 ## Verdict
