@@ -287,7 +287,7 @@ int main( int argc, char ** argv )
             rocketnet_client_update( client, ack_cost_now );
 
             const struct rocketnet_message_batch_t * batch;
-            while ( ( batch = rocketnet_client_receive_messages( client ) ) )
+            while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
             {
                 client_messages_received += (uint64_t) batch->num_messages;
             }
@@ -344,7 +344,7 @@ int main( int argc, char ** argv )
         }
 
         const struct rocketnet_message_batch_t * batch;
-        while ( ( batch = rocketnet_server_receive_messages( server ) ) )
+        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
         {
             server_messages_received += (uint64_t) batch->num_messages;
         }

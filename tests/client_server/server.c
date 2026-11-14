@@ -1152,9 +1152,14 @@ static int self_test_interleave( void )
 
     const char * held_7 = self_test_ordered( &live, rx, 7, 6, 0 );
     const char * held_3 = self_test_ordered( &live, rx, 3, 6, 0 );
-    const char * good[4] = { self_test_ordered( &live, rx, 3, 9, 0 ), self_test_ordered( &live, rx, 7, 9, 0 ),
-                             self_test_ordered( &live, rx, 3, 9, 1 ), self_test_ordered( &live, rx, 7, 9, 1 ) };
-    const char * alone[2] = { self_test_ordered( &live, rx, 3, 10, 0 ), self_test_ordered( &live, rx, 3, 10, 1 ) };
+    const char * good[4];
+    good[0] = self_test_ordered( &live, rx, 3, 9, 0 );
+    good[1] = self_test_ordered( &live, rx, 7, 9, 0 );
+    good[2] = self_test_ordered( &live, rx, 3, 9, 1 );
+    good[3] = self_test_ordered( &live, rx, 7, 9, 1 );
+    const char * alone[2];
+    alone[0] = self_test_ordered( &live, rx, 3, 10, 0 );
+    alone[1] = self_test_ordered( &live, rx, 3, 10, 1 );
 
     // the sent report: (3, 6) 1, (7, 6) 1, (3, 8) 2, (7, 8) 2, (3, 9) 2, (7, 9) 2, (3, 10) 2
     static const uint8_t streams[7][3] = { { 3, 6, 1 }, { 7, 6, 1 }, { 3, 8, 2 }, { 7, 8, 2 }, { 3, 9, 2 }, { 7, 9, 2 }, { 3, 10, 2 } };

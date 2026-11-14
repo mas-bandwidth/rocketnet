@@ -464,7 +464,11 @@ static bool soak_check_msg( const uint8_t * data, int len, uint64_t seed, uint64
         return false;
     }
 
-    const uint32_t hdr[4] = { read_u32( data ), read_u32( data + 4 ), read_u32( data + 8 ), read_u32( data + 12 ) };
+    uint32_t hdr[4];
+    hdr[0] = read_u32( data );
+    hdr[1] = read_u32( data + 4 );
+    hdr[2] = read_u32( data + 8 );
+    hdr[3] = read_u32( data + 12 );
     uint32_t client_id = hdr[0], kind = hdr[1] & 0xffu, seq = hdr[2], want_hash = hdr[3];
     int msg_len = (int) ( hdr[1] >> 8 );
     uint32_t hash = 2166136261u;
@@ -1253,11 +1257,36 @@ int main( int argc, char ** argv )
                                "server_tick_us_p50", "server_tick_us_p99", "server_tick_us_max", "client_frame_us_p50", "client_frame_us_p99", "client_frame_us_max",
                                "client_us_per_client_p50", "client_us_per_client_p99", "server_pkts_per_s_tx", "server_pkts_per_s_rx", "server_bytes_per_s_tx", "server_bytes_per_s_rx", "allocs_per_tick",
                                "server_create_ms", "server_start_ms", "clients_create_ms", "clients_destroy_ms", "server_stop_ms", "server_destroy_ms", "running_peak_rss", "shutdown_peak_rss" };
-    double m_vals[] = { (double) sent_rel, (double) recv_rel, (double) acked_total, (double) sent_seq, (double) recv_seq, (double) corrupt, (double) gaps, (double) allocation_stats.peak_bytes,
-                        srv_p50, srv_p99, srv_max, cli_p50, cli_p99, cli_max, cli_p50 / num_clients, cli_p99 / num_clients,
-                        (double) srv_pkts_tx / seconds, (double) srv_pkts_rx / seconds, (double) srv_bytes_tx / seconds, (double) srv_bytes_rx / seconds, (double) allocation_stats.steady_allocs / soak_ticks,
-                        g_life.server_create_ms, g_life.server_start_ms, g_life.clients_create_ms, g_life.clients_destroy_ms, g_life.server_stop_ms, g_life.server_destroy_ms,
-                        (double) g_life.running_peak_rss, (double) g_life.shutdown_peak_rss };
+    double m_vals[sizeof( m_names ) / sizeof( m_names[0] )];
+    m_vals[0] = (double) sent_rel;
+    m_vals[1] = (double) recv_rel;
+    m_vals[2] = (double) acked_total;
+    m_vals[3] = (double) sent_seq;
+    m_vals[4] = (double) recv_seq;
+    m_vals[5] = (double) corrupt;
+    m_vals[6] = (double) gaps;
+    m_vals[7] = (double) allocation_stats.peak_bytes;
+    m_vals[8] = srv_p50;
+    m_vals[9] = srv_p99;
+    m_vals[10] = srv_max;
+    m_vals[11] = cli_p50;
+    m_vals[12] = cli_p99;
+    m_vals[13] = cli_max;
+    m_vals[14] = cli_p50 / num_clients;
+    m_vals[15] = cli_p99 / num_clients;
+    m_vals[16] = (double) srv_pkts_tx / seconds;
+    m_vals[17] = (double) srv_pkts_rx / seconds;
+    m_vals[18] = (double) srv_bytes_tx / seconds;
+    m_vals[19] = (double) srv_bytes_rx / seconds;
+    m_vals[20] = (double) allocation_stats.steady_allocs / soak_ticks;
+    m_vals[21] = g_life.server_create_ms;
+    m_vals[22] = g_life.server_start_ms;
+    m_vals[23] = g_life.clients_create_ms;
+    m_vals[24] = g_life.clients_destroy_ms;
+    m_vals[25] = g_life.server_stop_ms;
+    m_vals[26] = g_life.server_destroy_ms;
+    m_vals[27] = (double) g_life.running_peak_rss;
+    m_vals[28] = (double) g_life.shutdown_peak_rss;
     fprintf( fp, "clients\tseconds\tseed\ttransport\tbuild\tmetric\tvalue\n" );
 
     const int num_metrics = (int) ( sizeof( m_vals ) / sizeof( m_vals[0] ) );

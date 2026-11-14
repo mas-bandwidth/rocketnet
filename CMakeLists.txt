@@ -585,6 +585,11 @@ add_library(rocketnet_header_warnings OBJECT
 target_include_directories(rocketnet_header_warnings PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
 if(MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
     # C4820 (padding added) is MSVC's -Wpadded: layout, not a defect.
+    # Before VS 2019 16.10 (MSVC 19.29) the /external switches need
+    # /experimental:external, or cl ignores them with D9007.
+    if(MSVC_VERSION LESS 1929)
+        target_compile_options(rocketnet_header_warnings PRIVATE /experimental:external)
+    endif()
     target_compile_options(rocketnet_header_warnings PRIVATE /Wall /wd4820 /external:anglebrackets /external:W0)
 elseif(CMAKE_C_COMPILER_ID MATCHES "Clang")
     target_compile_options(rocketnet_header_warnings PRIVATE -Weverything -Wno-padded)

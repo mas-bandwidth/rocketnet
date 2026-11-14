@@ -857,7 +857,9 @@ static void over_maximum( matrix_state_t * st, struct rocketnet_client_t * clien
             continue;
         }
 
-        const int channels[2] = { 0, last_stream_channel( mode ) };
+        int channels[2];
+        channels[0] = 0;
+        channels[1] = last_stream_channel( mode );
 
         for ( int k = 0; k < 2; k++ )
         {

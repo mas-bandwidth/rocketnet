@@ -34,7 +34,7 @@
 #define check( condition )                                                                               \
 do                                                                                                       \
 {                                                                                                        \
-    const bool check_passed = ( condition );                                                             \
+    bool check_passed = ( condition );                                                                   \
     if ( !check_passed && rocketnet_dev_hash_key_seed() != 0 )                                           \
     {                                                                                                    \
         printf( "hash key seed 0x%016llx\n", (unsigned long long) rocketnet_dev_hash_key_seed() );       \

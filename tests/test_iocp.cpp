@@ -3159,11 +3159,11 @@ static void test_windows_transports_sized_by_max_clients()
     CHECK( rocketnet_server_iocp_send_threads( rocketnet_server_iocp_send_lanes( 1000 ) ) == 2 );
     CHECK( rocketnet_server_iocp_lanes_for( 32768 ) == 1 && rocketnet_server_iocp_send_threads( rocketnet_server_iocp_lanes_for( 32768 ) ) == 1 );
     CHECK( rocketnet_server_rio_receives( large_clients ) == 2 * rocketnet_server_send_staging_packets( large_clients ) );
-    if ( large_clients == 1000 )
-    {
-        CHECK( rocketnet_server_iocp_send_lanes( 1000 ) == 8 && rocketnet_server_iocp_send_queue_size( 1000 ) == 4096 );
-        CHECK( rocketnet_server_rio_receives( 1000 ) == 4096 );
-    }
+#if ROCKETNET_MAX_CLIENTS >= 1000
+    // large_clients is 1000
+    CHECK( rocketnet_server_iocp_send_lanes( 1000 ) == 8 && rocketnet_server_iocp_send_queue_size( 1000 ) == 4096 );
+    CHECK( rocketnet_server_rio_receives( 1000 ) == 4096 );
+#endif // #if ROCKETNET_MAX_CLIENTS >= 1000
 
     rocketnet_address_t bind = address( "127.0.0.1:0" );
     CHECK( !rocketnet_server_iocp_create( NULL, &bind, 1, 0 ) );

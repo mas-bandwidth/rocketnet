@@ -1666,10 +1666,11 @@ static void test_handshake_cookie_reply_bitmap_sized_from_receive_bound()
     check( ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_FACTOR == 16 );
     check( rocketnet_server_cookie_reply_source_words( 4 ) == 4096 );
     check( rocketnet_server_cookie_reply_source_words( 64 ) == 4096 );
-    if ( ROCKETNET_MAX_CLIENTS >= 1000 )
+#if ROCKETNET_MAX_CLIENTS >= 1000
     {
         check( rocketnet_server_cookie_reply_source_words( 1000 ) == 4096 );
     }
+#endif // #if ROCKETNET_MAX_CLIENTS >= 1000
 
     const int sizes[] = { 1, 4, 64, 512, 640, 641, 1000, ROCKETNET_MAX_CLIENTS };
     for ( int i = 0; i < (int) ( sizeof( sizes ) / sizeof( sizes[0] ) ); i++ )

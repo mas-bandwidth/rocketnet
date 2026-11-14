@@ -159,9 +159,10 @@ struct rocketnet_unit_file_registrar_t
 do                                                                                                                \
 {                                                                                                                 \
     ROCKETNET_TEST_COUNT_CHECK();                                                                                 \
-    if ( !(condition) )                                                                                           \
+    bool rocketnet_unit_check_passed = !!(condition); /* not const: MSVC 14.29 and older flag a constant (C4127) */ \
+    if ( !rocketnet_unit_check_passed )                                                                           \
     {                                                                                                             \
-        if ( *rocketnet_unit_expected_fail_active() )                                                             \
+        if ( *rocketnet_unit_expected_fail_active() )                                                           \
         {                                                                                                         \
             throw rocketnet_unit_expected_failure_t{ __LINE__ };                                                  \
         }                                                                                                         \

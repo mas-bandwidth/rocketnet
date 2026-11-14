@@ -262,7 +262,7 @@ void cft_hooks_init( void )
     cft_acquire_srw_fn acquire_srw = cft_acquire_srw;
     cft_post_fn post = cft_post;
     cft_wsasendto_fn wsasendto = cft_wsasendto;
-    const void * hook;
+    void * hook;
 
     memcpy( &hook, &try_srw, sizeof( hook ) );
     cft_patch( "TryAcquireSRWLockExclusive", hook, &cft_real_try_srw );

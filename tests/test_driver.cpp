@@ -9,7 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define CHECK( x ) do { if (!(x)) { fprintf(stderr, "transport check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
+// check_passed is not const: MSVC 14.29 and older warn C4127 on a constant condition
+#define CHECK( x ) do { bool check_passed = !!(x); if ( !check_passed ) { fprintf(stderr, "transport check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 
 
 struct lifecycle_t
