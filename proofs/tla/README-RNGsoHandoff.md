@@ -48,7 +48,8 @@ functions.
   destination assignment, since two slots never reorder.
 - `TailDroppedOnlyWhenStalled`: after shutdown a full socket's tail is
   dropped only by the `RetryBound + 1`-th attempt in a row that sent
-  nothing. An attempt that sent part of the tail starts the count again
+  nothing. An attempt that moved `held_slot` on (sent part of the tail, or
+  dropped a message counted) starts the count again
   (`rocketnet_server_gso_send_step` zeroes `retries_after_quit` when
   `held_slot` passed where the attempt began), so a socket that keeps taking
   some of it never loses the rest. The ghost `stalls` counts those attempts

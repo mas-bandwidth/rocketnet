@@ -93,7 +93,8 @@ CONSTANTS Dests,            \* the destinations
           Queue,            \* each destination's queue (rocketnet_send_queue_of)
           AcceptedRule,     \* "transport" (the code) or "queue"
           FallbackScope,    \* "queue" (io_uring) or "transport" (gso)
-          InFlight,         \* one destination's segmented runs in the kernel at once (gso 1)
+          InFlight,         \* one destination's segmented runs out at once: the cases check 2; the
+                            \* code's bound is max_in_kernel (io_uring) or a batch's messages (gso)
           PlainFails        \* a plain resend may fail with a hard error
 
 ASSUME Refusing \subseteq Dests

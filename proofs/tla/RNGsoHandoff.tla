@@ -38,7 +38,8 @@
 (* Shutdown (rocketnet_server_gso_begin_shutdown and the server            *)
 (* transport's stop step): BeginShutdown sets send_shutdown before the     *)
 (* last disconnect batches, which main still stages and publishes.  From   *)
-(* then on each refused send of a held bank counts; past RetryBound        *)
+(* then on an attempt on a held bank that sends nothing counts and one     *)
+(* that moves the bank on starts the count again; past RetryBound          *)
 (* (ROCKETNET_GSO_SEND_RETRIES_AFTER_QUIT) the unsent rest is dropped and  *)
 (* counted in SEND_DROPPED (txDropped) and the bank returned, so a socket  *)
 (* that stays full still lets send_idle become true.  The stop step       *)
@@ -874,11 +875,12 @@ StopJoinsBeforeFree ==
 ExitSentAll == txExited => Len(txSent) + Len(txDropped) + Len(txErrDropped) = staged
 
 (* a stop completes even when a full socket leaves banks unsent: both     *)
-(* workers exit, destroy joins and storage is freed                       *)
+(* halves of the worker thread exit, destroy joins and storage is freed   *)
 StopCompletes == quit ~> freed
 
 (* a shutdown completes even on a socket that stays full: each bank is    *)
-(* held for at most RetryBound + 1 refusals after shutdown, so send_idle   *)
+(* held for at most RetryBound + 1 attempts in a row that send nothing     *)
+(* after shutdown, and every other attempt shrinks it, so send_idle        *)
 (* becomes true, the stop is requested and the transport is freed          *)
 ShutdownCompletes == shut.on ~> freed
 
