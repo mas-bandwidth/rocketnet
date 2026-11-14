@@ -953,11 +953,6 @@
    :text "DST caps messages at 16384 bytes (tests/dst_checks.h) and draws sizes from 14 to 16384 (rocketnet_dst_draw_size in tests/dst_harness.h), so it reaches about 15 fragments and never the 57-fragment default, the 64-fragment ceiling, or the resend bitmap words past them. 16384 is an input to the budget slack derivation (dst_checks.h, dst_harness.h), so raising it means deriving that slack again, not changing one constant."
    :date "2026-11-13" :origin "Tests review TA030 (P12)")
 
-  (item "check-memory-worker-table" :group "review-v1-2" :area "tools"
-   :title "check_memory.py hard-codes each transport's worker count"
-   :text "tools/check_memory.py:24 fixes the one-queue worker count per transport ('iocp': 3) and asserts it at :55, :87 and :112. The library's count moves with the plan: at a15a98cf1 the plan had 3 against a table of 2; 5677b4bf set 3; v1.1.61's sizing commits (81352192, 65e48f4f) made it 2, so the Windows Debug job fails with AssertionError ('iocp', 2). Smallest fix: take the expected count from the plan the server prints (its 'N workers'), and keep only the invariants that do not depend on sizing."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly windows / Debug at a1a426851 and a15a98cf1")
-
   (item "windows-commit-lock-machine-wide" :group "review-v1-2" :area "tests"
    :title "The Windows test commit lock is machine-wide, so two runner slots wait on each other"
    :text "tests/suite_runner.h:1725 takes the mutex Global\\rocketnet-test-commit-bound and waits up to SUITE_COMMIT_LOCK_WAIT_SECONDS (1800, :1720). Both runner slots on an aws-win host share it, so a long holder on one slot fails the other: test_secrets_wiped_destroy_writes_only_keys 'waited 1800 s for the machine-wide commit lock' in nightly-soak windows (a1a426851) and Nightly CI windows unit 1/2 (21543f689). GUESS on the holder: a long ASan unit run on the sibling slot. Smallest fix: name the mutex per runner work directory (a hash of the working directory), and print the holder's pid when a wait passes 60 s. About 5 to 10 lines in one file."

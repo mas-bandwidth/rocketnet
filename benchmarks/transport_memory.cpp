@@ -13,6 +13,9 @@
 #else
 #include <sys/resource.h>
 #endif // #if defined( _WIN32 )
+#if defined( __linux__ )
+#include <dirent.h>
+#endif // #if defined( __linux__ )
 #include <atomic>
 #include <mutex>
 #include <stdio.h>
@@ -80,6 +83,32 @@ static uint64_t process_peak_rss()
     return (uint64_t) usage.ru_maxrss * 1024;
 #endif // #if defined( __APPLE__ )
 #endif // #if defined( _WIN32 )
+}
+// The threads this process has now, by the kernel's own list (Linux: the
+// entries of /proc/self/task), or -1 where the probe does not observe them.
+// The difference across create is the workers create started, an observation
+// independent of the plan's worker_threads.
+static int process_threads()
+{
+#if defined( __linux__ )
+    DIR * tasks = opendir( "/proc/self/task" );
+    if ( !tasks )
+    {
+        return -1;
+    }
+    int threads = 0;
+    for ( struct dirent * entry = readdir( tasks ); entry; entry = readdir( tasks ) )
+    {
+        if ( entry->d_name[0] != '.' )
+        {
+            threads++;
+        }
+    }
+    closedir( tasks );
+    return threads;
+#else
+    return -1;
+#endif // #if defined( __linux__ )
 }
 static int number( const char * text )
 {
@@ -904,6 +933,7 @@ int main( int argc, char ** argv )
     }
     rocketnet_forbid_xdp_commit();
 
+    const int threads_before = process_threads();
     auto * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config );
     if ( !server )
     {
@@ -911,11 +941,23 @@ int main( int argc, char ** argv )
         rocketnet_term();
         return 1;
     }
+    const int threads_after = process_threads();
 
     const bool same_transport = strcmp( rocketnet_server_transport_io_name( server ), transport ) == 0;
 
-    printf( "{\"live_allocator_bytes\":%zu,\"peak_allocator_bytes\":%zu,\"live_allocations\":%zu,\"process_peak_rss_bytes\":%llu}\n",
-            live.load(), peak.load(), count.load(), (unsigned long long) process_peak_rss() );
+    // started_threads is null where the probe cannot count the process's threads
+    char started_threads[32];
+    if ( threads_before >= 0 && threads_after >= 0 )
+    {
+        snprintf( started_threads, sizeof( started_threads ), "%d", threads_after - threads_before );
+    }
+    else
+    {
+        snprintf( started_threads, sizeof( started_threads ), "null" );
+    }
+    printf( "{\"live_allocator_bytes\":%zu,\"peak_allocator_bytes\":%zu,\"live_allocations\":%zu,\"process_peak_rss_bytes\":%llu,"
+            "\"started_threads\":%s}\n",
+            live.load(), peak.load(), count.load(), (unsigned long long) process_peak_rss(), started_threads );
     const uint64_t planned_allocator = plan.total_bytes - plan.umem_bytes;
 
     // Worker shims may have been freed before the constructor returns; all

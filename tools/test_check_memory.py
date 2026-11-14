@@ -43,6 +43,9 @@ if flag == "--session-plan-only" and ("ROCKETNET_SERVER_MAX_CLIENTS" in os.envir
 
 stack = 65536
 planned = 10000 + 1000 * clients
+# the library's worker count: "drift" moves every transport's count, as a
+# change of defaults or sizing does, and the tool must follow the plan
+workers = {"gso": 1, "iocp": 3}.get(transport, 2) + (1 if mode == "drift" else 0)
 if flag == "--plan-only":
     if transport == "xdp":
         umem = 1 << 20
@@ -53,6 +56,8 @@ if flag == "--plan-only":
     elif transport == "rio":
         out({"worker_threads": 1, "allocator_bytes": planned, "planned_bytes": planned,
              "os_bytes": stack, "thread_stack_bytes": stack})
+    else:
+        out({"worker_threads": workers, "thread_stack_bytes": stack * workers})
     sys.exit(0)
 if flag == "--session-plan-only":
     rio = 4096 if transport == "rio" else 0
@@ -66,12 +71,14 @@ if flag == "--session-plan-only":
     sys.exit(0)
 
 os_rows = {"thread_stack_bytes": stack, "umem_bytes": 0, "mapped_ring_bytes": 0,
-           "os_bytes": stack, "worker_threads": {"gso": 1, "iocp": 3}.get(transport, 2)}
+           "os_bytes": stack, "worker_threads": workers}
 if flag is None:
     peak = planned + (1 if mode == "over" else 0)
+    # "unplanned": create starts a thread the plan does not count
+    started = workers + (1 if mode == "unplanned" else 0)
     out(dict(os_rows, planned_bytes=planned, allocator_bytes=planned, sockets=1 + clients if transport == "msgx" else 1,
              os_and_application_bytes=None),
-        {"peak_allocator_bytes": peak, "live_allocator_bytes": peak // 2})
+        {"peak_allocator_bytes": peak, "live_allocator_bytes": peak // 2, "started_threads": started})
 elif flag in ("--lifecycle", "--light-lifecycle"):
     rows = []
     for lifecycle in ("server", "client"):
@@ -138,6 +145,18 @@ class CheckMemoryProcessTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("AssertionError", result.stderr)
         self.assertIn("peak_allocator_bytes", result.stderr)
+
+    def test_worker_counts_follow_the_plan(self):
+        # a library whose counts all moved (defaults or sizing) still passes:
+        # the tool holds no copy of any count
+        result = self.run_tool(self.probe, "drift")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_unplanned_thread_fails(self):
+        # create starts one thread more than the plan counts
+        result = self.run_tool(self.probe, "unplanned")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("started_threads", result.stderr)
 
     def test_zero_rows_fail(self):
         result = self.run_tool(self.probe, "silent")
