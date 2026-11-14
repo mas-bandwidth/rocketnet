@@ -120,8 +120,9 @@ vars == <<transportVars, xdpVars, leaseVars>>
 
 Fresh == Frames \ (buffer \cup sent \cup dropped \cup withdrawn \cup {reserved})
 
-\* the slots the producer bank holds until the next flush: armed and claimed
-Used == Cardinality(buffer) + Cardinality(claimed)
+\* the slots the producer bank holds until the next flush: armed, claimed,
+\* and the outstanding reservation's (reserve_send_frame claims its slot)
+Used == Cardinality(buffer) + Cardinality(claimed) + (IF reserved # 0 THEN 1 ELSE 0)
 
 \* a withdrawn frame's io_abort_packet: its slot stays claimed and disarmed,
 \* or, in the reversed witness, stays armed in the staging

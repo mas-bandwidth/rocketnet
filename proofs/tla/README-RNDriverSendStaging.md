@@ -123,7 +123,9 @@ not locations in the current source.
   phase is handed off"). The slot stays claimed in the producer bank, the
   flush skips it, and only the flush that hands the bank off frees it. In
   the model the frame is in `withdrawn` and in `claimed`: `claimed` counts
-  against `MaxStaged` with the armed `buffer` (`Used`), so three withdrawn
+  against `MaxStaged` with the armed `buffer` and the outstanding
+  reservation, whose slot `rocketnet_server_reserve_send_frame` claims
+  (`Used`), so three withdrawn
   frames fill the three-slot bank and the next reserve fails until
   `SendPackets` flushes, and `SendPackets` empties `claimed` while sending
   only `buffer`. Every withdrawal advances `send_staged`: the commit's
@@ -155,8 +157,12 @@ not locations in the current source.
 - **`WithdrawnNeverSent`**: a withdrawn frame is never handed to the driver.
 - **`ClaimedFlushOwed`**: while a withdrawn frame's slot is claimed, the
   counters differ, so the next `send_packets` flushes and frees it.
-- **`StagingWithinCapacity`**: armed and claimed slots together never pass
-  `MaxStaged`.
+- **`StagingWithinCapacity`**: armed slots, claimed slots and the
+  outstanding reservation together never pass `MaxStaged`. TLC found the
+  earlier model short here: a reservation did not count, so `Update` and
+  `DisconnectClient` could fill the bank between a reserve and its commit,
+  and the commit then took a fourth slot of three. The reservation now
+  counts, as `rocketnet_server_reserve_send_frame` claims its slot at once.
 - **`FlushedNeverAhead`**: the flushed counter never passes the staged
   counter.
 - **`DiscOwedTracked`**: a disconnect frame owed is always still buffered or
