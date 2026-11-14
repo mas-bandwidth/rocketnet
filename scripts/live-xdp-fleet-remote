@@ -251,6 +251,11 @@ cmd_arm()
 
     mkdir -p "$BASE" || fail "arm: cannot create $BASE"
     : > "$BASE/heartbeat"
+    # the orchestrator touches the heartbeat as the invoking user, without
+    # sudo; a file this root step created is root's and that touch would fail
+    if [ -n "${SUDO_USER:-}" ]; then
+        chown "$SUDO_USER" "$BASE/heartbeat" || fail "arm: cannot give $BASE/heartbeat to $SUDO_USER"
+    fi
 
     # the timer command needs no file on the machine, so a missing script
     # can never turn it into a no-op
