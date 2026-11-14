@@ -1466,10 +1466,12 @@ int rocketnet_client_protocol_process_record( struct rocketnet_client_protocol_t
 
     if ( verdict == ROCKETNET_CLIENT_IO_VERDICT_RAW )
     {
+        fprintf( stderr, "REC raw t=%.6f bytes=%d type=%d\n", rocketnet_time(), packet_bytes, (int) packet_data[0] );
         return rocketnet_client_protocol_process_packet( client, packet_data, packet_bytes, current_time,
                                                          out_payload, out_payload_capacity, out_payload_bytes );
     }
 
+        fprintf( stderr, "REC v=%d t=%.6f\n", (int) verdict, rocketnet_time() );
     client->record_verdict = verdict;
     client->record_sequence = sequence;
 

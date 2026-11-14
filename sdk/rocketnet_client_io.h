@@ -25,6 +25,7 @@
 #include "rocketnet_keys.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_client_protocol.h"
+#include <stdio.h>
 
 // The secret wipe of the I/O thread's open copy: sodium_memzero, the
 // repository's helper, behind a function of sdk/rocketnet_client_transport.cpp
@@ -393,6 +394,7 @@ inline void rocketnet_client_io_publish_keys( rocketnet_client_io_t * io, const 
     memcpy( io->open.packet_filter, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
     io->open.server_address = *server_address;
     io->open.epoch.store( ROCKETNET_CLIENT_IO_EPOCH_LIVE, std::memory_order_release );
+    fprintf( stderr, "PUBKEYS t=%.6f\n", rocketnet_time() );
 }
 
 // proofs/tla/RNClientIoDecrypt.tla OpenPayloads; main thread, on entering connected.
@@ -406,6 +408,7 @@ inline void rocketnet_client_io_publish_keys( rocketnet_client_io_t * io, const 
 
 inline void rocketnet_client_io_open_payloads( rocketnet_client_io_t * io )
 {
+    fprintf( stderr, "OPENPAYLOADS t=%.6f\n", rocketnet_time() );
     io->open.payloads.store( 1, std::memory_order_relaxed );
 }
 
@@ -459,6 +462,7 @@ inline void rocketnet_client_io_take_keys( rocketnet_client_io_t * io )
     }
 
     io->open.loaded_epoch = epoch;
+    fprintf( stderr, "TAKEKEYS epoch=%u t=%.6f\n", epoch, rocketnet_time() );
 
     if ( epoch == ROCKETNET_CLIENT_IO_EPOCH_RETIRED )
     {
@@ -509,6 +513,7 @@ inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, co
     if ( io->open.loaded_epoch == ROCKETNET_CLIENT_IO_EPOCH_NONE ||
          io->open.loaded_epoch == ROCKETNET_CLIENT_IO_EPOCH_RETIRED )
     {
+        fprintf( stderr, "IORAW epoch=%u t=%.6f\n", io->open.loaded_epoch, rocketnet_time() );
         return;
     }
     if ( !rocketnet_address_equal( from, &io->open.server_address ) )
@@ -531,6 +536,7 @@ inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, co
 
     if ( type == ROCKETNET_CONNECTION_PAYLOAD_PACKET && io->open.payloads.load( std::memory_order_relaxed ) == 0 )
     {
+        fprintf( stderr, "IORAW payloads0 t=%.6f\n", rocketnet_time() );
         return;
     }
 

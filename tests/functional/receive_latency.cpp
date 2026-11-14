@@ -444,6 +444,7 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
     uint64_t client_thread_opens = 0;
 
     const double start = rocketnet_time() + 0.1;
+    fprintf( stderr, "MEASURE start=%.6f\n", start );
 
     std::thread client_thread( [&]()
                                {
@@ -516,6 +517,7 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
                 rocketnet_client_send_packets( clients[c] );
 #if ROCKETNET_DEV
                 client_thread_opens += rocketnet_crypto_tally_get().aead_open - opens_before;
+                { const unsigned long long d = rocketnet_crypto_tally_get().aead_open - opens_before; if ( d ) { fprintf( stderr, "UPDOPEN j=%d c=%d n=%llu t=%.6f\n", j, c, d, rocketnet_time() ); } }
 #endif // #if ROCKETNET_DEV
             }
         } } );
