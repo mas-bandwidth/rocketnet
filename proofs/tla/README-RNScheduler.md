@@ -42,7 +42,11 @@ outermost first:
    the reset comes while messages still wait queued behind a stalled window
    or the room, and, the endpoint calling `rn_ordered_write` once per packet,
    in the middle of an update. In the model a reliable `Write` that leaves no
-   item numbered or lost resets the clocks.
+   item numbered or lost resets the clocks, and any other reliable `Write`
+   may: one call's plan is capped at one packet's room (`rn_ordered_write`
+   with one payload from `rn_endpoint_next_packet_bytes`), so a plan that
+   fills the room is taken whole, and resets, while lost or unplanned items
+   remain.
 3. **Round robin across channels inside a level**, one item per turn,
    starting after the channel the last item came from.
 
@@ -115,7 +119,8 @@ again once acked: a channel that keeps sending, an endless stream on a bounded
 state), `Number` (the ready head's FIFO head numbered, the channel rotated),
 `Write` (the builder takes `Pick`, once the call's numbering is done; a
 reliable write that spends the call's plan, no item numbered or lost left,
-resets the clocks), `Tick` (the update ends when nothing more can be numbered
+resets the clocks, and any other reliable write may, as the end of a plan
+capped at one packet's room), `Tick` (the update ends when nothing more can be numbered
 or written: leftover unreliable items are dropped and counted, the budget
 refills, the next update's unreliable items arrive; the clocks are left),
 `Ack(i)` and `Lose(i)` (the transport's packet ack or loss for the packet that

@@ -40,10 +40,11 @@ const struct rn_packet_builder_plan_t * rn_packet_builder_test_last_plan( void )
 
 static void rn_builder_reset_clocks( struct rn_packet_builder_t * builder )
 {
-    // RNScheduler!Init and Tick's reset: with nothing queued the clocks go back to
-    // the seeds, so the interleave describes a backlog and nothing else.
+    // RNScheduler!Init and Write's reset: at the end of a call that took every
+    // item of its plan the clocks go back to the seeds, so the interleave
+    // describes one call's backlog and nothing else.
 
-    // proofs/tla/RNScheduler.tla, Init and Tick's clock reset
+    // proofs/tla/RNScheduler.tla, Init and Write's clock reset (Tick, a new update, leaves the clocks)
 
     for ( int p = 0; p < ROCKETNET_PACKET_BUILDER_LEVELS; p++ )
     {
@@ -435,7 +436,7 @@ static void rn_builder_take_level( struct rn_packet_builder_t * builder, int lev
 
 int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_packet_item_t * items, int num_items, uint8_t ** payloads, int num_payloads )
 {
-    // proofs/tla/RNScheduler.tla, Write (class order, clock step, rr') and Tick's clock reset (every item taken)
+    // proofs/tla/RNScheduler.tla, Write (class order, clock step, rr', and the clock reset when the call's plan is taken)
 
     if ( !builder || builder->packets_per_update == 0 )
     {

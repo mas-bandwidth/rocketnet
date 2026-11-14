@@ -33,9 +33,10 @@
 (*      messages still wait queued behind a stalled window or the room,    *)
 (*      and, the endpoint calling rn_ordered_write once per packet, in     *)
 (*      the middle of an update.  Write resets when a reliable write       *)
-(*      leaves no item numbered or lost.  A loss arriving between two      *)
-(*      writes of one call can only delay the model's reset, never add    *)
-(*      one.                                                               *)
+(*      leaves no item numbered or lost, and may reset at any other        *)
+(*      reliable write: a call's plan is capped at one packet's room, so   *)
+(*      a plan that fills it is taken whole, and resets, while lost or     *)
+(*      unplanned items remain.                                            *)
 (*   3. Round robin across channels inside a level, one item per turn.     *)
 (*                                                                         *)
 (* Priorities in v1.1.x: every reliable message is MEDIUM                  *)
@@ -390,12 +391,17 @@ Write ==
            \* items) is spent by this write: rn_packet_builder_write's reset
            drained == c # "unrel" /\
                       \A j \in Ids : j # x.id => st[j] \notin {"numbered", "lost"}
+           stepped == [p \in Levels |-> IF p = x.lv THEN Stride(p) ELSE Max(clock[p] - e, 0)]
        IN
        /\ classBad' = (classBad \/ \E k \in 1..3 :
                             DesignOrder[k] = c /\ \E j \in 1..(k - 1) : HasItem(DesignOrder[j]))
-       /\ clock' = IF drained
-                   THEN Seeds
-                   ELSE [p \in Levels |-> IF p = x.lv THEN Stride(p) ELSE Max(clock[p] - e, 0)]
+       \* a reliable write may also end its call's plan with items left: the
+       \* plan is capped at one packet's room (one payload per call), so a
+       \* plan that fills the room is taken whole and resets while lost or
+       \* unplanned items remain
+       /\ clock' \in IF drained THEN {Seeds}
+                     ELSE IF c # "unrel" THEN {Seeds, stepped}
+                     ELSE {stepped}
        /\ rr' = x.ch
        /\ budget' = budget - 1
        /\ IF c = "unrel"
