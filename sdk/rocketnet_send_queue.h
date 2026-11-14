@@ -63,7 +63,7 @@ inline int rocketnet_send_queue_of_packet( uint64_t packet_id, int num_queues )
 
 // Claims the next slot of a bank. A claim at or past limit is refused, and
 // the three-argument form counts it in refused (the gso bank calls the
-// two-argument form: its refusals are the counter past limit). The count is
+// two-argument form and keeps no refusal count). The count is
 // 64 bits: a bank never takes 2^64 claims without a reset, so it never wraps
 // back onto a slot it handed out (proofs/tla/RNUringQueueBankLayout.tla and
 // RNGsoQueueBankLayout.tla Start, ClaimCmp "ge", CounterWrap 0). Returns the

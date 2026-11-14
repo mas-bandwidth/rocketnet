@@ -37,7 +37,8 @@ finish or abort writes only its own claim's slot, or nothing), `RouteMatches`
 writes a bank its worker owns), `StagedMatches` (the claimed slots of each
 producer are exactly `0..min(count, S)-1`, the slots the worker reads), with
 `TypeOK` and `OneProducer`. With `Start` one step and the turn-over only with
-the fill joined, no witness reaches `NoWorkerWrite`: it stays checked, and
+the fill joined, `Start` and `Finish` write only the producer, so
+`NoWorkerWrite` can no longer fail: it stays checked, and
 `OpenFlush` is caught one step later by `NoForeignWrite`.
 
 Status: built. sdk/rocketnet_server_gso_linux.cpp implements it and cites each
@@ -61,7 +62,8 @@ first finish or abort that writes another claim's slot.
   set holds no negative number).
 - What start returns is `Start`'s argument `r`, `StartResult`: the slot's
   address and the packet id, or `None` for a refused start.
-- The count is unbounded in the code (64 bits, reset each fill); in the model
+- The count is unbounded in the code (64 bits, reset when the worker returns
+  the bank; a producer kept for want of a free bank keeps its count); in the model
   it is bounded by `CntMax`, every start a fill can make, and `CounterWrap` = 0
   keeps it unwrapped.
 - `MaxFlush` = 2 in the control. At 3 (`MCRNGsoQueueBankLayoutFlush3.cfg`) a
@@ -72,7 +74,7 @@ Each switch of the model is the code's in the controls; each witness changes
 one: `ClaimCmp` ("ge"), `ClaimRule` ("add"), `CounterWrap` (0), `SlotRule`
 ("check"), `IdRule` ("mul"), `FlushRule` ("joined").
 
-## Results (aws-mut-4, arm64; pinned jar 936a2620..., pinned tlacheck 0c97d595, 2 workers, 2026-11-14, each case its own bounded run; RUNS.tsv)
+## Results (aws-mut-4, x86; pinned jar 936a2620..., pinned tlacheck 0c97d595, 2 workers, 2026-11-14, each case its own bounded run; RUNS.tsv)
 
 The move from the two-step compare-and-swap claim to the one-step fetch-add
 (`Start`) dropped the control from 1,323,990 distinct states to 653,994: the
@@ -124,7 +126,8 @@ Each was checked by hand against the broken rule.
 - **NarrowCounter.** The counter wraps at 4 (`CounterWrap` = 4). Three starts
   take slots 0 to 2, a fourth is refused and moves the counter from 3 to 0,
   and the fifth is handed slot 0, which thread 1 still holds. The code's
-  counter is 64 bits and reset each fill, so it never wraps.
+  counter is 64 bits and reset when the worker returns the bank, so it never
+  wraps.
 
 ## The trace check
 
