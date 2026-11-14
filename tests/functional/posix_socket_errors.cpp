@@ -48,12 +48,15 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 #include "rocketnet_server_uring.h"
 #include "reserved_port.h"
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/stat.h>
 #endif // #if defined( __linux__ )
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #include "rocketnet_server_msgx.h"
 #include "rocketnet_receive_prefilter.h"
+#include "reserved_port.h"
+#include <poll.h>
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 // darwin declares IPV6_DONTFRAG only under __APPLE_USE_RFC_3542, which the
@@ -1385,15 +1388,239 @@ static void posix_send_seam_socket( int ipv6, const char * pump )
     rocketnet_platform_socket_destroy( socket );
 }
 
+// a connected socket hands back an ICMP error an earlier datagram drew from
+// its next send call, which sends nothing and clears it (the seam plays that
+// call): the message goes again once, arrives, and nothing is counted. Two
+// back to back drop that one message, counted once, and the rest arrive. On
+// macOS the batch send is sendmsg_x on the msgx pump: no pending errno pauses
+// it, and its resend gives no message a third try. The client's sockets are
+// the connected ones; here the socket is connected to its own loopback
+// address, so what it sends it receives.
+
+static void posix_connected_send_pending_icmp( int ipv6, const char * pump, int error )
+{
+    rocketnet_address_t bind_address;
+    posix_check( rocketnet_address_parse( &bind_address, ipv6 ? "::1" : "127.0.0.1" ) );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
+                                                                                       ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, pump );
+    posix_check( socket != NULL );
+    posix_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
+
+    rocketnet_address_t to;
+    posix_check( rocketnet_address_parse( &to, ipv6 ? "::1" : "127.0.0.1" ) );
+    to.port = bind_address.port;
+    posix_check( rocketnet_platform_socket_connect( socket, &to ) );
+
+    uint8_t packets[8][64];
+    struct rocketnet_platform_send_t sends[8];
+    for ( int i = 0; i < 8; i++ )
+    {
+        memset( packets[i], 0x40 + i, sizeof( packets[i] ) );
+        sends[i].to = &to;
+        sends[i].packet_data = packets[i];
+        sends[i].packet_bytes = (int) sizeof( packets[i] );
+    }
+
+    static uint8_t data[8 * ROCKETNET_RECEIVE_CEILING];
+    rocketnet_address_t from[8];
+    int bytes[8];
+
+    // 0: the per-packet send; 1: the batch send (linux sendmmsg, macOS
+    // send_packets on the pump); 2: the batch progress send (linux)
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    const int calls = 3;
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    const int calls = 2;
+#else
+    const int calls = 1;
+#endif
+    for ( int call = 0; call < calls; call++ )
+    {
+        const int count = call == 0 ? 1 : 8;
+
+        for ( int pending = 1; pending <= 2; pending++ )
+        {
+            const uint64_t before = rocketnet_platform_socket_send_failures( socket );
+
+            rocketnet_platform_socket_fail_next_sends( socket, pending, error );
+            int consumed = count;
+            if ( call == 0 )
+            {
+                rocketnet_platform_socket_send_packet( socket, sends[0].to, sends[0].packet_data, sends[0].packet_bytes );
+            }
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+            else if ( call == 1 )
+            {
+                rocketnet_platform_socket_send_packets_mmsg( socket, sends, count );
+            }
+            else
+            {
+                consumed = rocketnet_platform_socket_send_packets_mmsg_progress( socket, sends, count );
+            }
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+            else
+            {
+                rocketnet_platform_socket_send_packets( socket, sends, count );
+            }
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+            rocketnet_platform_socket_fail_next_sends( socket, 0, 0 );
+
+            // one pending error: all arrive, none counted. Two: the first
+            // message is dropped, counted once, and the rest arrive. The
+            // pump is the one the socket opened with
+
+            const uint64_t failed = rocketnet_platform_socket_send_failures( socket ) - before;
+            const int lost = pending == 2 ? 1 : 0;
+            printf( "  ipv%d %s connected send %d, %d pending %s: consumed %d of %d, counted %llu, pump %s\n", ipv6 ? 6 : 4, pump, call, pending,
+                    strerror( error ), consumed, count, (unsigned long long) failed, rocketnet_platform_socket_pump( socket ) );
+            fflush( stdout );
+            posix_check( consumed == count );
+            posix_check( failed == (uint64_t) lost );
+            posix_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
+
+            if ( count - lost > 0 )
+            {
+                struct rocketnet_loss_gate_t gate;
+                rocketnet_loss_gate_begin( &gate, "posix_connected_send_pending_icmp" );
+                posix_check( posix_receive_each( socket, &gate, sends + lost, count - lost ) == count - lost );
+            }
+            rocketnet_platform_sleep( 0.01 );
+            posix_check( rocketnet_platform_socket_receive_packets( socket, from, data, ROCKETNET_RECEIVE_CEILING, bytes, 8 ) == 0 );
+        }
+    }
+
+    rocketnet_platform_socket_destroy( socket );
+}
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+// the real thing on loopback: a socket connected to a port no socket holds
+// draws an ICMP port unreachable from its sends, and the kernel queues it on
+// the socket as ECONNREFUSED (poll reports it without clearing it: POLLERR on
+// Linux, readable on macOS, so the case waits for it rather than for time).
+// The next send call consumes it: that call sends its datagram again and
+// nothing is counted, on the per-packet send and on the batch send (sendmmsg
+// on Linux, sendmsg_x on the macOS msgx pump, which stays batched).
+
+static int posix_connected_send_to_closed_port( int ipv6, const char * pump )
+{
+    // a port below the ephemeral range that no socket binds (reserved_port.h):
+    // a port 0 bind released here could be handed to a case running beside
+    // this one, which would then receive these datagrams
+
+    rocketnet_address_t to;
+    posix_check( rocketnet_address_parse( &to, ipv6 ? "::1" : "127.0.0.1" ) );
+    to.port = rocketnet_test_reserved_port( ROCKETNET_TEST_PORT_CLOSED_SEND );
+    posix_check( to.port != 0 );
+
+    rocketnet_address_t bind_address;
+    posix_check( rocketnet_address_parse( &bind_address, ipv6 ? "::1" : "127.0.0.1" ) );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
+                                                                                       ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, pump );
+    posix_check( socket != NULL );
+    posix_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
+    posix_check( rocketnet_platform_socket_connect( socket, &to ) );
+
+    uint8_t packets[8][64];
+    struct rocketnet_platform_send_t sends[8];
+    for ( int i = 0; i < 8; i++ )
+    {
+        memset( packets[i], 0x60 + i, sizeof( packets[i] ) );
+        sends[i].to = &to;
+        sends[i].packet_data = packets[i];
+        sends[i].packet_bytes = (int) sizeof( packets[i] );
+    }
+
+    int checked = 0;
+    for ( int call = 0; call < 2; call++ )
+    {
+        // the first datagram draws the ICMP; wait until the socket holds it.
+        // The kernel rate-limits these (measured on macOS: a datagram sent
+        // within about 100 ms of the last ICMP draws none), so the datagram
+        // goes again every 250 ms until one is queued, for up to 5 s
+
+        struct pollfd pending;
+        pending.fd = socket->handle;
+        pending.events = POLLIN;
+        pending.revents = 0;
+        int ready = 0;
+        for ( int wait = 0; wait < 20 && ready == 0; wait++ )
+        {
+            rocketnet_platform_socket_send_packet( socket, &to, packets[0], (int) sizeof( packets[0] ) );
+            ready = poll( &pending, 1, 250 );
+            posix_check( ready >= 0 );
+        }
+        if ( ready == 0 )
+        {
+            // the host sent no ICMP (a kernel's global ICMP rate limit, shared
+            // with every case running beside this one, can hold it back): this
+            // round says so and stops; the case fails if no round was checked
+            printf( "  ipv%d %s connected send %d to a closed port: no ICMP queued in 5 s, round not checked\n", ipv6 ? 6 : 4, pump, call );
+            fflush( stdout );
+            continue;
+        }
+        posix_check( ( pending.revents & ( POLLERR | POLLIN ) ) != 0 );
+
+        const uint64_t before = rocketnet_platform_socket_send_failures( socket );
+        if ( call == 0 )
+        {
+            rocketnet_platform_socket_send_packet( socket, &to, packets[1], (int) sizeof( packets[1] ) );
+        }
+        else
+        {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+            rocketnet_platform_socket_send_packets_mmsg( socket, sends, 8 );
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+            rocketnet_platform_socket_send_packets( socket, sends, 8 );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+        }
+        const uint64_t failed = rocketnet_platform_socket_send_failures( socket ) - before;
+        printf( "  ipv%d %s connected send %d to a closed port, ECONNREFUSED pending: counted %llu, pump %s\n", ipv6 ? 6 : 4, pump, call,
+                (unsigned long long) failed, rocketnet_platform_socket_pump( socket ) );
+        fflush( stdout );
+        posix_check( failed == 0 );
+        posix_check( strcmp( rocketnet_platform_socket_pump( socket ), pump ) == 0 );
+        checked++;
+
+        // the datagrams just sent draw ICMPs of their own: let each arrive and
+        // read past it, so the next round starts from a clean socket
+
+        rocketnet_platform_sleep( 0.01 );
+        rocketnet_address_t from;
+        uint8_t data[64];
+        posix_check( rocketnet_platform_socket_receive_packet( socket, &from, data, (int) sizeof( data ) ) == 0 );
+    }
+
+    rocketnet_platform_socket_destroy( socket );
+    return checked;
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 static void test_mmsg_progress_retries_original_suffix( int ipv6, int error, int prefix, bool holes );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 void rocketnet_test_posix_platform_send_seam()
 {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    int closed_port_checked = 0;
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
     {
         posix_send_seam_socket( ipv6, "portable" );
+        posix_connected_send_pending_icmp( ipv6, "portable", ECONNREFUSED );
+        posix_connected_send_pending_icmp( ipv6, "portable", ENOPROTOOPT );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+        closed_port_checked += posix_connected_send_to_closed_port( ipv6, "portable" );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+        // the msgx pump: sendmsg_x is the batch send, and a forged parameter
+        // problem (ENOPROTOOPT) must not pause it
+        posix_connected_send_pending_icmp( ipv6, "msgx", ECONNREFUSED );
+        posix_connected_send_pending_icmp( ipv6, "msgx", ENOPROTOOPT );
+        closed_port_checked += posix_connected_send_to_closed_port( ipv6, "msgx" );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
         test_mmsg_progress_retries_original_suffix( ipv6, EAGAIN, 2, true );
         test_mmsg_progress_retries_original_suffix( ipv6, ENOBUFS, 65, false );
@@ -1405,6 +1632,11 @@ void rocketnet_test_posix_platform_send_seam()
         posix_send_seam_socket( ipv6, "msgx" );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     }
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    // a round with no ICMP is skipped, never a whole case: one checked round
+    // at least, or the real-socket half proved nothing
+    posix_check( closed_port_checked > 0 );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 }
 
 // ---------------------------------------------------
