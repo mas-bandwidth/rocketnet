@@ -4961,6 +4961,10 @@ static void rocketnet_test_transport_io_pin_exchange( const char * transport_lis
 {
     struct rocketnet_test_env_guard_t transport_guard;
     rocketnet_test_env_clear( &transport_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    // the client must reach this server over a real socket: a cell's client
+    // pin (loopback in loopback/loopback) is set aside, as the server's is
+    struct rocketnet_test_env_guard_t client_pin_guard;
+    rocketnet_test_env_clear( &client_pin_guard, "ROCKETNET_CLIENT_TRANSPORT" );
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -5051,6 +5055,7 @@ static void rocketnet_test_transport_io_pin_exchange( const char * transport_lis
     rocketnet_server_transport_update( server, rocketnet_platform_time() );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 
+    rocketnet_test_env_restore( &client_pin_guard );
     rocketnet_test_env_restore( &transport_guard );
 }
 

@@ -68,6 +68,14 @@ Library:
   without liburing) logs a warning naming the step and the errno, and `auto`
   goes on to `gso`. Two `iocp` create refusals that returned silently now
   log. The `rio` warning for more lanes than cores now counts physical cores.
+- `io_uring` server create: when the kernel refuses ring memory with ENOMEM,
+  create tries again for up to 100 ms before failing (or, under `auto`, going
+  on to `gso`). A release test on a saturated host saw that refusal on the
+  second of 1000 create and destroy cycles; the cause was not reproduced, and
+  the retry count is chosen, not measured.
+- Windows ASan builds: the red-zone walk asks the OS once per committed run
+  instead of once per 32 KiB, which took the 1000-client unit cases from
+  about two hours each to 13 seconds.
 
 Build:
 

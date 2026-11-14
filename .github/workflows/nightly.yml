@@ -817,8 +817,10 @@ jobs:
   # slot waits for the machine-wide commit lock (SUITE_COMMIT_LOCK_WAIT_SECONDS,
   # tests/suite_runner.h), which a case holds while it runs: unbounded, the
   # 1000-client cases of tests/test_unit_server_mass_disconnect.cpp ran about
-  # 2 hours each here and failed the other slot's waits (roadmap
-  # windows-asan-mass-disconnect-two-hours). The job's ceiling is 120 minutes.
+  # 2 hours each here on 2026-11-14 and failed the other slot's waits (a
+  # per-span VirtualQuery in the red-zone walk, fixed by b1434430c: 13 s a
+  # case after; the unit suite then ran whole in 151.5 s). The job's ceiling
+  # is 120 minutes.
   build-and-test-windows-asan:
     name: windows / Release ASan
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]

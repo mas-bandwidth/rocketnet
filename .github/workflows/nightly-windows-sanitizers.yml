@@ -72,7 +72,7 @@ jobs:
     # keep the workflow's no-timeout opt-in here: with the per-case watchdog,
     # test_unit_case_memory (the whole unit suite, run where
     # ROCKETNET_TEST_MAX_CASE_RSS_MB is set, as it is here) would be held to
-    # its 99 s. Roadmap windows-asan-mass-disconnect-two-hours.
+    # its 99 s.
     timeout-minutes: 240
     strategy:
       fail-fast: false
