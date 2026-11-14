@@ -279,5 +279,5 @@ int main( int argc, char ** argv )
     rocketnet_sendmsg_x = real_send;
     rocketnet_recvmsg_x = real_receive;
     rocketnet_platform_socket_destroy( socket );
-    rocketnet_term();
+    CHECK( rocketnet_term() == ROCKETNET_STATUS_OK ); // LIVE_ALLOCATIONS: a fixture or the library leaked
 }

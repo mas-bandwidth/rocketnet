@@ -43,7 +43,7 @@ int main( int argc, char ** argv )
     const bool reply_mac_passed = rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
     const bool gateway_refresh_passed = rocketnet_server_socket_test_gateway_refresh();
     const bool worker_stack_passed = rocketnet_server_socket_test_worker_stack();
-    rocketnet_term();
+    const enum rocketnet_status_t term = rocketnet_term(); // judged last, so a failed case is named first
 
     if ( !passed )
     {
@@ -129,6 +129,14 @@ int main( int argc, char ** argv )
     }
 
     printf( "test_xdp_transport_frame_holds_receive_ceiling\n" );
+
+    // every case released what it allocated: LIVE_ALLOCATIONS means a case or
+    // the library left an allocation behind
+    if ( term != ROCKETNET_STATUS_OK )
+    {
+        fprintf( stderr, "rocketnet_term returned %s\n", rocketnet_status_name( term ) );
+        return 1;
+    }
 
     return 0;
 }

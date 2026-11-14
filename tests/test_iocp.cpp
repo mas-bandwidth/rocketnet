@@ -226,7 +226,7 @@ int main( int argc, char ** argv )
     }
     printf( "test_platform_socket_production_sets_dont_fragment\n" );
 
-    rocketnet_term();
+    PRODUCTION_CHECK( rocketnet_term() == ROCKETNET_STATUS_OK ); // LIVE_ALLOCATIONS: a fixture or the library leaked
     printf( "*** PRODUCTION WINDOWS TRANSPORTS PASSED ***\n" );
 
     return 0;
@@ -4442,7 +4442,7 @@ int main( int argc, char ** argv )
         CHECK( found );
     }
 
-    rocketnet_term();
+    CHECK( rocketnet_term() == ROCKETNET_STATUS_OK ); // LIVE_ALLOCATIONS: a fixture or the library leaked
     CHECK( live_allocations.load() == 0 );
 
     return 0;

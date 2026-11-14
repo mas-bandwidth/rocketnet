@@ -2151,7 +2151,7 @@ int main( int argc, char ** argv )
             CHECK( false );
         }
         CHECK( rocketnet_test_loopback_hub_release() );
-        rocketnet_term();
+        CHECK( rocketnet_term() == ROCKETNET_STATUS_OK ); // LIVE_ALLOCATIONS: a fixture or the library leaked
         return 0;
     }
 
@@ -2182,5 +2182,5 @@ int main( int argc, char ** argv )
 #endif // #if ROCKETNET_DEV
     test_disconnect_allowance_shared_with_the_message_update();
     CHECK( rocketnet_test_loopback_hub_release() );
-    rocketnet_term();
+    CHECK( rocketnet_term() == ROCKETNET_STATUS_OK ); // LIVE_ALLOCATIONS: a fixture or the library leaked
 }
