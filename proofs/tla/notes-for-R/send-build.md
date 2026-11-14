@@ -61,6 +61,22 @@ function lists.
 - Line 171, `rnserversendfair`: "The server send pass under the transport's
   live send capacity (README-RNSendRotation.md, revisions 1.1 and 1.2)."
 
+## MA015: add to the roadmap entry fill-phase-trace-gaps
+
+Append to the `:text` of `fill-phase-trace-gaps` in docs/roadmap.sexp, and
+add "; models addendum MA015" to its `:origin`:
+
+```
+ The walk arms the check (RNFillPhase Arm) once, after FP_ARM_AT records, while every actor is parked between calls (tests/tla_trace_fill_phase.cpp, the Arm step of the walk); before arming each call is skipped whole, so no fill or main call is in flight at the arm. The model's Arm is enabled in any state, and the code arms from the game's first finish, abort or update_receive while fills may be in flight (rocketnet_fill_phase_arm and its call sites in sdk/rocketnet_api.cpp), so an arm that lands inside a fill or main call is never trace-checked. Split a skipped call around the arm in the walk (begin unarmed, arm, end armed) so the trace reaches it.
+```
+
+## MA020: RNWriterFinish has no README
+
+RNWriterFinish gained the reversed witness `MCRNWriterFinishBrokenWalkDrops.cfg`
+(`KeepLeft <- BrokenKeepLeft`: the walk clears what it did not carry,
+uncounted; must fail `Accounted`). The module's header lists every witness;
+there is no README-RNWriterFinish.md, which belongs to R's missing READMEs.
+
 ## Comment re-citations for package C (comment-only, sdk/)
 
 1. `sdk/rocketnet_message_server.cpp` (rn_message_object_start, the comment above it, line 1459) (MM059). Now: "proofs/tla/RNWriterFinish.tla

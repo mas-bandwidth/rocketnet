@@ -237,28 +237,36 @@ counterexample was checked against the C by hand.
 
 ## Revision 1.1: a dark client takes no more than its turn (RNServerSendFair)
 
-Standard rule: MESSAGES.md m1.8 (per-client scope). `RNServerSendFair.tla`
-gains the constant `Dark`, the clients whose path is dark or that never
-acknowledge, so they always have resends due, and the invariant
-`OtherClientUnaffected`: every client outside `Dark` is still served within
-`ceil(N / K)` updates. The rule is the one-frame-per-connection-per-round
-loop of `rn_message_object_send_packets` with the cursor at `i + 1`: a busy
-or dark connection cannot take K turns. `Mode = "darkhogs"` is the reversed
-witness, a per-client allowance that lets a dark client with resends due take
-the whole cap each update. The four existing configurations set `Dark = {}`
-and their records are unchanged.
+Standard rule: MESSAGES.md m1.8 (per-client scope) and m9.3 (probe hold).
+`RNServerSendFair.tla` has the constant `Dark`, the slots in probe hold:
+their path is dark, their resends are due, and the walk holds all but the
+probe. The rule is the one-frame-per-connection-per-round loop of
+`rn_message_object_send_packets` with the cursor at `i + 1`, and a due test
+that asks the walk's hold (`DueRule = "shared"`): a dark slot starts a frame
+only for its probe, so no unit of the shared capacity is charged to a frame
+that writes nothing. Two invariants state it: `DarkTakesOnlyItsProbes` (a
+dark slot starts a frame only in a flush in which its probe is due) and
+`OtherClientUnaffected` (a healthy slot never ends a flush with work left
+while a unit of that flush went to an aborted frame).
 
-| Case | Expected | Exit | Distinct |
-|---|---|---:|---:|
-| `MCRNServerSendFairDark.cfg` (N 2, K 1, `Dark = {2}`) | pass | 0 | 9 |
-| `MCRNServerSendFairBrokenDarkHogs.cfg` | `OtherClientUnaffected` | 12 | 3 |
+| Case | Expected | Distinct |
+|---|---|---:|
+| `MCRNServerSendFairDark.cfg` (N 3, K 2, `Dark = {2}`) | pass | 354 |
+| `MCRNServerSendFairDarkTwo.cfg` (N 3, K 1, `Dark = {1, 2}`) | pass | 88 |
+| `MCRNServerSendFairBrokenDueIgnoresHold.cfg` (`DueRule = "head"`, the v1.1.0 due test) | `OtherClientUnaffected` | 144 |
+| `MCRNServerSendFairBrokenDarkProbes.cfg` (`DueRule = "head"`) | `DarkTakesOnlyItsProbes` | 38 |
+| `MCRNServerSendFairBrokenBudgetFrame.cfg` (the v1.1.1 order: frame before the budget) | `OtherClientUnaffected` | 75 |
 
-Witness trace, read by hand (3 states): N = 2, K = 1, client 2 dark. Each
-`Tick` serves only client 2; at update 2 client 1 has waited `Window = 2`
-updates and the invariant fails. Against the C: the inner loop of
-`rn_message_object_send_packets` writes one frame for a connection, moves
-`send_next_connection` past it and goes on to the next connection before
-any connection gets a second frame, so client 1 is served at the next update.
+The first form of this revision had a per-client allowance witness
+(`Mode = "darkhogs"`, `MCRNServerSendFairBrokenDarkHogs.cfg`); the model's
+rounds replaced the allowance, that mode and its case were removed, and the
+`DueRule = "head"` witnesses above took its place. With `DueRule = "head"`
+the due test reads the held head alone: the dark slot is due every flush,
+its frame takes a unit, the walk writes nothing and the frame is aborted.
+Against the C: today `rn_endpoint_fifo_due` skips a held head to `U`, the
+one number the walk may resend, and lets `rn_window_ack_held` decide
+(sdk/rocketnet_endpoint.cpp, the comment above its walk); the v1.1.0 due
+test read the head alone.
 
 ## Revision 1.2: the capacity is read live (RNServerSendFair)
 

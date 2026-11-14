@@ -90,7 +90,9 @@
 (* (ValidateFirst FALSE: a bad finish of a no-capacity start counted as   *)
 (* no capacity) breaks BadBytesNeverRefused;                              *)
 (* MCRNWriterFinishBrokenRingRefuses (the ring's shortfall marked as no    *)
-(* capacity) breaks BufferedNeverRefuses.                                  *)
+(* capacity) breaks BufferedNeverRefuses; MCRNWriterFinishBrokenWalkDrops   *)
+(* (KeepLeft FALSE: the walk clears what it did not carry, uncounted)       *)
+(* breaks Accounted.                                                       *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -277,6 +279,11 @@ Abort(w, c) ==
 \* A main-thread operation ends the phase's claims (RNFillPhase MainEpoch: the
 \* epoch advances at its end), so no client is owned after it; touched, the
 \* history OneWriter reads, stays until the next phase opens
+\* KeepLeft: what the walk does not carry stays queued or held for the next
+\* walk (the code leaves its records in place). A definition, so the reversed
+\* witness MCRNWriterFinishBrokenWalkDrops.cfg can replace it with FALSE: the
+\* walk clears what it did not carry without counting it, and Accounted fails
+KeepLeft == TRUE
 Left(c) == build[c] + queued[c] + held[c]
 Total(f) == LET Sum[S \in SUBSET Clients] ==
                     IF S = {} THEN 0
@@ -292,9 +299,10 @@ SendPackets ==
     /\ phase' = "main"
     /\ owner' = [c \in Clients |-> NoOwner]
     /\ build' = [c \in Clients |-> 0]
-    /\ queued' \in AtMost(queued)
-    /\ held' \in AtMost(held)
-    /\ walked' = walked + Total([c \in Clients |-> Left(c)]) - Total(queued') - Total(held')
+    /\ \E q \in AtMost(queued), h \in AtMost(held) :
+          /\ queued' = IF KeepLeft THEN q ELSE [c \in Clients |-> 0]
+          /\ held' = IF KeepLeft THEN h ELSE [c \in Clients |-> 0]
+          /\ walked' = walked + Total([c \in Clients |-> Left(c)]) - Total(q) - Total(h)
     /\ cap' = Capacity
     /\ UNCHANGED << touched, open, starts, sent, refused, cancelled, lost >>
 

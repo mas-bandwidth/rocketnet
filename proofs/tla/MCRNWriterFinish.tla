@@ -9,4 +9,7 @@
 (* property its CASES.tsv row names.                                      *)
 (***************************************************************************)
 EXTENDS RNWriterFinish
+
+\* the reversed witness MCRNWriterFinishBrokenWalkDrops.cfg: KeepLeft <- BrokenKeepLeft
+BrokenKeepLeft == FALSE
 =============================================================================
