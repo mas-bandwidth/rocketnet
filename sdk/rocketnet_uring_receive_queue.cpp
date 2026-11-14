@@ -337,6 +337,8 @@ struct rocketnet_uring_receive_queue_t * rocketnet_uring_receive_queue_create( v
     {
         memset( base + layout.buf_ring, 0, (size_t) config->buffers * sizeof( struct io_uring_buf ) );
     }
+    // ASan builds: poison the red zones between the carves, once the zeroing is done; the kernel writes the provided buffers, never a pad (sdk/rocketnet_memory.h)
+    ROCKETNET_RED_ZONE_CARVE( base, rocketnet_uring_receive_queue_layout( config, ring == NULL, &layout ) );
 
     struct rocketnet_uring_receive_queue_t * queue = new ( base ) rocketnet_uring_receive_queue_t();
     queue->context = context;

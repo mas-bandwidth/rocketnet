@@ -63,3 +63,29 @@ cross-thread bulk handoffs, not a claim that existing paths have all been
 converted or gated. The asynchronous server-stats implementation remains
 subject to its source and platform gates; this decision records the architecture,
 not a completion or conformance claim.
+
+## Scoped exception: loopback (2026-11-13)
+
+The loopback transport (sdk/rocketnet_driver_loopback.cpp) does not follow
+the exchange-only rule. Every endpoint on a hub shares the hub's one mutex,
+and a send holds it across the destination lookup and the copy of the
+datagram into the destination's queue; a server batch send holds it across
+the whole batch, one lookup and one copy per packet; a receive holds it
+across the copies out of the endpoint's queue. Loopback has no worker: each
+endpoint does this on its caller's thread.
+
+This is accepted for now. Loopback is in-process and touches no kernel or
+socket; the lock is held for bounded copies of at most
+ROCKETNET_RECEIVE_CEILING bytes a datagram and never across a wait, and
+shutdown's send only tries it. What the mutex costs is serialisation: the
+endpoints on one hub take turns, so loopback does not show how a socket
+transport scales across threads. Nothing is unsafe. The exception covers
+loopback alone and is no precedent for any other path.
+
+What would remove it: a per-destination bounded queue whose slots the
+sender fills outside any lock and publishes with an index exchange under a
+small mutex (or the existing atomic transfer), the receiver consuming
+published slots the same way, with full queues refusing and counting as
+today, and the lookup reading a bound table that changes only at endpoint
+create and destroy. The roadmap entry loopback-exchange-only-handoff
+tracks it (review of 2026-11-10, row R127).

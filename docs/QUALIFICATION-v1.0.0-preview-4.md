@@ -5,6 +5,14 @@ yet in hand, the section says so and names what fills it. Manual results are
 not GitHub CI runs. A result carried from another commit names that commit.
 The gates still owed when the tag is cut are listed under "Not qualified".
 
+This is a historical record, kept as it was at the tag. Its references to
+RELEASING.md (its sections and numbered steps) are to [that file at the
+v1.0.0-preview-4
+tag](https://github.com/mas-bandwidth/rocketnet/blob/v1.0.0-preview-4/docs/RELEASING.md);
+the current [RELEASING.md](RELEASING.md) has since been rewritten. The
+"TO BE FILLED" fields below were never filled. `make roadmap-check`, called
+retired below, is back from v1.0.0-preview-6 on.
+
 ## Candidate head
 
 - Base: `23724925`, `main` after #627, the newest commit under this branch
@@ -13,7 +21,7 @@ The gates still owed when the tag is cut are listed under "Not qualified".
   contract audit) and #631 (the macOS fuzzing record).
 - Release head: **TO BE FILLED** when the release pull request merges: the
   exact `main` commit the tag will name, reconciled with this record
-  ([RELEASING.md](RELEASING.md), "Cutting the release", steps 5 and 7).
+  ([RELEASING.md at the tag](https://github.com/mas-bandwidth/rocketnet/blob/v1.0.0-preview-4/docs/RELEASING.md#cutting-the-release), "Cutting the release", steps 5 and 7).
 - Changes since the preview-3 tag are in
   [the release notes](RELEASE-NOTES-v1.0.0-preview-4.md). The standard and the
   wire encodings did not change.
