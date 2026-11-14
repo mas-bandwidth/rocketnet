@@ -65,7 +65,7 @@ Not modelled: blocks (`U'` only narrows the window, so it cannot add packets)
 and the 16P reference ring (each packet holds at most 16 references, so it
 never binds before the packet ring).
 
-## Receipt-only packets: the rule does not hold with them (open risk)
+## Receipt-only packets: the rule does not hold with them (documented contract)
 
 A packet of unreliable records with receipts and no reliable number takes a
 ring entry too (`rn_window_ack_commit_receipt_packet`), and `W` does not bound
@@ -93,7 +93,27 @@ that refuses to evict a reliable entry still leaves its entry in the ring for
 the next reliable write to pass `P` on; reserving `W` entries for numbered
 packets makes every receipt LOSS at the default `P = W = 1024`; and a budget
 or ring of their own changes the map's layout and memory. The repair is a
-design change for a minor release.
+design change for a minor release: docs/roadmap.sexp
+`sent-map-receipts-give-way`.
+
+The contract now says so (2026-11-13): `packets_in_flight` in sdk/rocketnet.h,
+standard/MESSAGES.md m9.1 and docs/CHANNELS.md state that reliable and
+receipt-only packets share the map, that no entry is evicted before its ack
+lands while the map holds every tracked packet sent between a send and the
+processing of its ack, and what happens past that. That sizing is the ring's
+own arithmetic, not this model's result: an entry is evicted only by the
+`P`-th tracked write after it, since holes behind a live head are not
+reclaimed. This model's `P >= W` argument needs its fixed round trip (acks in
+send order): with acks out of order, faster acks of later packets (resends of
+lost numbers below the entry's among them) advance the window while an older
+entry's ack is on its way, and a receipt-only entry holds no number at all, so
+neither `W` nor `W` plus the receipt-only packets of one round trip bounds the
+writes after it. The
+model's rule is unchanged: the committed run is `P = W` with no receipt-only
+packets, and `MCRNSentMapReceiptEviction.cfg` is the overflow the contract
+describes. tests/test_unit_sent_map_receipt_eviction.cpp pins the overflow
+behaviour by value at `P = W = 64`, and shows that a map of `P = 160` with the
+same fixed-delay traffic evicts nothing.
 
 ## Cases
 

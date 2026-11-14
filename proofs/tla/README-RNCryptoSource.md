@@ -1,7 +1,8 @@
 # The random source shared by the generators, init and term
 
-`RNCryptoSource.tla` models how the key and token generators, `rocketnet_init`
-and `rocketnet_term` share the bundled sodium's random source
+`RNCryptoSource.tla` models how the key and token generators,
+`rocketnet_random_uint64` and `rocketnet_random_bytes`, `rocketnet_init` and
+`rocketnet_term` share the bundled sodium's random source
 (`sdk/rocketnet.cpp`: `rocketnet_crypto_acquire`, `rocketnet_crypto_release`,
 `rocketnet_crypto_open_locked`, `rocketnet_crypto_close`).
 
@@ -44,7 +45,9 @@ not model them.
 | `MCRNCryptoSourceBrokenInitNoLock.cfg` | `AtMostOneSource` |
 
 `NoLock` is the code before the guard: two calls draw at once, both read the
-flag clear and both open. `NoHold` opens the source but does not count the
+flag clear and both open. It is also `rocketnet_random_uint64` and
+`rocketnet_random_bytes` before they held the source (a ThreadSanitizer race
+before `rocketnet_init`, `tests/test_lifecycle.cpp`). `NoHold` opens the source but does not count the
 call a holder: a term closes the source after the call let the mutex go, and
 its draw opens it unlocked beside another call's draw. `NoClear` is a term
 that leaves `open` set: the next calls skip the open and their draws open the

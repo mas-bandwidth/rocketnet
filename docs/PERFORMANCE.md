@@ -482,6 +482,8 @@ Check all of the following together:
 - `harden_ready`: actual transport, buffer sizes and thread setup.
 - `harden_tick`: connected players, sent packet rate, refused starts and frames.
 - `harden_frame`: per-second main p99/max, latency, join wait and overruns.
+- `harden_frame_run`: the whole run's main p99/p99.9/max over every frame, beside the mean and maximum of the
+  per-second p99s. Quote the run's p99 as the run's p99; the mean of per-second p99s is a different number.
 - `harden_threads`: game-thread network work and remaining-time accounting.
 - `harden_players`: connected players, loss and delivery in each direction.
 - Reconciliation chains: named drops and gaps, with the known limits above.

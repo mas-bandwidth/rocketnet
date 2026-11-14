@@ -1388,9 +1388,15 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     if ( strcmp( transport, "loopback" ) == 0 )
     {
         // the endpoint's record and queue are in the caller's hub, allocated
-        // at hub create, and loopback opens no socket. A threaded client
-        // still starts its network thread.
+        // at hub create, and loopback opens no socket. Its client create
+        // makes the wake its I/O thread waits on (zero bytes where the
+        // platform has none), and a threaded client still starts its network
+        // thread.
         plan.transport_io_bytes = 0;
+        if ( !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_wake_allocation_bytes() ) )
+        {
+            return false;
+        }
         if ( threaded && !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_thread_allocation_bytes() ) )
         {
             return false;
@@ -1469,7 +1475,7 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     }
 
     // loopback opens no socket and runs no family race; its endpoint is in
-    // the caller's hub, so a step-driven loopback client plans no I/O bytes
+    // the caller's hub, so a step-driven loopback client plans only its wake
 
     if ( !plan.transport_bytes || ( plan.sockets != 0 && !plan.transport_io_bytes ) )
     {
@@ -2652,7 +2658,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     // a transport with wait and wake runs the I/O thread design of
     // docs/CLIENT-IO.md through rocketnet_client_io_t, modelled by
     // proofs/tla/RNClientIo.tla (every RNClientIo action named here). Built-in
-    // loopback uses the same core with bounded worker polling. Custom drivers
+    // loopback has wait and wake too: its I/O thread sleeps until a datagram is queued for it. Custom drivers
     // without wait/wake keep the BASE path: per-packet sends on the main
     // thread and a polling receive worker that exchanges buffer ownership
     // under a short mutex.
@@ -2667,9 +2673,18 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     // never moves: a live setting change does not move a running connection
     // between the two paths.
 
+#if ROCKETNET_DEV
+    // the step-driven unit fixture over the built-in loopback's own operations
+    // keeps the receive-thread path it ran before loopback had wait and wake:
+    // its cases step that path (rocketnet_client_transport_step_legacy_for_test)
+    const rocketnet_transport_definition_t * loopback_definition = rocketnet_transport_definition( ROCKETNET_TRANSPORT_LOOPBACK );
+    const bool step_driven_builtin_loopback = step_driven_operations && loopback_definition && loopback_definition->backend &&
+                                              step_driven_operations == loopback_definition->backend->client;
+#endif // #if ROCKETNET_DEV
+
     client_transport->io_thread = !rocketnet_network_simulator_created_active( client_transport->link_simulator ) &&
 #if ROCKETNET_DEV
-                                  ( rocketnet_client_transport_uses_io_thread( client_transport->io.operations ) ||
+                                  ( ( rocketnet_client_transport_uses_io_thread( client_transport->io.operations ) && !step_driven_builtin_loopback ) ||
                                     ( !step_driven_operations && granted_transport == ROCKETNET_TRANSPORT_LOOPBACK ) );
 #else
                                   ( rocketnet_client_transport_uses_io_thread( client_transport->io.operations ) ||

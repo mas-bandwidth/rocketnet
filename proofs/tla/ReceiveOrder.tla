@@ -45,6 +45,19 @@
 (* AcceptStep releases the replaced mapping's claim as it installs the new *)
 (* one (ReplaceReleasesClaim; MCReceiveOrder says which requests may       *)
 (* replace).                                                               *)
+(*                                                                         *)
+(* The repeat rung, just above the work budget: a token that a request     *)
+(* earlier in the same update verified and that the clientid rung (its    *)
+(* client id already holds a slot) or the slots rung (no free slot) then   *)
+(* refused is refused again here, for nothing, until the update ends       *)
+(* (repeated; MCReceiveOrder UpdateStart empties it).  Neither refusal     *)
+(* charges the source's failed-signature budget, so without the rung one  *)
+(* valid token could spend every verify of every update.                   *)
+(* RepeatSpendsNoVerify, checked in MCReceiveOrder: a request whose token  *)
+(* was so refused earlier in the update never reaches the signature.  The *)
+(* witness RepeatRungOff turns the rung off, the code before 2026-11-13:  *)
+(* repeated still notes the refused tokens, as the invariant reads them,  *)
+(* but nothing refuses them.                                               *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -52,17 +65,26 @@ CONSTANTS PosVersion, PosTimestamps, PosCompares, PosCookie, PosUsed,
           PosRestart, PosSignature, PosSeal, PosSlots, PosKeypair
 
 Rungs == {"version", "timestamps", "compares", "cookie", "used",
-          "verifybudget", "claim", "capacity", "claimfull",
-          "restart", "workbudget", "signature", "seal", "slots", "keypair"}
+          "verifybudget", "claim", "capacity", "claimfull", "repeat",
+          "restart", "workbudget", "signature", "seal", "clientid", "slots",
+          "keypair"}
 
 CryptoRungs == {"signature", "seal", "keypair"}
 
 AboveVerify == {"version", "timestamps", "compares", "cookie", "used",
-                "verifybudget", "claim", "capacity", "claimfull",
+                "verifybudget", "claim", "capacity", "claimfull", "repeat",
                 "restart", "workbudget"}
 
 Faults == {"none", "version", "expired", "full", "mapfull", "claimed",
-           "budget", "claimfull", "workspent", "signature", "seal"}
+           "budget", "claimfull", "workspent", "signature", "seal",
+           "clientid"}
+
+\* the refusals past the verify that the sender does not choose: each
+\* records its token for the repeat rung (sdk/rocketnet_server_protocol.cpp,
+\* rocketnet_server_record_repeat), which refuses it while RepeatRungRefuses;
+\* the witness overrides that with <-
+RepeatRungs == {"clientid", "slots"}
+RepeatRungRefuses == TRUE
 
 \* the handshake work budget's rung: immediately before the signature, as
 \* the code charges it (sdk/rocketnet_server_protocol.cpp, the check under
@@ -86,11 +108,13 @@ Pos(r) ==
       [] r = "claim"     -> 10 * PosUsed + 2
       [] r = "capacity"  -> 10 * PosUsed + 5
       [] r = "claimfull" -> 10 * PosUsed + 6
+      [] r = "repeat"    -> 10 * PosSignature - 2
       [] r = "restart"   -> 10 * PosRestart
       [] r = "workbudget" -> IF WorkBudgetAtVerify THEN 10 * PosSignature - 1
                                                    ELSE 10 * PosCookie + 1
       [] r = "signature" -> 10 * PosSignature
       [] r = "seal"      -> 10 * PosSeal
+      [] r = "clientid"  -> 10 * PosSlots - 1
       [] r = "slots"     -> 10 * PosSlots
       [] r = "keypair"   -> 10 * PosKeypair
 
@@ -105,8 +129,11 @@ RequestRungOrder ==
     /\ Pos("verifybudget") < Pos("claim")
     /\ Pos("claim") < Pos("capacity")
     /\ Pos("capacity") < Pos("claimfull")
-    /\ Pos("claimfull") < Pos("workbudget")
+    /\ Pos("claimfull") < Pos("repeat")
+    /\ Pos("repeat") < Pos("workbudget")
     /\ Pos("workbudget") < Pos("signature")
+    /\ Pos("seal") < Pos("clientid")
+    /\ Pos("clientid") < Pos("slots")
 
 \* The token claim and the mapping table are the same small instance as the
 \* code: two addresses, two tokens, room for two half-open mappings.
@@ -128,13 +155,15 @@ ClaimWriteRung == "signature"
 \* before the replaced mapping's removal); the witness overrides it with <-
 ReplaceReleasesClaim == TRUE
 
+\* repeated: the tokens refused this update at a RepeatRung; wasRepeat: the
+\* current request's token was among them as the request began
 VARIABLES pos, fault, spent, spentKp, outcome, refusedRung,
           spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims, maps,
-          claimWritten, verified
+          claimWritten, verified, repeated, wasRepeat
 
 vars == <<pos, fault, spent, spentKp, outcome, refusedRung,
           spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims, maps,
-          claimWritten, verified>>
+          claimWritten, verified, repeated, wasRepeat>>
 
 MapCount == Cardinality({ a \in Addrs : maps[a] /= None })
 MapFull == MapCount >= MapCap
@@ -147,6 +176,8 @@ Refuses(r, f) ==
     \/ (r = "claim" /\ (f = "claimed" \/ (ClaimAtRequest /\ ClaimOther)))
     \/ (r = "capacity" /\ (f = "mapfull" \/ (MapFull /\ maps[reqAddr] = None)))
     \/ (r = "claimfull" /\ f = "claimfull")
+    \/ (r = "repeat" /\ RepeatRungRefuses /\ reqToken \in repeated)
+    \/ (r = "clientid" /\ f = "clientid")
     \/ (r = "slots" /\ f = "full")
     \/ (r = "workbudget" /\ f = "workspent")
     \/ (r = "signature" /\ f = "signature")
@@ -167,6 +198,8 @@ TypeOK ==
     /\ maps \in [Addrs -> Tokens \cup {None}]
     /\ claimWritten \in BOOLEAN
     /\ verified \in BOOLEAN
+    /\ repeated \subseteq Tokens
+    /\ wasRepeat \in BOOLEAN
 
 Init ==
     /\ pos = MinPos
@@ -183,6 +216,8 @@ Init ==
     /\ maps = [a \in Addrs |-> None]
     /\ claimWritten = FALSE
     /\ verified = FALSE
+    /\ repeated = {}
+    /\ wasRepeat = FALSE
 
 RefuseStep ==
     /\ outcome = "pending"
@@ -198,8 +233,12 @@ RefuseStep ==
     /\ claims' = IF claimWritten /\ claims[reqToken] = reqAddr
                   THEN [u \in Tokens |-> IF u = reqToken THEN None ELSE claims[u]]
                   ELSE claims
+    \* a refusal the sender does not choose, past the verify, records its
+    \* token for the repeat rung until the update ends
+    /\ repeated' = IF RungAt(pos) \in RepeatRungs
+                    THEN repeated \cup {reqToken} ELSE repeated
     /\ UNCHANGED <<fault, spent, spentKp, reqAddr, reqToken, maps,
-                   claimWritten, verified>>
+                   claimWritten, verified, wasRepeat>>
 
 AdvanceStep ==
     /\ outcome = "pending"
@@ -215,7 +254,8 @@ AdvanceStep ==
     /\ claimWritten' = (claimWritten \/ (RungAt(pos) = ClaimWriteRung /\ ClaimAtRequest))
     /\ verified' = (verified \/ RungAt(pos) = "signature")
     /\ UNCHANGED <<fault, outcome, refusedRung, spentAtRefusal,
-                   spentKpAtRefusal, reqAddr, reqToken, maps>>
+                   spentKpAtRefusal, reqAddr, reqToken, maps, repeated,
+                   wasRepeat>>
 
 \* past the last rung the address gets its mapping; a half-open mapping it
 \* held for another token is replaced, and that token's claim is released
@@ -230,7 +270,7 @@ AcceptStep ==
                   THEN [claims EXCEPT ![maps[reqAddr]] = None] ELSE claims
     /\ UNCHANGED <<pos, fault, spent, spentKp, refusedRung,
                    spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken,
-                   claimWritten, verified>>
+                   claimWritten, verified, repeated, wasRepeat>>
 
 Next == RefuseStep \/ AdvanceStep \/ AcceptStep
 
@@ -257,5 +297,10 @@ OneLiveMappingPerToken == \A t \in Tokens : Cardinality({ a \in Addrs : maps[a] 
 \* a request refused at or above the signature rung leaves no claim behind
 \* and never held one.
 ClaimOnlyAfterSignature == claimWritten => verified
+
+\* one token costs at most one verify an update: a request whose token a
+\* request earlier in the update verified and the clientid or slots rung
+\* refused never reaches the signature
+RepeatSpendsNoVerify == wasRepeat => ~verified
 
 =============================================================================

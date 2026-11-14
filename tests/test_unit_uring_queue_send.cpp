@@ -18,6 +18,7 @@
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_address.h"
 #include "../sdk/rocketnet_constants.h"
+#include "../sdk/rocketnet_memory.h"
 #include "../sdk/rocketnet_uring_queue_send.h"
 #include "../sdk/rocketnet_uring_send_queue.h"
 
@@ -112,6 +113,27 @@ static void test_uring_queue_send_create_refuses_bad_limits()
 }
 
 REGISTER_UNIT_TEST( test_uring_queue_send_create_refuses_bad_limits );
+
+#if ROCKETNET_RED_ZONES && ROCKETNET_DEV
+// ASan development builds: each carved array is followed by a poisoned red
+// zone (sdk/rocketnet_memory.h), so a write one past the queue arrays of the
+// send banks and of the queue send is reported, not landed in the next array
+static void test_uring_send_allocations_carve_red_zones()
+{
+    struct rocketnet_uring_send_queues_t * banks = rocketnet_uring_send_queues_create( NULL, 2, 4 );
+    check( banks != NULL );
+    struct rocketnet_uring_queue_send_t * send = rocketnet_uring_queue_send_create( NULL, banks, 4, 1500 );
+    check( send != NULL );
+    check( !__asan_address_is_poisoned( &banks->queue[1] ) );
+    check( __asan_address_is_poisoned( &banks->queue[2] ) );
+    check( !__asan_address_is_poisoned( &send->queue[1] ) );
+    check( __asan_address_is_poisoned( &send->queue[2] ) );
+    rocketnet_uring_queue_send_destroy( send );
+    rocketnet_uring_send_queues_destroy( banks );
+}
+
+REGISTER_UNIT_TEST( test_uring_send_allocations_carve_red_zones );
+#endif // #if ROCKETNET_RED_ZONES && ROCKETNET_DEV
 
 // RNUringQueueSend Publish: nothing staged keeps the producer; a staged
 // producer goes to the ready FIFO and the free head replaces it, reset; with

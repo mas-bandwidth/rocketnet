@@ -77,6 +77,8 @@ struct rocketnet_uring_send_queues_t * rocketnet_uring_send_queues_create( void 
     }
 
     memset( base, 0, (size_t) layout.bytes );
+    // ASan builds: poison the red zones between the carves, once the zeroing is done (sdk/rocketnet_memory.h)
+    ROCKETNET_RED_ZONE_CARVE( base, rocketnet_uring_send_queues_layout( num_queues, slots, &layout ) );
 
     struct rocketnet_uring_send_queues_t * queues = new ( base ) rocketnet_uring_send_queues_t();
     queues->context = context;

@@ -7,13 +7,21 @@
 (*                                                                         *)
 (* The class: N chunks, one meta word per chunk (a live bit and a          *)
 (* generation), the lazy watermark fresh (chunks at or past it were never  *)
-(* taken and their meta is whatever bytes the memory held), the scan       *)
-(* cursor free_head and free_count.  rn_send_store_find scans from         *)
-(* free_head up for the first chunk that is at or past fresh or whose live *)
-(* bit is clear; rn_send_store_take marks it live under its next           *)
-(* generation (1 on a first take, skipping 0 on a wrap) and moves fresh    *)
-(* and the cursor past it; rn_send_store_free_checked clears the live bit  *)
-(* and lowers the cursor to the freed chunk.                               *)
+(* taken and their meta is whatever bytes the memory held), the free stack *)
+(* free_stack (one entry a chunk; entries [0, free_top) are the free       *)
+(* chunks below fresh) and free_count.  rn_send_store_find returns the     *)
+(* top of the stack, or fresh when the stack is empty: one stack entry     *)
+(* read and no meta word, whatever is held; rn_send_store_take pops it (or *)
+(* moves fresh past a first take) and marks it live under its next         *)
+(* generation (1 on a first take, skipping 0 on a wrap, the meta read only *)
+(* below fresh); rn_send_store_free_checked clears the live bit and pushes *)
+(* the chunk.  The ghost visits is the entries the last choice examined.   *)
+(*                                                                         *)
+(* ScanFind = TRUE is the code before (finding W2-86, a reversed witness): *)
+(* the scan from the cursor free_head up for the first chunk at or past    *)
+(* fresh or with its live bit clear, the take moving the cursor past it    *)
+(* and the free lowering it to the freed chunk.  A receiver chooses which  *)
+(* chunks are freed, so it could make that scan walk a held run.           *)
 (*                                                                         *)
 (* The descriptors: Q of them, a LIFO free stack stored in the             *)
 (* descriptors' own free_slot fields (the entry at stack depth k is        *)
@@ -64,8 +72,10 @@
 (* state before it.                                                        *)
 (*                                                                         *)
 (* Reversed witnesses (each flag FALSE is a real bug class):               *)
-(*   FreshGuard    the free test reads meta without the i >= fresh guard   *)
-(*   LowerCursor   a free that does not lower the cursor                   *)
+(*   FreshGuard    the take reads meta without the i < fresh guard (and,   *)
+(*                 under ScanFind, the old free test without i >= fresh)   *)
+(*   PushOnFree    a free that does not push the chunk on the stack        *)
+(*   ScanFind      the scan from the cursor in place of the stack          *)
 (*   ChunkSkipZero a chunk generation that wraps to 0                      *)
 (*   DescSkipZero  a descriptor generation that wraps to 0                 *)
 (*   KeepFreeSlot  the take clears a free_slot the stack still uses        *)
@@ -81,8 +91,9 @@ CONSTANTS
     N,              \* chunks in the class
     Q,              \* send descriptors
     GenMod,         \* generations run 0..GenMod-1
-    FreshGuard,     \* rn_store_chunk_is_free tests i >= fresh before the meta read
-    LowerCursor,    \* rn_send_store_free_checked lowers free_head to the freed chunk
+    FreshGuard,     \* rn_send_store_take reads meta only below fresh
+    PushOnFree,     \* rn_send_store_free_checked pushes the freed chunk on the stack
+    ScanFind,       \* broken: the scan from the cursor (the code before W2-86)
     ChunkSkipZero,  \* a chunk's generation skips 0 when it wraps
     DescSkipZero,   \* a descriptor's generation skips 0 when it wraps
     KeepFreeSlot,   \* rn_region_descriptor_take keeps a free_slot below the new top
@@ -92,7 +103,7 @@ CONSTANTS
     RefuseExhausts  \* a refused fit exhausts the region (broken: v1.0's send kick)
 
 ASSUME N \in Nat \ {0} /\ Q \in Nat \ {0} /\ GenMod \in Nat /\ GenMod >= 3
-ASSUME \A f \in {FreshGuard, LowerCursor, ChunkSkipZero, DescSkipZero, KeepFreeSlot, CountQueueFull, RefuseExhausts} : f \in BOOLEAN
+ASSUME \A f \in {FreshGuard, PushOnFree, ScanFind, ChunkSkipZero, DescSkipZero, KeepFreeSlot, CountQueueFull, RefuseExhausts} : f \in BOOLEAN
 ASSUME StartOrder \in {"fit", "descfirst", "chunkfirst"} /\ CountMod \in Nat \ {0}
 
 Chunks == 0..(N - 1)
@@ -104,7 +115,9 @@ Garbage == [ inUse |-> TRUE, gen |-> 0, slot |-> 0, chunk |-> 0 ]
 
 VARIABLES
     meta,           \* meta[i]: chunk i's meta word, [live, gen]
-    freeHead,       \* the class's free_head
+    freeHead,       \* ScanFind only: the old scan cursor free_head (0 otherwise)
+    cStack,         \* free_stack: the entry at stack depth k is cStack[k]
+    cTop,           \* free_top
     freeCount,      \* the class's free_count
     fresh,          \* the class's fresh
     desc,           \* desc[d]: descriptor d's in_use, generation, free_slot and chunk
@@ -116,12 +129,13 @@ VARIABLES
     calls,          \* ghost: the application's send starts, modulo CountMod
     touchedPast,    \* ghost: meta at or past fresh, or a descriptor at or past dFresh, read or written
     takenTwice,     \* ghost: a take handed out a chunk or a descriptor that was live
-    badRefusal      \* ghost: the store refused while a chunk was free
+    badRefusal,     \* ghost: the store refused while a chunk was free
+    visits          \* ghost: the entries the last choice examined
 
-vars == <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, exhausted, refused, calls, touchedPast, takenTwice, badRefusal>>
+vars == <<meta, freeHead, cStack, cTop, freeCount, fresh, desc, dTop, dFree, dFresh, exhausted, refused, calls, touchedPast, takenTwice, badRefusal, visits>>
 
 \* everything of the region a start may touch, the refusal counter aside
-Layout == <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, exhausted>>
+Layout == <<meta, freeHead, cStack, cTop, freeCount, fresh, desc, dTop, dFree, dFresh, exhausted>>
 Kinds == {"store", "span"}
 
 Min(S) == CHOOSE x \in S : \A y \in S : x <= y
@@ -129,21 +143,53 @@ Min(S) == CHOOSE x \in S : \A y \in S : x <= y
 \* the chunks that are free in truth: never taken, or taken with the live bit clear
 FreeChunks == { i \in Chunks : i >= fresh \/ ~meta[i].live }
 
-\* rn_store_chunk_is_free, and whether that test reads the meta word
+\* ScanFind (broken): the old free test, and whether it reads the meta word
 IsFree(i) == IF FreshGuard THEN i >= fresh \/ ~meta[i].live ELSE ~meta[i].live
 TestReads(i) == ~FreshGuard \/ i < fresh
+ScanFound == IF \E i \in freeHead..(N - 1) : IsFree(i)
+             THEN Min({ i \in freeHead..(N - 1) : IsFree(i) })
+             ELSE N
 
-\* rn_send_store_find: from free_head up, the first chunk the test calls free; N when none
-Found == IF \E i \in freeHead..(N - 1) : IsFree(i)
-         THEN Min({ i \in freeHead..(N - 1) : IsFree(i) })
-         ELSE N
+\* rn_send_store_find: the top of the stack, else fresh; N when none
+StackFound == IF cTop > 0 THEN cStack[cTop - 1] ELSE IF fresh < N THEN fresh ELSE N
+Found == IF ScanFind THEN ScanFound ELSE StackFound
 FindOK == freeCount > 0 /\ Found < N
 
-\* the chunks the scan examined, and whether it read meta at or past fresh
-Scanned == IF freeCount = 0 THEN {} ELSE freeHead..Min({Found, N - 1})
+\* the entries the find examined (meta words under ScanFind, the top of the
+\* stack otherwise), and whether it read meta at or past fresh
+Scanned == IF freeCount = 0 \/ ~ScanFind THEN {} ELSE freeHead..Min({Found, N - 1})
+FindVisits == IF freeCount = 0 THEN 0
+              ELSE IF ScanFind THEN Cardinality(Scanned)
+              ELSE IF cTop > 0 THEN 1 ELSE 0
 ScanTouchesPast == \E i \in Scanned : TestReads(i) /\ i >= fresh
 
 NextGen(g, skip) == IF skip THEN (IF g = GenMod - 1 THEN 1 ELSE g + 1) ELSE (g + 1) % GenMod
+
+\* rn_send_store_take: the generation read only below fresh (FreshGuard), and
+\* whether the take read meta at or past fresh
+TakeGen(i) == IF i < fresh \/ ~FreshGuard THEN NextGen(meta[i].gen, ChunkSkipZero) ELSE 1
+TakeTouchesPast(i) == ~FreshGuard /\ i >= fresh
+
+\* the cursor and the stack after the take of chunk i: the pop (or nothing,
+\* for a first take), or under ScanFind the cursor past the chunk
+TakeStack(i) ==
+    IF ScanFind
+    THEN /\ freeHead' = i + 1
+         /\ UNCHANGED <<cStack, cTop>>
+    ELSE /\ cTop' = IF i < fresh THEN cTop - 1 ELSE cTop
+         /\ UNCHANGED <<freeHead, cStack>>
+
+\* the cursor and the stack after the free of held chunk c: the push (none
+\* when PushOnFree is off), or under ScanFind the cursor lowered to the chunk
+FreeStack(c) ==
+    IF ScanFind
+    THEN /\ freeHead' = IF c < freeHead THEN c ELSE freeHead
+         /\ UNCHANGED <<cStack, cTop>>
+    ELSE IF PushOnFree
+    THEN /\ cStack' = [ cStack EXCEPT ![cTop] = c ]
+         /\ cTop' = cTop + 1
+         /\ UNCHANGED freeHead
+    ELSE UNCHANGED <<freeHead, cStack, cTop>>
 
 \* rn_region_descriptor_take, read off the current state
 DFreshTake == dTop = 0
@@ -172,6 +218,8 @@ DTakeSteps(chunk) ==
 Init ==
     /\ meta \in [ Chunks -> [ live : BOOLEAN, gen : {0} ] ]
     /\ freeHead = 0
+    /\ cStack = [ k \in Chunks |-> 0 ]
+    /\ cTop = 0
     /\ freeCount = N
     /\ fresh = 0
     /\ desc = [ d \in Descs |-> Garbage ]
@@ -184,6 +232,7 @@ Init ==
     /\ touchedPast = FALSE
     /\ takenTwice = FALSE
     /\ badRefusal = FALSE
+    /\ visits = 0
 
 \* rn_region_send_fit_store's decision and rn_region_send_fit_span's, read off
 \* a const region before anything is taken: the sticky flag, then
@@ -201,14 +250,15 @@ Alloc ==
     /\ FitOK("store", TRUE)
     /\ DTaken < Q
     /\ LET i == Found
-           g == IF i < fresh THEN NextGen(meta[i].gen, ChunkSkipZero) ELSE 1
+           g == TakeGen(i)
        IN /\ meta' = [ meta EXCEPT ![i] = [ live |-> TRUE, gen |-> g ] ]
           /\ fresh' = IF i < fresh THEN fresh ELSE i + 1
           /\ freeCount' = freeCount - 1
-          /\ freeHead' = i + 1
+          /\ TakeStack(i)
           /\ DTakeSteps(i)
-          /\ touchedPast' = (touchedPast \/ ScanTouchesPast \/ DTakeTouchesPast)
+          /\ touchedPast' = (touchedPast \/ ScanTouchesPast \/ TakeTouchesPast(i) \/ DTakeTouchesPast)
           /\ takenTwice' = (takenTwice \/ i \notin FreeChunks \/ DTakeTwice)
+    /\ visits' = FindVisits
     /\ calls' = (calls + 1) % CountMod
     /\ UNCHANGED <<exhausted, refused, badRefusal>>
 
@@ -221,7 +271,8 @@ AllocSpan ==
     /\ touchedPast' = (touchedPast \/ DTakeTouchesPast)
     /\ takenTwice' = (takenTwice \/ DTakeTwice)
     /\ calls' = (calls + 1) % CountMod
-    /\ UNCHANGED <<meta, freeHead, freeCount, fresh, exhausted, refused, badRefusal>>
+    /\ visits' = 0
+    /\ UNCHANGED <<meta, freeHead, cStack, cTop, freeCount, fresh, exhausted, refused, badRefusal>>
 
 \* rn_region_send_refuse: the refusal counted under its fit result. A
 \* QUEUE_FULL refusal is uncounted when CountQueueFull = FALSE (broken);
@@ -250,13 +301,18 @@ DescTakeThenRelease ==
 \* rn_send_store_free_checked: the live bit cleared, the cursor lowered.
 ChunkTakeThenFree ==
     LET i == Found
-        g == IF i < fresh THEN NextGen(meta[i].gen, ChunkSkipZero) ELSE 1
-        head1 == i + 1
+        g == TakeGen(i)
+        top1 == IF i < fresh THEN cTop - 1 ELSE cTop
     IN /\ meta' = [ meta EXCEPT ![i] = [ live |-> FALSE, gen |-> g ] ]
        /\ fresh' = IF i < fresh THEN fresh ELSE i + 1
        /\ UNCHANGED freeCount
-       /\ freeHead' = IF LowerCursor /\ i < head1 THEN i ELSE head1
-       /\ touchedPast' = (touchedPast \/ ScanTouchesPast)
+       /\ IF ScanFind
+          THEN /\ freeHead' = i
+               /\ UNCHANGED <<cStack, cTop>>
+          ELSE /\ cStack' = [ cStack EXCEPT ![top1] = i ]
+               /\ cTop' = top1 + 1
+               /\ UNCHANGED freeHead
+       /\ touchedPast' = (touchedPast \/ ScanTouchesPast \/ TakeTouchesPast(i))
        /\ takenTwice' = (takenTwice \/ i \notin FreeChunks)
 
 \* The start the region has no room for (standard/MESSAGES.md m1.7), its
@@ -267,17 +323,18 @@ ChunkTakeThenFree ==
 Refuse(kind, spanRoom) ==
     /\ ~FitOK(kind, spanRoom)
     /\ badRefusal' = (badRefusal \/ (kind = "store" /\ ~exhausted /\ dFree > 0 /\ FreeChunks # {}))
+    /\ visits' = IF kind = "store" /\ ~exhausted /\ dFree > 0 THEN FindVisits ELSE 0
     /\ IF ~exhausted /\ StartOrder = "descfirst" /\ dFree > 0
        THEN \* the descriptor first; then no chunk, or no place for the span
             /\ DescTakeThenRelease
-            /\ UNCHANGED <<meta, freeHead, freeCount, fresh>>
+            /\ UNCHANGED <<meta, freeHead, cStack, cTop, freeCount, fresh>>
        ELSE IF ~exhausted /\ StartOrder = "chunkfirst" /\ kind = "store" /\ dFree = 0 /\ FindOK
        THEN \* the chunk first; then no descriptor
             /\ ChunkTakeThenFree
             /\ UNCHANGED <<desc, dTop, dFree, dFresh>>
        ELSE \* the code: the fit's reads, nothing taken
             /\ touchedPast' = (touchedPast \/ (~exhausted /\ dFree > 0 /\ kind = "store" /\ ScanTouchesPast))
-            /\ UNCHANGED <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, takenTwice>>
+            /\ UNCHANGED <<meta, freeHead, cStack, cTop, freeCount, fresh, desc, dTop, dFree, dFresh, takenTwice>>
     /\ CountRefusal(~exhausted /\ dFree = 0)
     /\ calls' = (calls + 1) % CountMod
 
@@ -291,12 +348,12 @@ Free(d) ==
            frees == c # NONE /\ c < fresh /\ meta[c].live
        IN /\ meta' = IF frees THEN [ meta EXCEPT ![c].live = FALSE ] ELSE meta
           /\ freeCount' = IF frees THEN freeCount + 1 ELSE freeCount
-          /\ freeHead' = IF frees /\ LowerCursor /\ c < freeHead THEN c ELSE freeHead
+          /\ IF frees THEN FreeStack(c) ELSE UNCHANGED <<freeHead, cStack, cTop>>
     /\ desc' = [ desc EXCEPT ![d].inUse = FALSE, ![d].chunk = NONE, ![dTop].slot = d ]
     /\ dTop' = dTop + 1
     /\ dFree' = dFree + 1
     /\ touchedPast' = (touchedPast \/ dTop >= dFresh)
-    /\ UNCHANGED <<fresh, dFresh, exhausted, refused, calls, takenTwice, badRefusal>>
+    /\ UNCHANGED <<fresh, dFresh, exhausted, refused, calls, takenTwice, badRefusal, visits>>
 
 \* rn_region_carve (rn_send_store_init_counts for the class): both pools
 \* empty and both watermarks at zero; modeled meta/descriptor fields unchanged.
@@ -304,13 +361,14 @@ Free(d) ==
 \* descriptor watermark before lowering it; these scheduling fields are omitted.
 Carve ==
     /\ freeHead' = 0
+    /\ cTop' = 0
     /\ freeCount' = N
     /\ fresh' = 0
     /\ dTop' = 0
     /\ dFree' = Q
     /\ dFresh' = 0
     /\ exhausted' = FALSE
-    /\ UNCHANGED <<meta, desc, refused, calls, touchedPast, takenTwice, badRefusal>>
+    /\ UNCHANGED <<meta, cStack, desc, refused, calls, touchedPast, takenTwice, badRefusal, visits>>
 
 \* rn_region_exhaust, from the receive side (a delivery with no room, a
 \* broken invariant of the receiver; RNConnectionMemory.tla Exhaust): the
@@ -319,8 +377,8 @@ Carve ==
 Exhaust ==
     /\ ~exhausted
     /\ exhausted' = TRUE
-    /\ UNCHANGED <<meta, freeHead, freeCount, fresh, desc, dTop, dFree, dFresh, refused,
-                   calls, touchedPast, takenTwice, badRefusal>>
+    /\ UNCHANGED <<meta, freeHead, cStack, cTop, freeCount, fresh, desc, dTop, dFree, dFresh, refused,
+                   calls, touchedPast, takenTwice, badRefusal, visits>>
 
 Next ==
     \/ Alloc
@@ -332,25 +390,31 @@ Next ==
 
 Spec == Init /\ [][Next]_vars
 
-\* The fingerprint view for TLC: a meta word at or past fresh, a descriptor at
-\* or past descriptors_fresh and a free_slot at or above the stack's top are
+\* The fingerprint view for TLC: a meta word at or past fresh, a free_stack
+\* entry at or above free_top, a descriptor at or past descriptors_fresh and a
+\* free_slot at or above the top of the descriptor stack are
 \* dead values, written before they are next read, so states that differ only
 \* in them are one state.  A read of one before its write is the violation
 \* NeverTouchPastFresh records (the ghosts stay in the view); a free_slot at
 \* or above the top is read by no action.
 View ==
     << [ i \in Chunks |-> IF i < fresh THEN meta[i] ELSE "dead" ],
-       freeHead, freeCount, fresh,
+       freeHead,
+       [ k \in Chunks |-> IF k < cTop THEN cStack[k] ELSE "dead" ], cTop,
+       freeCount, fresh,
        [ d \in Descs |-> IF d < dFresh
                          THEN [ desc[d] EXCEPT !.slot = IF d < dTop THEN @ ELSE 0 ]
                          ELSE "dead" ],
-       dTop, dFree, dFresh, exhausted, refused, calls, touchedPast, takenTwice, badRefusal >>
+       dTop, dFree, dFresh, exhausted, refused, calls, touchedPast, takenTwice, badRefusal, visits >>
 
 ----------------------------------------------------------------------------
 
 TypeOK ==
     /\ meta \in [ Chunks -> [ live : BOOLEAN, gen : Gens ] ]
     /\ freeHead \in 0..N
+    /\ cStack \in [ Chunks -> Chunks ]
+    /\ cTop \in 0..N
+    /\ visits \in 0..N
     /\ freeCount \in 0..N
     /\ fresh \in 0..N
     /\ desc \in [ Descs -> [ inUse : BOOLEAN, gen : Gens, slot : Descs, chunk : 0..N ] ]
@@ -376,8 +440,21 @@ RefuseOnlyWhenNoneFree == ~badRefusal
 \* free_count is the free chunks
 FreeCountExact == freeCount = Cardinality(FreeChunks)
 
-\* free_head is at or below fresh and below every free chunk: the scan from it finds the lowest
+\* ScanFind only: free_head is at or below fresh and below every free chunk
 CursorBelowFree == freeHead <= fresh /\ \A i \in FreeChunks : freeHead <= i
+
+\* the free stack holds exactly the free chunks below fresh, each once
+FreeStackExact ==
+    \/ ScanFind
+    \/ /\ cTop <= fresh
+       /\ \A j, k \in 0..(cTop - 1) : j # k => cStack[j] # cStack[k]
+       /\ { cStack[k] : k \in 0..(cTop - 1) } = { i \in 0..(fresh - 1) : ~meta[i].live }
+
+\* each choice of a chunk, by an allocation or a room query, examines at most
+\* one entry, however many chunks are held: the receiver chooses which chunks
+\* its acks free, so a choice that walked held chunks was its to steer
+\* (finding W2-86). Reversed by ScanFind.
+ChoiceBounded == visits <= 1
 
 \* a chunk below fresh is live exactly when one live descriptor names it
 LiveIsHeld ==
