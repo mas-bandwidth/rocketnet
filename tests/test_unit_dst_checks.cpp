@@ -90,6 +90,30 @@ static void test_dst_check_ordered_out_of_order_fails()
     rocketnet_unit_check( strcmp( st.check, "ordered_in_order" ) == 0 );
 }
 
+// The ordered skip check past the first 4096 sequences: once the reliable base
+// has moved past 4096, a delivery that skips an undelivered earlier send is
+// still red (the walk starts at the base, not at 0)
+
+static void test_dst_check_ordered_skip_past_4096_fails()
+{
+    DST_CHECK_STATE( st );
+    rocketnet_dst_check_init( &st, 1, 44 );
+
+    for ( uint32_t seq = 0; seq < 4500; seq++ )
+    {
+        rec_sent( &st, 0, 0, 3, seq );
+        rec_deliver( &st, 0, 0, 3, seq );
+    }
+    rocketnet_unit_check( st.failed == 0 );
+    rocketnet_unit_check( st.stream[rocketnet_dst_check_stream_index( 0, 0, 3 )].reliable_base == 4500 );
+
+    rec_sent( &st, 0, 0, 3, 4500 );
+    rec_sent( &st, 0, 0, 3, 4501 );
+    rec_deliver( &st, 0, 0, 3, 4501 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "ordered_in_order" ) == 0 );
+}
+
 static void test_dst_check_reliable_duplicate_fails()
 {
     DST_CHECK_STATE( st );
@@ -451,6 +475,7 @@ static void test_dst_check_clean_sequence_passes()
 }
 
 REGISTER_UNIT_TEST( test_dst_check_ordered_out_of_order_fails );
+REGISTER_UNIT_TEST( test_dst_check_ordered_skip_past_4096_fails );
 REGISTER_UNIT_TEST( test_dst_check_reliable_duplicate_fails );
 REGISTER_UNIT_TEST( test_dst_check_reliable_missing_fails );
 REGISTER_UNIT_TEST( test_dst_check_reliable_missing_from_fault_window_fails );
