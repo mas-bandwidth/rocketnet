@@ -14,3 +14,9 @@ target_include_directories(transport_extension PRIVATE "${ROCKETNET_SOURCE_PATH}
 enable_testing()
 add_test(NAME external_transport_transport_exchange COMMAND transport_extension)
 set_tests_properties(external_transport_transport_exchange PROPERTIES TIMEOUT 30 ENVIRONMENT "ROCKETNET_SERVER_TRANSPORT=external_test;ROCKETNET_CLIENT_TRANSPORT=external_test")
+# The same exchange with the custom row listed after portable under a one-byte
+# operator memory budget: portable's plan exceeds it and is refused, and the
+# custom row, which has no SDK plan, is still tried and granted (main.cpp
+# checks the granted name on both ends).
+add_test(NAME external_transport_budget_fallback COMMAND transport_extension)
+set_tests_properties(external_transport_budget_fallback PROPERTIES TIMEOUT 30 ENVIRONMENT "ROCKETNET_SERVER_TRANSPORT=portable,external_test;ROCKETNET_CLIENT_TRANSPORT=portable,external_test;ROCKETNET_SERVER_MEMORY_BUDGET_BYTES=1;ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES=1")

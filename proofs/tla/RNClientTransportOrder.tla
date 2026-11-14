@@ -14,11 +14,15 @@
 \* Before any socket the operator memory budget is applied
 \* (rocketnet_client_transport_resolve): a candidate whose memory plan
 \* exceeds the budget is refused and later skipped without a socket, the
-\* transport order falling to the next candidate; a candidate whose plan is
-\* unavailable is neither refused nor counted as fitting; and when some
-\* candidate is refused and none fits, the create is refused before the
-\* first allocation (NO_TRANSPORT_FOUND, result "nobudget"). A budget of
-\* zero refuses nothing: every candidate "fits" or is "unknown".
+\* transport order falling to the next candidate; a built-in candidate whose
+\* plan is unavailable ("unknown") is neither refused nor counted as fitting;
+\* a custom transport ("custom": a row from ROCKETNET_TRANSPORT_REGISTRY_HEADER,
+\* which has no SDK plan) is not refused and can still be tried
+\* (rocketnet_transport_budget_count in sdk/rocketnet_driver.h); and when some
+\* candidate is refused and none fits or is custom, the create is refused
+\* before the first allocation (NO_TRANSPORT_FOUND, result "nobudget"). A
+\* budget of zero refuses nothing: every candidate "fits", is "unknown" or is
+\* "custom".
 \*
 \* Each socket's outcome is the environment's, chosen once at Init for every
 \* candidate and family: "ok", "refused" or "oom"; so is each candidate's
@@ -28,8 +32,9 @@
 \* Broken names the reversed witnesses: "nofallback" falls to the next
 \* candidate on an IPv6 refusal, "oomfalls" tries the IPv4 server after an
 \* IPv6 refusal for want of memory, "ignorestoken" falls back to IPv4 for
-\* a token that names IPv6 alone, and "budgetopens" opens a socket for a
-\* candidate the budget refused.
+\* a token that names IPv6 alone, "budgetopens" opens a socket for a
+\* candidate the budget refused, and "budgetignorescustom" refuses the create
+\* for the budget while a custom transport could still be tried (v1.1.58).
 EXTENDS Naturals, Sequences
 
 CONSTANTS NumCandidates, Broken
@@ -38,14 +43,17 @@ Families == {"v4", "v6"}
 Outcomes == {"ok", "refused", "oom"}
 Candidates == 1..NumCandidates
 Tokens == {{"v4"}, {"v6"}, {"v4", "v6"}}
-Plans == {"fits", "refused", "unknown"}
+Plans == {"fits", "refused", "unknown", "custom"}
 
 VARIABLES token, outcome, budget, rung, family, result, tried
 
 vars == <<token, outcome, budget, rung, family, result, tried>>
 
-\* the budget refused the create: some candidate refused, none fits
-NoBudget == (\E c \in Candidates : budget[c] = "refused") /\ ~(\E c \in Candidates : budget[c] = "fits")
+\* the plans a candidate can still be tried with under the budget
+Tryable == IF "budgetignorescustom" \in Broken THEN {"fits"} ELSE {"fits", "custom"}
+
+\* the budget refused the create: some candidate refused, none can be tried
+NoBudget == (\E c \in Candidates : budget[c] = "refused") /\ ~(\E c \in Candidates : budget[c] \in Tryable)
 
 \* a candidate the transport order opens sockets for
 Opens(c) == budget[c] # "refused" \/ "budgetopens" \in Broken
@@ -164,6 +172,11 @@ NoSocketForRefusedPlan == \A i \in 1..Len(tried) : budget[tried[i][1]] # "refuse
 NoExhaustWhileReachable ==
     result = "exhausted" =>
         \A r \in Candidates, f \in token : budget[r] # "refused" => outcome[<<r, f>>] # "ok"
+
+\* the budget refuses the create only when no candidate fits and none is a
+\* custom transport, which has no plan to judge and is still tried
+NoBudgetOnlyWhenNoneTryable ==
+    result = "nobudget" => \A c \in Candidates : budget[c] \in {"refused", "unknown"}
 
 \* a refusal for want of memory is the last socket tried
 NoTryAfterOom == \A i \in 1..(Len(tried) - 1) : outcome[tried[i]] # "oom"

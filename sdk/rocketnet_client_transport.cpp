@@ -1986,8 +1986,9 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
     // is compared to the budget before any allocation, and a candidate whose
     // plan exceeds it is refused exactly as a refusing transport is -- logged with
     // the plan and the budget, and skipped so the transport order falls to the next
-    // candidate. a budget that no candidate fits refuses the create before the
-    // first allocation.
+    // candidate. a budget that leaves no candidate to try (none fits, and no
+    // custom transport, which has no plan, is listed) refuses the create before
+    // the first allocation (rocketnet_transport_budget_refuses).
 
     uint64_t memory_budget = resolved_memory_budget ? *resolved_memory_budget : 0;
     if ( !resolved_memory_budget && !rocketnet_config_apply_env_uint64( "client", "memory_budget_bytes", &memory_budget ) )
@@ -2003,39 +2004,37 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
     bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
     memset( budget_refused, 0, sizeof( budget_refused ) );
 
-    int budget_refused_total = 0;
-    int budget_allowed = 0;
+    rocketnet_transport_budget_t budget_tally = {};
 
     for ( int i = 0; i < transport_order.num_candidates; ++i )
     {
         const int candidate = transport_order.candidates[i];
         const char * name = rocketnet_transport_name( candidate );
         rocketnet_client_memory_plan_t plan;
-        if ( rocketnet_client_transport_memory_plan( config, name, plan ) )
+        const bool planned = rocketnet_client_transport_memory_plan( config, name, plan );
+        const bool over_budget = planned && memory_budget > 0 && plan.total_bytes > memory_budget;
+        if ( planned )
         {
             rocketnet_info( "client memory plan [%s]: %llu allocator bytes, %d sockets; excludes OS stacks, kernel queues, loader and application memory",
                             name, (unsigned long long) plan.total_bytes, plan.sockets );
 
-            if ( memory_budget > 0 && plan.total_bytes > memory_budget )
+            if ( over_budget )
             {
                 rocketnet_warn( "client transport %s refused: memory plan %llu allocator bytes exceeds the %llu byte operator budget",
                                 name, (unsigned long long) plan.total_bytes, (unsigned long long) memory_budget );
 
                 budget_refused[candidate] = true;
-                budget_refused_total++;
-            }
-            else
-            {
-                budget_allowed++;
             }
         }
         else
         {
             rocketnet_info( "client memory plan [%s]: unavailable; consult this transport's resource policy", name );
         }
+
+        rocketnet_transport_budget_count( budget_tally, candidate, planned, over_budget );
     }
 
-    if ( memory_budget > 0 && budget_refused_total > 0 && budget_allowed == 0 )
+    if ( rocketnet_transport_budget_refuses( memory_budget, budget_tally ) )
     {
         rocketnet_error( "client transport: no transport found: every candidate's memory plan exceeds the %llu byte operator budget",
                          (unsigned long long) memory_budget );
