@@ -16,12 +16,16 @@
 (* sequences, the earliest and latest times, and, for loss, the records    *)
 (* in its loss-eligible part (sequence <= highest - H) and how many of     *)
 (* those are unacknowledged. The running aggregates keep the same numbers  *)
-(* without the walk. The received implementation lazily clears physical   *)
-(* slot ranges that leave the retained full window, point-writes the exact *)
-(* full-width sequence generation, and reduces the older-half range from  *)
-(* fixed 32-slot blocks. A move never reinserts every newly counted record *)
-(* in the older half. The sent implementation retains incremental counters*)
-(* for loss and acknowledgment state.                                     *)
+(* without the walk. The sent implementation keeps incremental counters    *)
+(* for loss and acknowledgment state, and this model checks them (Slide,  *)
+(* Write, Ack against the reference).  The received implementation keeps   *)
+(* generation-tagged block summaries and three cached pieces of the older  *)
+(* half (rocketnet_ack_stats_received_summarize, _generation, _refresh);   *)
+(* RNReceivedBlocksLayout.tla models that layout.  Here the received       *)
+(* aggregate is Reduce, the reference itself, so CountedIsWindow,          *)
+(* RangeAggregateExact and PublishedSpanExact hold by construction on the  *)
+(* received side; its cases check the write's floor (RetainedIsNewest,     *)
+(* LateNeverShrinks) and the base, and SeqTimes the span's reading.        *)
 (*                                                                         *)
 (* Two sides share the machine. The sent side (Late = FALSE) writes above  *)
 (* highest, with gaps (burned sequences) and jumps; with Reorder = TRUE it *)
@@ -166,8 +170,9 @@ CrossAll(a, r, S) ==
     IF S = {} THEN a
     ELSE LET x == Min(S) IN CrossAll(Cross(a, r, x), r, S \ {x})
 
-\* Abstract fixed-block range reduction. The implementation maintains this
-\* result with one point-block rebuild, bounded edge rebuilds and summaries.
+\* The received side's aggregate: the reference window reduced whole. The
+\* implementation keeps it with generation summaries and cached pieces, whose
+\* equality to this reduction is RNReceivedBlocksLayout's QueryIsReference.
 Reduce(r, b, h) ==
     InsAll(Empty, r, b, h, {x \in Seqs : InWin(x, b, h) /\ Present(r, x)})
 
