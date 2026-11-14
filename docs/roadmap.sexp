@@ -999,9 +999,9 @@
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly 43577137425")
 
   (item "macos-soak-selftest-send-fault" :group "review-v1-2" :area "tools"
-   :title "macOS platform selftest: the soak summary selftest fails at its send-fault leg"
-   :text "Nightly CI platform selftests / macos (mini-m5-1, 21543f689) failed the soak argument and summary selftest at leg 9 (send fault): --seconds 3 exited 1. Green at cbad53d3b. GUESS: a TEST tool timing leg on a loaded host. Settled by the leg-9 output on its next failure."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-ci 43554956087")
+   :title "Soak link witness: loopback loss fails a clean run, and a count cannot tell it from a lost payload"
+   :text "Nightly CI platform selftests / macos (21543f689) failed the soak argument and summary selftest at leg 2, not leg 9 as first recorded: '--seconds 3 exited 1' (leg 9 passed); the log kept only the summary counters, so the selftest now prints the failure lines first. Reproduced on the studio under the looping functional suite: bin/soak --seconds 3 failed 1 run in 20 with 'LINK WITNESS FAILED: client_to_server missing=2 ... server_to_client missing=2', honest loopback loss in transit (lo0 drops), which the witness treats as impossible on a clean link. Tried and rejected: admitting missing payloads up to the loss gate's count (tests/kernel_drops.h). Quiet, the selftest passed 20 of 20; loaded, the planted skip in leg 9 was admitted 1 run in 20 ('exited 0 -- the link witness verdict is decoration'): the soak's own sockets always show hundreds of datagrams sent and not received (teardown disconnects, in flight), so the evidence falls to lo0's machine-wide drops, and any count also covers a lost datagram that carried no payload. Fix: evidence per direction and per connection that only a lost packet can produce, a hole in the receiving end's packet sequences (a later packet received, an earlier one never), read from the library's own counters, and admit only that many missing payloads; the planted skip leaves no hole."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-ci 43554956087; studio runs 2026-11-14")
 
   (item "trace-plant-never-fires" :group "trace-check" :area "tools"
    :title "Trace check: on some rolling seeds the plant never fires"

@@ -147,6 +147,9 @@ elapsed=$(( t1 - t0 ))
 
 if [ "$status" -ne 0 ]; then
     fail "--seconds 3 exited $status, expected 0"
+    # the reasons first: the soak prints its failures before the summary, so
+    # the tail alone showed only counters (nightly-ci 43554956087)
+    grep -E -m 20 'FAILED|REFUSAL|^soak: ' "$WORK/sec3.txt" >&2
     tail -20 "$WORK/sec3.txt" >&2
 elif [ "$elapsed" -lt 3 ] || [ "$elapsed" -gt 15 ]; then
     fail "--seconds 3 took ${elapsed}s, expected between 3 and 15 seconds"
