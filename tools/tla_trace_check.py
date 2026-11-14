@@ -30,12 +30,16 @@ steps + 1 records; ACTS is not the acts the trace records; a configuration
 macro the binaries see differs from the library's; the cfg the walk wrote is
 not SPECIFICATION TraceSpec, INVARIANT TraceConsistent and plain constants;
 TLC rejects the clean trace, times out, errs, or found fewer states than the
-trace has records; the clean walk shows the planted effect; the plant never
-fired, changed no record, or TLC accepts it or rejects it anywhere but at
-the first record it changed.
+trace has records; the clean walk shows the planted effect; the plant fired
+and changed no record, changed a record and never fired, or TLC accepts it
+or rejects it anywhere but at the first record it changed. A seed whose walk
+never reached the planted effect, so that the plant's trace is the clean one
+byte for byte, checks its clean trace alone (PLANT-UNFIRED).
 
 Across the seeds, red when an action of Next that is not untraced, or a
-reach predicate of the row, was never taken or reached in a clean trace.
+reach predicate of the row, was never taken or reached in a clean trace, or
+when no seed of a layer checked in the run fired its plant and met every
+check above.
 
 Per commit the work is split by SHARDS (--shard I/10): each shard is a set of
 (layer, seed) pairs, and the table is red unless every pair is in exactly one
@@ -357,6 +361,9 @@ CONFIG = re.compile(r"^CONFIG((?: [A-Z][A-Z0-9_]*=\S+)+)$", re.M)
 LOG_ACT = re.compile(r'act \|-> "([A-Za-z][A-Za-z0-9]*)"')
 DISTINCT = re.compile(r"([0-9,]+) distinct states found")
 TI = re.compile(r"^/\\ ti = ([0-9]+)$", re.M)
+CHAIN_COUNTS = re.compile(r"^([0-9,]+) states generated, ([0-9,]+) distinct states found, 0 states left on queue\.$", re.M)
+CHAIN_DEPTH = re.compile(r"^The depth of the complete state graph search is ([0-9,]+)\.$", re.M)
+CHAIN_OUTDEGREE = re.compile(r"^The average outdegree of the complete state graph is 1 \(minimum is 1, the maximum 1 and", re.M)
 CASE_LINE = re.compile(r"^CASE \S+ config=\S+ result=(\S+) seconds=\S+ exit=([0-9]+)", re.M)
 REFUSED = re.compile(r"^REFUSED (\S+) (bad-name|registered-twice|table-full)$", re.M)
 LAYER_NAME = re.compile(r"[a-z0-9-]+")
@@ -832,25 +839,35 @@ def check_seed(args, name, layer, plant_binary, seed, facts):
                             f"{macro}={args.library_config.get(macro, 'undef')}")
     if reports["clean"]["fired"] != 0:
         failures.append(f"clean code shows the planted effect {reports['clean']['fired']} times")
-    if reports["plant"]["fired"] == 0:
-        failures.append("the plant never fired: its trace proves nothing")
     # the first record the planted code changed: the walk is the same, so
     # the two traces agree until the plant acts
     clean_lines, plant_lines = reports["clean"]["lines"], reports["plant"]["lines"]
     changed = next((i + 1 for i, (c, p) in enumerate(zip(clean_lines, plant_lines)) if c != p), None)
-    if changed is None and len(clean_lines) == len(plant_lines):
-        failures.append("the plant changed no record: its trace is the clean one")
-    elif changed is None:
-        changed = min(len(clean_lines), len(plant_lines)) + 1
-    if changed is not None and changed not in reports["plant"]["at"]:
-        failures.append(f"the plant first changed record {changed}, where the walk does not say the plant fired")
+    # a random walk may never reach the planted line on some seed: then the
+    # plant's trace is byte for byte the clean one and proves nothing, so the
+    # seed checks its clean trace alone and the layer is held to a fired plant
+    # on some other seed of the run (main); a plant that changed a record
+    # without saying so, or said so and changed none, stays red here
+    unfired = reports["plant"]["fired"] == 0 and changed is None and len(clean_lines) == len(plant_lines)
+    if unfired:
+        log.append("PLANT-UNFIRED: the walk never reached the planted effect on this seed; its trace is the clean one\n")
+    else:
+        if reports["plant"]["fired"] == 0:
+            failures.append("the plant never fired: its trace proves nothing")
+        if changed is None and len(clean_lines) == len(plant_lines):
+            failures.append("the plant changed no record: its trace is the clean one")
+        elif changed is None:
+            changed = min(len(clean_lines), len(plant_lines)) + 1
+        if changed is not None and changed not in reports["plant"]["at"]:
+            failures.append(f"the plant first changed record {changed}, where the walk does not say the plant fired")
     if failures:
-        return name, seed, log, failures, reports["clean"], 0
+        return name, seed, log, failures, reports["clean"], 0, False
 
     expected = {"clean": "pass\t-", "plant": "invariant\tTraceConsistent"}
+    kinds = ("clean",) if unfired else ("clean", "plant")
     with ThreadPoolExecutor(max_workers=2) as pool:
         runs = {kind: pool.submit(tlc, args, name, base / kind, reports[kind]["module"], expected[kind], layer, log)
-                for kind in ("clean", "plant")}
+                for kind in kinds}
         results = {kind: runs[kind].result() for kind in runs}
 
     clean_exit, clean_log = results["clean"]
@@ -864,6 +881,8 @@ def check_seed(args, name, layer, plant_binary, seed, facts):
         distinct = int(found[-1].replace(",", "")) if found else -1
         if distinct < reports["clean"]["records"]:
             failures.append(f"clean trace: TLC found {distinct} distinct states for {reports['clean']['records']} records")
+    if unfired:
+        return name, seed, log, failures, reports["clean"], 0, False
     plant_exit, plant_log = results["plant"]
     # TLC 2.19 sometimes reports the violation (exit 12) and prints no
     # behaviour at all: on byte-identical inputs, with -fp and -seed pinned,
@@ -890,11 +909,34 @@ def check_seed(args, name, layer, plant_binary, seed, facts):
         # step is ti + 1: it must be the first record the plant changed
         values = TI.findall(plant_log)
         if not values:
+            last = chain_ti(plant_log)
+            if last is not None:
+                log.append(f"PLANT-TI-FROM-COUNTS {last}: TLC printed no behaviour; its state graph is one chain, so the "
+                           "last matched record is its distinct states less the rejecting one\n")
+                values = [str(last)]
+        if not values:
             failures.append(f"plant rejection: no ti in TLC's counterexample after {attempts} attempts")
         elif int(values[-1]) + 1 != changed:
             failures.append(f"plant trace rejected at record {int(values[-1]) + 1}, not at record {changed}, "
                             "the first the plant changed")
-    return name, seed, log, failures, reports["clean"], attempts - 1
+    return name, seed, log, failures, reports["clean"], attempts - 1, not failures
+
+
+def chain_ti(text):
+    """The last matched record of a plant run whose behaviour TLC did not print, from TLC's own counts, or None.
+    TraceStep moves ti one record on and TraceReject keeps it, so when TLC reports TraceConsistent violated and its
+    whole state graph is one chain (every count equal, outdegree at most 1, nothing left on the queue), the states
+    are ti = 1 .. k and the rejecting state: k is the distinct count less one"""
+    if "Error: Invariant TraceConsistent is violated." not in text:
+        return None
+    counts = CHAIN_COUNTS.search(text)
+    depth = CHAIN_DEPTH.search(text)
+    if not counts or not depth or not CHAIN_OUTDEGREE.search(text):
+        return None
+    generated, distinct, steps = (int(v.replace(",", "")) for v in (counts.group(1), counts.group(2), depth.group(1)))
+    if generated != distinct or distinct != steps or distinct < 2:
+        return None
+    return distinct - 1
 
 
 def coverage_walk(args, name, layer, seed):
@@ -1143,12 +1185,17 @@ def main():
     # plant needs reruns on every seed shows in the summary line, not only in
     # each seed's own PLANT-ATTEMPTS line
     reruns = 0
+    # the seeds of each layer whose plant fired and met every check: a layer
+    # needs one in the run, so an unreached plant on one seed is not red, and
+    # a plant no seed reaches is
+    proved = {n: 0 for n in names}
     # each seed runs its two TLC runs at once
     with ThreadPoolExecutor(max_workers=max(1, args.jobs // 2)) as pool:
         futures = [pool.submit(check_seed, args, n, LAYERS[n], plants[n], seed, facts[n]) for n, seed in pairs]
         for future in as_completed(futures):
-            n, seed, log, failures, clean, reran = future.result()
+            n, seed, log, failures, clean, reran, fired = future.result()
             reruns += reran
+            proved[n] += 1 if fired else 0
             print(f"== layer {n} seed {seed}")
             sys.stdout.write("".join(log))
             sys.stdout.flush()
@@ -1159,6 +1206,11 @@ def main():
                 # from the walk's own report
                 for act, count in clean["logged"].items():
                     taken[n][act] = taken[n].get(act, 0) + count
+    for n in sorted({n for n, _ in pairs}):
+        if proved[n] == 0:
+            checked = sorted(seed for m, seed in pairs if m == n)
+            failed.append(f"layer {n}: the plant fired on none of the seeds checked here ({','.join(map(str, checked))}): "
+                          "nothing shows this run would see the planted defect")
 
     # a home layer's seeds that other shards check: the clean walk alone, into
     # the directory check_seed uses, so their actions are counted here and the
