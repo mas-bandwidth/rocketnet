@@ -465,7 +465,7 @@ server topology, with nothing set, is:
 | rio (Windows), wildcard bind | 1 | 1 | `num_rio_lanes` |
 | msgx (macOS) | 1 shared, plus 1 per connected client | 4: 3 transmit workers and 1 receive worker | `num_msgx_transmit_workers` |
 
-The IOCP send threads are at most the send lanes (8 at 1000 clients, fewer
+The IOCP send threads are at most the send lanes (16 at 1000 clients, fewer
 for a smaller server). These server counts do not include client objects;
 each normal client adds its own one background network thread.
 

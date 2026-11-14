@@ -132,7 +132,7 @@ no `msgx` rows yet).
 | `portable` | 2, fixed | Linux: send worker on cpu `num_os_cpus`, receive worker on `num_os_cpus + 1`, not cpu 0 by default (`portable_reserve_cpu_0`); elsewhere where the OS puts them | none |
 
 A value past a transport's limit is refused at create, never clamped. The
-one check made later is `iocp`'s send threads against its send lanes (8 at
+one check made later is `iocp`'s send threads against its send lanes (16 at
 1000 clients): above them, `iocp` refuses at start with a warning, and start
 tries the next transport in the list (with `iocp` alone, start fails with
 `NO_TRANSPORT_FOUND`). On
