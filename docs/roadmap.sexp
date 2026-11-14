@@ -993,11 +993,6 @@
    :text "PLANT-GREEN nightly-frame-budget/macos: the gate printed VOID (host load 9.83 over 8 on studio-3; 36 on mini-m5-2 earlier), measured nothing and so could not catch its plant; the self-test then fails 'a GREEN row exits 1'. The planted run's parallel slots load the host. Smallest fix: run the frame-budget row alone, or count a VOID there as unmeasured rather than green."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: planted-violations 43594770983")
 
-  (item "clang-cl-test-build-warnings" :group "review-v1-2" :area "tests"
-   :title "clang-cl builds of the tests fail under -Werror and at link"
-   :text "nightly clang-cl x64 and nightly-windows-sanitizers clangcl-asan: tests/functional/windows_socket_errors.cpp 'missing field client initializer' (lines 559 to 918 across commits); lld cannot resolve __cpu_model in client_frame_time.vcxproj; duplicate operator new and delete in test.vcxproj under ASan; tests/load/harden_load.cpp -Wshorten-64-to-32 and -Wsign-conversion. Red on 11-13 too. Smallest fix: name the client field in those initializers, cast at the harden_load lines, and link clang_rt.builtins (or avoid __builtin_cpu_supports) under clang-cl; where __cpu_model comes from is a GUESS."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14")
-
   (item "mutation-slice-survivors" :group "review-v1-2" :area "tests"
    :title "Mutation campaign: the daily slices are not baselined"
    :text "nightly linux / mutation reports 194 new survivors (150 on 11-13) against the 181 rows of tools/mutation/survivors.tsv, and 46 of 515 mutants do not compile. The daily slices were never triaged into the baseline. Fix: triage each slice's survivors into a test or a survivors.tsv row with its reason."

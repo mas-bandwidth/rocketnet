@@ -50,8 +50,6 @@ nightly-toolchains.yml	windows / v143	glenn	2026-11-14	MSB8020: toolset v143 mis
 nightly-toolchains.yml	linux / clang-18	glenn	2026-11-14	exact delivery over real sockets under host load (rocketnet_functional_tests.cpp:9171 tag == num_seen; earlier 1201/1280 with SEND_FAILED=79); roadmap exact-delivery-asserts
 nightly-ubuntu-lts-vms.yml	ubuntu 24.04 vm	glenn	2026-11-14	gpg-agent fails in the cloud image verify step on the runner; roadmap nightly-runner-setup-gaps
 nightly-windows-sanitizers.yml	windows appverif	glenn	2026-11-14	APPVERIF-REFUSED: NETWORK SERVICE cannot write the HKLM IFEO key; roadmap nightly-runner-setup-gaps
-nightly-windows-sanitizers.yml	windows clangcl-asan	glenn	2026-11-14	clang-cl Debug build: lld __cpu_model undefined, duplicate operator new/delete, harden_load.cpp sign and shorten warnings; roadmap clang-cl-test-build-warnings
-nightly.yml	windows / clang-cl x64	glenn	2026-11-14	windows_socket_errors.cpp missing field 'client' initializer under -Werror, lld __cpu_model undefined; roadmap clang-cl-test-build-warnings
 nightly.yml	linux / mutation	glenn	2026-11-14	194 new survivors in the daily slice against tools/mutation/survivors.tsv; roadmap mutation-slice-survivors
 nightly.yml	linux / transport cells x50	glenn	2026-11-14	GUESS: every suite cell red, the failing case is only in the per-cell artifacts; roadmap linux-transport-cells-x50
 nightly.yml	windows / Debug	glenn	2026-11-14	tools/check_memory.py:24 hard-codes iocp workers (3); v1.1.61 plans 2; roadmap check-memory-worker-table

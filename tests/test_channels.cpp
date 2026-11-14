@@ -952,7 +952,23 @@ static void channels_test_round_trip_and_never_overreads()
 #endif // #if __has_feature( thread_sanitizer )
 #endif // #if defined( __SANITIZE_THREAD__ )
 
+// clang-cl's AddressSanitizer runtime on Windows is a DLL that exports the
+// global operator new and delete (clang_rt.asan_dynamic-x86_64.dll, through
+// its import library clang_rt.asan_dynamic-x86_64.lib), and lld-link binds
+// test.exe's references to them: these definitions were a second copy
+// (duplicate symbol, nightly-windows-sanitizers clangcl-asan). There, too, the
+// sanitizer owns them. MSVC's own AddressSanitizer leaves them replaceable.
+#if defined( __SANITIZE_ADDRESS__ )
+#define RN_TEST_ASAN 1
+#elif defined( __has_feature )
+#if __has_feature( address_sanitizer )
+#define RN_TEST_ASAN 1
+#endif // #if __has_feature( address_sanitizer )
+#endif // #if defined( __SANITIZE_ADDRESS__ )
+
 #if defined( RN_TEST_TSAN ) && defined( __clang__ ) && !defined( __APPLE__ ) && !defined( _WIN32 )
+#define RN_TEST_TRAP_NEW 0
+#elif defined( RN_TEST_ASAN ) && defined( __clang__ ) && defined( _WIN32 )
 #define RN_TEST_TRAP_NEW 0
 #else
 #define RN_TEST_TRAP_NEW 1

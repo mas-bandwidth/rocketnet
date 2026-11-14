@@ -128,6 +128,7 @@
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
 typedef SOCKET harden_socket_t;
+typedef int harden_send_length_t; // Winsock sendto takes an int length
 #define HARDEN_INVALID_SOCKET INVALID_SOCKET
 #else
 #include <arpa/inet.h>
@@ -137,6 +138,7 @@ typedef SOCKET harden_socket_t;
 #include <sys/socket.h>
 #include <unistd.h>
 typedef int harden_socket_t;
+typedef size_t harden_send_length_t;
 #define HARDEN_INVALID_SOCKET ( -1 )
 #endif // #if defined( _WIN32 )
 
@@ -4096,7 +4098,7 @@ static void harden_hostile_send_loop( harden_hostile_worker_t * w )
             }
             const harden_socket_t s = w->sockets[(size_t) socket_cursor];
             socket_cursor = ( socket_cursor + 1 ) % (int) w->sockets.size();
-            const int result = (int) sendto( s, (const char *) data, (size_t) bytes, 0, (const struct sockaddr *) &w->server, sizeof( w->server ) );
+            const int result = (int) sendto( s, (const char *) data, (harden_send_length_t) bytes, 0, (const struct sockaddr *) &w->server, sizeof( w->server ) );
             if ( result == bytes )
             {
                 w->sent[kind]++;
@@ -4223,7 +4225,7 @@ static int harden_hostile_main( const harden_options_t & o )
         }
 #if defined( _WIN32 )
         u_long nonblocking = 1;
-        ioctlsocket( s, FIONBIO, &nonblocking );
+        ioctlsocket( s, (long) FIONBIO, &nonblocking );
 #else
         fcntl( s, F_SETFL, fcntl( s, F_GETFL, 0 ) | O_NONBLOCK );
 #endif // #if defined( _WIN32 )

@@ -1514,6 +1514,15 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(client_frame_time benchmarks/client_frame_time.cpp benchmarks/client_frame_time_hooks.c)
     target_link_libraries(client_frame_time PRIVATE rocketnet Threads::Threads ${CMAKE_DL_LIBS})
     target_compile_features(client_frame_time PRIVATE cxx_std_11)
+    if(MSVC AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "x64")
+        # its crypto line reads __builtin_cpu_supports, which reads __cpu_model
+        # from compiler-rt's builtins; clang names that library on its own link
+        # line and clang-cl's lld-link does not, so name it from clang's own
+        # resource directory, as the AddressSanitizer runtime is named above
+        execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -print-resource-dir
+            OUTPUT_VARIABLE ROCKETNET_CLANG_CL_RESOURCE_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
+        target_link_libraries(client_frame_time PRIVATE "${ROCKETNET_CLANG_CL_RESOURCE_DIR}/lib/windows/clang_rt.builtins-x86_64.lib")
+    endif()
     foreach(tool soak load load_split harden_load soak_sim transport_memory client_main_thread_cost ack_block_build_cost handshake_cost request_lookup_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
