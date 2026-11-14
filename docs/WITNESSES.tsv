@@ -75,7 +75,7 @@ m10	the packet builder's flat plan keeps each channel's items, written, in fligh
 m10	a refused packet that does not step its groups' cursors back loses its items from the plan	ChannelOrderKept	sdk/rocketnet_packet_builder.cpp:rn_packet_builder_write	proofs/tla/MCRNBuilderPlanLayoutBrokenNoRestore.cfg	model
 t14	A genuine sequence inside the retained range that has not opened is never refused as already received.	GenuineIsAccepted	sdk/rocketnet_replay.cpp:rocketnet_replay_already_received	proofs/tla/MCReplayWindowBrokenGenuine.cfg	model
 t15.1	A sender MUST NOT name a sequence that it did not open.	AckReportsOnlyReceived	sdk/rocketnet_ack.cpp:rocketnet_ack_block_build	proofs/tla/MCReplayWindowBrokenAck.cfg	model
-t15.1	The ack block names only sequences a slot processed.	AckReportsOnlyProcessed	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_sealed_packet	proofs/tla/MCReplayWindowBrokenProcessed.cfg	model
+t15.1	The ack block names only packets the endpoint took in: a payload only once it is accepted.	AckReportsOnlyProcessed	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_accept_payload	proofs/tla/MCReplayWindowBrokenPayloadOnOpen.cfg	model
 t14	Everything that opened is refused thereafter.	ReceivedIsRefused	sdk/rocketnet_replay.cpp:rocketnet_replay_already_received	proofs/tla/MCReplayWindowBrokenReceived.cfg	model
 t14	Below the retained floor every sequence is refused as too old.	BelowFloorIsRefused	sdk/rocketnet_replay.cpp:rocketnet_replay_already_received	proofs/tla/MCReplayWindowBrokenBelowFloor.cfg	model
 t15.1	The high-water mark is itself received and marked.	HighestIsReceived	sdk/rocketnet_ack.cpp:rocketnet_ack_block_build	proofs/tla/MCReplayWindowBrokenHighest.cfg	model
