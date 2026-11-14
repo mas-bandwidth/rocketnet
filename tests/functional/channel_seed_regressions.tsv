@@ -9,3 +9,4 @@ test_unreliable_receipts_over_lossy_link	4879047	the server CONFIG lost on each 
 test_unreliable_receipts_over_lossy_link	4879943	the same, on the other of the two seeds
 test_reliable_receipts_over_lossy_link	4883729	eight consecutive losses of one fragment exhaust the real timeout; receipt completion now includes a loss-free recovery phase
 test_promoted_receipts_over_lossy_reliable_blocks	4905888	one chunk lost on each of its five sends at the 2 s resend cap until the default 10 s reliable timeout (standard/MESSAGES.md m9.3); the case now runs on a 30 s timeout matching its loop
+test_block_resend_cost_over_long_path	4914435	small record 272 lost on three sends in a row, then due at 1.817 s while probe pacing (m9.3, 1.05 s with no reliable ack) held every number but U; the small_held oracle now applies Held as RNResendTiming!NoDueRecordHeld does
