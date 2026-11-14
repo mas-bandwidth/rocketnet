@@ -429,6 +429,7 @@ MCServerConnectionBrokenSweepKeepsMapping.cfg	MCServerConnection.tla	invariant	S
 MCServerConnectionMove.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	required	-
 MCServerConnectionBrokenAddressNotIdentity.cfg	MCServerConnection.tla	action	PacketsReachOwnSlotOnly	ignore-terminal	serverconnection	required	-
 MCServerConnectionBrokenResendFromRequest.cfg	MCServerConnection.tla	action	StoredChallengeResent	ignore-terminal	serverconnection	required	-
+MCServerConnectionBrokenBoundReplaces.cfg	MCServerConnection.tla	action	BoundTokenNeverReplaces	ignore-terminal	serverconnection	required	-
 MCServerConnectionSameId.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	required	-
 MCServerConnectionBrokenClientIdNoCheck.cfg	MCServerConnection.tla	invariant	OneSlotPerClientId	ignore-terminal	serverconnection	required	-
 MCServerConnectionHistoryNone.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	required	-

@@ -554,6 +554,8 @@ serverRecvUnchanged == <<clientVars, sDiscPending, sDiscPkt>>
 \* map+challenge
 \* Reversed witness only: the implementation keeps this FALSE.
 ResendFromRequest == FALSE
+\* Reversed witness only (FALSE): the implementation keeps this TRUE.
+BoundReplaceSilent == TRUE
 
 ServerRecvRequest(p) ==
     /\ p.type = "request"
@@ -565,7 +567,9 @@ ServerRecvRequest(p) ==
            \* token bound to no address, its own included
            \* (sdk/rocketnet_server_protocol.cpp, the history check against the
            \* zero address before the signature)
-           boundReplace == m.live /\ History = "kept" /\ bound[p.tok] # 0
+           \* (BoundTokenNeverReplaces; reversed witness
+           \* MCServerConnectionBrokenBoundReplaces.cfg turns it off)
+           boundReplace == BoundReplaceSilent /\ m.live /\ History = "kept" /\ bound[p.tok] # 0
            heldFull == HoldUntilExpire /\ bound[p.tok] = 0
                        /\ Cardinality({t \in Tokens : bound[t] # 0}) >= HeldCapacity
            fresh == Fresh(p.tok)
@@ -912,6 +916,19 @@ StoredChallengeResent ==
               IN /\ q.type = "challenge"
                  /\ q.salt = smap[p.from].salt
                  /\ q.nonce = smap[p.from].nonce]_vars
+
+\* a request whose token is bound in the kept history never replaces a
+\* half-open mapping (salt and token both differ): the code checks the
+\* history against the zero address before the signature and is silent
+\* (TOKEN_ALREADY_USED). Reversed witness
+\* MCServerConnectionBrokenBoundReplaces.cfg (BoundReplaceSilent FALSE).
+BoundTokenNeverReplaces ==
+    [][\A p \in ClientPackets :
+         (/\ p.type = "request" /\ C2S!Deliver(p)
+          /\ History = "kept" /\ bound[p.tok] # 0
+          /\ smap[p.from].live /\ smap[p.from].slot = 0
+          /\ p.salt # smap[p.from].salt /\ p.tok # smap[p.from].tok)
+           => smap'[p.from] = smap[p.from]]_vars
 
 \* the timeouts fire when they are due
 TimeoutHonoured  == \A a \in Addrs : (smap[a].est /\ Timeout > 0) => smap[a].sinceRecv < Timeout
