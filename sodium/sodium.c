@@ -249,9 +249,9 @@ sodium_memcmp(const void *const b1_, const void *const b2_, size_t len)
     const unsigned char *b2 = (const unsigned char *) b2_;
 #else
     const volatile unsigned char *volatile b1 =
-        (const volatile unsigned char *volatile) b1_;
+        (const volatile unsigned char *) b1_;
     const volatile unsigned char *volatile b2 =
-        (const volatile unsigned char *volatile) b2_;
+        (const volatile unsigned char *) b2_;
 #endif
     size_t                 i;
     volatile unsigned char d = 0U;
@@ -289,9 +289,9 @@ sodium_compare(const unsigned char *b1_, const unsigned char *b2_, size_t len)
     const unsigned char *b2 = b2_;
 #else
     const volatile unsigned char *volatile b1 =
-        (const volatile unsigned char *volatile) b1_;
+        (const volatile unsigned char *) b1_;
     const volatile unsigned char *volatile b2 =
-        (const volatile unsigned char *volatile) b2_;
+        (const volatile unsigned char *) b2_;
 #endif
     size_t                 i;
     volatile unsigned char gt = 0U;
@@ -957,9 +957,9 @@ crypto_verify_n(const unsigned char *x_, const unsigned char *y_,
                 const int n)
 {
     const volatile unsigned char *volatile x =
-        (const volatile unsigned char *volatile) x_;
+        (const volatile unsigned char *) x_;
     const volatile unsigned char *volatile y =
-        (const volatile unsigned char *volatile) y_;
+        (const volatile unsigned char *) y_;
     volatile uint16_t d = 0U;
     int               i;
 
