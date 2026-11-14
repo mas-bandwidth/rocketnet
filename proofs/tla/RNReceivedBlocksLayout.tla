@@ -27,12 +27,21 @@
 (* piece and any passed generations into the middle; base leaving its      *)
 (* generation rebuilds the suffixes and the middle.                        *)
 (*                                                                         *)
-(* A summary or piece is modelled as the set of records it counts, each a  *)
-(* <<sequence, bytes>> pair: the code's bytes, count and time extrema are  *)
-(* functions of those records and its merge is their union.  Two payloads  *)
-(* make a duplicate that is merged rather than rebuilt visible as two      *)
-(* pairs of one sequence.  The order the code merges in (the first         *)
-(* record's NaN) is checked by the unit tests against the scan oracle.     *)
+(* A summary or piece is modelled as the bag (multiset) of records it      *)
+(* counts, each a <<sequence, bytes>> pair: the code's merge               *)
+(* (rocketnet_ack_stats_received_merge) adds counts and bytes, so it is    *)
+(* bag addition (+), and a record merged twice is counted twice, in the    *)
+(* model as in the code; the time extrema are functions of the bag's       *)
+(* records.  Two payloads make a duplicate that is merged rather than      *)
+(* rebuilt visible as two pairs of one sequence.  The order the code       *)
+(* merges in (the first record's NaN) is checked by the unit tests against *)
+(* the scan oracle.                                                        *)
+(*                                                                         *)
+(* Init is rocketnet_ack_endpoint_reset: the tags, the cached base and top *)
+(* and the middle and right aggregates are zero (the empty aggregate); the *)
+(* block summaries and the left suffixes are left as they were, here the   *)
+(* bag Unset of a record no receive writes, so a read of one before a      *)
+(* write sets it reaches the published cohort and fails QueryIsReference.  *)
 (*                                                                         *)
 (* Broken selects a reversed witness:                                      *)
 (*   "inside"     the pieces are reused when the write lands inside the    *)
@@ -41,9 +50,12 @@
 (*                retags it to its own;                                    *)
 (*   "duplicate"  a duplicate joins its summary instead of rebuilding it;  *)
 (*   "basemove"   the left piece and middle are reused after base leaves   *)
-(*                its generation.                                          *)
+(*                its generation;                                          *)
+(*   "overlap"    the right piece is appended from the cached top itself,  *)
+(*                not the sequence after it, so that record is counted     *)
+(*                twice (a set union would hide it).                       *)
 (***************************************************************************)
-EXTENDS Integers, FiniteSets
+EXTENDS Integers, FiniteSets, Bags
 
 CONSTANTS
     B,          \* slots per block: ROCKETNET_ACK_RECEIVED_STATS_BLOCK_SLOTS, 32
@@ -59,53 +71,58 @@ None == <<0, 0>>
 ASSUME /\ B \in Nat \ {0} /\ Blocks \in Nat \ {0} /\ N % 2 = 0 /\ Half % B = 0
        /\ MaxSeq \in Nat \ {0}
        /\ Payloads \subseteq Nat /\ Payloads # {}
-       /\ Broken \in {"none", "inside", "later", "duplicate", "basemove"}
+       /\ Broken \in {"none", "inside", "later", "duplicate", "basemove", "overlap"}
 
 Slots == 0..N-1
 BlockIds == 0..Blocks-1
 Offsets == 0..B-1
 Records == {None} \cup ((1..MaxSeq) \X Payloads)
 
+\* the words a reset leaves as they were: a record no receive writes
+Unset == SetToBag({None})
+
 VARIABLES
     ring,       \* slot -> the <<sequence, bytes>> its record holds, None when not written since the reset
     highest,    \* endpoint->highest_received_sequence
     tag,        \* block -> generation + 1 its summary holds, 0 = none
-    summary,    \* block -> the records its summary counts
-    suffix,     \* offset -> the records of the left generation from that offset on
+    summary,    \* block -> the bag of records its summary counts
+    suffix,     \* offset -> the bag of records of the left generation from that offset on
     middle,     \* the cached middle (stats words at ROCKETNET_ACK_RECEIVED_STATS_MIDDLE_WORD)
     right,      \* the cached right piece (ROCKETNET_ACK_RECEIVED_STATS_RIGHT_WORD)
     cacheBase,  \* the cached base (ROCKETNET_ACK_RECEIVED_STATS_CACHE_BASE_WORD), 0 = no pieces
     cacheTop,   \* the cached top (ROCKETNET_ACK_RECEIVED_STATS_CACHE_TOP_WORD)
-    published   \* the records the published count, bytes and extrema reduce
+    published   \* the bag of records the published count, bytes and extrema reduce
 
 vars == <<ring, highest, tag, summary, suffix, middle, right, cacheBase, cacheTop, published>>
 
 Base(h) == IF h >= N THEN h - N + 1 ELSE 1
 Top(h) == IF h < Base(h) + Half - 1 THEN h ELSE Base(h) + Half - 1
 
-\* rocketnet_ack_stats_received_present over [first, last]
-Present(r, first, last) == {r[x % N] : x \in {y \in first..last : r[y % N][1] = y}}
+\* rocketnet_ack_stats_received_present over [first, last], merged: each
+\* sequence's slot holds at most one record, so the bag holds each once
+Present(r, first, last) == SetToBag({r[x % N] : x \in {y \in first..last : r[y % N][1] = y}})
 
 \* the records of generation g
 Gen(r, g) == Present(r, g * B, g * B + B - 1)
 
 \* rocketnet_ack_stats_received_generation
-GenSummary(t, sum, g) == IF t[g % Blocks] = g + 1 THEN sum[g % Blocks] ELSE {}
+GenSummary(t, sum, g) == IF t[g % Blocks] = g + 1 THEN sum[g % Blocks] ELSE EmptyBag
 
-\* the union of generations [from, to)
-Gens(t, sum, from, to) == UNION {GenSummary(t, sum, g) : g \in from..(to - 1)}
+\* generations [from, to) merged in order
+RECURSIVE Gens(_, _, _, _)
+Gens(t, sum, from, to) == IF from >= to THEN EmptyBag ELSE GenSummary(t, sum, from) (+) Gens(t, sum, from + 1, to)
 
 Init ==
     /\ ring = [x \in Slots |-> None]
     /\ highest = 0
     /\ tag = [b \in BlockIds |-> 0]
-    /\ summary = [b \in BlockIds |-> {}]
-    /\ suffix = [o \in Offsets |-> {}]
-    /\ middle = {}
-    /\ right = {}
+    /\ summary = [b \in BlockIds |-> Unset]
+    /\ suffix = [o \in Offsets |-> Unset]
+    /\ middle = EmptyBag
+    /\ right = EmptyBag
     /\ cacheBase = 0
     /\ cacheTop = 0
-    /\ published = {}
+    /\ published = EmptyBag
 
 \* rocketnet_ack_endpoint_record_received, with the summary step
 \* (rocketnet_ack_stats_received_summarize) and the pieces
@@ -121,9 +138,9 @@ Receive(s, w) ==
            retag == held < t \/ (Broken = "later" /\ held > t)
            tg2 == IF retag THEN [tag EXCEPT ![blk] = t] ELSE tag
            sum2 == IF held > t /\ ~retag THEN summary
-                   ELSE IF retag THEN [summary EXCEPT ![blk] = {<<s, w>>}]
+                   ELSE IF retag THEN [summary EXCEPT ![blk] = SetToBag({<<s, w>>})]
                    ELSE IF dup /\ Broken # "duplicate" THEN [summary EXCEPT ![blk] = Gen(r, t - 1)]
-                   ELSE [summary EXCEPT ![blk] = summary[blk] \cup {<<s, w>>}]
+                   ELSE [summary EXCEPT ![blk] = summary[blk] (+) SetToBag({<<s, w>>})]
            base == Base(h)
            top == Top(h)
            bg == base \div B
@@ -133,11 +150,13 @@ Receive(s, w) ==
            ctg == cacheTop \div B
            sameBase == valid /\ (cbg = bg \/ Broken = "basemove")
            sameTop == valid /\ ctg = tgen
+           \* the first sequence the right piece appends: cache_top + 1
+           next == IF Broken = "overlap" THEN cacheTop ELSE cacheTop + 1
            \* the right piece, and the middle when top leaves its generation with base in place
-           right2 == IF sameTop THEN right \cup Present(r, cacheTop + 1, top)
+           right2 == IF sameTop THEN right (+) Present(r, next, top)
                      ELSE Present(r, tgen * B, top)
-           moved == middle \cup right \cup Present(r, cacheTop + 1, ctg * B + B - 1)
-                           \cup Gens(tg2, sum2, ctg + 1, tgen)
+           moved == middle (+) (right (+) Present(r, next, ctg * B + B - 1))
+                           (+) Gens(tg2, sum2, ctg + 1, tgen)
            middle1 == IF ~sameTop /\ sameBase THEN moved ELSE middle
            \* the suffixes and the middle, rebuilt when base leaves its generation
            suffix2 == IF sameBase THEN suffix
@@ -157,7 +176,7 @@ Receive(s, w) ==
                   /\ right' = right2
                   /\ cacheBase' = base
                   /\ cacheTop' = top
-                  /\ published' = suffix2[base % B] \cup middle2 \cup right2
+                  /\ published' = suffix2[base % B] (+) middle2 (+) right2
 
 Next == \E s \in 1..MaxSeq, w \in Payloads : Receive(s, w)
 
@@ -167,7 +186,7 @@ TypeOK ==
     /\ ring \in [Slots -> Records]
     /\ highest \in 0..MaxSeq
     /\ tag \in [BlockIds -> 0..(MaxSeq \div B + 1)]
-    /\ summary \in [BlockIds -> SUBSET Records]
+    /\ \A b \in BlockIds : IsABag(summary[b]) /\ BagToSet(summary[b]) \subseteq Records
     /\ cacheBase \in 0..MaxSeq
     /\ cacheTop \in 0..MaxSeq
 
