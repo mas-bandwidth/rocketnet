@@ -18,8 +18,17 @@
 (*   MCRNWindowBrokenHoldOrdered.cfg      HoldOrdered    OrderedDeliveredInOrder *)
 (*   MCRNWindowBrokenDropDuplicates.cfg   DropDuplicates DeliveredOnce     *)
 (* The cfgs list each invariant by name, so TLC names the one that fails.  *)
+(*                                                                         *)
+(* The liveness witness overrides a definition instead of a constant:     *)
+(*   MCRNWindowBrokenNoAcksLand.cfg  AcksLand <- NoAcksLand                *)
+(*                                   EveryReliableAckedAndDelivered fails  *)
+(* It shows that the assumption AcksLand carries the property: without     *)
+(* it the sender's abstract RTO evicts each entry before its ack lands.    *)
 (***************************************************************************)
 EXTENDS RNWindow
+
+\* AcksLand dropped from Fairness (the cfg substitutes it for AcksLand)
+NoAcksLand == TRUE
 
 \* every safety invariant at once, for a run that wants one name
 SafetyInvariants ==

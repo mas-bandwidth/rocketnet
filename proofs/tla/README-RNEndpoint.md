@@ -29,8 +29,12 @@ bounded evidence below do not establish a refinement proof of the C++ code.
 - **OnAcked** (`rn_endpoint_on_acked`): the records of the end's own packets
   that the remote endpoint opened are acked.
 - **OnPayload** (`rn_endpoint_on_payload`): an end opens a packet from its
-  remote endpoint. The transport acks the packet's reliable records whatever follows
-  (P2). CONFIG, first in the packet, goes through **ConfigCompare**; a
+  remote endpoint. The model acks the packet's reliable records whatever follows
+  (P2). The code commits the ack only for a payload the message layer accepts
+  (`rn_endpoint_on_payload` returns true, then `link.accept_payload`), so a
+  payload refused as a violation, or opened by an end in error, is never
+  acked. The model's acks are a superset of the code's, which is sound for
+  the safety properties, and the refusal ends the connection either way. CONFIG, first in the packet, goes through **ConfigCompare**; a
   mismatch is `CONFIG_MISMATCH` and parsing stops. Data records are checked
   against the receiver's own `num_channels`: a channel outside it is a
   `VIOLATION` and parsing stops (R6). Otherwise a fresh reliable message is

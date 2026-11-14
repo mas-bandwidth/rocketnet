@@ -80,6 +80,15 @@ vars == <<receiptType, fragmentCount, nextSerial, live,
 SendLimit == IF fragmentCount = 1 THEN 3 ELSE 2
 PromotionSources == {0,1,5}
 Twin(k) == CASE k = 0 -> 2 [] k = 1 -> 4 [] k = 5 -> 6 [] OTHER -> k
+\* The promotion rule of rn_endpoint_send_route (sdk/rocketnet_endpoint.cpp):
+\* code 0 to 2, code 1 to 4, and code 5 to its reliable receipt twin (sent
+\* as type 2 with the receipt kept, so it behaves as type 6 here).  A fact
+\* about the constant table, stated as an assumption TLC checks once at
+\* start-up: no action reads or changes it, so it is no invariant.
+\* (Revision 1.3: it replaces PromotionTable, which passed any twin in
+\* {2,4,6}, and PromotedIsTwin, which restated EffectiveKind's definition.)
+ASSUME /\ Twin(0) = 2 /\ Twin(1) = 4 /\ Twin(5) = 6
+       /\ \A k \in 0..7 \ PromotionSources : Twin(k) = k
 Large == fragmentCount = 2
 Kind(s) == IF s = 1 THEN 0 ELSE receiptType
 EffectiveKind(s) == IF s \in ReceiptSerials /\ Kind(s) \in PromotionSources /\ Large
@@ -293,11 +302,8 @@ TypeOK ==
 ExactlyOneOutcomePerReceiptSerial == \A s \in Serials :
  Len(outcomes[s]) <= 1 /\ (outcomes[s] # <<>> => s \in Issued \cap ReceiptSerials)
 LossOnlyForUnreliableReceipt == \A s \in ReceiptSerials : Has(s,"LOSS") => EffectiveKind(s) = 5
-PromotedIsTwin == \A s \in ReceiptSerials :
-    Kind(s) \in PromotionSources /\ Large => EffectiveKind(s) = Twin(Kind(s))
 PromotedNeverLoses == \A s \in ReceiptSerials :
     Kind(s) \in PromotionSources /\ Large => ~Has(s,"LOSS")
-PromotionTable == \A k \in PromotionSources : Twin(k) \in {2,4,6}
 AckedMeansPacketOpened == /\ acked \subseteq openedNums
                          /\ \A s \in ReceiptSerials :
                               Has(s,"ACKED") /\ EffectiveKind(s)=5 => s \in ackProof

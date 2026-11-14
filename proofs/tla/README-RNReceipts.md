@@ -45,9 +45,11 @@ walk.
   is a channel responsibility. An unreliable send too big for one packet is
   promoted to its reliable twin: type 0 to effective type 2, type 1 to
   effective type 4, and type 5 to effective type 6. A promoted send therefore
-  never emits LOSS. `EffectiveKind` maps all three source modes; the fixed
-  workload exercises the type-5 promotion, and `PromotionTable` checks the
-  twin mapping for every source mode.
+  never emits LOSS. `EffectiveKind` maps all three source modes, and the fixed
+  workload exercises the type-5 promotion. The twin table itself is an
+  `ASSUME` (exactly 0 to 2, 1 to 4, 5 to 6, every other code to itself, as
+  `rn_endpoint_send_route` promotes), checked once when TLC starts. No
+  action reads or changes the table, so it is not stated as an invariant.
 - `outcomes` is a ghost history of generated events, separate from `ring`.
   A full ring drops its oldest event and increments `ringDropped`, as
   CHANNELS specifies. Draining or overflowing the ring does not allow a
@@ -95,9 +97,12 @@ that prunes transitions or hides violations.
   for an issued receipt serial. `ReceiptProgress` supplies the eventual half.
 - `LossOnlyForUnreliableReceipt`: only effective type 5 emits LOSS; large
   type 5, and the promoted type 0 and type 1 twins, are reliable and excluded.
-- `PromotedIsTwin` and `PromotedNeverLoses`: each promoted source maps to
-  its declared twin (0 to 2, 1 to 4, 5 to 6) and never emits LOSS.
-- `PromotionTable`: the twin mapping covers every unreliable source mode.
+- `PromotedNeverLoses`: a promoted send (source 0, 1 or 5, too large for
+  one record) never emits LOSS. That it takes its twin's effective type is
+  `EffectiveKind`'s definition, not a checked property. Revision 1.3 removed
+  `PromotedIsTwin`, which restated that definition, and `PromotionTable`,
+  which read no state and accepted any twin in {2, 4, 6}. The exact table is
+  now the module's `ASSUME`.
 - `AckedMeansPacketOpened`: acknowledged numbers were transport-opened, and
   an unreliable ACKED receipt has a matched transport packet ACK.
 - `BlockAckedOnlyWhenAllFragmentsAcked`: reliable receipt generation, including

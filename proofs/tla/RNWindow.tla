@@ -13,8 +13,13 @@
 (* preconditions, P2 and P6 of CHANNELS.md section 2:                      *)
 (*                                                                         *)
 (*   P2  opening a packet is what acks it: the receiver puts the id of     *)
-(*       every packet it opens into the next ack it sends, whatever this   *)
-(*       layer then does with the records inside;                          *)
+(*       every packet it opens into the next ack it sends.  The code       *)
+(*       commits the ack only for a payload the message layer accepts      *)
+(*       (rn_endpoint_on_payload true, then link.accept_payload, in        *)
+(*       sdk/rocketnet_message_server.cpp): a payload refused as a         *)
+(*       violation is not acked.  The model acks it anyway, a superset of  *)
+(*       the code's acks, which is sound for the safety properties; the    *)
+(*       refusal ends the connection in the code;                          *)
 (*   P6  a reply to a packet opened in update j is opened in update j+1    *)
 (*       or later: the receiver opens packets only while its batch is      *)
 (*       open ("receive"), fixes the batch, and only then sends acks       *)
@@ -292,7 +297,7 @@ ReceiveUsefulAck == \E q \in AckPackets : q \cap MapIds # {} /\ ReceiveAck(q)
 
 
 \* The receiver opens a packet (P2: the id goes into the next ack whatever
-\* happens below) and runs 6.5 on each number in turn, as rn_ordered_receive
+\* happens below; the code acks only an accepted payload, a subset) and runs 6.5 on each number in turn, as rn_ordered_receive
 \* does record by record (sdk/rocketnet_channel.cpp, through
 \* rn_window_receive_accept): a duplicate is dropped; a number outside the
 \* window, or whose slot is live with another number, is a violation, after
