@@ -1677,14 +1677,14 @@ void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_optio
     if ( ipv6 )
     {
 #if defined( __linux__ )
-        set_option( user, IPPROTO_IPV6, IPV6_MTU_DISCOVER, IPV6_PMTUDISC_DO );
+        set_option( user, IPPROTO_IPV6, IPV6_MTU_DISCOVER, IPV6_PMTUDISC_PROBE );
 #elif defined( IPV6_DONTFRAG )
         set_option( user, IPPROTO_IPV6, IPV6_DONTFRAG, 1 );
 #endif // #if defined( __linux__ )
     }
 
 #if defined( __linux__ )
-    set_option( user, IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_DO );
+    set_option( user, IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_PROBE );
 #elif defined( __APPLE__ )
     // darwin refuses IP_DONTFRAG on an AF_INET6 socket (EINVAL), and
     // IPV6_DONTFRAG already keeps its v4-mapped datagrams whole
@@ -2029,9 +2029,12 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
 // ---------------------------------------------------
 
 // UDP's ordinary weather on the receive path (TRANSPORTS.md, ICMP errors): a
-// connected client socket gets an ICMP error (port or host unreachable) on its
-// next receive, and a full buffer pool reports ENOBUFS. Each says nothing
-// about the datagrams queued behind it, so a drain skips it and reads on.
+// connected client socket gets an ICMP error (port or host unreachable, or
+// EMSGSIZE from a fragmentation-needed or packet-too-big naming its 4-tuple,
+// which anyone on the path can forge) on its next receive, and a full buffer
+// pool reports ENOBUFS. A long datagram is never EMSGSIZE here: the receive
+// reports its true size. Each says nothing about the datagrams queued behind
+// it, so a drain skips it and reads on.
 //
 // Every receive call carries one read budget, and every read spends one unit
 // of it: a datagram kept, a zero-length datagram or refused source skipped,
@@ -2044,7 +2047,7 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
 static bool rocketnet_platform_receive_weather( int error )
 {
     return error == ECONNREFUSED || error == EHOSTUNREACH || error == ENETUNREACH ||
-           error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR;
+           error == EHOSTDOWN || error == ENETDOWN || error == ENOBUFS || error == EINTR || error == EMSGSIZE;
 }
 
 
@@ -5044,7 +5047,8 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
 // The client I/O wake on Windows: a manual-reset event beside an event the
 // socket signals on FD_READ (docs/CLIENT-IO.md "The wake" and
-// rocketnet-client-io-windows; proofs/tla/RNClientIo.tla's IoWait, IoWake and Wake).
+// rocketnet-client-io-windows; proofs/tla/RNClientIo.tla's IoWait and IoWake, and the
+// wake' = TRUE set by HandOffTo).
 // The wake is level-triggered: a set made while no wait runs leaves the event
 // signalled, so the next wait returns at once. FD_READ is re-armed by the
 // drain the I/O step runs to a would-block, so no readable datagram is missed.
@@ -5260,7 +5264,7 @@ bool rocketnet_platform_wake_wait_writable( rocketnet_platform_wake_t * wake, do
     return rocketnet_platform_wake_wait( wake, false, timeout_seconds );
 }
 
-// proofs/tla/RNClientIo.tla's Wake: set the level-triggered wake from any thread
+// proofs/tla/RNClientIo.tla's HandOffTo (its wake' = TRUE): set the level-triggered wake from any thread
 void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 {
     rocketnet_assert( wake );

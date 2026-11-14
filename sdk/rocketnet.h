@@ -47,7 +47,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.54"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.55"
 
     /// The major component of the SDK version.
 
@@ -59,7 +59,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        54
+    #define ROCKETNET_VERSION_PATCH                        55
 
 #else // !ROCKETNET_DEV
 
@@ -570,8 +570,9 @@ enum rocketnet_receipt_status_t
 
     /// The connection layer acknowledged the send that carried the message.
     /// The receiver's message layer may still have dropped the message
-    /// (counted MESSAGE_UNRELIABLE_DELIVERY_FULL or by the sequenced drop
-    /// counters), and its application may not have read it.
+    /// (counted by the SDK-internal counter MESSAGE_UNRELIABLE_DELIVERY_FULL
+    /// or the sequenced drop counters, which no call in this header reads),
+    /// and its application may not have read it.
 
     ROCKETNET_RECEIPT_STATUS_ACKED = 1
 };
@@ -710,6 +711,12 @@ enum rocketnet_client_state_t
 
     ROCKETNET_CLIENT_STATE_CONNECTED = 4
 };
+
+// Counter names in this header written in capitals, such as
+// MESSAGE_NOT_RECEIVED or SEND_RESERVE_REFUSED, are the SDK's internal
+// counters, the registry of the standard's error handling section. No call
+// in this header reads them: an application sees their effect through the
+// stats structs below, the client state and the disconnect reason.
 
 /// rocketnet_client_stats fills this struct.
 /// Packet, byte, payload, resend, duplicate, receipt and budget counts are
@@ -1364,9 +1371,15 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 /// datagram queue. Each client endpoint's queue is 2048 slots of 1476 bytes,
 /// 2048 * 1476 bytes. At max_clients 1000 the block is about 3.05 GB. It sits
 /// outside rocketnet_client_required_memory and
-/// rocketnet_server_required_memory. Server start and client connect register
-/// an endpoint and allocate nothing; stop, disconnect and destroy unregister
-/// it. Traffic never allocates. A server or client past the hub's capacity is
+/// rocketnet_server_required_memory. The endpoint records and queues are
+/// preallocated there: server start registers an endpoint and allocates
+/// nothing. Client connect registers one too, and also creates the client's
+/// own wake (a small allocation through the configured allocator and, on
+/// platforms with one, an operating-system event), which its I/O thread
+/// sleeps on until a datagram is queued for it; the wake is counted in
+/// rocketnet_client_required_memory. Stop, disconnect and destroy unregister
+/// the endpoint, and a client's destroy frees its wake. Traffic never
+/// allocates. A server or client past the hub's capacity is
 /// refused at start or connect. Create it once rocketnet_init has run, and
 /// destroy it with the same library copy that created it, after every server
 /// and client that uses it is destroyed and before rocketnet_term.
@@ -1540,9 +1553,16 @@ struct rocketnet_client_config_t
 
     /// ROCKETNET_CLIENT_PACKETS_IN_FLIGHT sets the sent map: the
     /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
-    /// and at least reliable_messages_in_flight, so a window sent
-    /// one number to a packet never evicts an entry before its ack lands.
-    /// Default is 1024.
+    /// and at least reliable_messages_in_flight. Packets with reliable
+    /// messages and packets with only unreliable receipt sends share it.
+    /// No entry is evicted before its ack lands while it holds every tracked
+    /// packet, of both kinds and resends included, sent from any packet's
+    /// send, that packet included, until the processing of its ack: the
+    /// packets_in_flight-th tracked packet sent after an entry evicts it
+    /// unless its ack was processed first. Past that the
+    /// oldest entry can be evicted with its ack on the way: the late ack is
+    /// ignored, a reliable entry's messages are resent, and a receipt-only
+    /// entry's unreliable receipts report LOSS early. Default is 1024.
 
     int packets_in_flight;
 
@@ -1786,9 +1806,16 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_PACKETS_IN_FLIGHT sets the sent map per client: the
     /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
-    /// and at least reliable_messages_in_flight, so a window sent
-    /// one number to a packet never evicts an entry before its ack lands.
-    /// Default is 1024.
+    /// and at least reliable_messages_in_flight. Packets with reliable
+    /// messages and packets with only unreliable receipt sends share it.
+    /// No entry is evicted before its ack lands while it holds every tracked
+    /// packet, of both kinds and resends included, sent from any packet's
+    /// send, that packet included, until the processing of its ack: the
+    /// packets_in_flight-th tracked packet sent after an entry evicts it
+    /// unless its ack was processed first. Past that the
+    /// oldest entry can be evicted with its ack on the way: the late ack is
+    /// ignored, a reliable entry's messages are resent, and a receipt-only
+    /// entry's unreliable receipts report LOSS early. Default is 1024.
 
     int packets_in_flight;
 
@@ -2650,8 +2677,9 @@ ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * clie
 /// Every message delivered by the previous update must already be taken:
 /// loop rocketnet_client_receive_messages until it returns NULL before the
 /// next update. A message still in the receive queue at update is API
-/// misuse: it asserts in a debug build, counts MESSAGE_NOT_RECEIVED, and the
-/// connection ends in ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED.
+/// misuse: it asserts in a debug build, counts the SDK-internal counter
+/// MESSAGE_NOT_RECEIVED, and the connection ends in the client state of
+/// that name, ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED.
 ///
 /// Callable in every client state. Before the first connect it only checks
 /// the time; after disconnect it steps the old attempt's shutdown. Thread: not
@@ -2825,9 +2853,9 @@ ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t 
 /// (rocketnet_conditions_t send_refused), and the game decides what to do.
 ///
 /// For valid arguments, changes no state, counts nothing and allocates nothing.
-/// Usually constant time; a message that needs a send store chunk scans that
-/// size class for a free one, so its worst case grows with the chunks in the
-/// class. It does not reserve wire bandwidth or guarantee immediate
+/// Constant time: a message that needs a send store chunk is answered from
+/// the free stack of that size class or its next unused chunk, however many
+/// chunks are held. It does not reserve wire bandwidth or guarantee immediate
 /// transmission.
 /// A false answer may be pessimistic for a small unreliable message: start
 /// can write it straight into a transport frame without message memory.
@@ -3196,8 +3224,8 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 /// Every message delivered by the previous update must already be taken:
 /// loop rocketnet_server_receive_messages until it returns NULL before the
 /// next update. A message still in the receive queue at update is API
-/// misuse: it asserts in a debug build, counts MESSAGE_NOT_RECEIVED, and the
-/// sending client's slot is disconnected with
+/// misuse: it asserts in a debug build, counts the SDK-internal counter
+/// MESSAGE_NOT_RECEIVED, and the sending client's slot is disconnected with
 /// ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED.
 ///
 /// Needs a running server; stopped or stopping it does nothing. Thread: not
@@ -3282,11 +3310,11 @@ ROCKETNET_EXPORT void rocketnet_server_update_finish( struct rocketnet_server_t 
 /// keep-alive is given one place an update out of the kept part. A message
 /// that would take more is not lost by that: it waits in its queue, as a
 /// message does when the transport is full, and goes out in a later call
-/// once the transport has sent what it holds. The counter
+/// once the transport has sent what it holds. The SDK-internal counter
 /// SEND_RESERVE_REFUSED counts the sends held back this way. Before this
-/// rule a send was held back only when the whole room was spent, which
-/// SEND_RING_FULL counted; SEND_RING_FULL still counts a send room that is
-/// full. The portable and loopback transports keep nothing back.
+/// rule a send was held back only when the whole room was spent, which the
+/// SDK-internal counter SEND_RING_FULL counted; it still counts a send room
+/// that is full. The portable and loopback transports keep nothing back.
 ///
 /// Needs a running server; stopped or stopping it does nothing. Thread: not
 /// thread-safe; the caller owns the server one thread at a time.
@@ -3604,7 +3632,7 @@ ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t 
 /// One difference: an unreliable message small enough to fit in one packet
 /// is sent alone from this call, on the calling thread, rather than waiting
 /// for rocketnet_server_send_packets to pack it with others. If the update's send limits leave no room to send it, the call
-/// returns 0, the message is dropped and
+/// returns 0, the message is dropped and the SDK-internal counter
 /// ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY counts it. Every
 /// other message is queued as by rocketnet_server_finish_message: a larger
 /// one, a reliable one, one that must keep its order behind a message already

@@ -509,9 +509,11 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     rocketnet_client_transport_io_t client = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
 
-    // registering the endpoints allocates nothing
+    // registering the server allocates nothing; the client's create makes
+    // the wake its I/O thread waits on (none where the platform has no wake)
 
-    rocketnet_unit_check( g_loopback_live_bytes - live_before == created_bytes );
+    const size_t registered_bytes = created_bytes + (size_t) rocketnet_platform_wake_allocation_bytes();
+    rocketnet_unit_check( g_loopback_live_bytes - live_before == registered_bytes );
 
     const size_t allocation_calls_after_create = g_loopback_allocation_calls;
     uint8_t data[ROCKETNET_RECEIVE_CEILING];
@@ -585,7 +587,7 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, received, sizeof( received ), &bytes, 1 ) == 0 );
     rocketnet_unit_check( client.operations->receive( client.instance, &from, received, sizeof( received ) ) == 0 );
     rocketnet_unit_check( g_loopback_allocation_calls == allocation_calls_after_create );
-    rocketnet_unit_check( g_loopback_live_bytes - live_before == created_bytes );
+    rocketnet_unit_check( g_loopback_live_bytes - live_before == registered_bytes );
 
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );

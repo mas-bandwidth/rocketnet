@@ -423,7 +423,19 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
     return bytes;
 }
 
-// proofs/tla/ClientConnection.tla ClientSend
+// The scheduled send is due once the send interval has elapsed. The clock is
+// the caller's, and a game loop often adds up a fixed step in floating point:
+// six steps of 1/60 s sum to just under 0.1 s, so an exact comparison waits a
+// whole extra frame for every interval at 60 Hz and 30 Hz. The microsecond of
+// tolerance takes that rounding out and nothing else: no real clock schedules
+// an update within a microsecond of the boundary on purpose (TRANSPORT.md t17).
+
+static bool rocketnet_client_send_due( const struct rocketnet_client_protocol_t * client, double current_time )
+{
+    return current_time - client->last_send_time >= 1.0 / client->send_rate - ROCKETNET_SEND_INTERVAL_TOLERANCE_SECONDS;
+}
+
+// proofs/tla/ClientConnection.tla ClientSend and ClientEarlySend
 
 void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * client,
                                        double current_time,
@@ -443,11 +455,27 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
         return;
     }
 
+    // proofs/tla/ClientConnection.tla ClientEarlySend (TRANSPORT.md t11 rule 7):
+    // a reply that advanced the handshake this update -- the first cookie
+    // moved requesting cookie to sending connection request, the challenge
+    // moved sending connection request to sending connection response --
+    // armed one send of the new state's packet, and it goes now instead of
+    // waiting out the tick. The advance alone arms it, at most once per
+    // advance, and this update spends it whether or not it sends: nothing
+    // that arrives later, a forged cookie included, can arm a second one.
+    // Retries of the same state stay on the tick, and nothing is sent from
+    // the receive path itself.
+
+    const bool early_send = client->handshake_early_send &&
+                            ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST ||
+                              client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+    client->handshake_early_send = 0;
+
     // proofs/tla/RNEndpoint.tla WriteAck: sends a packet that carries only the owed acks.
     // An owed ack goes out on this update, outside the scheduled send rate.
     // Type 8 does not add debt, so the ack cannot ping-pong.
 
-    if ( current_time - client->last_send_time < 1.0 / client->send_rate )
+    if ( !early_send && !rocketnet_client_send_due( client, current_time ) )
     {
         if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              client->ack.ack_debt >= ROCKETNET_ACK_DEBT_THRESHOLD )
@@ -593,7 +621,9 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
     // moves backwards on no packet that does not open under the attempt's
     // keys (proofs/tla/ClientConnection.tla HandshakeNeverRewinds). a genuine fresh
     // cookie, after the kept one expired, still goes out on every second
-    // request. nothing is sent because this arrived.
+    // request. nothing is sent from here: the advance below arms the one
+    // early request the next protocol update sends (ClientEarlySend), and a
+    // cookie that advances nothing arms nothing.
 
     const uint8_t * cookie_field = packet_data + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES;
 
@@ -620,6 +650,7 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
     {
         client->state_first_send_time = -1.0;
         rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+        client->handshake_early_send = 1;
     }
 
     return 1;
@@ -757,6 +788,10 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
 
+    // the advance arms the one early response (ClientEarlySend)
+
+    client->handshake_early_send = 1;
+
     return 1;
 }
 
@@ -890,7 +925,8 @@ typedef int ( *rocketnet_client_type_data_validator_t )( struct rocketnet_client
 // server's first payloads, and a payload delivered before connected let the
 // application reply on a connection that could not yet send. The server's
 // resend carries a reliable message again after the keep-alive
-// (proofs/tla/ClientConnection.tla PayloadBeforeKeepAlive).
+// (proofs/tla/ClientConnection.tla PayloadOnlyWhenConnected; ClientRecvEarlyPayload
+// under SpecEarlyPayload is the delivery before connected that it refuses).
 
 static bool rocketnet_client_session_state_accepts( const struct rocketnet_client_protocol_t * client, uint8_t packet_type )
 {

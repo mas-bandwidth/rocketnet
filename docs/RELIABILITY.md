@@ -24,8 +24,12 @@ Channels scope ordered and sequenced state. Receipt serials are returned by
 `finish_message` and read through the client or server receipt call. The
 endpoint-wide receive queue reports each message's channel and reliability.
 
-An ACK receipt reports acceptance by the remote library, not application processing.
-Only unreliable receipt sends can report LOSS; a send promoted to reliable
+An ACKED receipt means the remote connection layer acknowledged the packet that
+carried the message. It does not mean the message was delivered: the remote
+message layer can still drop it (a full unreliable delivery table, or a stale
+or superseded sequenced message), and the application may not have read it.
+A LOSS receipt means no acknowledgement arrived in time; the acknowledgement
+itself may have been lost, so the receiver may still have the message. Only unreliable receipt sends can report LOSS; a send promoted to reliable
 reports ACKED only. A send still in flight when its connection ends gets no
 terminal receipt. Already recorded outcomes remain readable until the next
 update; reads do not consume them. A connection ended by an explicit

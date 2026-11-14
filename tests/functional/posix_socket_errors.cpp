@@ -3675,14 +3675,14 @@ static void posix_native_socket_hygiene( int kind, int ipv6 )
         int pmtud = -1;
         socklen_t pmtud_bytes = sizeof( pmtud );
         posix_check( getsockopt( fd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtud, &pmtud_bytes ) == 0 );
-        posix_check( pmtud == IP_PMTUDISC_DO );
+        posix_check( pmtud == IP_PMTUDISC_PROBE );
 
         if ( ipv6 )
         {
             int pmtud6 = -1;
             socklen_t pmtud6_bytes = sizeof( pmtud6 );
             posix_check( getsockopt( fd, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &pmtud6, &pmtud6_bytes ) == 0 );
-            posix_check( pmtud6 == IPV6_PMTUDISC_DO );
+            posix_check( pmtud6 == IPV6_PMTUDISC_PROBE );
         }
 
         checked++;
