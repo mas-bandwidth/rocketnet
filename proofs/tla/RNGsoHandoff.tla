@@ -49,14 +49,20 @@
 (* and every staged packet is sent, held or counted (SentOrHeld,           *)
 (* ExitSentAll).  A hard send error drops the refused message, counted in *)
 (* SEND_DROPPED, at any time, and the flush goes on (txErrDropped, folded *)
-(* into TxSend and TxSendFull).  Not modelled: destinations and the       *)
-(* segmentation tier (README-RNGsoHandoff.md).                            *)
+(* into TxSend and TxSendFull).  Not modelled: destinations (the order     *)
+(* inside a bank, see TxInOrder) and the segmentation refusal, which is    *)
+(* per destination and RNSegmentRefusal's (README-RNGsoHandoff.md).       *)
 (*                                                                         *)
-(* Stop and free: stop stores quit for both workers; the RX worker exits   *)
-(* after its drain, the TX worker after its drain, which a full socket     *)
-(* cannot hold past the retry bound; destroy joins both threads before     *)
-(* freeing any storage, and refuses (does not free) while a worker has not *)
-(* exited.                                                                 *)
+(* One worker thread per queue (rocketnet_server_gso_worker) does both     *)
+(* halves, each pass the send step then the receive drain; the model runs  *)
+(* them as two processes, the RX worker (pcRx) and the TX worker           *)
+(* (pc["worker"]), whose steps interleave freely, which includes every     *)
+(* order the one thread takes.  Stop and free: stop stores quit; the       *)
+(* thread reads no more datagrams once it sees quit (rxExited), and its    *)
+(* send step ends with stop's final bank, which a full socket cannot hold  *)
+(* past the retry bound, and the thread returns (txExited); destroy joins  *)
+(* before freeing any storage, and refuses (does not free) while the       *)
+(* worker has not exited.                                                  *)
 (*                                                                         *)
 (* Received and never consumed (StopCount, RxAccounted): main claims and   *)
 (* consumes nothing once stop is asked, and the first stopped call that    *)
@@ -122,6 +128,13 @@ RetryBound == 2
 (* Both FALSE in the passing run.                                         *)
 DropBeforeShutdown == FALSE
 BoundOnQuitOnly == FALSE
+
+(* LostProgressReset counts every refused attempt after shutdown, one that *)
+(* sent part of the tail too (the model before 2026-11-13, MM135): a tail  *)
+(* the code keeps sending a little at a time is dropped.  The reversed     *)
+(* witness MCRNGsoHandoffBrokenLostProgressReset.cfg violates              *)
+(* TailDroppedOnlyWhenStalled.  FALSE in the passing run.                  *)
+LostProgressReset == FALSE
 
 (* CountErrorDrops: a message the kernel refuses with a hard error (any    *)
 (* errno but a full socket's, EPERM or ENETUNREACH say) is dropped and    *)
@@ -189,7 +202,9 @@ VARIABLES
     txDropped,   \* packets the shutdown bound dropped and counted in SEND_DROPPED
     txErrDropped, \* packets a hard send error dropped and counted in SEND_DROPPED
     shut,        \* [on: send_shutdown, full: the socket refuses sends (environment),
-                 \*  refusals: the held bank's refused sends since shutdown]
+                 \*  refusals: the held bank's refused attempts in a row that sent
+                 \*  nothing, since shutdown (retries_after_quit),
+                 \*  movedDrop (ghost): a tail was dropped by an attempt that sent part of it]
     quit,        \* main requested stop (send_quit)
     rxExited,    \* the RX worker exited
     txExited,    \* the TX worker exited
@@ -216,7 +231,7 @@ Init ==
     /\ txFinal = FALSE
     /\ txContent = [ b \in Buffers |-> << >> ]
     /\ staged = 0 /\ txSent = << >> /\ txDropped = << >> /\ txErrDropped = << >>
-    /\ shut = [ on |-> FALSE, full |-> FALSE, refusals |-> 0 ]
+    /\ shut = [ on |-> FALSE, full |-> FALSE, refusals |-> 0, movedDrop |-> FALSE ]
     /\ quit = FALSE /\ rxExited = FALSE /\ txExited = FALSE
     /\ joined = FALSE /\ freed = FALSE
 
@@ -494,8 +509,12 @@ TxSend ==
 (* held bank, k less than the bank holds (rocketnet_server_gso_flush       *)
 (* returning the first unsent slot with full set); the bank and its unsent *)
 (* rest stay with the worker.  Before shutdown the worker waits and        *)
-(* retries with no limit.  Once send_shutdown is set, each refusal counts  *)
-(* (retries_after_quit, reset only when the worker takes a bank); while    *)
+(* retries with no limit.  Once send_shutdown is set, an attempt that sent *)
+(* nothing (k = 0) counts and one that moved the bank on (k > 0, sent or   *)
+(* dropped by a hard error) starts the count again (retries_after_quit:   *)
+(* rocketnet_server_gso_send_step zeroes it when held_slot passed where    *)
+(* the attempt began, and when the worker takes a bank), so only a socket  *)
+(* that stays full loses the tail; while                                  *)
 (* the count is at most RetryBound the worker retries from the unsent slot *)
 (* (TxRetry), and when it passes the bound the rest is dropped and counted *)
 (* in SEND_DROPPED (TxDropTail): a ready bank is returned and the next one *)
@@ -513,15 +532,20 @@ Counting ==
 TxSendFull ==
     /\ pc["worker"] = "sending" /\ txHeld # NONE
     /\ shut.full
-    /\ LET c == txContent[txHeld]
-           r1 == IF Counting THEN shut.refusals + 1 ELSE shut.refusals IN
+    /\ LET c == txContent[txHeld] IN
        \E k \in 0 .. Len(c) - 1 :
        \E d \in ( IF FullDrops THEN 1 .. Len(c) - k ELSE { 0 } ) :
        \E e \in ErrorSets( k, Len(txErrDropped) ) :
-          LET rest == SubSeq( c, k + d + 1, Len(c) ) IN
+          LET rest == SubSeq( c, k + d + 1, Len(c) )
+              \* an attempt that moved the bank on (k > 0: held_slot passed
+              \* before) starts the count again; one that moved nothing counts
+              r1 == IF ~Counting THEN shut.refusals
+                    ELSE IF k > 0 /\ ~LostProgressReset THEN 0
+                    ELSE shut.refusals + 1 IN
           /\ txSent' = txSent \o Accepted( c, k, e )
           /\ txErrDropped' = txErrDropped \o Refused( c, k, e )
-          /\ shut' = [ shut EXCEPT !.refusals = r1 ]
+          /\ shut' = [ shut EXCEPT !.refusals = r1,
+                                   !.movedDrop = @ \/ ( r1 > RetryBound /\ k > 0 ) ]
           /\ IF r1 > RetryBound
              THEN \* TxDropTail: count - slot added to SEND_DROPPED
                   /\ txContent' = [ txContent EXCEPT ![txHeld] = << >> ]
@@ -716,7 +740,7 @@ TypeOK ==
     /\ arrived \in 0 .. MaxRx /\ staged \in 0 .. MaxTx
     /\ rxStopped \in 0 .. MaxRx
     /\ txProducer \in Buffers \cup { NONE } /\ txHeld \in Buffers \cup { NONE }
-    /\ shut \in [ on : BOOLEAN, full : BOOLEAN, refusals : 0 .. RetryBound + 1 ]
+    /\ shut \in [ on : BOOLEAN, full : BOOLEAN, refusals : 0 .. RetryBound + 1, movedDrop : BOOLEAN ]
 
 (* every receive buffer has exactly one role: the tail, the free buffer,  *)
 (* or main's and the worker's, which may share one; a free buffer exists  *)
@@ -794,10 +818,26 @@ NotReachedErrorDropRunning == ~( txErrDropped # << >> /\ ~shut.on )
 (* that drops the tail                                                     *)
 RefusalsBounded == shut.refusals <= RetryBound + 1
 
-(* packets are consumed and sent once each, in the order they arrived;    *)
-(* the sent packets rise, and every packet below one sent was sent or     *)
-(* dropped and counted (with both drop lists empty this is txSent[i] = i) *)
+(* a full socket's tail is dropped only by an attempt that sent nothing,   *)
+(* after RetryBound such attempts in a row: an attempt that sent part of   *)
+(* the tail starts the count again, so a socket that keeps taking some of  *)
+(* it never loses the rest                                                 *)
+TailDroppedOnlyWhenStalled == ~shut.movedDrop
+
+(* packets are consumed once each, in the order they arrived              *)
 RxInOrder == \A i \in 1 .. Len(rxConsumed) : rxConsumed[i] = i
+
+(* TxInOrder: banks leave in the order they were published, a held bank's *)
+(* unsent rest before any later bank, and every packet below one sent was *)
+(* sent or dropped and counted.  In the code the order inside a bank is    *)
+(* the gather's (rocketnet_send_gather: grouped by destination, each      *)
+(* destination's packets in staged order, RNSendGatherLayout Grouped), so *)
+(* the code keeps each destination's staged order and the bank order, not *)
+(* one rising order across destinations (A1, B2, A3 leaves 1, 3, 2).  The *)
+(* model has no destinations and sends a bank in staged order; with TxCap *)
+(* = 2 that is the gather's order for every destination assignment (two   *)
+(* slots never reorder), so here the rising ids are exactly the code's    *)
+(* order, and a larger TxCap would need destinations to state it.          *)
 TxInOrder ==
     /\ \A i \in 1 .. Len(txSent) - 1 : txSent[i] < txSent[i + 1]
     /\ \A i \in 1 .. Len(txSent) : \A n \in 1 .. txSent[i] :

@@ -28,6 +28,11 @@ DropBeforeShutdownBroken == TRUE
 \* ShutdownCompletes.
 BoundOnQuitOnlyBroken == TRUE
 
+\* MCRNGsoHandoffBrokenLostProgressReset.cfg: after shutdown every refused
+\* attempt counts, one that sent part of the tail too; must fail
+\* TailDroppedOnlyWhenStalled.
+LostProgressResetBroken == TRUE
+
 \* MCRNGsoHandoffBrokenUncountedErrorDrop.cfg: a hard send error drops a
 \* message uncounted; must fail SentOrHeld.
 \* MCRNGsoHandoffReachErrorDropRunning.cfg (the rule) must fail
