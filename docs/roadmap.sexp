@@ -725,4 +725,29 @@
    :title "The functional suite step says 'on Linux' on the macOS runner"
    :text "One step of .github/workflows/ci.yml, 'Run functional suite (automatic transport order — the fall, on Linux; RSS enforced)', runs on the Linux and the macOS rows, so docs/PLATFORMS.md's macOS 27 row, which must name the step word for word (tools/check_platform_policy.py), reads 'on Linux'. Rename the step so it names no OS (or give each OS its own step), and change tools/planted_violations.tsv and both PLATFORMS.md rows in the same commit."
    :date "2026-11-13" :origin "Review before v1.2.0")
+
+  (item "harden-load-reliable-tail-ledger" :group "review-v1-2" :area "tests"
+   :title "harden_load: reconcile each connection's reliable and big sends against what arrived"
+   :text "tests/load/harden_load.cpp now requires a reliable stream to start at sequence 0 and fails a run whose server sent reliable or big messages that no client delivered, but the tail is not reconciled: no sender ledger checks each stable connection's reliable and big sends against its unique receives after a bounded drain. Add that ledger and its verdict term, with a planted dropped tail as the red witness."
+   :date "2026-11-13" :origin "Tests review TM016 (P12), follow-on")
+
+  (item "check-split-load-final-missing" :group "review-v1-2" :area "tools"
+   :title "check_split_load.py: a sequenced stream missing its newest send is a loss"
+   :text "tools/load_split_verify.h now fails a reliable-sequenced stream whose newest send never arrived instead of excusing it as a stale skip (TM051). tools/check_split_load.py has the same excuse; give it the same rule and a witness that withholds the newest send."
+   :date "2026-11-13" :origin "Tests review TM051 (P12), the same gap in the Python checker")
+
+  (item "harden-cell-per-role-verdict" :group "review-v1-2" :area "tests"
+   :title "harden-cell: require each role's own PASS verdict and exit status"
+   :text "scripts/harden-pair now requires every role to print its own PASS verdict, no FAIL, and exit 0 (TM017). scripts/harden-cell:202 still accepts any harden_verdict line in any log; give it the same per-role rule and a planted server FAIL as the red witness."
+   :date "2026-11-13" :origin "Tests review TM017 (P12), the same gap in harden-cell")
+
+  (item "queue-worker-trace-submit-refusals" :group "trace-check" :area "tests"
+   :title "Bind refused io_uring submits in the queue-worker trace"
+   :text "The queue-worker walk (tests/tla_trace_queue_worker.cpp) drives worker_step and never calls rocketnet_uring_queue_worker_run, so its fake qwork_submit is never called and always returns 0. RNUringQueueWorker has no refused-submit action (its Submit is SQE preparation). Add a prepared-but-unsubmitted state and a SubmitRefused action to the model, a per-step record seam so the walk can drive run, and scripted transient and fatal submit errors. Also decide what run should do on a persistent non-transient submit error: today it loops and logs once."
+   :date "2026-11-13" :origin "Tests review TM062, trace half (P12)")
+
+  (item "dst-large-message-coverage" :group "review-v1-2" :area "tests"
+   :title "DST: messages up to the fragment ceiling"
+   :text "DST caps messages at 16384 bytes (tests/dst_checks.h) and draws sizes from 14 to 16384 (rocketnet_dst_draw_size in tests/dst_harness.h), so it reaches about 15 fragments and never the 57-fragment default, the 64-fragment ceiling, or the resend bitmap words past them. 16384 is an input to the budget slack derivation (dst_checks.h, dst_harness.h), so raising it means deriving that slack again, not changing one constant."
+   :date "2026-11-13" :origin "Tests review TA030 (P12)")
  ))
