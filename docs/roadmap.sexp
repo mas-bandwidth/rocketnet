@@ -993,11 +993,6 @@
    :text "nightly linux / mutation reports 194 new survivors (150 on 11-13) against the 181 rows of tools/mutation/survivors.tsv, and 46 of 515 mutants do not compile. The daily slices were never triaged into the baseline. Fix: triage each slice's survivors into a test or a survivors.tsv row with its reason."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly 43577137425")
 
-  (item "linux-transport-cells-x50" :group "review-v1-2" :area "tests"
-   :title "Linux transport cells x50: every cell red, cause only in the artifacts"
-   :text "nightly linux / transport cells x50 and ASan fails every suite cell (portable/portable, auto, gso, io_uring, loopback) on amd-1-1 and vision-1, and was red on 11-13. The failing case is printed only in the per-cell suite logs uploaded as artifacts. GUESS: the env-pinned placement cases (env-pinned-placement-cast) or an ASan report. Settled by the artifacts; fix then: print each cell's first failing check into the job log."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly 43577137425")
-
   (item "macos-soak-selftest-send-fault" :group "review-v1-2" :area "tools"
    :title "macOS platform selftest: the soak summary selftest fails at its send-fault leg"
    :text "Nightly CI platform selftests / macos (mini-m5-1, 21543f689) failed the soak argument and summary selftest at leg 9 (send fault): --seconds 3 exited 1. Green at cbad53d3b. GUESS: a TEST tool timing leg on a loaded host. Settled by the leg-9 output on its next failure."

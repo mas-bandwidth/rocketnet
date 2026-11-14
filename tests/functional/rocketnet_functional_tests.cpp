@@ -15406,6 +15406,9 @@ static void rocketnet_test_server_stop_disconnects_every_client( const char * tr
     memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
     server_config.max_clients = num_clients;
     server_config.transport = transport;
+    // the hub is read only when a pin names loopback, as the CI transport
+    // matrix's loopback cell does
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     // a transport this host cannot run is a named skip in the registry (its
     // runs_here predicate); here a create or start that fails is a failure
@@ -15427,6 +15430,7 @@ static void rocketnet_test_server_stop_disconnects_every_client( const char * tr
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     struct rocketnet_client_t * clients[8] = {};
     for ( int i = 0; i < num_clients; i++ )
@@ -16975,6 +16979,19 @@ static bool rocketnet_test_server_pin_is_not_xdp()
     return !rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", pin, sizeof( pin ) ) || strcmp( pin, "xdp" ) != 0;
 }
 static bool rocketnet_test_a_transport_pin_is_set_and_not_xdp() { return rocketnet_test_a_transport_pin_is_set() && rocketnet_test_server_pin_is_not_xdp(); }
+
+// the bind cases (server_bind_address.cpp) check what the kernel does with a
+// socket's bind: a held port, an address that is not this host's. A
+// whole-suite server pin of loopback carries datagrams in process and binds
+// no socket, so it takes them out of the suite
+static bool rocketnet_test_server_pin_is_not_loopback()
+{
+    char pin[256];
+    return !rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", pin, sizeof( pin ) ) || strcmp( pin, "loopback" ) != 0;
+}
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+static bool rocketnet_test_uring_available_and_server_pin_is_not_loopback() { return rocketnet_server_uring_available() && rocketnet_test_server_pin_is_not_loopback(); }
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static bool rocketnet_test_server_pin_allows_iocp() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "iocp" ); }
 static bool rocketnet_test_server_pin_allows_rio() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "rio" ); }
@@ -17204,6 +17221,9 @@ static void rocketnet_latency_pair_server( struct rocketnet_latency_pair_t * pai
     server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
     server_config.transport = "portable";
+    // the hub is read only when a pin names loopback, as the CI transport
+    // matrix's loopback cell does
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
     pair->server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     rocketnet_check( pair->server );
     rocketnet_check( rocketnet_server_start( pair->server ) == ROCKETNET_STATUS_OK );
@@ -17219,6 +17239,7 @@ static void rocketnet_latency_pair_connect( struct rocketnet_latency_pair_t * pa
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "portable";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     pair->client = rocketnet_client_create( NULL, &client_config, NULL );
     rocketnet_check( pair->client );
     rocketnet_check( rocketnet_client_connect( pair->client, token ) == ROCKETNET_STATUS_OK );
@@ -17824,10 +17845,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_small_server_sessions_rio", rocketnet_test_small_server_sessions_rio, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    { "test_server_bind_refused_portable", rocketnet_test_server_bind_refused_portable, NULL },
+    { "test_server_bind_refused_portable", rocketnet_test_server_bind_refused_portable, rocketnet_test_server_pin_is_not_loopback },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    { "test_server_bind_refused_msgx", rocketnet_test_server_bind_refused_msgx, NULL },
+    { "test_server_bind_refused_msgx", rocketnet_test_server_bind_refused_msgx, rocketnet_test_server_pin_is_not_loopback },
     { "test_server_bind_dual_stack_ipv4_held", rocketnet_test_server_bind_dual_stack_ipv4_held, NULL },
     { "test_server_bind_dual_stack_port_zero", rocketnet_test_server_bind_dual_stack_port_zero, NULL },
 #if ROCKETNET_DEV
@@ -17839,10 +17860,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_server_bind_refused_rio", rocketnet_test_server_bind_refused_rio, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    { "test_server_bind_address_not_reached_on_another_address", rocketnet_test_server_bind_address_not_reached_on_another_address, NULL },
-    { "test_server_bind_refused_gso", rocketnet_test_server_bind_refused_gso, NULL },
-    { "test_server_bind_refused_io_uring", rocketnet_test_server_bind_refused_io_uring, rocketnet_server_uring_available },
-    { "test_server_bind_refused_default_transports", rocketnet_test_server_bind_refused_default_transports, rocketnet_server_uring_available },
+    { "test_server_bind_address_not_reached_on_another_address", rocketnet_test_server_bind_address_not_reached_on_another_address, rocketnet_test_server_pin_allows_portable },
+    { "test_server_bind_refused_gso", rocketnet_test_server_bind_refused_gso, rocketnet_test_server_pin_is_not_loopback },
+    { "test_server_bind_refused_io_uring", rocketnet_test_server_bind_refused_io_uring, rocketnet_test_uring_available_and_server_pin_is_not_loopback },
+    { "test_server_bind_refused_default_transports", rocketnet_test_server_bind_refused_default_transports, rocketnet_test_uring_available_and_server_pin_is_not_loopback },
     { "test_session_reconnect_isolation_gso", rocketnet_test_session_reconnect_isolation_gso, NULL },
     { "test_session_reconnect_isolation_io_uring", rocketnet_test_session_reconnect_isolation_io_uring, rocketnet_server_uring_available },
 #if ROCKETNET_XDP
@@ -18019,6 +18040,10 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     {
         return "rocketnet_test_server_pin_allows_io_uring";
     }
+    if ( predicate == rocketnet_test_uring_available_and_server_pin_is_not_loopback )
+    {
+        return "rocketnet_test_uring_available_and_server_pin_is_not_loopback";
+    }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if defined( __linux__ ) && ROCKETNET_XDP
     if ( predicate == rocketnet_test_xdp_veth_runs_here )
@@ -18057,6 +18082,10 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     if ( predicate == rocketnet_test_a_transport_pin_is_set_and_not_xdp )
     {
         return "rocketnet_test_a_transport_pin_is_set_and_not_xdp";
+    }
+    if ( predicate == rocketnet_test_server_pin_is_not_loopback )
+    {
+        return "rocketnet_test_server_pin_is_not_loopback";
     }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( predicate == rocketnet_test_server_pin_allows_iocp )
