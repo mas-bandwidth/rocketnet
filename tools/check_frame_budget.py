@@ -9,9 +9,11 @@ gates total_us_p99 <= 100.0 us.
 
 Before each of the three runs, reads the 1-minute load average (os.getloadavg
 where available; on Windows prints load=unavailable and does not void). If
-load > cores / 4.0, prints "VOID load=<x> cores=<n>" and a VOID verdict line
-and exits 3 (unless --report-only is set, which exits 0). A void is never a
-pass.
+load > cores / 4.0, that run is a probe and the last: when it exits nonzero or
+prints no P=32 line the verdict is FAIL (exit 1, with --report-only too), since
+load voids a timing and never a broken binary; otherwise it prints
+"VOID load=<x> cores=<n>" and a VOID verdict line and exits 3 (unless
+--report-only is set, which exits 0). A void is never a pass.
 """
 
 import argparse
@@ -105,9 +107,31 @@ def evaluate_gate(
         load_samples = [(load1, cores)] * count
 
     for idx, (cur_load, cur_cores) in enumerate(load_samples):
+        loaded = cur_load is not None and not is_quiet_host(cur_load, cur_cores)
         if cur_load is None:
             lines_out.append("load=unavailable")
-        elif not is_quiet_host(cur_load, cur_cores):
+
+        # A loaded host voids the timing only. The run before the void (the
+        # probe, below) still has to work: a binary that exits nonzero or prints
+        # no P=32 line is broken, and load does not excuse that. Without this a
+        # loaded host hid every break, and the planted run (which loads its own
+        # host) could never catch its plant.
+        if loaded and idx < len(run_outputs):
+            probe_error = run_errors[idx] if run_errors is not None and idx < len(run_errors) else None
+            if probe_error is None:
+                try:
+                    parse_p32_total_p99(run_outputs[idx])
+                except ValueError as exc:
+                    probe_error = str(exc)
+            if probe_error is not None:
+                lines_out.append(
+                    f"frame_budget transport={transport} P=32 total_us_p99_median=FAIL "
+                    f"runs=- gate={gate_us:g} verdict=FAIL ({probe_error}; host load {cur_load:.2f}, "
+                    f"which voids only the timing)"
+                )
+                return 1, "\n".join(lines_out)
+
+        if loaded:
             lines_out.append(f"VOID load={cur_load:.2f} cores={cur_cores}")
             lines_out.append(
                 f"frame_budget transport={transport} P=32 total_us_p99_median=VOID "
@@ -118,6 +142,7 @@ def evaluate_gate(
             lines_out.append(
                 f"::warning title=UNMEASURED::frame budget VOID: host load {cur_load:.2f} over "
                 f"{cur_cores / 4.0:g} ({cur_cores} cores / 4) before run {idx + 1}; nothing measured"
+                + (" (the probe run worked; its timing is not judged)" if idx < len(run_outputs) else "")
             )
             return (0 if report_only else 3), "\n".join(lines_out)
 
@@ -200,10 +225,15 @@ def run_benchmark_with_load_checks(
     for i in range(runs):
         load1, cores = load_fn()
         load_samples.append((load1, cores))
-        if load1 is not None and not is_quiet_host(load1, cores):
-            break
+        loaded = load1 is not None and not is_quiet_host(load1, cores)
 
+        # on a loaded host the run is a probe: it must work, and its timing is
+        # not judged (evaluate_gate)
         rc, stdout, stderr = runner(binary, transport)
+        if loaded:
+            run_outputs.append(stdout)
+            run_errors.append(f"run {i + 1}/{runs} exited {rc}: {(stderr or stdout or '').strip()}" if rc != 0 else None)
+            break
         if rc != 0:
             err_msg = (stderr or stdout or "").strip()
             run_outputs.append(stdout)

@@ -364,21 +364,6 @@
    :text "The worker counts a cancel it submitted when its completion arrives (rocketnet_uring_queue_worker_reap_one, ROCKETNET_URING_TAG_CANCEL). A cancel the kernel answers -EALREADY (the target already completed) reads the same as one that took effect; the model (RNUringQueueWorker.tla CancelRecv, CancelWake, CancelPoll) has one outcome. Check the worker against the answers and add the case to the model."
    :date "2026-11-13" :origin "Review of the io_uring transport work")
 
-  (item "flaky-reply-opens-a-later-update" :group "audit-remaining" :area "tests"
-   :title "test_transport_reply_opens_a_later_update: the delivery assertion is fixed; the ordering proof is weak"
-   :text "The case sent each request and each answer once, as unreliable datagrams over real loopback, so one lost datagram failed it. It failed this way on PR #1124's CI (43476345841, line 10204). It failed on main at a8cf53bc8 and 3218cf5f6, both before v1.1.60, and at dc8c1e6de (v1.1.61, run 43564179693, both attempts). On the studio under the looping functional suite it failed 1 of 500 on main and 0 of 500 on v1.1.60, so v1.1.61 is not involved. The one failure lost two contiguous blocks: 10 answers that the server sent and 45 requests that never reached it. Fixed on fix/v1.1.x/reply-opens-tolerates-loss: a missing request is opened again through the loss gate (tests/kernel_drops.h), and every round has a hard bound of 12000 passes and 15 s, so the case always ends, red by name or green, within 4 rounds. What remains is item reply-opens-ordering-proof-weak, and the gate's macOS evidence (loss-gate-macos-machine-wide-evidence)."
-   :date "2026-11-14" :origin "PR #1124 CI; main run 43564179693; studio runs 2026-11-14")
-
-  (item "reply-opens-ordering-proof-weak" :group "audit-remaining" :area "tests"
-   :title "The mutation test_transport_reply_opens_a_later_update names does not turn it red"
-   :text "The case's comment says that moving the client's update and drain block after the server's answer block must turn it red. On the studio, over real sockets, that mutation passed 50 of 50 runs. The answer almost never reaches the client's receive batch within the same pass, so the case does not show that a reply is first opened in a later update than its request. A deterministic proof would run the same phases where arrival is immediate and under the test's control: the loopback hub, or a seam that hands the answer to the client before its update. The mutation must then go red every time. The library is not changed."
-   :date "2026-11-14" :origin "Studio runs 2026-11-14 while fixing flaky-reply-opens-a-later-update")
-
-  (item "loss-gate-macos-machine-wide-evidence" :group "audit-remaining" :area "tests"
-   :title "On macOS the test loss gate can credit a library loss as kernel loss"
-   :text "rocketnet_loss_gate_drops (tests/kernel_drops.h) counts two things on macOS. One is udps_fullsock, which is machine-wide, so another job on the host that overflows a socket raises it; burst traffic can drop hundreds to thousands. The other is this process's own sockets' sent minus received, which also counts a datagram the library sent to a wrong address or port. Either way, a resend can cover a datagram the library lost. A fix would take the evidence from this process's own sockets only, limited to the transport's ports where the case can name them, and would drop udps_fullsock or require the per-socket count to back it. Measure first: how often udps_fullsock moves in a 5 s window while the functional suite loops, and whether honest loopback loss is still covered once the evidence is narrowed. Linux (per-socket drops), Windows and the BSDs (no count is read, so every resend is refused) are not affected."
-   :date "2026-11-14" :origin "Cold read of fix/v1.1.x/reply-opens-tolerates-loss, finding 2")
-
   (item "uring-offline-cpu-holes" :group "audit-remaining" :area "sdk"
    :title "Offline cpu holes in the io_uring pin"
    :text "rocketnet_uring_pin_check refuses a cpu at or past the online count, but a machine with cpus offline has holes below that count (cpu 5 offline, cpu 6 online). A pin to a hole is refused by the kernel, counted, and the worker is confined to its own mask past the OS's cpus (rocketnet_uring_pin_confine_words, which never names a hole), so it is placed but not where the config said. Read the online mask (sched_getaffinity or /sys/devices/system/cpu/online) and place the workers on online cpus past the OS's."
@@ -993,11 +978,6 @@
    :text "FUZZ-EXECS-FLOOR on mini-m5-1 and mini-m5-2 at a1a426851: client 4408 of 6003, server 4430 of 9000 per second; the Windows legs failed the same way at earlier shas; green on 11-12. GUESS: a floor measured on idle hosts and read on shared ones, not a regression. Settled by one run on an idle host. Fix then: a floor per host class, or a void on host load as the frame budget does."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: fuzz-nightly 43570535426")
 
-  (item "planted-frame-budget-void" :group "review-v1-2" :area "tools"
-   :title "Planted macOS row for the frame budget voids under the planted run's own load"
-   :text "PLANT-GREEN nightly-frame-budget/macos: the gate printed VOID (host load 9.83 over 8 on studio-3; 36 on mini-m5-2 earlier), measured nothing and so could not catch its plant; the self-test then fails 'a GREEN row exits 1'. The planted run's parallel slots load the host. Smallest fix: run the frame-budget row alone, or count a VOID there as unmeasured rather than green."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: planted-violations 43594770983")
-
   (item "clang-cl-test-build-warnings" :group "review-v1-2" :area "tests"
    :title "clang-cl builds of the tests fail under -Werror and at link"
    :text "nightly clang-cl x64 and nightly-windows-sanitizers clangcl-asan: tests/functional/windows_socket_errors.cpp 'missing field client initializer' (lines 559 to 918 across commits); lld cannot resolve __cpu_model in client_frame_time.vcxproj; duplicate operator new and delete in test.vcxproj under ASan; tests/load/harden_load.cpp -Wshorten-64-to-32 and -Wsign-conversion. Red on 11-13 too. Smallest fix: name the client field in those initializers, cast at the harden_load lines, and link clang_rt.builtins (or avoid __builtin_cpu_supports) under clang-cl; where __cpu_model comes from is a GUESS."
@@ -1019,9 +999,9 @@
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly 43577137425")
 
   (item "macos-soak-selftest-send-fault" :group "review-v1-2" :area "tools"
-   :title "macOS platform selftest: the soak summary selftest fails at its send-fault leg"
-   :text "Nightly CI platform selftests / macos (mini-m5-1, 21543f689) failed the soak argument and summary selftest at leg 9 (send fault): --seconds 3 exited 1. Green at cbad53d3b. GUESS: a TEST tool timing leg on a loaded host. Settled by the leg-9 output on its next failure."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-ci 43554956087")
+   :title "Soak link witness: loopback loss fails a clean run, and a count cannot tell it from a lost payload"
+   :text "Nightly CI platform selftests / macos (21543f689) failed the soak argument and summary selftest at leg 2, not leg 9 as first recorded: '--seconds 3 exited 1' (leg 9 passed); the log kept only the summary counters, so the selftest now prints the failure lines first. Reproduced on the studio under the looping functional suite: bin/soak --seconds 3 failed 1 run in 20 with 'LINK WITNESS FAILED: client_to_server missing=2 ... server_to_client missing=2', honest loopback loss in transit (lo0 drops), which the witness treats as impossible on a clean link. Tried and rejected: admitting missing payloads up to the loss gate's count (tests/kernel_drops.h). Quiet, the selftest passed 20 of 20; loaded, the planted skip in leg 9 was admitted 1 run in 20 ('exited 0 -- the link witness verdict is decoration'): the soak's own sockets always show hundreds of datagrams sent and not received (teardown disconnects, in flight), so the evidence falls to lo0's machine-wide drops, and any count also covers a lost datagram that carried no payload. Fix: evidence per direction and per connection that only a lost packet can produce, a hole in the receiving end's packet sequences (a later packet received, an earlier one never), read from the library's own counters, and admit only that many missing payloads; the planted skip leaves no hole."
+   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-ci 43554956087; studio runs 2026-11-14")
 
   (item "trace-plant-never-fires" :group "trace-check" :area "tools"
    :title "Trace check: on some rolling seeds the plant never fires"

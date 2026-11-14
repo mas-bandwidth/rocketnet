@@ -4,8 +4,10 @@ Unit tests for tools/check_frame_budget.py covering the four required cases:
 1. Median <= 100.0 passes (exit 0, verdict=PASS, prints 3 raw lines + verdict).
 2. Median > 100.0 fails naming the value (exit 1, verdict=FAIL; exit 0 with --report-only).
 3. Missing or malformed P=32 / packets_per_frame=32 line fails (exit 1, verdict=FAIL).
-4. Load > cores / 4 voids before any of the 3 runs and is never a pass (exit 3, verdict=VOID;
+4. Load > cores / 4 voids the timing and is never a pass (exit 3, verdict=VOID;
    and Windows load=unavailable does not void).
+5. Load never voids a broken binary: the run on a loaded host is a probe, and a
+   nonzero exit or a missing P=32 line is FAIL (exit 1, with --report-only too).
 """
 
 import os
@@ -203,7 +205,8 @@ class TestCheckFrameBudget(unittest.TestCase):
         self.assertIn("total_us_p99_median=50.00", report)
         self.assertIn("verdict=PASS", report)
 
-        # Load spike before run 2 stops early without invoking run 2 or 3:
+        # Load spike before run 2: run 2 is a probe (it must work, its timing
+        # is not judged) and run 3 never starts:
         loads = iter([(1.0, 16), (6.0, 16), (1.0, 16)])
         spike_calls = []
 
@@ -218,9 +221,10 @@ class TestCheckFrameBudget(unittest.TestCase):
             run_fn=fake_run_spike,
         )
         self.assertEqual(code_void, 3, msg=report_void)
-        self.assertEqual(len(spike_calls), 1)
+        self.assertEqual(len(spike_calls), 2)
         self.assertIn("VOID load=6.00 cores=16", report_void)
         self.assertIn("verdict=VOID", report_void)
+        self.assertIn("the probe run worked; its timing is not judged", report_void)
 
         # Non-zero exit from binary fails immediately and names the exit status:
         err_calls = []
@@ -238,6 +242,52 @@ class TestCheckFrameBudget(unittest.TestCase):
         self.assertEqual(code_err, 1, msg=report_err)
         self.assertEqual(len(err_calls), 1)
         self.assertIn("run 1/3 exited 2: bind failed", report_err)
+
+    def test_load_voids_the_timing_never_a_broken_binary(self) -> None:
+        # The planted-violations run loads its own host, so a check that voided
+        # before running anything could never catch a plant that breaks the
+        # binary (nightly-frame-budget/macos, 2026-11-14). On a loaded host the
+        # one run is a probe: a nonzero exit or no P=32 line is FAIL, exit 1,
+        # with --report-only too; only a working probe voids.
+        for report_only in (False, True):
+            calls = []
+
+            def fake_run_broken(binary: str, transport: str):
+                calls.append(binary)
+                return 1, "", "error: failed to create the client transport"
+
+            code, report = cfb.run_benchmark_with_load_checks(
+                binary="/fake/client_main_thread_cost",
+                transport="msgx",
+                report_only=report_only,
+                load_fn=lambda: (30.0, 32),
+                run_fn=fake_run_broken,
+            )
+            self.assertEqual(code, 1, msg=report)
+            self.assertEqual(len(calls), 1)
+            self.assertIn("verdict=FAIL (run 1/3 exited 1: error: failed to create the client transport; host load 30.00", report)
+            self.assertNotIn("verdict=VOID", report)
+
+            code_line, report_line = cfb.run_benchmark_with_load_checks(
+                binary="/fake/client_main_thread_cost",
+                transport="msgx",
+                report_only=report_only,
+                load_fn=lambda: (30.0, 32),
+                run_fn=lambda binary, transport: (0, "connected 0 of 1\n", ""),
+            )
+            self.assertEqual(code_line, 1, msg=report_line)
+            self.assertIn("verdict=FAIL (missing packets_per_frame=32", report_line)
+
+            code_void, report_void = cfb.run_benchmark_with_load_checks(
+                binary="/fake/client_main_thread_cost",
+                transport="msgx",
+                report_only=report_only,
+                load_fn=lambda: (30.0, 32),
+                run_fn=lambda binary, transport: (0, make_stdout(400.0, "msgx"), ""),
+            )
+            self.assertEqual(code_void, 0 if report_only else 3, msg=report_void)
+            self.assertIn("verdict=VOID", report_void)
+            self.assertNotIn("verdict=FAIL", report_void)
 
 
 if __name__ == "__main__":

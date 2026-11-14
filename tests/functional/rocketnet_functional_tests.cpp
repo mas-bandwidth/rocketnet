@@ -1589,8 +1589,8 @@ void rocketnet_test_transport_start_finish_shape()
     // count covers it. That count is the kernel's count of lost datagrams
     // since the case began:
     // - macOS: the datagrams this process's own sockets sent that none of them
-    //   received, plus udps_fullsock. udps_fullsock is machine-wide, so
-    //   another process's drops raise it too.
+    //   received, and at most the loopback interface's drops: each alone could
+    //   cover a datagram the library lost or misaddressed.
     // - Linux: the drops of this process's own sockets.
     // - Elsewhere: nothing, and the gate refuses every resend.
     //
@@ -10652,26 +10652,37 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_SEND_RING_FULL );
 }
 
-void rocketnet_test_transport_reply_opens_a_later_update()
-{
-    // P6 (standard/MESSAGES.md m1.4) over real loopback: a reply to a packet
-    // this end opened in update j is first opened by this end in update j+1
-    // or later. Each pass is one update and mirrors the transport's phase
-    // order: the client's update swaps receive buffers and takes the batch
-    // fixed at the start of the update, then the update opens its request,
-    // then the server's update takes its batch and answers. The pass in which
-    // the client first opens the answer must be strictly later than the pass
-    // that opened the request.
-    //
-    // The single mutation that must bite (applied to the bench copy, never
-    // committed): move the client's update + payload-drain block below to
-    // after the server's answer block, so the client's batch is fixed after
-    // the request left and after the server answered; the answer then lands in
-    // the same pass, reply_seen equals request_opened, and the strictly-later
-    // check at the bottom goes red. The transport-side rule this pins is the
-    // client receive handoff (sdk/rocketnet_client_transport.cpp (rocketnet_client_legacy_commit),
-    // and rocketnet_client_update_expose_legacy_receive).
+// P6 (standard/MESSAGES.md m1.4): a reply to a packet this end opened in
+// update j is first opened by this end in update j+1 or later. Each pass is
+// one update and mirrors the transport's phase order: the client's update
+// swaps receive buffers and takes the batch fixed at the start of the update,
+// then the update opens its request, then the server's update takes its batch
+// and answers. The pass in which the client first opens the answer must be
+// strictly later than the pass that opened the request.
+//
+// Two cases run this body. test_transport_reply_opens_a_later_update runs it
+// over the transport the suite selects (real sockets unless a pin names
+// loopback): it shows that every request and its answer get through the real
+// path, with the loss gate, and that no answer is seen before the update after
+// its request. It does NOT prove the phase order: over a socket the answer
+// almost never reaches the client before its next update in any order, so the
+// mutation below passed 50 of 50 runs there (studio, 2026-11-14).
+//
+// test_transport_reply_opens_a_later_update_in_process is the proof. Both ends
+// pin the loopback transport (in memory, no socket) and the client is step
+// driven, so a pass's sends are in the other end's queue before the next call
+// on it: the request reaches the server in the pass that opened it, and the
+// answer is waiting for the client's next update. The single mutation that
+// must bite (applied to the bench copy, never committed): move the client's
+// update + payload-drain block below to after the server's answer block. The
+// answer then lands in the same pass, reply_seen equals request_opened, and
+// the strictly-later check at the bottom goes red on every run. The
+// transport-side rule this pins is the client receive handoff
+// (sdk/rocketnet_client_transport.cpp (rocketnet_client_legacy_commit), and
+// rocketnet_client_update_expose_legacy_receive).
 
+static void rocketnet_test_reply_opens( const char * name, bool in_process )
+{
     const int rounds = 200;
 
     struct rocketnet_server_transport_config_t server_config;
@@ -10684,6 +10695,19 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     rocketnet_client_transport_default_config( &client_config );
     client_config.loopback_hub = rocketnet_test_loopback_hub();
 
+    // the in-process case pins both ends itself, so a suite pin must not reach it
+    struct rocketnet_test_env_guard_t server_guard, client_guard;
+    rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_save( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+    if ( in_process )
+    {
+        unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
+        unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
+        snprintf( server_config.transport, sizeof( server_config.transport ), "loopback" );
+        snprintf( client_config.transport, sizeof( client_config.transport ), "loopback" );
+        client_config.step_driven = true;
+    }
+
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
     rocketnet_check( server );
 
@@ -10695,6 +10719,12 @@ void rocketnet_test_transport_reply_opens_a_later_update()
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
+
+    if ( in_process )
+    {
+        rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "loopback" ) == 0 );
+        rocketnet_check( strcmp( rocketnet_client_transport_io_name( client ), "loopback" ) == 0 );
+    }
 
     double start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 10.0 )
@@ -10738,8 +10768,8 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     // the first sends, only when the gate's count covers them. That count is
     // the kernel's count of lost datagrams since the case began:
     // - macOS: the datagrams this process's own sockets sent that none of them
-    //   received, plus udps_fullsock. udps_fullsock is machine-wide, so
-    //   another process's drops raise it too.
+    //   received, and at most the loopback interface's drops: each alone could
+    //   cover a datagram the library lost or misaddressed.
     // - Linux: the drops of this process's own sockets.
     // - Elsewhere: nothing, and the gate refuses every resend.
     //
@@ -10753,7 +10783,7 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     const double round_seconds = 15.0;
 
     struct rocketnet_loss_gate_t gate;
-    rocketnet_loss_gate_begin( &gate, __func__ );
+    rocketnet_loss_gate_begin( &gate, name );
     std::vector<int> reopen;
     int round_start_update = 1;
     double round_start_time = rocketnet_platform_time();
@@ -10763,7 +10793,7 @@ void rocketnet_test_transport_reply_opens_a_later_update()
         if ( update - round_start_update >= round_passes || rocketnet_platform_time() - round_start_time >= round_seconds )
         {
             const int state = rocketnet_client_transport_state( client );
-            printf( "%s: round %d ended (%s) after %d passes, %.3f s: %d sent, %d answered, %d admitted still unopened, client state %d\n", __func__,
+            printf( "%s: round %d ended (%s) after %d passes, %.3f s: %d sent, %d answered, %d admitted still unopened, client state %d\n", name,
                     gate.resends + 1, update - round_start_update >= round_passes ? "pass budget" : "time budget", update - round_start_update,
                     rocketnet_platform_time() - round_start_time, sent, observed, (int) reopen.size(), state );
             fflush( stdout );
@@ -10885,13 +10915,22 @@ void rocketnet_test_transport_reply_opens_a_later_update()
             }
         }
 
-        rocketnet_platform_sleep( 0.0002 );
+        if ( !in_process )
+        {
+            rocketnet_platform_sleep( 0.0002 );
+        }
     }
 
     for ( int request = 1; request <= rounds; request++ )
     {
         rocketnet_check( reply_seen_update.find( request ) != reply_seen_update.end() );
         rocketnet_check( reply_seen_update[request] > request_opened_update[request] );
+        if ( in_process )
+        {
+            // in memory and step driven the boundary is exact: the answer is
+            // opened in the very next update, never later
+            rocketnet_check( reply_seen_update[request] == request_opened_update[request] + 1 );
+        }
     }
 
     rocketnet_client_transport_disconnect( client );
@@ -10904,7 +10943,21 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     }
 
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
 }
+
+void rocketnet_test_transport_reply_opens_a_later_update()
+{
+    rocketnet_test_reply_opens( __func__, false );
+}
+
+#if ROCKETNET_DEV
+void rocketnet_test_transport_reply_opens_a_later_update_in_process()
+{
+    rocketnet_test_reply_opens( __func__, true );
+}
+#endif // #if ROCKETNET_DEV
 
 // The message objects over real sockets: a message server and a message
 // client through loopback, through the C API alone. The game clock starts at
@@ -17395,6 +17448,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_client_stats_of_empty_slot_read_zero", rocketnet_test_client_stats_of_empty_slot_read_zero, rocketnet_test_server_pin_is_not_xdp },
     { "test_transport_acked_unfragmented_was_in_exactly_one_batch", rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch, rocketnet_test_server_pin_is_not_xdp },
     { "test_transport_reply_opens_a_later_update", rocketnet_test_transport_reply_opens_a_later_update, rocketnet_test_server_pin_is_not_xdp },
+#if ROCKETNET_DEV
+    { "test_transport_reply_opens_a_later_update_in_process", rocketnet_test_transport_reply_opens_a_later_update_in_process, NULL },
+#endif // #if ROCKETNET_DEV
     { "test_loopback_transport_ipv6", rocketnet_test_transport_ipv6_loopback, rocketnet_test_server_pin_is_not_xdp },
     { "test_transport_dual_stack_ipv4_client", rocketnet_test_transport_dual_stack_ipv4_client, rocketnet_test_server_pin_is_not_xdp },
     { "test_server_serves_both_families", rocketnet_test_server_serves_both_families, NULL },
