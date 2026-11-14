@@ -10512,10 +10512,20 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     // again and must be the one its update fixed. The library mutation that
     // bites (applied to a bench copy, never committed): make
     // rocketnet_client_transport_num_payloads run an update when its view is
-    // empty, so newly arrived datagrams appear between updates. The
-    // transport-side rule this pins is the client buffer swap
-    // (sdk/rocketnet_client_transport.cpp, rocketnet_client_legacy_publish and
-    // rocketnet_client_update_expose_legacy_receive).
+    // empty, so newly arrived datagrams appear between updates.
+    //
+    // What this case covers, and what it does not: through the public API a
+    // request can be opened only after an update has returned, so every
+    // phase of that update, wherever it exposes the receive buffers
+    // (sdk/rocketnet_client_transport.cpp, rocketnet_client_update_expose_legacy_receive
+    // and rocketnet_client_io_expose), ends before the request exists. The one
+    // P6 failure a caller can see is a view that changes between updates,
+    // which the check above pins. Where the expose falls inside an update is
+    // not visible to a caller; it is the I/O core's rule, held by
+    // proofs/tla/RNClientIo.tla Expose (ExposedStable) and the caller-stepped
+    // unit case test_client_io_step_publishes_received
+    // (tests/test_unit_client_io_step.cpp: a datagram that arrives after an
+    // expose reaches the next one), not by this case.
 
     const int rounds = 200;
 
@@ -10571,8 +10581,7 @@ void rocketnet_test_transport_reply_opens_a_later_update()
         // the client's update for this pass: swap the receive buffers and take
         // the batch fixed at the start of the update, before this update opens
         // anything. the client records the update each reply is first opened
-        // in. THIS BLOCK is the phase-P6 boundary; the mutation moves it after
-        // the server's answer block below.
+        // in, and keeps the view to read it again after the server answers.
 
         rocketnet_client_transport_update( client, rocketnet_platform_time() );
         rocketnet_client_transport_send_packets( client );
