@@ -233,13 +233,13 @@ Bench runs of this version (two workers, `distinct` states and seconds):
 
 | Case | Result | Distinct | Seconds |
 |---|---|---|---|
-| `MCRNDisconnectBurstRing.cfg` | pass | 435,502 | 6.2 |
-| `MCRNDisconnectBurstRingK3.cfg` | pass | 670,782 | 9.2 |
-| `MCRNDisconnectBurstRingBrokenSteadyCapOffByOne.cfg` | `NoOverwrite`, exit 12 | 158 | 0.8 |
+| `MCRNDisconnectBurstRing.cfg` | pass | 435,502 | 5.8 |
+| `MCRNDisconnectBurstRingK3.cfg` | pass | 670,782 | 8.5 |
+| `MCRNDisconnectBurstRingBrokenSteadyCapOffByOne.cfg` | `NoOverwrite`, exit 12 | 158 | 0.7 |
 | `MCRNDisconnectBurstRingBrokenCursorWrapLate.cfg` | `SealOnlyLive`, exit 12 | 21 | 0.7 |
-| `MCRNDisconnectBurstRingBrokenCursorKept.cfg` | `SealedFallFromHead`, exit 12 | 81 | 0.8 |
+| `MCRNDisconnectBurstRingBrokenCursorKept.cfg` | `SealedFallFromHead`, exit 12 | 81 | 0.7 |
 | `MCRNDisconnectBurstRingBrokenDropKeepsCursor.cfg` | `CursorInRange`, exit 12 | 25 | 0.7 |
-| `MCRNDisconnectBurstRingQueues.cfg` | pass | 386,173 | 11.3 |
+| `MCRNDisconnectBurstRingQueues.cfg` | pass | 579,397 | 15.6 |
 | `MCRNDisconnectBurstRingQueuesPassFair.cfg` | `PassFair`, exit 12 | 28 | 0.7 |
 | `MCRNDisconnectBurstRingQueuesSealedFall.cfg` | `SealedFallFromHead`, exit 12 | 61 | 0.8 |
 | `MCRNDisconnectBurstRingBrokenQueueAbandonNoPop.cfg` | `HeadNotComplete`, exit 12 | 15 | 0.7 |

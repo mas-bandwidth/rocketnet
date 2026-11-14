@@ -161,20 +161,20 @@ application's choice and not fair.
 
 ## Cases
 
-Measured on an AWS bench (2026-11-13, after the drain reset), 2 workers, 110 s budget.
+Measured on an AWS bench (2026-11-14, with the per-call reset), 2 workers, 110 s budget.
 
 | Case | Constants | Result |
 |---|---|---|
-| `MCRNScheduler.cfg` | code instance, every rule on, every invariant and `NoStarvation` | pass 3235 distinct states, 6.7 s |
-| `MCRNSchedulerBrokenPerMessagePriority.cfg` | reserved levels, `ChannelFIFO = FALSE` | invariant `FirstWriteInOrderPerChannel`, exit 12, 6-state trace (30 distinct states, 1.0 s) |
-| `MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg` | code instance, `UnreliableLast = FALSE` | temporal `NoStarvation`, exit 13, lasso of 12 states (68 distinct, 1.5 s) |
-| `MCRNSchedulerBrokenUnreliableFirstClassOrder.cfg` | code instance, `UnreliableLast = FALSE` | invariant `ClassOrderBeforePriority`, exit 12, 4-state trace (10 distinct, 1.1 s) |
-| `MCRNSchedulerBrokenRtxPerMessage.cfg` | code instance, `ChannelFIFO = FALSE` | invariant `RtxHeadBoost`, exit 12, 10-state trace (144 distinct, 1.1 s) |
-| `MCRNSchedulerBrokenStallEndsPass.cfg` | code instance, `StallEndsPass = TRUE` | invariant `UnreliableNotBlockedByWindow`, exit 12, 11-state trace (105 distinct, 1.1 s) |
-| `MCRNSchedulerReservedLevels.cfg` | reserved levels, every rule on | pass 4477 distinct states, 10.9 s |
-| `MCRNSchedulerKeepsSending.cfg` | keeps sending, every rule on | pass 1272 distinct states, 3.8 s |
-| `MCRNSchedulerBrokenReadyKeepsTurn.cfg` | keeps sending, `ReadyRotate = FALSE` | temporal `NoStarvation`, exit 13, lasso of 25 states (1220 distinct, 5.7 s) |
-| `MCRNSchedulerBrokenRtxById.cfg` | code instance, `RtxSendOrder = FALSE` | invariant `RtxHeadBoost`, exit 12, 13-state trace (403 distinct, 1.3 s) |
+| `MCRNScheduler.cfg` | code instance, every rule on, every invariant and `NoStarvation` | pass 3288 distinct states, 6.7 s |
+| `MCRNSchedulerBrokenPerMessagePriority.cfg` | reserved levels, `ChannelFIFO = FALSE` | invariant `FirstWriteInOrderPerChannel`, exit 12, 6-state trace (30 distinct states, 0.7 s) |
+| `MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg` | code instance, `UnreliableLast = FALSE` | temporal `NoStarvation`, exit 13, lasso of 11 states (68 distinct, 0.9 s) |
+| `MCRNSchedulerBrokenUnreliableFirstClassOrder.cfg` | code instance, `UnreliableLast = FALSE` | invariant `ClassOrderBeforePriority`, exit 12, 4-state trace (10 distinct, 0.7 s) |
+| `MCRNSchedulerBrokenRtxPerMessage.cfg` | code instance, `ChannelFIFO = FALSE` | invariant `RtxHeadBoost`, exit 12, 10-state trace (147 distinct, 0.7 s) |
+| `MCRNSchedulerBrokenStallEndsPass.cfg` | code instance, `StallEndsPass = TRUE` | invariant `UnreliableNotBlockedByWindow`, exit 12, 11-state trace (105 distinct, 0.7 s) |
+| `MCRNSchedulerReservedLevels.cfg` | reserved levels, every rule on | pass 4479 distinct states, 10.8 s |
+| `MCRNSchedulerKeepsSending.cfg` | keeps sending, every rule on | pass 1272 distinct states, 3.4 s |
+| `MCRNSchedulerBrokenReadyKeepsTurn.cfg` | keeps sending, `ReadyRotate = FALSE` | temporal `NoStarvation`, exit 13, lasso of 23 states (1220 distinct, 5.3 s) |
+| `MCRNSchedulerBrokenRtxById.cfg` | code instance, `RtxSendOrder = FALSE` | invariant `RtxHeadBoost`, exit 12, 13-state trace (415 distinct, 0.8 s) |
 
 What the earlier instance could not show, measured with the cases' constants
 changed (bench runs, not cases): the earlier `UnreliableNotBlockedByWindow`,
@@ -235,8 +235,8 @@ drains whatever the turns do.
   `reliable_waiting` and sets `RN_ENDPOINT_WRITE_UNRELIABLE`, and the
   unreliable packet is written. The trace also shows the rotation at work:
   channel 1 is numbered before channel 0's second message.
-- **`MCRNSchedulerBrokenReadyKeepsTurn.cfg`** (lasso of 25 states, back to
-  16): CONFIG numbered and written, lost and resent, items 2 and 3 queued on
+- **`MCRNSchedulerBrokenReadyKeepsTurn.cfg`** (lasso of 23 states, back to
+  14): CONFIG numbered and written, lost and resent, items 2 and 3 queued on
   channel 0, item 4 queued on channel 1 (ready 0, 1); CONFIG acked; item 2
   numbered and channel 0 keeps the head (ready 0, 1), written, acked,
   requeued behind 3; item 3 numbered (ready 0, 1), written, acked, requeued;

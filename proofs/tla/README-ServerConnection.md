@@ -97,7 +97,8 @@ and are not committed:
 | `OneConnectionPerToken` | the same token never admits two clients (S:2648, S:2788-2791) |
 | `NonceFresh` | no two live mappings share keys (S:32-33, no key or nonce outlives one connection; S:2656-2658) |
 | `StoredChallengeNeverReplaced` | every live mapping holds the one challenge fixed at its creation (`csalt`, `cnonce`, written only when the mapping is made); on its own this holds by construction (S:2691-2697) |
-| `StoredChallengeResent` (action) | the challenge a half-open mapping actually puts on the wire for a request carrying its salt or its token is that stored one, so the client derives the keys the mapping opens under (the code copies `mapping->challenge_packet`); reversed witness `MCServerConnectionBrokenResendFromRequest.cfg` answers under the request's salt |
+| `StoredChallengeResent` (action) | the challenge a half-open mapping actually puts on the wire for a request carrying its salt or its token carries the salt and nonce the mapping opens the response under (the code copies `mapping->challenge_packet`); in the passing cases the resend arm sends `csalt` and `cnonce`, so it holds there with `StoredChallengeNeverReplaced`, and binding it to the code's copy would take a trace check; reversed witness `MCServerConnectionBrokenResendFromRequest.cfg` answers under the request's salt |
+| `BoundTokenNeverReplaces` (action) | a request whose token is bound in the kept history never replaces a half-open mapping whose salt and token both differ: the code checks the history against the zero address before the signature and is silent (`TOKEN_ALREADY_USED`); reversed witness `MCServerConnectionBrokenBoundReplaces.cfg` |
 | `TimeoutHonoured`, `DeadlineHonoured`, `HalfOpenIdleHonoured` | the idle timeout and the handshake deadline fire when due, for an established mapping and for a half-open one |
 | `PacketsReachOwnSlotOnly` | a client's packets never reach another client's slot: a client packet that touches a used slot (its record, or the mapping behind it) came from that slot's address and opened under that mapping's keys; after an address change the client's packets come from an address with no mapping, or another client's, and touch nothing |
 | `SessionNeverAnswered` | a session packet never provokes a send (S:2852-2853, a disconnect is never answered); the keep-alive is timer driven (S:2894, keep-alive generation reads the clocks, never an arrival) |
@@ -214,6 +215,7 @@ holds each one's measured result. Every case is on a FIFO link without duplicati
 | `MCServerConnectionMove.cfg` | one client, any token, two attempts, one address change | `SafetyInvariants`, `PacketsReachOwnSlotOnly`, `SessionNeverAnswered` | pass |
 | `MCServerConnectionBrokenAddressNotIdentity.cfg` | `Move` with `AddressIsIdentity = FALSE` | `PacketsReachOwnSlotOnly` | fails (action) |
 | `MCServerConnectionBrokenResendFromRequest.cfg` | `Move` with the resend under the request's salt (`ResendFromRequest`) | `StoredChallengeResent` | fails (action) |
+| `MCServerConnectionBrokenBoundReplaces.cfg` | `Move` with three attempts and the bound-token silence off (`BoundReplaceSilent = FALSE`) | `BoundTokenNeverReplaces` | fails (action) |
 | `MCServerConnectionSameId.cfg` | `SameId = TRUE`, two slots, two nonces, no disconnects | `SafetyInvariants` | pass |
 | `MCServerConnectionBrokenClientIdNoCheck.cfg` | `SameId` with both client-id checks off | `OneSlotPerClientId` | fails (invariant) |
 | `MCServerConnectionHistoryNone.cfg` | one token shared by two clients, two slots, `History = "none"` | `SafetyInvariants` | pass |
@@ -319,7 +321,10 @@ committed case. One model error was found and fixed on the way.
    property holds in `MCServerConnection.cfg`, `MCServerConnectionMove.cfg`
    and `MCServerConnectionLossy.cfg`. `StoredChallengeNeverReplaced` alone
    holds by construction (`csalt` and `cnonce` are written only when the
-   mapping opens), so this is the check that can fail.
+   mapping opens); this property checks the packet on the wire against the
+   salt and nonce the mapping opens under, and the witness shows it can
+   fail. That the model's resend matches the code's copy is read from the
+   code, not checked: it would take a trace check.
 
 ### One token, one live connection
 
@@ -339,7 +344,17 @@ committed case. One model error was found and fixed on the way.
    with `TokenChoice = "any"` and `History = "kept"` a client that connected from A with
    token 1, then left a half-open mapping at A under token 2, replaced it with token 1.
    The silent rung now carries `boundReplace` (`m.live /\ History = "kept" /\
-   bound[p.tok] # 0`).
+   bound[p.tok] # 0`), and `BoundTokenNeverReplaces` checks it. Reversed
+   witness `MCServerConnectionBrokenBoundReplaces.cfg` (32 states, checked by
+   hand): attempt 1 connects with token 1 from address 1 (its response
+   arrives after the client has started attempt 2, binding token 1 to
+   address 1), and its disconnect copy frees the slot and the mapping;
+   attempt 2, token 2, gets its cookie and sends its cookie-bearing request,
+   then the client starts attempt 3 with token 1; the server takes attempt
+   2's request and opens a half-open mapping under token 2; attempt 3's
+   cookie-bearing request, salt `<<1, 3>>` and token 1, finds that mapping
+   with salt and token both different, and with the silence off it
+   replaces it. The code is silent there (`TOKEN_ALREADY_USED`).
 
 ### Model errors, fixed
 

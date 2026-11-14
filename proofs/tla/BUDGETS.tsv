@@ -3,8 +3,7 @@ MCRNSecurityTables.cfg	360	75.824	154.2	bench-nyc-3
 MCRNChannel.cfg	480	109.799	209.2	bench-nyc-3
 MCRNChannelSafety.cfg	540	104.885	237.3	bench-nyc-3
 MCServerSessionTwoClients.cfg	240	75.202	110.0	vision
-MCServerConnectionTwoSlots.cfg	200	83.157	91.002	record
-MCServerConnectionLossy.cfg	150	66.566	66.566	record
+MCServerConnectionTwoSlots.cfg	200	79.028	91.002	record
 MCClientConnectionReachSFirstkind.cfg	240	74.909	75.7	bench-xdp-9
 MCServerStopSpreadBrokenNoAbandon.cfg	150	69.749	72.586	bench-xdp-9
 MCRNUringQueueSendLive.cfg	200	81.711	84.272	bench-xdp-8
