@@ -8,8 +8,11 @@
 (* MCAckBlockWrap.cfg is the rule and passes every invariant.              *)
 (* MCAckBlockWrapBrokenHalfRange.cfg sets BrokenHalfRange = TRUE (the      *)
 (* empty test on the reconstructed largest, the reader before 2026-10-24)  *)
-(* and must fail on EmptyRecognised.  README-AckBlockWrap.md gives the     *)
-(* trace, replayed against sdk/rocketnet_ack.cpp by hand.                  *)
+(* and must fail on EmptyRecognised.                                       *)
+(* MCAckBlockWrapBrokenRunBound.cfg sets RunBoundChecked = FALSE (no        *)
+(* refusal of a first range length above the reconstructed largest) and    *)
+(* must fail on MalformedRefused.  README-AckBlockWrap.md gives the        *)
+(* traces, replayed against sdk/rocketnet_ack.cpp by hand.                 *)
 (***************************************************************************)
 EXTENDS AckBlockWrap
 
