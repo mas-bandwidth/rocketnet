@@ -1489,7 +1489,7 @@ WINDOWS_LIFECYCLE_CELL_CASES( rio )
 
 #include "rocketnet_server_iocp.h"
 
-extern void rocketnet_server_iocp_set_create_for_test( rocketnet_server_iocp_t * ( *function )( void *, rocketnet_address_t *, int, int, int, int, int, int * ) );
+extern void rocketnet_server_iocp_set_create_for_test( rocketnet_server_iocp_t * ( *function )(void *, rocketnet_address_t *, int, int, int, int, int, int *) );
 
 // defined in tests/functional/rocketnet_functional_tests.cpp: the suite's log function back
 void rocketnet_functional_restore_log_function();
