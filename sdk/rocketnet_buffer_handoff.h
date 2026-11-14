@@ -24,11 +24,14 @@
 // The game thread side only ever try-acquires the mutex: a busy mutex defers
 // the exchange to its next call, it never waits. The worker side may acquire.
 //
-// The same structure runs both directions of the client transport: send
-// (producer: the game thread filling payload rings; consumer: the I/O thread
-// sending them) and receive (producer: the I/O thread reading datagrams;
-// consumer: update processing them). The portable server's TX banks
-// (sdk/rocketnet_driver_builtin.cpp) are the same pattern.
+// Every user is a send path: the client transport's send (producer: the game
+// thread filling payload rings; consumer: the I/O thread sending them) and the
+// server's send queues (sdk/rocketnet_uring_queue_send.h,
+// sdk/rocketnet_server_msgx_apple.cpp). The client receive direction it once
+// also ran (producer: the I/O thread reading datagrams; consumer: update) is
+// historical: the client receive is sdk/rocketnet_receive_handoff.h. The
+// portable server's TX banks (sdk/rocketnet_driver_builtin.cpp) are the same
+// pattern.
 
 template <int NumBuffers> struct rocketnet_buffer_handoff_t
 {
