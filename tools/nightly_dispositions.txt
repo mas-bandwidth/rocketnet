@@ -47,7 +47,6 @@ nightly-real-load.yml	1000 clients over the LAN	glenn	2026-11-14	no inventory fi
 nightly-soak.yml	soak (main / windows)	glenn	2026-11-14	test_secrets_wiped_destroy_writes_only_keys waited 1800 s for the machine-wide commit lock (tests/suite_runner.h:1725); roadmap windows-commit-lock-machine-wide
 nightly-toolchains.yml	windows / v145	glenn	2026-11-14	Configure: MSVC 14.52 not installed on the runner the label picked; roadmap nightly-runner-setup-gaps
 nightly-toolchains.yml	windows / v143	glenn	2026-11-14	MSB8020: toolset v143 missing on the runner the label picked (aws-win; captain has no v143 either); roadmap nightly-runner-setup-gaps
-nightly-toolchains.yml	linux / clang-18	glenn	2026-11-14	exact delivery over real sockets under host load (rocketnet_functional_tests.cpp:9171 tag == num_seen; earlier 1201/1280 with SEND_FAILED=79); roadmap exact-delivery-asserts
 nightly-ubuntu-lts-vms.yml	ubuntu 24.04 vm	glenn	2026-11-14	gpg-agent fails in the cloud image verify step on the runner; roadmap nightly-runner-setup-gaps
 nightly-windows-sanitizers.yml	windows appverif	glenn	2026-11-14	APPVERIF-REFUSED: NETWORK SERVICE cannot write the HKLM IFEO key; roadmap nightly-runner-setup-gaps
 nightly-windows-sanitizers.yml	windows clangcl-asan	glenn	2026-11-14	clang-cl Debug build: lld __cpu_model undefined, duplicate operator new/delete, harden_load.cpp sign and shorten warnings; roadmap clang-cl-test-build-warnings

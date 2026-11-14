@@ -193,7 +193,7 @@
 
   (item "exact-delivery-asserts" :group "after-v1-0-1" :area "tests"
    :title "Functional cases that assert exact delivery over real sockets"
-   :text "Windows functional cases and the gso and io_uring functional cases assert exact delivery over real sockets, so a host dropping a datagram under load turns them red. Assert what the library promises instead."
+   :text "Functional cases that count datagrams over a real socket and assert every one arrived, with no resend and no loss accounting, so a host dropping a datagram under load turns them red. The two the nightlies hit were fixed on fix/v1.1.x/known-defects-linux (gso_client_wire_exchange and server_uring_wire_gro: a resend admitted only through the loss gate in tests/kernel_drops.h, which also counts the senders' SEND_FAILED). Still exact, in tests/functional/rocketnet_functional_tests.cpp at that branch: pump_chaff_exchange (received == sent_real), server_gso_wire_exchange (num_seen == ROCKETNET_GSO_TEST_PACKETS twice, num_segments_seen == gro_segments), server_uring_wire_exchange_flags (num_seen == ROCKETNET_URING_TEST_PACKETS twice), server_uring_gro_cmsg_faults_counted (num_seen == datagrams), xdp_max_size_both_ways (server_received == count), xdp_over_mtu_refused (received_small == count); Windows: server_rio_wire (num_seen == last twice), iocp_exchange (num_seen == ROCKETNET_IOCP_TEST_PACKETS), iocp_client_send_and_collect and iocp_client_receive_from_server (received == num_packets; the gate reads no counter on Windows, so these need the iocp transports' SEND_FAILED at least). Fix each the same way."
    :date "2026-11-11" :origin "v1.0.1 review")
 
   (item "fault-counters-public" :group "after-v1-0-1" :area "rocketnet"
