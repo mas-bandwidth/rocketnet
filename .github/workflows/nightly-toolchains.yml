@@ -198,7 +198,7 @@ jobs:
       - name: Build static and shared libraries, unit suite and functional suite
         run: |
           set -euo pipefail
-          cmake --build build --parallel 2>&1 | tee logs/build.log
+          cmake --build build --parallel 8 2>&1 | tee logs/build.log
 
       - name: Zero warnings in the configure and build output
         run: |

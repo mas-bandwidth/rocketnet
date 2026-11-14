@@ -818,7 +818,7 @@ struct rocketnet_server_transport_config_t
     int gso_reserve_cpu_0;
     /** @brief io_uring (Linux): as gso_reserve_cpu_0. */
     int io_uring_reserve_cpu_0;
-    /** @brief portable on Linux (also the msgx name there): as gso_reserve_cpu_0, for its send (0) and receive (1) workers. */
+    /** @brief portable on Linux: as gso_reserve_cpu_0, for its send (0) and receive (1) workers. */
     int portable_reserve_cpu_0;
 };
 

@@ -516,7 +516,8 @@ transport creates, from the creating thread right after the create
 `rocketnet_thread_priority( false )` turns the priority calls off for
 threads created after it. The pins of the XDP, GSO and io_uring threads to
 their queue's cpu always run; those threads ask for `SCHED_RR` only when the
-switch is on and the thread was kept off core 0.
+switch is on and the pin was granted (with cpu 0 not reserved, that pin may
+be cpu 0).
 A refused call is counted in the stats structs' `thread_priority_refusals` and
 logged once per call kind (`docs/ERRORS-AND-LOGGING.md` 3.4); the transport starts
 either way. The server task workers of a game and its main thread are the

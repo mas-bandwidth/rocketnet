@@ -37,7 +37,7 @@ proofs-message_read_max:
 	    seconds=$$(( $$(date +%s) - start )); \
 	    if [ $$status -eq 124 ]; then \
 	        verdict="timed out after $(MESSAGE_READ_MAX_TIMEOUT) s"; \
-	    elif grep -q "VERIFICATION SUCCESSFUL" "$$output"; then \
+	    elif [ $$status -eq 0 ] && grep -q "^VERIFICATION SUCCESSFUL" "$$output"; then \
 	        verdict="VERIFICATION SUCCESSFUL"; \
 	    elif grep -A3 "^Violated property" "$$output" | grep -q "unwinding assertion"; then \
 	        verdict="unwinding assertion failed"; \

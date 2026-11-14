@@ -1763,7 +1763,7 @@ struct rocketnet_server_config_t
     /// system on Linux, from cpu 0: the xdp, gso and io_uring transports'
     /// network thread q runs on cpu num_os_cpus + q, and the portable
     /// transport's send and receive workers on cpus num_os_cpus and
-    /// num_os_cpus + 1 (the msgx name runs the portable server on Linux). Zero,
+    /// num_os_cpus + 1. Zero,
     /// the default, reads as 1. Range is 1 .. 256. Start the game's own
     /// threads, the main thread first, past the network threads. A gso,
     /// io_uring or portable transport whose reserve_cpu_0 setting below is
@@ -2118,8 +2118,7 @@ struct rocketnet_server_config_t
     int io_uring_reserve_cpu_0;
 
     /// ROCKETNET_SERVER_PORTABLE_RESERVE_CPU_0 is gso_reserve_cpu_0 for the
-    /// portable transport on Linux, which is also the server behind the msgx
-    /// name there: zero, the default, and ROCKETNET_CPU_0_RESERVED put its
+    /// portable transport on Linux: zero, the default, and ROCKETNET_CPU_0_RESERVED put its
     /// send worker on cpu num_os_cpus and its receive worker on cpu
     /// num_os_cpus + 1; ROCKETNET_CPU_0_NOT_RESERVED on cpus 0 and 1. A
     /// refused pin is counted in PORTABLE_PIN_REFUSALS. Other platforms do not

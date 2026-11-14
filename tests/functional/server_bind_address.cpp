@@ -749,15 +749,10 @@ static void bind_refused_for( const char * transport )
     bind_check( WSAStartup( MAKEWORD( 2, 2 ), &data ) == 0 );
 
     // the control first: the transport starts on a port the kernel picks at the
-    // start (port 0), or the host cannot run it. No released port is rebound:
-    // another process could take it between the close and the start.
-    if ( bind_refused_start( transport, "127.0.0.1:0", NULL ) != ROCKETNET_STATUS_OK )
-    {
-        printf( "  skipped: the %s transport does not start on this host\n", transport );
-        fflush( stdout );
-        WSACleanup();
-        return;
-    }
+    // start (port 0). iocp and rio run on every Windows host, so a control
+    // that does not start is a failure, not a skip. No released port is
+    // rebound: another process could take it between the close and the start.
+    bind_check( bind_refused_start( transport, "127.0.0.1:0", NULL ) == ROCKETNET_STATUS_OK );
 
     // a port held by another socket for the rest of the test
     SOCKET holder = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );

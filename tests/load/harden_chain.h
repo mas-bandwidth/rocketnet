@@ -75,6 +75,9 @@ struct harden_chain_result_t
 //    URING_RECEIVE_DROPPED_SIZE, IOCP_ and RIO_RECEIVE_TOO_SHORT/TOO_LARGE),
 //    which the transport folds into PREFILTER_TOO_SHORT/TOO_LARGE outside
 //    PACKETS_RECEIVED. The other transports count their size drops inside it.
+//    On xdp, its kernel program's drops (XDP_KERNEL_DROPPED_*) and the frames
+//    it dropped before reading a datagram (XDP_RECEIVE_FRAME_DROPPED) join
+//    this part (harden_refused_from_terms).
 // PREFILTER_TOO_SHORT/TOO_LARGE are never added whole: they mix both parts.
 static inline int64_t harden_refused_before_received( int64_t worker_refused, int64_t outside_size_drops )
 {
@@ -86,7 +89,28 @@ static inline int64_t harden_refused_before_received( int64_t worker_refused, in
 // transport serves the cell, so the size drop counters of the others read 0
 template <typename Get> static inline int64_t harden_refused_from_terms( const Get & get )
 {
-    const int64_t outside_size_drops = get( "server.c2s_transport_URING_RECEIVE_DROPPED_SIZE" ) + get( "server.c2s_transport_IOCP_RECEIVE_TOO_SHORT" ) + get( "server.c2s_transport_IOCP_RECEIVE_TOO_LARGE" ) + get( "server.c2s_transport_RIO_RECEIVE_TOO_SHORT" ) + get( "server.c2s_transport_RIO_RECEIVE_TOO_LARGE" );
+    int64_t outside_size_drops = get( "server.c2s_transport_URING_RECEIVE_DROPPED_SIZE" ) + get( "server.c2s_transport_IOCP_RECEIVE_TOO_SHORT" ) + get( "server.c2s_transport_IOCP_RECEIVE_TOO_LARGE" ) + get( "server.c2s_transport_RIO_RECEIVE_TOO_SHORT" ) + get( "server.c2s_transport_RIO_RECEIVE_TOO_LARGE" );
+    // xdp has no receive workers' totals (no receive_drop_totals in its
+    // driver table): its kernel program's drops and the frames it dropped
+    // before reading a datagram are counted by its own rows, outside
+    // PACKETS_RECEIVED, so they are named here
+    static const char * const xdp_drops[] = {
+        "server.c2s_transport_XDP_KERNEL_DROPPED_TOO_SMALL",
+        "server.c2s_transport_XDP_KERNEL_DROPPED_TOO_LARGE",
+        "server.c2s_transport_XDP_KERNEL_DROPPED_WRONG_FILTER",
+        "server.c2s_transport_XDP_KERNEL_DROPPED_INVALID_TYPE",
+        "server.c2s_transport_XDP_KERNEL_DROPPED_WRONG_EPOCH",
+        "server.c2s_transport_XDP_KERNEL_DROPPED_REPLAYED",
+        "server.c2s_transport_XDP_KERNEL_DROPPED_FIRST_FRAGMENT",
+        "server.c2s_transport_XDP_KERNEL_DROPPED_NO_SOCKET",
+        "server.c2s_transport_XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION",
+        "server.c2s_transport_XDP_KERNEL_DROPPED_NO_SESSION",
+        "server.c2s_transport_XDP_RECEIVE_FRAME_DROPPED",
+    };
+    for ( const char * name : xdp_drops )
+    {
+        outside_size_drops += get( name );
+    }
     return harden_refused_before_received( get( "server.c2s_worker_refused" ), outside_size_drops );
 }
 
@@ -114,7 +138,7 @@ template <typename Get> static inline harden_chain_t harden_chain_up_from_terms(
     // the refusals before the library's received count, both parts on every
     // transport and with or without a hostile role, each from its own count
     up.library_refused_before_received = harden_refused_from_terms( get );
-    up.refused_source = "c2s_worker_refused (the receive workers' own totals) + the receive path's size drops (URING_RECEIVE_DROPPED_SIZE, IOCP_/RIO_RECEIVE_TOO_SHORT/TOO_LARGE)";
+    up.refused_source = "c2s_worker_refused (the receive workers' own totals) + the receive path's size drops (URING_RECEIVE_DROPPED_SIZE, IOCP_/RIO_RECEIVE_TOO_SHORT/TOO_LARGE) + xdp's drops (XDP_KERNEL_DROPPED_*, XDP_RECEIVE_FRAME_DROPPED)";
     return up;
 }
 

@@ -582,12 +582,20 @@ static int run_server( const char * address, int max_clients )
     }
     uint8_t key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     rocketnet_server_public_key( server, key );
-    printf( "SRV key " );
+    // the harness parses this line, and the library's log sink prints to the
+    // same stdout from its own threads: one call per line, so a log line can
+    // only land before or after it, never inside it
+    static const char hex_digits[] = "0123456789abcdef";
+    char key_hex[2 * ROCKETNET_SERVER_PUBLIC_KEY_BYTES + 1];
     for ( int i = 0; i < ROCKETNET_SERVER_PUBLIC_KEY_BYTES; i++ )
     {
-        printf( "%02x", key[i] );
+        key_hex[2 * i] = hex_digits[key[i] >> 4];
+        key_hex[2 * i + 1] = hex_digits[key[i] & 15];
     }
-    printf( "\nSRV started %s transport=%s max_message_bytes=%d\n", address, rocketnet_server_transport_name( server ), g_max_message_bytes );
+    key_hex[2 * ROCKETNET_SERVER_PUBLIC_KEY_BYTES] = '\0';
+    printf( "SRV key %s\n", key_hex );
+    fflush( stdout );
+    printf( "SRV started %s transport=%s max_message_bytes=%d\n", address, rocketnet_server_transport_name( server ), g_max_message_bytes );
     fflush( stdout );
 
     double outage_until = 0.0;

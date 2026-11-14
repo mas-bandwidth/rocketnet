@@ -464,9 +464,11 @@ static uint64_t server_receive_low_tick_refusals( const struct rocketnet_counter
 
     for ( int i = 0; i < rocketnet_num_counters(); ++i )
     {
-        if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL && !rocketnet_counter_aliases_shared_row( i ) )
+        // each event once: a row a shared row also counts adds only what the
+        // shared row does not (GSO_RECEIVE_DROPPED_OVERFLOW past RECEIVE_DROPPED_FULL)
+        if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL )
         {
-            total += rocketnet_counter_value( counters, i );
+            total += rocketnet_counter_unshared_value( counters, i );
         }
     }
 

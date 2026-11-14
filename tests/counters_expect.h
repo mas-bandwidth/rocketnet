@@ -190,7 +190,6 @@ inline bool rocketnet_counter_aliases_shared_row( int counter )
         case ROCKETNET_COUNTER_RIO_RECEIVE_TOO_SHORT:
         case ROCKETNET_COUNTER_RIO_RECEIVE_TOO_LARGE:
         case ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_OVERFLOW:
-        case ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_OVERFLOW:
         case ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SOURCE:
         case ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOURCE:
         case ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_NO_BUFFER:
@@ -204,6 +203,24 @@ inline bool rocketnet_counter_aliases_shared_row( int counter )
         default:
             return false;
     }
+}
+
+// The part of a refusal row's value that no shared row also counts, so a walk
+// over every refusal row counts each event once: 0 for a row that aliases a
+// shared row; for GSO_RECEIVE_DROPPED_OVERFLOW, which counts the full-bank
+// drops (RECEIVE_DROPPED_FULL also counts them) and the kernel's drops at a
+// full gso queue socket (SO_RXQ_OVFL, which no shared row counts), its excess
+// over RECEIVE_DROPPED_FULL; the whole value for every other row.
+
+inline uint64_t rocketnet_counter_unshared_value( const struct rocketnet_counters_t * counters, int counter )
+{
+    const uint64_t value = counters->values[counter];
+    if ( counter == ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_OVERFLOW )
+    {
+        const uint64_t full = counters->values[ROCKETNET_COUNTER_RECEIVE_DROPPED_FULL];
+        return value > full ? value - full : 0;
+    }
+    return rocketnet_counter_aliases_shared_row( counter ) ? 0 : value;
 }
 
 // The clean-run rule: every REFUSAL counter reads 0 on a clean path. Returns
@@ -239,8 +256,15 @@ inline int rocketnet_counters_refusals( const struct rocketnet_counters_t * coun
 
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
     {
-        if ( rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL || counters->values[i] == 0 ||
-             rocketnet_counter_aliases_shared_row( i ) )
+        if ( rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL || counters->values[i] == 0 )
+        {
+            continue;
+        }
+
+        // a row a shared row also counts is read there; GSO_RECEIVE_DROPPED_OVERFLOW
+        // is a refusal only past RECEIVE_DROPPED_FULL (rocketnet_counter_unshared_value)
+        const uint64_t value = rocketnet_counter_unshared_value( counters, i );
+        if ( value == 0 )
         {
             continue;
         }
@@ -264,7 +288,8 @@ inline int rocketnet_counters_refusals( const struct rocketnet_counters_t * coun
         }
 
         char line[128];
-        snprintf( line, sizeof( line ), "  %s = %llu\n", rocketnet_counter_name( i ), (unsigned long long) counters->values[i] );
+        snprintf( line, sizeof( line ), "  %s = %llu%s\n", rocketnet_counter_name( i ), (unsigned long long) value,
+                  value != counters->values[i] ? " (past RECEIVE_DROPPED_FULL)" : "" );
         lines += line;
         moved++;
     }

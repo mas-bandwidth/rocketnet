@@ -4035,7 +4035,7 @@ frames. These rows alias, one event moving each named row once:
 |---|---|
 | `PREFILTER_TOO_SHORT`, `PREFILTER_TOO_LARGE` | `GSO_RECEIVE_DROPPED_SIZE`; `URING_RECEIVE_DROPPED_SIZE`; `IOCP_RECEIVE_TOO_SHORT` or `IOCP_RECEIVE_TOO_LARGE`; `RIO_RECEIVE_DROPPED_SIZE` and `RIO_RECEIVE_TOO_SHORT` or `RIO_RECEIVE_TOO_LARGE` |
 | `RECEIVE_DROPPED_FULL` | `GSO_RECEIVE_DROPPED_OVERFLOW` (which also counts the kernel's drops at a full gso queue socket, SO_RXQ_OVFL, which no shared row counts, as `URING_RECEIVE_DROPPED_SOCKET` does for io_uring) |
-| `RECEIVE_FAILED` | `GSO_RECEIVE_DROPPED_SOURCE`; `RIO_RECEIVE_FAILED` |
+| `RECEIVE_FAILED` | `GSO_RECEIVE_DROPPED_SOURCE`; `URING_RECEIVE_DROPPED_SOURCE`; `URING_RECEIVE_DROPPED_NO_BUFFER`; `RIO_RECEIVE_FAILED` |
 | `SEND_FAILED` | `GSO_SEND_DROPPED`; `URING_SEND_DROPPED`; `IOCP_SEND_FAILED`; `RIO_SEND_FAILED` |
 | `SEND_RING_FULL` | `RIO_SEND_FULL` |
 
@@ -4049,11 +4049,11 @@ its transport rows do not: on gso, `SEND_FAILED` also counts a frame whose
 send was refused before it was staged, and on uring, `RECEIVE_FAILED` counts
 the receives the kernel refused, which no uring row counts.
 `URING_RECEIVE_DROPPED_OVERFLOW` counts the datagrams of one coalesced receive
-past the most one receive takes, and `URING_RECEIVE_DROPPED_SOURCE` and
+past the most one receive takes; no shared row counts these, so it aliases no
+shared row. `URING_RECEIVE_DROPPED_SOURCE` and
 `URING_RECEIVE_DROPPED_NO_BUFFER` count the receives dropped for an unreadable
 source address or a completion naming no buffer, one for each receive however
-many datagrams it held; no shared row counts these,
-so they alias no shared row.
+many datagrams it held, and each also moves `RECEIVE_FAILED`.
 
 To count distinct events, sum the shared rows and leave out the aliasing
 transport rows and `IOCP_RECEIVE_DROPPED`; every other transport row aliases

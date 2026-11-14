@@ -2365,8 +2365,8 @@ void rocketnet_test_posix_msgx_retired_socket_counted()
 // and for an IPv6 client on its own port: its shared socket sets
 // SO_REUSEADDR and SO_REUSEPORT after its bind, the client sockets before
 // theirs. The open count is read, so a client socket that failed to open and
-// fell back to the shared socket is red. Skipped where the host has no IPv6.
-// Real sockets: the server's transport directly, no datagram sent.
+// fell back to the shared socket is red, and so is a create that fails (every
+// macOS host the suite runs on has IPv6 loopback). Real sockets: the server's transport directly, no datagram sent.
 
 void rocketnet_test_posix_msgx_dual_stack_client_sockets_open()
 {
@@ -2378,8 +2378,10 @@ void rocketnet_test_posix_msgx_dual_stack_client_sockets_open()
     struct rocketnet_server_msgx_t * msgx = rocketnet_server_msgx_create( NULL, &bind_address, 2, 8, packet_filter, &status );
     if ( !msgx )
     {
-        return;
+        printf( "  msgx dual-stack create failed: %s\n", rocketnet_status_name( (enum rocketnet_status_t) status ) );
+        fflush( stdout );
     }
+    posix_check( msgx );
 
     rocketnet_address_t clients[2];
     posix_check( rocketnet_address_parse( &clients[0], "127.0.0.1:40001" ) );

@@ -75,8 +75,9 @@ logs a warning and falls back to one send per datagram. `iocp` runs
 (`ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS`, 1 to 32; default 2 on a
 specific bind address, 1 on the wildcard) and `num_iocp_send_threads` send
 threads (`ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS`, default 2; 1 to 16, and
-at most the send lanes: 8 at 1000 clients, fewer for a smaller server). A
-value outside 1 to 16 is refused at create with `CONFIG_OUT_OF_RANGE`. A
+at most the send lanes: 8 at 1000 clients, fewer for a smaller server). Zero
+selects the default; any other value outside 1 to 16 is refused at create
+with `CONFIG_OUT_OF_RANGE`. A
 value above the send lanes is checked at start: `iocp` refuses with a warning
 naming the limit, and start tries the next transport in the list; with
 `iocp` alone, start fails with `NO_TRANSPORT_FOUND`. With more than one worker, worker `w` takes the

@@ -9,7 +9,7 @@
 #   all: the union of every target.
 # Measured 2026-11-12. Linux: hetzner2, branch ci/v1.1.8/checks-that-check at 9bb116638 with
 # ROCKETNET_XDP on (Ubuntu clang 21.1.8). Darwin: macbook, the same tree, XDP off (Apple clang 21.0.0);
-# the netlink and io_uring harnesses are Linux parsers and the XDP filter driver is not built.
+# the netlink and io_uring harnesses are Linux parsers (the XDP filter row is below).
 # A target with no row for the OS it runs on is refused.
 rocketnet_fuzz	Linux	374
 rocketnet_fuzz_client_transport	Linux	9356
@@ -44,6 +44,8 @@ rocketnet_fuzz_session	Darwin	9149
 rocketnet_fuzz_session_raw	Darwin	9222
 rocketnet_fuzz_token_private	Darwin	1233
 rocketnet_fuzz_uring_recvmsg	Darwin	off
-rocketnet_fuzz_xdp_filter	Darwin	off
+# rocketnet_fuzz_xdp_filter on Darwin: its harness now reaches sdk lines there (FUZZ-COV-OFF-REACHED); the nightly fuzz coverage (macOS) job, run 43543697089 at a15a98cf1 on main, covered 325 (committed
+# corpus, 0 campaign inputs). Nine tenths, rounded down.
+rocketnet_fuzz_xdp_filter	Darwin	292
 rocketnet_fuzz_xdp_frame	Darwin	122
 all	Darwin	11342

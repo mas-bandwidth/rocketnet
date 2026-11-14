@@ -9592,7 +9592,7 @@ static void rocketnet_test_portable_placement_cell( const struct rocketnet_test_
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS );
 }
 
-// the portable server's two workers on Linux (also the msgx name there): the
+// the portable server's two workers on Linux: the
 // send worker on cpu num_os_cpus, the receive worker on num_os_cpus + 1, each
 // alone on its cpu, whatever mask the creating thread had; not reserved, on
 // cpus 0 and 1; where the host does not allow a worker's cpu, that worker is
@@ -14988,8 +14988,8 @@ static void rocketnet_test_public_client_reads_server_disconnected()
 // rocketnet_server_stopped while the clients update. Every client reads
 // ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED, well inside its timeout: the
 // stop handed every burst over and stopped the I/O only after the transport
-// finished sending it. A transport this build or host cannot create is
-// skipped.
+// finished sending it. A transport this host cannot run is a named skip (the
+// row's runs_here predicate); a create or start that fails is red.
 
 static void rocketnet_test_server_stop_disconnects_every_client( const char * transport )
 {
@@ -15002,16 +15002,16 @@ static void rocketnet_test_server_stop_disconnects_every_client( const char * tr
     server_config.max_clients = num_clients;
     server_config.transport = transport;
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
-    if ( !server || rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    // a transport this host cannot run is a named skip in the registry (its
+    // runs_here predicate); here a create or start that fails is a failure
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    if ( !server )
     {
-        if ( server )
-        {
-            rn_cli_server_stop_and_destroy( server );
-        }
-        printf( "    %s server transport not available here: skipped\n", transport );
-        return;
+        printf( "    %s server create failed: %s\n", transport, rocketnet_status_name( create_status ) );
     }
+    rocketnet_check( server );
+    rocketnet_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     rocketnet_check( rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) );
@@ -17154,7 +17154,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_server_stop_disconnects_every_client_portable", rocketnet_test_server_stop_disconnects_every_client_portable, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_stop_disconnects_every_client_gso", rocketnet_test_server_stop_disconnects_every_client_gso, NULL },
-    { "test_server_stop_disconnects_every_client_io_uring", rocketnet_test_server_stop_disconnects_every_client_io_uring, NULL },
+    { "test_server_stop_disconnects_every_client_io_uring", rocketnet_test_server_stop_disconnects_every_client_io_uring, rocketnet_server_uring_available },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_stop_disconnects_every_client_iocp", rocketnet_test_server_stop_disconnects_every_client_iocp, NULL },
