@@ -26,8 +26,16 @@ of abstraction:
   `NoIoThreadActionInStepMode`, `MCRNClientIoStepDriven.cfg`,
   `MCRNClientIoBrokenStepStartsThread.cfg`): with `step_in_update` set no I/O
   thread starts and `rocketnet_client_io_step` runs with block false inside
-  update, send_packets and destroy (`sdk/rocketnet_client_transport.cpp`, the
-  `RNClientIo CallerStep` sites). No other module models this mode's rule;
+  update and send_packets (`sdk/rocketnet_client_transport.cpp`, the
+  `RNClientIo CallerStep` sites). After stop, update steps it too, at a site
+  with no tag, whenever an io-core transport has no I/O thread, step mode or
+  not; destroy only requires the transport stopped and runs no step. No other
+  module models this mode's rule. Its
+  invariant is weak: `NoIoThreadActionInStepMode` reads `~ENABLED
+  IoThreadNext` and `lastExec`, and in step mode `IoThreadNext` is enabled
+  only through `ThreadStarted`, which is the constant `StepModeStartsThread`
+  itself, so the invariant restates that constant: the reversed witness
+  shows the switch is read, not that the code's create could start a thread;
 - the thread's lifecycle, `Init`, `Stop`, `Join`, `Free` in that order
   (`FreedOnlyAfterJoin`), cited by the transport's create and destroy and by
   each I/O driver's (`sdk/rocketnet_driver_builtin.cpp`,
