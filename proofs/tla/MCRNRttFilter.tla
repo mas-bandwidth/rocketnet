@@ -6,9 +6,10 @@
 (* Broken configs the reversed witnesses: v1.1.1's first-ack test and      *)
 (* sampling (BrokenFirstAck, BrokenUnowed), v1.1.0's silence on any gap,   *)
 (* and no filter.  ReceiptOnly adds receipt-only packets (ReceiptPkts)    *)
-(* and passes the silence invariants; ReceiptOnlyPoisons is the recorded  *)
-(* expected failure of OutageNeverPoisons: the code samples a receipt-only *)
-(* packet that waited out an outage with no number owed.                  *)
+(* and passes the silence invariants; ReceiptOnlyPoisons passes            *)
+(* NumberSamplesNeverPoison beside receipt-only packets that wait out      *)
+(* outages and are sampled, as m9.1 requires; BrokenNoFilterReceiptOnly   *)
+(* is its reversed witness (no filter).                                   *)
 (***************************************************************************)
 EXTENDS RNRttFilter
 =============================================================================
