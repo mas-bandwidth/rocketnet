@@ -3478,6 +3478,52 @@ static void rocketnet_server_socket_test_count_assert( const char * condition, c
 }
 #endif // #if ROCKETNET_ASSERTS
 
+// the staged packets in one send buffer from slot first to its staged
+// count: the slots a start wrote (a nonzero byte count). The staged count
+// is clamped as the worker clamps it when it claims the buffer.
+
+static uint32_t rocketnet_server_xdp_buffer_staged( const rocketnet_server_socket_send_buffer_t * buffer, int first )
+{
+    const uint64_t claimed = buffer->num_packets.load( std::memory_order_relaxed );
+    const int staged = claimed < (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE ? (int) claimed : ROCKETNET_XDP_SEND_QUEUE_SIZE;
+    uint32_t count = 0;
+    for ( int i = first; i < staged; i++ )
+    {
+        if ( buffer->packet_info[i].packet_bytes > 0 )
+        {
+            count++;
+        }
+    }
+    return count;
+}
+
+// what a stalled queue abandons when the stop gives up on it, counted once
+// (MA027): the frames on the TX ring and the worker's copied batch, the
+// staged packets it has not copied in the buffer it claimed, the staged
+// packets in the buffers main published, and the producer buffer main was
+// filling. Every started packet is in exactly one of these; send_idle
+// releases the queue after the stall, so none of them is sent or counted
+// again. The handoff is read under its mutex, once per stall.
+
+static uint32_t rocketnet_server_xdp_stall_abandoned( rocketnet_server_xdp_socket_t * socket, int worker_index, int batch_packets, uint32_t on_ring )
+{
+    uint32_t abandoned = on_ring + (uint32_t) batch_packets;
+    if ( worker_index >= 0 )
+    {
+        const rocketnet_server_socket_send_buffer_t * claimed = &socket->send_buffer[worker_index];
+        abandoned += rocketnet_server_xdp_buffer_staged( claimed, claimed->packet_start_index );
+    }
+    rocketnet_platform_mutex_acquire( &socket->send_mutex );
+    for ( int k = 0; k < socket->send_handoff.ready_count; k++ )
+    {
+        const int index = socket->send_handoff.ready_index[( socket->send_handoff.ready_head + k ) % ROCKETNET_XDP_NUM_BUFFERS];
+        abandoned += rocketnet_server_xdp_buffer_staged( &socket->send_buffer[index], 0 );
+    }
+    abandoned += rocketnet_server_xdp_buffer_staged( &socket->send_buffer[socket->send_handoff.producer], 0 );
+    rocketnet_platform_mutex_release( &socket->send_mutex );
+    return abandoned;
+}
+
 // Exercise the native staging entry points without creating kernel resources.
 bool rocketnet_server_socket_test_buffer_exchange()
 {
@@ -5017,52 +5063,6 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
         const int origin = filled_queue >= 0 ? filled_queue : server_socket->receive_start_queue;
         server_socket->receive_start_queue = rocketnet_xdp_drain_queue( origin, 1, num_queues );
     }
-}
-
-// the staged packets in one send buffer from slot first to its staged
-// count: the slots a start wrote (a nonzero byte count). The staged count
-// is clamped as the worker clamps it when it claims the buffer.
-
-static uint32_t rocketnet_server_xdp_buffer_staged( const rocketnet_server_socket_send_buffer_t * buffer, int first )
-{
-    const uint64_t claimed = buffer->num_packets.load( std::memory_order_relaxed );
-    const int staged = claimed < (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE ? (int) claimed : ROCKETNET_XDP_SEND_QUEUE_SIZE;
-    uint32_t count = 0;
-    for ( int i = first; i < staged; i++ )
-    {
-        if ( buffer->packet_info[i].packet_bytes > 0 )
-        {
-            count++;
-        }
-    }
-    return count;
-}
-
-// what a stalled queue abandons when the stop gives up on it, counted once
-// (MA027): the frames on the TX ring and the worker's copied batch, the
-// staged packets it has not copied in the buffer it claimed, the staged
-// packets in the buffers main published, and the producer buffer main was
-// filling. Every started packet is in exactly one of these; send_idle
-// releases the queue after the stall, so none of them is sent or counted
-// again. The handoff is read under its mutex, once per stall.
-
-static uint32_t rocketnet_server_xdp_stall_abandoned( rocketnet_server_xdp_socket_t * socket, int worker_index, int batch_packets, uint32_t on_ring )
-{
-    uint32_t abandoned = on_ring + (uint32_t) batch_packets;
-    if ( worker_index >= 0 )
-    {
-        const rocketnet_server_socket_send_buffer_t * claimed = &socket->send_buffer[worker_index];
-        abandoned += rocketnet_server_xdp_buffer_staged( claimed, claimed->packet_start_index );
-    }
-    rocketnet_platform_mutex_acquire( &socket->send_mutex );
-    for ( int k = 0; k < socket->send_handoff.ready_count; k++ )
-    {
-        const int index = socket->send_handoff.ready_index[( socket->send_handoff.ready_head + k ) % ROCKETNET_XDP_NUM_BUFFERS];
-        abandoned += rocketnet_server_xdp_buffer_staged( &socket->send_buffer[index], 0 );
-    }
-    abandoned += rocketnet_server_xdp_buffer_staged( &socket->send_buffer[socket->send_handoff.producer], 0 );
-    rocketnet_platform_mutex_release( &socket->send_mutex );
-    return abandoned;
 }
 
 static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thread_t *, void * data )
