@@ -145,14 +145,23 @@ static inline uint64_t rocketnet_kernel_drops_table( const char * path, const un
 #include <sys/socket.h>
 #include <arpa/inet.h>
 
-// macOS keeps per-socket packet counts: net.inet.udp.pcblist_n gives each of
-// this process's UDP sockets (another process's are not listed to it) a
-// record XSO_INPCB (xi_inpp, the socket's identity, at byte 8) followed by
-// XSO_STATS (struct data_stats { rxpackets, rxbytes, txpackets, txbytes }
-// for each of SO_TC_STATS_MAX = 4 traffic classes, from byte 8), each
-// record rounded up to 8 bytes after a leading struct xinpgen. These are
-// xnu's netstat layouts (bsd/netinet/in_pcb.h, bsd/sys/socketvar.h), not in
-// the SDK's headers.
+// macOS keeps per-socket packet counts: net.inet.udp.pcblist_n can list
+// every UDP socket on the machine, every process's (xnu get_pcblist_n walks
+// the global list). What a caller is given varies: measured on the studio,
+// 2026-11-13, a Go probe holding one socket was listed 48 sockets of several
+// processes while a C test binary on the same kernel was listed only its
+// own; the reason is not known, so nothing here relies on it. Each socket is a record XSO_INPCB (xi_inpp, its
+// identity, at byte 8; inp_lport at byte 18), then XSO_SOCKET (struct
+// xsocket_n: so_uid at byte 64, so_last_pid at byte 68), ..., then XSO_STATS
+// (struct data_stats { rxpackets, rxbytes, txpackets, txbytes } for each of
+// SO_TC_STATS_MAX = 4 traffic classes, from byte 8), each record rounded up
+// to 8 bytes after a leading struct xinpgen. These are xnu's netstat layouts
+// (bsd/netinet/in_pcb.h, bsd/sys/socketvar.h), not in the SDK's headers.
+// Only a socket whose so_last_pid is this process is kept: another
+// process's datagrams must never excuse this case's loss. The pid's offset
+// is proven once per process by the private pair below: its receiver must
+// be found among the kept sockets, or the count is turned off and the gate
+// admits no resend (it fails closed).
 //
 // txpackets counts a datagram at udp_output, rxpackets when udp_input hands
 // it to the socket. A loopback datagram one of these sockets sent that none
@@ -169,8 +178,10 @@ static inline uint64_t rocketnet_kernel_drops_table( const char * path, const un
 // pair of sockets; a measurement that is not 1 or 2 turns the count off.
 
 #define ROCKETNET_KERNEL_OWN_MAX_SOCKETS 128
+#define ROCKETNET_KERNEL_XSO_SOCKET 0x001
 #define ROCKETNET_KERNEL_XSO_STATS 0x008
 #define ROCKETNET_KERNEL_XSO_INPCB 0x010
+#define ROCKETNET_KERNEL_XSO_SOCKET_LAST_PID 68 // so_last_pid in struct xsocket_n
 
 struct rocketnet_kernel_own_socket_t
 {
@@ -201,9 +212,11 @@ static inline int rocketnet_kernel_own_sockets( struct rocketnet_kernel_own_sock
         return -1;
     }
 
+    const int32_t self = (int32_t) getpid();
     int count = 0;
     uint64_t id = 0;
     uint16_t port = 0;
+    bool owned = false; // the current socket's XSO_SOCKET names this process
     uint32_t header = 0;
     memcpy( &header, table, sizeof( header ) );
     size_t offset = ( (size_t) header + 7 ) & ~(size_t) 7;
@@ -221,8 +234,15 @@ static inline int rocketnet_kernel_own_sockets( struct rocketnet_kernel_own_sock
         {
             memcpy( &id, table + offset + 8, sizeof( id ) );
             memcpy( &port, table + offset + 18, sizeof( port ) ); // inp_lport
+            owned = false;
         }
-        else if ( kind == ROCKETNET_KERNEL_XSO_STATS && length >= 8 + 4 * 32 && count < capacity )
+        else if ( kind == ROCKETNET_KERNEL_XSO_SOCKET && length >= ROCKETNET_KERNEL_XSO_SOCKET_LAST_PID + 4 )
+        {
+            int32_t last_pid = 0;
+            memcpy( &last_pid, table + offset + ROCKETNET_KERNEL_XSO_SOCKET_LAST_PID, sizeof( last_pid ) );
+            owned = last_pid == self;
+        }
+        else if ( kind == ROCKETNET_KERNEL_XSO_STATS && length >= 8 + 4 * 32 && owned && count < capacity )
         {
             uint64_t rx = 0;
             uint64_t tx = 0;
@@ -238,6 +258,7 @@ static inline int rocketnet_kernel_own_sockets( struct rocketnet_kernel_own_sock
             sockets[count].tx = tx;
             sockets[count].port = port;
             count++;
+            owned = false;
         }
         offset += ( (size_t) length + 7 ) & ~(size_t) 7;
     }
