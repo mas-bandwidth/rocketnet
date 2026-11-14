@@ -109,24 +109,33 @@ not locations in the current source.
   counters is the XDP submodel's `Publish`. The model's `Commit` combines
   sealing through the helper with the caller's staged-count bookkeeping; the
   helper alone does not increment the counter.
-- **A slot back without a flush.** `rocketnet_server_commit_staged`, when the
-  link simulator is active, hands the simulator the datagram and calls
-  `io_abort_packet`, so the staging slot goes back (`Commit`'s second arm; the
-  caller still advances `send_staged`, which costs one flush).
-  `rocketnet_server_abort_send_frame` does the same for a frame reserved and
-  never committed: maintenance that found no keep-alive or ack due, and a
-  disconnect seal whose write failed (`Update`'s abort arm). Such a frame is
-  in `withdrawn` and `WithdrawnNeverStaged` says it is never also flushed.
-  `AbortReturnsSlot = FALSE` leaves it in the staging:
-  `MCRNDriverSendStagingBrokenAbortKeepsSlot.cfg` must fail
-  `WithdrawnNeverStaged`: TLC's trace is one `Update` whose maintenance
-  aborts a frame that then stays in the staging (depth 2), so the next flush
-  would send an empty frame; on the simulator arm the flush would send again
-  a datagram the simulator already sent. In the passing model the invariant
-  holds by construction of the two arms; the witness shows it is the abort's
-  slot return that keeps it. The simulator choice is drawn at
-  `Commit`; the disconnect burst and maintenance commit through the same
-  helper and are not given a second arm.
+- **A withdrawn frame keeps its slot until the flush.**
+  `rocketnet_server_commit_staged`, when the link simulator is active, hands
+  the simulator the datagram and calls `io_abort_packet` (`Commit`'s second
+  arm). `rocketnet_server_abort_send_frame` calls it for a frame reserved and
+  never committed: maintenance that found no keep-alive or ack due
+  (`Update`'s abort arm), and a disconnect seal whose write failed. On every
+  staged driver `io_abort_packet` only zeroes the slot's byte count: XDP
+  (`packet_info[...].packet_bytes = 0` in
+  `rocketnet_server_socket_abort_packet`), io_uring
+  (`rocketnet_uring_send_queues_abort`), GSO, sendmsg_x, IOCP and RIO
+  (`rocketnet_rio_lane_abort_packet`: "its reservation stays taken until the
+  phase is handed off"). The slot stays claimed in the producer bank, the
+  flush skips it, and only the flush that hands the bank off frees it. In
+  the model the frame is in `withdrawn` and in `claimed`: `claimed` counts
+  against `MaxStaged` with the armed `buffer` (`Used`), so three withdrawn
+  frames fill the three-slot bank and the next reserve fails until
+  `SendPackets` flushes, and `SendPackets` empties `claimed` while sending
+  only `buffer`. Every withdrawal advances `send_staged`: the commit's
+  caller, or `update`'s unconditional `send_staged++`, which the abort arm
+  takes. `ClaimedFlushOwed` checks that the flush freeing a claimed slot is
+  always owed. `AbortDisarmsSlot = FALSE` leaves the withdrawn frame armed
+  in the staging: `MCRNDriverSendStagingBrokenAbortLeavesArmed.cfg` must
+  fail `WithdrawnNeverSent`, the next flush handing the driver an empty
+  frame or, on the simulator arm, a datagram the simulator already sent
+  (TLC's trace below). The simulator choice is drawn at `Commit`; the
+  disconnect burst and maintenance commit through the same helper and are
+  not given a second arm.
 - **The disconnect burst.** `disconnect_client` runs out of band, between
   `update` calls. It seals its burst through the same seam. With the rule,
   the burst advances the staged counter, so the next `send_packets` flushes
@@ -143,8 +152,11 @@ not locations in the current source.
   wire: on XDP the driver's `send_packets` may retain its producer (a busy
   handoff lock, or no free replacement), and the frame leaves at a later
   flush under the XDP submodel's fairness assumption.
-- **`WithdrawnNeverStaged`**: a frame whose staging slot went back without a
-  flush is never also in the staging or flushed.
+- **`WithdrawnNeverSent`**: a withdrawn frame is never handed to the driver.
+- **`ClaimedFlushOwed`**: while a withdrawn frame's slot is claimed, the
+  counters differ, so the next `send_packets` flushes and frees it.
+- **`StagingWithinCapacity`**: armed and claimed slots together never pass
+  `MaxStaged`.
 - **`FlushedNeverAhead`**: the flushed counter never passes the staged
   counter.
 - **`DiscOwedTracked`**: a disconnect frame owed is always still buffered or
@@ -166,9 +178,11 @@ not locations in the current source.
   seam runs on the main thread. Payload fills from game threads reach the
   same staging by the driver's own start/finish pair and are represented by
   the seam and by `update`'s maintenance commit.
-- `update`'s unconditional counter bump is a bare generation tick: it stages
-  no frame and strands none. Drivers that flush inside `update` are the
-  `send_packets` case with the flush one call earlier.
+- `update`'s unconditional counter bump is taken by its seal and abort arms;
+  on an update that touches no frame it is a bare generation tick (one more
+  flush, nothing stranded), which keeps the counters bounded. Drivers that
+  flush inside `update` are the `send_packets` case with the flush one call
+  earlier.
 
 ## How to run it
 
@@ -178,7 +192,7 @@ On a Linux bench with TLC 2.19 or later, from `proofs/tla/`:
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNDriverSendStaging.cfg MCRNDriverSendStaging
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNDriverSendStagingBrokenDisconnect.cfg MCRNDriverSendStaging
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNDriverSendStagingBrokenRefusesSend.cfg MCRNDriverSendStaging
-java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNDriverSendStagingBrokenAbortKeepsSlot.cfg MCRNDriverSendStaging
+java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNDriverSendStagingBrokenAbortLeavesArmed.cfg MCRNDriverSendStaging
 java -XX:+UseParallelGC -cp /path/to/tla2tools.jar tlc2.TLC -workers 2 -cleanup -config MCRNDriverSendStagingBrokenLockAlwaysBusy.cfg MCRNDriverSendStaging
 ```
 
@@ -192,7 +206,7 @@ The small instance:
 | `DisconnectAdvancesStaged` | `TRUE` (`FALSE` in the witness) |
 | `XdpBuffers` | 3 |
 | `FinishRecordsRefusal` | `TRUE` (`FALSE` in its witness) |
-| `AbortReturnsSlot` | `TRUE` (`FALSE` in its witness) |
+| `AbortDisarmsSlot` | `TRUE` (`FALSE` in its witness) |
 
 The historical transport-only run generated 7,037 states and found 1,198 distinct states,
 with no error: the invariants hold and `StagedFramesEventuallySent` holds

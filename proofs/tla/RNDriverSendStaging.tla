@@ -33,21 +33,32 @@
 (* not held at every try).  The two graphs are not composed: no state     *)
 (* here says which frames a retained XDP producer holds.                  *)
 (*                                                                         *)
-(* A staging slot can go back without a flush: the link simulator's       *)
-(* commit (rocketnet_server_commit_staged hands it the datagram and calls *)
+(* A reserved frame can be withdrawn: the link simulator's commit          *)
+(* (rocketnet_server_commit_staged hands it the datagram and calls        *)
 (* io_abort_packet) and rocketnet_server_abort_send_frame (maintenance    *)
 (* that reserved a frame and found nothing due, or a disconnect seal      *)
-(* whose write failed).  Such a frame is "withdrawn" and must never also  *)
-(* stay in the staging; AbortReturnsSlot = FALSE leaves it there, and TLC *)
-(* must reject that (WithdrawnNeverStaged).  The simulator's choice is    *)
-(* drawn at Commit; the other commit sites go through the same helper.    *)
+(* whose write failed).  On every staged driver io_abort_packet only      *)
+(* zeroes the slot's byte count: the slot stays claimed in the producer   *)
+(* bank until the next flush hands the bank off, and the flush skips it   *)
+(* (XDP packet_info, io_uring and GSO bank slots, sendmsg_x bank info,    *)
+(* IOCP ops, RIO slot_bytes).  A withdrawn frame is therefore "claimed":  *)
+(* it counts against MaxStaged like a staged frame, it is never sent, and *)
+(* the flush that frees the bank also frees its slot.  Every withdrawal   *)
+(* advances send_staged (the commit's caller, or update's unconditional   *)
+(* bump), so that flush is always owed (ClaimedFlushOwed).                *)
+(* AbortDisarmsSlot = FALSE leaves the withdrawn frame armed in the       *)
+(* staging, the flush sends it, and TLC must reject that                  *)
+(* (WithdrawnNeverSent).  The simulator's choice is drawn at Commit; the  *)
+(* other commit sites go through the same helper.                         *)
 (*                                                                         *)
 (* Frames are abstract wire packets.  A frame is fresh until it is        *)
 (* reserved, committed, sent or dropped, so the small instance replays    *)
 (* the whole life of a bounded set of frames.  One reservation is         *)
 (* outstanding at a time: every commit through the seam runs on the main  *)
-(* thread.  update's unconditional counter bump is a bare generation      *)
-(* tick here; it stages no frame and strands none.                        *)
+(* thread.  update's unconditional counter bump is taken by its seal and  *)
+(* abort arms; on an update that touches no frame it is a bare generation *)
+(* tick here (its only effect is one more flush), so the counters stay    *)
+(* bounded.                                                                *)
 (*                                                                         *)
 (* Packet leases are a separate graph, attached only at transport idle.   *)
 (* start_packet records one lease at the current epoch. update,           *)
@@ -68,23 +79,24 @@ CONSTANTS MaxFrames,                \* the abstract frames are 1..MaxFrames
           DisconnectAdvancesStaged, \* commit through disconnect advances staged
           XdpBuffers,               \* ROCKETNET_XDP_NUM_BUFFERS: physical XDP send buffers
           FinishRecordsRefusal,     \* finish after reset records the refusal
-          AbortReturnsSlot          \* io_abort_packet takes a withdrawn frame out of the staging
+          AbortDisarmsSlot          \* io_abort_packet zeroes a withdrawn frame's slot so the flush skips it
 
 ASSUME MaxFrames \in Nat \ {0} /\ MaxStaged \in 1..MaxFrames
 ASSUME MaxBurst \in 1..MaxFrames /\ DisconnectAdvancesStaged \in BOOLEAN
 ASSUME XdpBuffers \in Nat /\ XdpBuffers >= 2
 ASSUME FinishRecordsRefusal \in BOOLEAN
-ASSUME AbortReturnsSlot \in BOOLEAN
+ASSUME AbortDisarmsSlot \in BOOLEAN
 
 Frames == 1..MaxFrames
 MaxLeaseGen == 1                \* one epoch bump; the model does not wrap onto a held generation
 
 VARIABLES staged,     \* the staged counter: frames committed, ever
           flushed,    \* the flushed counter: frames flushed, ever
-          buffer,     \* the send buffer: committed frames not yet flushed
+          buffer,     \* the send buffer: committed frames not yet flushed (armed slots)
+          claimed,    \* withdrawn frames whose disarmed slot the next flush frees
           sent,       \* frames handed to the driver by a flush
           dropped,    \* frames whose reserve failed on a full staging
-          withdrawn,  \* frames whose staging slot went back without a flush
+          withdrawn,  \* frames withdrawn after their reserve (simulator or abort)
           reserved,   \* the frame between reserve and commit; 0 for none
           discOwed,   \* disconnect frames committed and not yet sent
           ranSend,    \* the last action was send_packets
@@ -98,7 +110,7 @@ VARIABLES staged,     \* the staged counter: frames committed, ever
           refused,    \* a finish after reset was recorded
           silent      \* a finish after reset was dropped
 
-transportVars == <<staged, flushed, buffer, sent, dropped, withdrawn, reserved, discOwed,
+transportVars == <<staged, flushed, buffer, claimed, sent, dropped, withdrawn, reserved, discOwed,
           ranSend, tick>>
 
 xdpVars == <<xdpQueue, xdpFilling, xdpStaged, xdpDirty, xdpRefused,
@@ -108,14 +120,24 @@ vars == <<transportVars, xdpVars, leaseVars>>
 
 Fresh == Frames \ (buffer \cup sent \cup dropped \cup withdrawn \cup {reserved})
 
-\* the staging after a withdrawn frame's io_abort_packet: unchanged, or, in
-\* the reversed witness, still holding the frame
-AfterAbort(f) == IF AbortReturnsSlot THEN buffer ELSE buffer \cup {f}
+\* the slots the producer bank holds until the next flush: armed and claimed
+Used == Cardinality(buffer) + Cardinality(claimed)
+
+\* a withdrawn frame's io_abort_packet: its slot stays claimed and disarmed,
+\* or, in the reversed witness, stays armed in the staging
+Withdraw(f) ==
+    /\ withdrawn' = withdrawn \cup {f}
+    /\ IF AbortDisarmsSlot
+       THEN /\ claimed' = claimed \cup {f}
+            /\ UNCHANGED buffer
+       ELSE /\ buffer' = buffer \cup {f}
+            /\ UNCHANGED claimed
 
 TransportInit ==
     /\ staged = 0
     /\ flushed = 0
     /\ buffer = {}
+    /\ claimed = {}
     /\ sent = {}
     /\ dropped = {}
     /\ withdrawn = {}
@@ -128,68 +150,70 @@ TransportInit ==
 Reserve(f) ==
     /\ reserved = 0
     /\ f \in Fresh
-    /\ Cardinality(buffer) < MaxStaged
+    /\ Used < MaxStaged
     /\ reserved' = f
     /\ ranSend' = FALSE
-    /\ UNCHANGED <<staged, flushed, buffer, sent, dropped, withdrawn, discOwed, tick>>
+    /\ UNCHANGED <<staged, flushed, buffer, claimed, sent, dropped, withdrawn, discOwed, tick>>
 
 \* rocketnet_server_commit_send_frame seals the frame; Commit also includes
 \* its caller advancing send_staged. The helper alone does not advance it.
 \* rocketnet_server_commit_staged: the staging finishes the frame, or, when
 \* the link simulator is active, the simulator takes the datagram and
-\* io_abort_packet returns the staging slot (the caller still advances
-\* send_staged, which costs one flush and strands nothing).
+\* io_abort_packet disarms the slot, which stays claimed until the flush
+\* the caller's send_staged advance makes owed.
 Commit ==
     /\ reserved # 0
     /\ \/ /\ buffer' = buffer \cup {reserved}
-          /\ UNCHANGED withdrawn
-       \/ /\ withdrawn' = withdrawn \cup {reserved}
-          /\ buffer' = AfterAbort(reserved)
+          /\ UNCHANGED <<withdrawn, claimed>>
+       \/ Withdraw(reserved)
     /\ staged' = staged + 1
     /\ reserved' = 0
     /\ ranSend' = FALSE
     /\ UNCHANGED <<flushed, sent, dropped, discOwed, tick>>
 
-\* a failed send: reserve finds the staging full and the frame is dropped
+\* a failed send: reserve finds the staging full (armed and claimed slots
+\* alike) and the frame is dropped
 FailedSend(f) ==
     /\ f \in Fresh
-    /\ Cardinality(buffer) = MaxStaged
+    /\ Used = MaxStaged
     /\ dropped' = dropped \cup {f}
     /\ ranSend' = FALSE
-    /\ UNCHANGED <<staged, flushed, buffer, sent, withdrawn, reserved, discOwed, tick>>
+    /\ UNCHANGED <<staged, flushed, buffer, claimed, sent, withdrawn, reserved, discOwed, tick>>
 
 \* rocketnet_server_transport_send_packets, staged branch, on a transport
 \* without ROCKETNET_TRANSPORT_REFLUSHES and not at shutdown: flush exactly
 \* when the counters differ, and everything staged is handed to the driver
-\* together (on XDP the driver may then retain it: the XDP submodel)
+\* together (on XDP the driver may then retain it: the XDP submodel); the
+\* bank handed off takes the claimed slots with it, sending nothing for them
 SendPackets ==
     /\ ranSend' = TRUE
     /\ IF staged # flushed
        THEN /\ sent' = sent \cup buffer
             /\ buffer' = {}
+            /\ claimed' = {}
             /\ flushed' = staged
             /\ discOwed' = {}
-       ELSE UNCHANGED <<sent, buffer, flushed, discOwed>>
+       ELSE UNCHANGED <<sent, buffer, claimed, flushed, discOwed>>
     /\ UNCHANGED <<staged, dropped, withdrawn, reserved, tick>>
 
 \* rocketnet_server_transport_update: the generation tick, and maintenance
 \* may seal one frame through the seam while it runs, or reserve one, find
 \* nothing due and abort it (rocketnet_server_abort_send_frame, whose
-\* io_abort_packet returns the staging slot)
+\* io_abort_packet leaves the slot claimed). Both arms take update's
+\* unconditional send_staged++, which owes the flush that frees the slot.
 Update ==
     /\ tick' = 1 - tick
     /\ ranSend' = FALSE
     /\ \/ \E f \in Fresh :
-            /\ Cardinality(buffer) < MaxStaged
+            /\ Used < MaxStaged
             /\ buffer' = buffer \cup {f}
             /\ staged' = staged + 1
-            /\ UNCHANGED withdrawn
+            /\ UNCHANGED <<withdrawn, claimed>>
        \/ \E f \in Fresh :
-            /\ Cardinality(buffer) < MaxStaged
-            /\ withdrawn' = withdrawn \cup {f}
-            /\ buffer' = AfterAbort(f)
-            /\ UNCHANGED staged
-       \/ UNCHANGED <<buffer, staged, withdrawn>>
+            /\ Used < MaxStaged
+            /\ Withdraw(f)
+            /\ staged' = staged + 1
+       \/ UNCHANGED <<buffer, claimed, staged, withdrawn>>
     /\ UNCHANGED <<flushed, sent, dropped, reserved, discOwed>>
 
 \* rocketnet_server_transport_disconnect_client: seal the burst through the
@@ -199,7 +223,7 @@ Update ==
 DisconnectClient ==
     \E burst \in SUBSET Fresh :
         /\ Cardinality(burst) <= MaxBurst
-        /\ Cardinality(buffer) + Cardinality(burst) <= MaxStaged
+        /\ Used + Cardinality(burst) <= MaxStaged
         /\ buffer' = buffer \cup burst
         /\ discOwed' = discOwed \cup burst
         /\ IF DisconnectAdvancesStaged
@@ -207,7 +231,7 @@ DisconnectClient ==
                 /\ ranSend' = FALSE
            ELSE /\ ranSend' = TRUE
                 /\ UNCHANGED staged
-        /\ UNCHANGED <<flushed, sent, dropped, withdrawn, reserved, tick>>
+        /\ UNCHANGED <<flushed, claimed, sent, dropped, withdrawn, reserved, tick>>
 
 \* XDP worker/publication submodel: rocketnet_xdp_buffer_exchange_t in
 \* sdk/rocketnet_server_socket_linux.cpp over XdpBuffers physical buffers.
@@ -239,7 +263,7 @@ LeaseInit == LeaseAtInit
 \* The transport and XDP valuation Init gives them. Lease actions run only
 \* here, so a lease step cannot fork the staged-send graph.
 TransportIdle ==
-    /\ staged = 0 /\ flushed = 0 /\ buffer = {} /\ sent = {} /\ dropped = {}
+    /\ staged = 0 /\ flushed = 0 /\ buffer = {} /\ claimed = {} /\ sent = {} /\ dropped = {}
     /\ withdrawn = {} /\ reserved = 0 /\ discOwed = {} /\ ranSend = FALSE /\ tick = 0
     /\ xdpQueue = 0 /\ xdpFilling = TRUE /\ xdpStaged = FALSE
     /\ xdpDirty = FALSE /\ xdpRefused = FALSE /\ xdpRanFlush = FALSE
@@ -395,6 +419,7 @@ TypeOK ==
     /\ staged \in 0..MaxFrames
     /\ flushed \in 0..MaxFrames
     /\ buffer \subseteq Frames
+    /\ claimed \subseteq Frames
     /\ sent \subseteq Frames
     /\ dropped \subseteq Frames
     /\ withdrawn \subseteq Frames
@@ -426,9 +451,16 @@ DiscOwedTracked ==
 StagedFramesEventuallySent ==
     \A f \in Frames : (f \in buffer) ~> (f \in sent)
 
-\* a frame whose staging slot went back is never also flushed: the simulator
-\* already sent it, or nothing was written into it
-WithdrawnNeverStaged == withdrawn \cap (buffer \cup sent) = {}
+\* a withdrawn frame is never handed to the driver: the simulator already
+\* has the datagram, or nothing was written into the slot
+WithdrawnNeverSent == withdrawn \cap sent = {}
+
+\* a claimed slot always has the flush that frees it owed: every withdrawal
+\* advanced send_staged, so the next send_packets hands the bank off
+ClaimedFlushOwed == claimed # {} => staged # flushed
+
+\* the producer bank never holds more than its slots, claimed ones included
+StagingWithinCapacity == Used <= MaxStaged
 
 \* a finish after reset is recorded. silent is the reversed witness, the
 \* finish that returns as if nothing was owed.

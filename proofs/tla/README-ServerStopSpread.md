@@ -16,7 +16,7 @@ its Stop step; this model is the stop as a state machine across steps.
 | `ring`, `head`, `count`, `cursor` | the ring of `RingSize` entries, each a session and its sealed count | `disconnect_bursts`, `disconnect_burst_head`, `disconnect_burst_count`, `disconnect_burst_cursor` |
 | `staged`, `inflight` | frames started since the last flush, and frames flushed that the transport still holds | the staged bank (the io_uring array, the gso producer bank, the IOCP send operations, the RIO fill phase, an XDP queue) |
 | `phase` | `RUNNING`, `STOPPING`, `IOSTOP` (the I/O told to stop), `STOPPED` | `state`, `io_stop_requested`, the I/O's stopped |
-| `held` | copies the development link simulator holds (always 0 with `Simulator = FALSE`) | the simulator's queue on a staged transport; `rocketnet_server_commit_staged` hands it the datagram and aborts the staging slot, so a held copy is neither `staged` nor `inflight`. `rocketnet_server_link_send` drops the datagram when its lock is busy, so the code's held count does not always grow where `SealOne` raises `held`: the model over-approximates what the simulator holds. On the portable path the simulator takes datagrams only at the control buffer's flush, which this model does not separate |
+| `held` | copies the development link simulator holds (always 0 with `Simulator = FALSE`) | the simulator's queue on a staged transport; `rocketnet_server_commit_staged` hands it the datagram and `io_abort_packet` zeroes the slot, which stays claimed in the queue's bank until the flush hands the bank off: `SealOne` raises `held` and `staged[q]` together, and the held copy itself is neither `staged` nor `inflight` until the link drain re-stages it. `rocketnet_server_link_send` drops the datagram when its lock is busy, so the code's held count does not always grow where `SealOne` raises `held`: the model over-approximates what the simulator holds. On the portable path the simulator takes datagrams only at the control buffer's flush, which this model does not separate |
 | `jammed` | environment: the transport has lost its send room for good | an XDP queue whose TX wakeup failed hard (`send_hard_error`) with its producer full |
 | `sent`, `owed`, `abandoned`, `refused`, `overflow`, `cut` | ghosts | |
 | `dropped`, `ringFull`, `early` | ghosts: bursts abandoned at a stop step for want of room, the `SEND_RING_FULL` counts those abandons added, and an abandon while room could still return | |
@@ -41,7 +41,7 @@ already spent. `Idle` is `inflight = 0 \/ jammed`: the transport's
 | `Connect(i)` | environment: a client takes a free slot |
 | `Complete` | environment: the kernel or worker finishes a flushed frame; a jammed transport finishes nothing |
 | `Jam` | environment: the transport loses its send room for good (an XDP queue in hard send error with its producer full). The hard error can clear on a later wakeup; the stop takes `send_idle`'s giving up as final, as the code does, so the model keeps the jam |
-| `LoseRoute(s)`, `FindRoute(s)` | environment: a destination loses or regains its link-layer address (the XDP reply MAC), or the transport refuses it with room left (an address its socket cannot carry); either refusal abandons the burst. A sealed write that fails after its start (the code abandons that burst and keeps draining since the `rn-server-stop-sim-burst` merge) is the same step: `LoseRoute(s)` then the abandon branch of `SealOne`, which needs the same room and stages nothing |
+| `LoseRoute(s)`, `FindRoute(s)` | environment: a destination loses or regains its link-layer address (the XDP reply MAC), or the transport refuses it with room left (an address its socket cannot carry); either refusal abandons the burst. A sealed write that fails after its start (the code abandons that burst and keeps draining since the `rn-server-stop-sim-burst` merge) is the same step: `LoseRoute(s)` then the abandon branch of `SealOne`, which needs the same room. Abstracted: on a staged transport that start already claimed a slot of the queue's bank, which `rocketnet_server_abort_send_frame` zeroes but leaves claimed until the step's flush; the model's abandon claims none, so a later burst on that queue in the same pass may seal where the code waits for the next flush |
 
 ## Properties
 
@@ -146,9 +146,12 @@ abandoned, and is a roadmap entry.
 ## The link simulator, and an open code defect
 
 With `Simulator = TRUE` a sealed packet goes to the development link
-simulator instead of the staging: `rocketnet_server_commit_staged` hands the
-datagram to the simulator and aborts its staging slot, so `SealOne` raises
-`held` and leaves `staged` alone. The stop step's flush drains the simulator
+simulator instead of the wire: `rocketnet_server_commit_staged` hands the
+datagram to the simulator and calls `io_abort_packet`, which on every staged
+driver only zeroes the slot's byte count. The slot stays claimed in the
+queue's bank until the flush hands the bank off and the worker recycles it,
+so `SealOne` raises `held` and `staged[q]` together, and the room comes
+back only through `Flush` and `Complete(q)`. The stop step's flush drains the simulator
 with `shutdown` (`rocketnet_server_link_drain`), re-staging held copies one
 by one while `rocketnet_server_transport_io_send_room` is above 0; that room
 is the fewest free slots over the queues, so one full queue stops the drain.

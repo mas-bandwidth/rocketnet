@@ -28,12 +28,17 @@
 (* refuses for want of a link-layer destination abandons that burst: no    *)
 (* packet of it can ever leave.  A sealed write that fails after its start *)
 (* (rocketnet_write_sealed_packet returning no bytes; the drain aborts the *)
-(* frame, abandons the burst and keeps draining) is the same abandon: in   *)
-(* the model it is LoseRoute(s) followed by SealOne's abandon branch,      *)
-(* which needs the same room, stages nothing and marks the burst complete. *)
-(* LoseRoute changes nothing but the environment set unreachable, which    *)
-(* names only that now complete burst, so the two steps are the code's    *)
-(* one.                                                                    *)
+(* frame, abandons the burst and keeps draining) is taken as the same      *)
+(* abandon: LoseRoute(s) followed by SealOne's abandon branch, which needs *)
+(* the same room and marks the burst complete.  One difference is          *)
+(* abstracted away: on a staged transport the start already claimed a slot *)
+(* of the queue's bank, and rocketnet_server_abort_send_frame only zeroes  *)
+(* its byte count, so that slot stays claimed until the step's flush hands *)
+(* the bank off; the model's abandon claims none.  The claim only takes    *)
+(* room (a later burst on that queue in the same pass may wait for the     *)
+(* next flush instead of sealing now); it carries nothing and every flush  *)
+(* frees it.  LoseRoute changes nothing but the environment set            *)
+(* unreachable, which names only that now complete burst.                  *)
 (*                                                                         *)
 (* The transport stages into QueueCount send queues (send_queues), each    *)
 (* with its own bank of BankSize frames; a session's packets go to the     *)
@@ -64,7 +69,9 @@
 (*                                                                         *)
 (* Simulator = TRUE is a development build's active link simulator         *)
 (* (rocketnet_server_commit_staged): a sealed packet goes to the simulator *)
-(* and its staging slot back, and the simulator holds the copy (held).     *)
+(* (held grows) and io_abort_packet zeroes its slot, which stays claimed   *)
+(* in the queue's bank (staged grows) until the flush hands the bank off   *)
+(* and the worker recycles it, as on every staged driver.                  *)
 (* The link drain (rocketnet_server_link_drain, called by the stop step    *)
 (* after its flush) moves held copies into the staging only while          *)
 (* rocketnet_server_transport_io_send_room is above 0, and that is the     *)
@@ -284,9 +291,9 @@ PopAfter(r, cur) ==
 \* start abandons the burst (and so does a sealed write that fails: see the
 \* module comment). Otherwise a packet is sealed only while its queue
 \* reports room; with no room anywhere the drain ends this step and the
-\* burst waits. With the link simulator the sealed packet goes to it and
-\* its staging slot back (rocketnet_server_commit_staged): held grows and
-\* the staging is unchanged.
+\* burst waits. With the link simulator the sealed packet goes to it
+\* (rocketnet_server_commit_staged): held grows, and the slot io_abort_packet
+\* zeroed stays claimed on queue q until the flush, so staged grows too.
 DrainAt == IF cursor >= count THEN 0 ELSE cursor
 SealOne ==
     /\ phase \in {"RUNNING", "STOPPING"}
@@ -312,11 +319,8 @@ SealOne ==
           \/ /\ e.sealed < Burst \/ Defect = "noskip"
              /\ e.s \notin unreachable
              /\ \/ /\ Room(q) > 0
-                   /\ IF Simulator
-                         THEN /\ held' = held + 1
-                              /\ UNCHANGED staged
-                         ELSE /\ staged' = [staged EXCEPT ![q] = @ + 1]
-                              /\ UNCHANGED held
+                   /\ staged' = [staged EXCEPT ![q] = @ + 1]
+                   /\ held' = IF Simulator THEN held + 1 ELSE held
                    /\ sent' = [sent EXCEPT ![e.s] = @ + 1]
                    /\ UNCHANGED refused
                 \/ /\ Room(q) = 0 /\ Defect = "singleshot"

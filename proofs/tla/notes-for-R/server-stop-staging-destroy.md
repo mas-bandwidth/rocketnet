@@ -106,11 +106,14 @@ to whatever the fix does with held copies.
   `// rocketnet_server_socket_finish_packet: writes the byte count of the packet slot start_packet staged in the producer buffer (proofs/tla/RNDriverSendStaging.tla XdpStart);`
   `// a pointer outside the producer buffer (one from before the last flip) is refused; RNDriverSendStaging does not model the pointer check (COVERAGE send-handoff-server-finish).`
 - `sdk/rocketnet_server_transport.cpp`, the comment block above
-  `rocketnet_server_commit_staged` (MM089): add
-  `// proofs/tla/RNDriverSendStaging.tla Commit (its link simulator arm): the slot goes back without a flush (WithdrawnNeverStaged).`
+  `rocketnet_server_commit_staged` (MM089): the existing words "the staging
+  slot goes back" are wrong for a staged driver, where io_abort_packet only
+  zeroes the slot's byte count and the slot stays claimed until the flush.
+  Replace that clause and add
+  `// proofs/tla/RNDriverSendStaging.tla Commit (its link simulator arm): io_abort_packet disarms the slot, which stays claimed until the next flush hands the bank off (WithdrawnNeverSent, ClaimedFlushOwed).`
 - `sdk/rocketnet_server_transport.cpp`, above
   `rocketnet_server_abort_send_frame` (MM089): add
-  `// proofs/tla/RNDriverSendStaging.tla Update (its abort arm): a reserved frame never committed gives its staging slot back (WithdrawnNeverStaged).`
+  `// proofs/tla/RNDriverSendStaging.tla Update (its abort arm): a reserved frame never committed is disarmed, not given back; its slot is freed by the flush update's send_staged++ makes owed.`
 - `sdk/rocketnet_server_transport.cpp`, in
   `rocketnet_server_transport_defer_disconnect_burst`, above
   `burst->first_sequence = rocketnet_platform_atomic_add_u64(` (MM086): add
