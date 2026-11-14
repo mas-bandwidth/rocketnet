@@ -11,6 +11,7 @@ bool rocketnet_server_socket_test_queue_room();
 bool rocketnet_server_socket_test_replay_marks();
 bool rocketnet_server_socket_test_send_failures_without_mutex();
 bool rocketnet_server_socket_test_send_idle_hard_error();
+bool rocketnet_server_socket_test_stall_abandoned();
 bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
 bool rocketnet_server_socket_test_gateway_refresh();
 bool rocketnet_server_socket_test_worker_stack();
@@ -40,6 +41,7 @@ int main( int argc, char ** argv )
     const bool replay_passed = rocketnet_server_socket_test_replay_marks();
     const bool send_failures_passed = rocketnet_server_socket_test_send_failures_without_mutex();
     const bool send_idle_hard_error_passed = rocketnet_server_socket_test_send_idle_hard_error();
+    const bool stall_abandoned_passed = rocketnet_server_socket_test_stall_abandoned();
     const bool reply_mac_passed = rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
     const bool gateway_refresh_passed = rocketnet_server_socket_test_gateway_refresh();
     const bool worker_stack_passed = rocketnet_server_socket_test_worker_stack();
@@ -92,6 +94,14 @@ int main( int argc, char ** argv )
     }
 
     printf( "test_xdp_transport_send_idle_hard_error\n" );
+
+    if ( !stall_abandoned_passed )
+    {
+        fprintf( stderr, "native XDP stall-abandoned count check failed\n" );
+        return 1;
+    }
+
+    printf( "test_xdp_transport_stall_abandoned_counts_every_started_packet\n" );
 
     if ( !reply_mac_passed )
     {

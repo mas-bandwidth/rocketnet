@@ -410,6 +410,7 @@ bool rocketnet_server_socket_test_inactive_flow();
 bool rocketnet_server_socket_test_replay_marks();
 bool rocketnet_server_socket_test_send_failures_without_mutex();
 bool rocketnet_server_socket_test_send_idle_hard_error();
+bool rocketnet_server_socket_test_stall_abandoned();
 // the unit suite's case: dispatch is rocketnet_server_transport_io_receive_frames_dropped,
 // replay_dispatch rocketnet_server_transport_io_replay_counts, and xdp the xdp
 // operations table, as the transport's counter read uses them

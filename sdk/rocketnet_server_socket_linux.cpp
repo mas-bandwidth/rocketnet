@@ -4804,6 +4804,73 @@ bool rocketnet_server_socket_test_send_idle_hard_error()
 
     return valid;
 }
+
+bool rocketnet_server_socket_test_stall_abandoned()
+{
+    // MA027: when the stop gives up on a stalled queue, every started packet
+    // is counted once: on the ring, in the worker's batch, still staged in
+    // the claimed buffer past its copy cursor, in the published buffers and
+    // in the producer buffer. A slot with no bytes is not a packet.
+
+    void * queue_storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_xdp_socket_t ) );
+    if ( !queue_storage )
+    {
+        return false;
+    }
+
+    auto * queue = new ( queue_storage ) rocketnet_server_xdp_socket_t();
+
+    if ( !rocketnet_platform_mutex_create( &queue->send_mutex ) )
+    {
+        queue->~rocketnet_server_xdp_socket_t();
+        rocketnet_free( NULL, queue_storage );
+        return false;
+    }
+
+    auto stage = [queue]( int buffer, int slot, size_t bytes )
+    {
+        queue->send_buffer[buffer].packet_info[slot].packet_bytes = bytes;
+    };
+
+    // the producer (buffer 0) stages three slots, one of them empty, and is
+    // published; the next producer stages two and is published; the third
+    // producer is still filling with one
+
+    stage( 0, 0, 10 );
+    stage( 0, 1, 0 );
+    stage( 0, 2, 20 );
+    queue->send_buffer[0].num_packets.store( 3, std::memory_order_relaxed );
+    queue->send_handoff.publish();
+
+    stage( 1, 0, 30 );
+    stage( 1, 1, 40 );
+    queue->send_buffer[1].num_packets.store( 2, std::memory_order_relaxed );
+    queue->send_handoff.publish();
+
+    stage( 2, 0, 50 );
+    queue->send_buffer[2].num_packets.store( 1, std::memory_order_relaxed );
+
+    // the worker claims the first published buffer and has copied one packet
+
+    const int claimed = queue->send_handoff.claim();
+    bool valid = claimed == 0;
+    queue->send_buffer[claimed].packet_start_index = 2;
+
+    // ring 5 + batch 2 + claimed remainder 1 (slot 2) + published 2 + producer 1
+
+    valid &= rocketnet_server_xdp_stall_abandoned( queue, claimed, 2, 5 ) == 11;
+
+    // with no claimed buffer, no batch and nothing on the ring, only the
+    // published buffer's two and the producer's one count
+
+    valid &= rocketnet_server_xdp_stall_abandoned( queue, -1, 0, 0 ) == 3;
+
+    rocketnet_platform_mutex_destroy( &queue->send_mutex );
+    queue->~rocketnet_server_xdp_socket_t();
+    rocketnet_free( NULL, queue_storage );
+
+    return valid;
+}
 #endif // #if ROCKETNET_DEV
 
 void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * server_socket, uint64_t * counters )
@@ -4950,6 +5017,52 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
         const int origin = filled_queue >= 0 ? filled_queue : server_socket->receive_start_queue;
         server_socket->receive_start_queue = rocketnet_xdp_drain_queue( origin, 1, num_queues );
     }
+}
+
+// the staged packets in one send buffer from slot first to its staged
+// count: the slots a start wrote (a nonzero byte count). The staged count
+// is clamped as the worker clamps it when it claims the buffer.
+
+static uint32_t rocketnet_server_xdp_buffer_staged( const rocketnet_server_socket_send_buffer_t * buffer, int first )
+{
+    const uint64_t claimed = buffer->num_packets.load( std::memory_order_relaxed );
+    const int staged = claimed < (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE ? (int) claimed : ROCKETNET_XDP_SEND_QUEUE_SIZE;
+    uint32_t count = 0;
+    for ( int i = first; i < staged; i++ )
+    {
+        if ( buffer->packet_info[i].packet_bytes > 0 )
+        {
+            count++;
+        }
+    }
+    return count;
+}
+
+// what a stalled queue abandons when the stop gives up on it, counted once
+// (MA027): the frames on the TX ring and the worker's copied batch, the
+// staged packets it has not copied in the buffer it claimed, the staged
+// packets in the buffers main published, and the producer buffer main was
+// filling. Every started packet is in exactly one of these; send_idle
+// releases the queue after the stall, so none of them is sent or counted
+// again. The handoff is read under its mutex, once per stall.
+
+static uint32_t rocketnet_server_xdp_stall_abandoned( rocketnet_server_xdp_socket_t * socket, int worker_index, int batch_packets, uint32_t on_ring )
+{
+    uint32_t abandoned = on_ring + (uint32_t) batch_packets;
+    if ( worker_index >= 0 )
+    {
+        const rocketnet_server_socket_send_buffer_t * claimed = &socket->send_buffer[worker_index];
+        abandoned += rocketnet_server_xdp_buffer_staged( claimed, claimed->packet_start_index );
+    }
+    rocketnet_platform_mutex_acquire( &socket->send_mutex );
+    for ( int k = 0; k < socket->send_handoff.ready_count; k++ )
+    {
+        const int index = socket->send_handoff.ready_index[( socket->send_handoff.ready_head + k ) % ROCKETNET_XDP_NUM_BUFFERS];
+        abandoned += rocketnet_server_xdp_buffer_staged( &socket->send_buffer[index], 0 );
+    }
+    abandoned += rocketnet_server_xdp_buffer_staged( &socket->send_buffer[socket->send_handoff.producer], 0 );
+    rocketnet_platform_mutex_release( &socket->send_mutex );
+    return abandoned;
 }
 
 static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thread_t *, void * data )
@@ -5352,7 +5465,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             const double now = draining && pending ? rocketnet_platform_time() : 0.0;
             if ( rocketnet_xdp_send_stall_pass( send_stall, consumer, pending, draining, now, ROCKETNET_XDP_SEND_STALL_SECONDS, socket->send_stalled ) )
             {
-                const uint32_t abandoned = on_ring + (uint32_t) num_batch_packets;
+                const uint32_t abandoned = rocketnet_server_xdp_stall_abandoned( socket, send_worker_index, num_batch_packets, on_ring );
                 socket->send_wakeup_failures.fetch_add( abandoned, std::memory_order_relaxed );
                 rocketnet_error( "xdp queue %d tx ring has not drained for %.1f s during the stop; stop gives up on its %u queued frames",
                                  socket->queue, ROCKETNET_XDP_SEND_STALL_SECONDS, abandoned );
