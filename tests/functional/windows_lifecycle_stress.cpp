@@ -1513,7 +1513,7 @@ static void windows_auto_fall_log( void * context, enum rocketnet_log_level_t le
     {
         windows_auto_fall_iocp_lines.fetch_add( 1 );
     }
-    if ( windows_auto_fall_has( message, length, "rio transport refused" ) )
+    if ( windows_auto_fall_has( message, length, "rio transport refused" ) || windows_auto_fall_has( message, length, "rio transport create failed" ) )
     {
         windows_auto_fall_rio_lines.fetch_add( 1 );
     }
