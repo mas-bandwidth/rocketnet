@@ -114,8 +114,9 @@ is the same loop with a larger allowance.
   burst is complete, so the pass does not owe it a seal, and passing over it
   is not a second seal.
 - **`PassFairUnlessFull`** (any number of queues): no burst is sealed twice
-  in a pass, and a pass ends owing a seal only when it passed a burst over
-  for its full queue.
+  in a pass, and a pass ends owing a seal only to bursts it passed over for
+  their full queue (the ghost set `passedFull`), never to a burst whose
+  queue had room.
 - **`HeadNotComplete`** (any number of queues): the head is never left
   complete; every step that completes a burst pops the complete head.
 - **`SealedFallFromHead`** (one queue): among bursts still waiting, sealed

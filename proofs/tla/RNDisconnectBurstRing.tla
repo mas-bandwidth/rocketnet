@@ -137,10 +137,10 @@ VARIABLES
     bad,            \* ghost: the first rule a step broke, "" while none
     conn,           \* the connected clients (rocketnet_client_slots_connected)
     stopping,       \* rocketnet_server_stop has run (the transport is STOPPING)
-    fullInPass,     \* ghost: the current pass passed a burst over for its full queue
+    passedFull,     \* ghost: the bursts the current pass passed over for their full queue
     fullSkip        \* ghost: a pass ended owing a seal after passing one over for its full queue
 
-vars == <<sealed, bid, head, count, cursor, next, seals, gone, abandoned, dropped, pass, bad, conn, stopping, fullInPass, fullSkip>>
+vars == <<sealed, bid, head, count, cursor, next, seals, gone, abandoned, dropped, pass, bad, conn, stopping, passedFull, fullSkip>>
 
 Ids == 1..Bursts
 \* bursts the pass still owes a seal: a complete (abandoned) entry is not one
@@ -169,7 +169,7 @@ Init ==
     /\ bad = ""
     /\ conn = 0
     /\ stopping = FALSE
-    /\ fullInPass = FALSE
+    /\ passedFull = {}
     /\ fullSkip = FALSE
 
 \* a client connects while the server runs; every connected client will
@@ -179,7 +179,7 @@ Connect ==
     /\ conn < SteadyCap
     /\ next + conn <= Bursts
     /\ conn' = conn + 1
-    /\ UNCHANGED <<sealed, bid, head, count, cursor, next, seals, gone, abandoned, dropped, pass, bad, stopping, fullInPass, fullSkip>>
+    /\ UNCHANGED <<sealed, bid, head, count, cursor, next, seals, gone, abandoned, dropped, pass, bad, stopping, passedFull, fullSkip>>
 
 \* a running disconnect whose burst must wait: deferred while fewer than
 \* SteadyCap wait, else dropped. There is no test against C: an append at
@@ -197,7 +197,7 @@ Defer ==
                /\ count' = count + 1
                /\ bad' = IF bad = "" /\ count >= C THEN "overwrite" ELSE bad
        ELSE UNCHANGED <<sealed, bid, count, bad>>
-    /\ UNCHANGED <<head, cursor, seals, gone, abandoned, dropped, pass, stopping, fullInPass, fullSkip>>
+    /\ UNCHANGED <<head, cursor, seals, gone, abandoned, dropped, pass, stopping, passedFull, fullSkip>>
 
 \* rocketnet_server_stop: each connected client's burst appended in turn at
 \* (head + count) % C, with no room test (the shutdown path of
@@ -217,7 +217,7 @@ Stop ==
           /\ bid' = r.b
           /\ count' = r.c
           /\ bad' = IF bad = "" /\ r.over THEN "overwrite" ELSE bad
-    /\ UNCHANGED <<head, cursor, seals, gone, abandoned, dropped, pass, fullInPass, fullSkip>>
+    /\ UNCHANGED <<head, cursor, seals, gone, abandoned, dropped, pass, passedFull, fullSkip>>
 
 \* the pop loop at the end of a seal or an abandon: each burst at the head
 \* with sealed = K leaves; the cursor drops with each
@@ -230,10 +230,10 @@ Pop(ns, h, c, cur, out) ==
 \* a new pass starts at this iteration while the pass ending owes a seal
 Skips(p) == p.wrap /\ ~(Need \subseteq pass)
 
-\* the pass ending owed a seal: a "skipped" pass unless it passed a burst over
-\* for its full queue, which only fullSkip records
-SkipBad(p) == Skips(p) /\ ~fullInPass
-NextFullSkip(p) == fullSkip \/ (Skips(p) /\ fullInPass)
+\* the pass ending owed a seal: a "skipped" pass unless every burst it owes
+\* was passed over for its full queue, which only fullSkip records
+SkipBad(p) == p.wrap /\ ~(Need \subseteq pass \cup passedFull)
+NextFullSkip(p) == fullSkip \/ (Skips(p) /\ ~SkipBad(p))
 
 \* one seal of the burst at the cursor. A complete entry is PassOver, not this.
 SealStep ==
@@ -257,7 +257,7 @@ SealStep ==
                     ELSE IF ~p.wrap /\ b \in pass THEN "twice"
                     ELSE ""
           /\ fullSkip' = NextFullSkip(p)
-          /\ fullInPass' = IF p.wrap THEN FALSE ELSE fullInPass
+          /\ passedFull' = IF p.wrap THEN {} ELSE passedFull
     /\ UNCHANGED <<bid, next, abandoned, dropped, conn, stopping>>
 
 \* rocketnet_server_transport_drain_disconnect_bursts: the destination was
@@ -284,7 +284,7 @@ Abandon ==
                     ELSE IF SkipBad(p) THEN "skipped"
                     ELSE ""
           /\ fullSkip' = NextFullSkip(p)
-          /\ fullInPass' = IF p.wrap THEN FALSE ELSE fullInPass
+          /\ passedFull' = IF p.wrap THEN {} ELSE passedFull
     /\ UNCHANGED <<bid, next, seals, dropped, conn, stopping>>
 
 \* a complete entry is not sealed again: the cursor moves on, and the pop
@@ -295,7 +295,7 @@ PassOver ==
     /\ LET p == Place
        IN /\ sealed[p.s] = K
           /\ cursor' = p.cur + 1
-          /\ UNCHANGED <<sealed, bid, head, count, next, seals, gone, abandoned, dropped, pass, bad, conn, stopping, fullInPass, fullSkip>>
+          /\ UNCHANGED <<sealed, bid, head, count, next, seals, gone, abandoned, dropped, pass, bad, conn, stopping, passedFull, fullSkip>>
 
 \* rocketnet_server_transport_drain_disconnect_bursts with several send
 \* queues: the incomplete burst at the cursor has a full queue while another
@@ -315,7 +315,7 @@ PassFull ==
                     ELSE IF SkipBad(p) THEN "skipped"
                     ELSE ""
           /\ fullSkip' = NextFullSkip(p)
-          /\ fullInPass' = TRUE
+          /\ passedFull' = IF p.wrap THEN {p.b} ELSE passedFull \cup {p.b}
           /\ UNCHANGED <<sealed, bid, head, count, next, seals, gone, abandoned, dropped, conn, stopping>>
 
 \* rocketnet_server_transport_stop_step with several send queues, the
@@ -339,7 +339,7 @@ AbandonQueue ==
                         /\ cursor' = r.cur
                         /\ gone' = gone \cup r.out
                    ELSE UNCHANGED <<head, count, cursor, gone>>
-    /\ UNCHANGED <<bid, next, seals, dropped, pass, bad, conn, stopping, fullInPass, fullSkip>>
+    /\ UNCHANGED <<bid, next, seals, dropped, pass, bad, conn, stopping, passedFull, fullSkip>>
 
 \* rocketnet_server_transport_stop_step with no send room and the transport
 \* idle (ServerStopSpread AbandonNoRoom): the loop pops every waiting burst
@@ -361,7 +361,7 @@ DropForRoom ==
           /\ gone' = gone \cup live
           /\ dropped' = dropped \cup short
           /\ pass' = {}
-          /\ fullInPass' = FALSE
+          /\ passedFull' = {}
     /\ UNCHANGED <<sealed, bid, next, seals, abandoned, bad, conn, stopping, fullSkip>>
 
 Next == Connect \/ Defer \/ Stop \/ SealStep \/ Abandon \/ PassOver \/ PassFull \/ AbandonQueue \/ DropForRoom
@@ -380,7 +380,7 @@ TypeOK ==
     /\ dropped \subseteq Ids
     /\ conn \in 0..SteadyCap
     /\ stopping \in BOOLEAN
-    /\ fullInPass \in BOOLEAN
+    /\ passedFull \subseteq 0..Bursts
     /\ fullSkip \in BOOLEAN
 
 \* a deferred burst never overwrites a waiting one
@@ -402,8 +402,8 @@ SealOnlyLive == bad # "dead"
 PassFair == bad \notin {"skipped", "twice"} /\ ~fullSkip
 
 \* what the code keeps with any number of queues: no burst sealed twice in a
-\* pass, and a pass ends owing a seal only when it passed a burst over for
-\* its full queue
+\* pass, and a pass ends owing a seal only to bursts it passed over for
+\* their full queue (passedFull), never to one whose queue had room
 PassFairUnlessFull == bad \notin {"skipped", "twice"}
 
 \* the head is never left complete: every step that completes a burst pops
