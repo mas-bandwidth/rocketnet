@@ -70,7 +70,7 @@ static const int network_threads_num_rows = (int) ( sizeof( network_threads_rows
 static void test_network_threads_defaults_by_value()
 {
     check( ROCKETNET_XDP_DEFAULT_THREADS == 1 );
-    check( ROCKETNET_GSO_DEFAULT_WORKERS == 1 );
+    check( ROCKETNET_GSO_DEFAULT_WORKERS == 2 );
     check( ROCKETNET_IO_URING_DEFAULT_WORKERS == 2 );
     check( ROCKETNET_RIO_DEFAULT_LANES == 5 );
     check( ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS == 2 );

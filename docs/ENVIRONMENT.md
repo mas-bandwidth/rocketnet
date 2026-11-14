@@ -93,7 +93,7 @@ create (`CONFIG_OUT_OF_RANGE` or `CONFIG_ENV_INVALID`), never clamped.
 | Variable | Config field | Transport | Default | Range |
 | --- | --- | --- | --- | --- |
 | `ROCKETNET_SERVER_NUM_XDP_THREADS` | `num_xdp_threads` | `xdp` (Linux) | 1 | 1 .. 1024 |
-| `ROCKETNET_SERVER_NUM_GSO_WORKERS` | `num_gso_workers` | `gso` (Linux) | 1 | 1 .. 32 |
+| `ROCKETNET_SERVER_NUM_GSO_WORKERS` | `num_gso_workers` | `gso` (Linux) | 2 | 1 .. 32 |
 | `ROCKETNET_SERVER_NUM_IO_URING_WORKERS` | `num_io_uring_workers` | `io_uring` (Linux) | 2 | 1 .. 32 |
 | `ROCKETNET_SERVER_NUM_RIO_LANES` | `num_rio_lanes` | `rio` (Windows) | 5 on a bind address; 1 on the wildcard | 1 .. 32 |
 | `ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS` | `num_iocp_completion_workers` | `iocp` (Windows) | 2 on a bind address; 1 on the wildcard | 1 .. 32 |

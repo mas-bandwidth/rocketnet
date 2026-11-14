@@ -223,8 +223,12 @@ skipped unavailable name must not count as a successful pin.
 `gso` (`sdk/rocketnet_server_gso.h`, `sdk/rocketnet_server_gso_linux.cpp`)
 needs no capability or privilege (`sdk/rocketnet_server_gso.h`). It
 binds an `SO_REUSEPORT` group of `num_gso_workers` sockets
-(`ROCKETNET_SERVER_NUM_GSO_WORKERS`), default 1, at most 32: a larger count
-is refused at create, never clamped (`sdk/rocketnet_network_threads.h`).
+(`ROCKETNET_SERVER_NUM_GSO_WORKERS`), default 2, at most 32: a larger count
+is refused at create, never clamped (`sdk/rocketnet_network_threads.h`). The
+default is the count that held 1000 players at 60 Hz and about 900,000
+packets a second at peak with the game threads half busy on the AWS record;
+1 worker held it there only with the game threads idle
+([PERFORMANCE.md](PERFORMANCE.md)).
 **Threads:** one worker thread per socket, and nothing else. Each worker
 does all of its queue's kernel-facing work: it drains its socket's receives
 and sends its queue's staged packets. Worker `q` pins itself to cpu
