@@ -150,7 +150,9 @@ value exhausts TLC's tableau.
   take sent-map entries, and enough of them evict every entry naming a reliable number
   before its ack lands (`RNSentMap`, `MCRNSentMapReceiptEviction.cfg`, and the
   `packets_in_flight` contract). The code half is the roadmap entry
-  `sent-map-receipts-give-way`.
+  `sent-map-receipts-give-way`. The assumption carries the liveness property, and
+  `MCRNWindowBrokenNoAcksLand.cfg` is its reversed witness: with `AcksLand` taken out of
+  `Fairness`, `EveryReliableAckedAndDelivered` fails (revision 1.2, below).
 - `OldestLands` (`SpecTyped`, for `"arbitrary"`, where `Drop` removes copies in flight):
   the oldest number, written through without bound, is opened without bound.
 
@@ -233,6 +235,7 @@ Committed cases:
 | `MCRNWindowBrokenHoldOrdered.cfg` | every invariant | 1,431 | 741 | 19 | 2 s | fail as expected: `OrderedDeliveredInOrder` |
 | `MCRNWindowBrokenDropDuplicates.cfg` | every invariant | 173 | 105 | 8 | 1 s | fail as expected: `DeliveredOnce` |
 | `MCRNWindowSafetyTwo.cfg` (numbers 0..4, `"arbitrary"`, `MaxPerPacket = 2`, revision 1.1; tlacheck, 2026-11-13) | every invariant | 4,597,613 | 1,198,503 | - | 34 s | pass |
+| `MCRNWindowBrokenNoAcksLand.cfg` (`MCRNWindow.cfg` with `AcksLand <- NoAcksLand`, revision 1.2; tlacheck, aws-mut-3, 2026-11-14) | `TypeOK`, `EveryReliableAckedAndDelivered` | 130,597 | 51,850 | - | 26 s | fail as expected: `EveryReliableAckedAndDelivered` (exit 13) |
 
 Bench runs (each is `MCRNWindow.cfg` with the changes named):
 
@@ -406,6 +409,22 @@ sender under back-off can evict its own acks and stall until `reliable_timeout`.
 that bounds it is `P >= W` with a resend delay above the RTT: `proofs/tla/RNSentMap.tla` checks it
 (README-RNSentMap.md), and config validation refuses `packets_in_flight` below
 `reliable_messages_in_flight` (standard/MESSAGES.md m9.1).
+
+Revision 1.2 commits this lasso as the reversed witness of `AcksLand`:
+`MCRNWindowBrokenNoAcksLand.cfg` substitutes `NoAcksLand` (`TRUE`) for `AcksLand` and
+fails `EveryReliableAckedAndDelivered` (exit 13, 130,597 states, 51,850 distinct, the
+loop back to state 60). Checked by hand against the trace: `0`, `1`, `2` and `4` are acked
+and `3` is not. The receiver opens `1{3}` (state 71) and sends the ack `{1}` (state 73).
+The sender then writes `3` under ids `2` and `0` (states 74 and 76), and the second write
+evicts id `1` from the two-entry map. The ack `{1}` lands at state 77 and is ignored. The
+acks for the later copies are lost by the `"alternate"` pattern, and the loop repeats.
+The code does the same with an id its map no longer holds: `rn_window_ack_on_ack`
+(sdk/rocketnet_window_ack.cpp) returns at once when `rn_sent_index_find` misses. The
+code's real resend delay stops this sender from evicting its own acks, but receipt-only
+packets do not stop it (`MCRNSentMapReceiptEviction.cfg`, MM028). This witness is what
+keeps `AcksLand` from being a vacuous antecedent. Before revision 1.2 no case reversed the
+liveness property (addendum row MA006). The checker half of MA006, following named
+operators in `Fairness`, belongs to `tools/check_tla_records.py`.
 
 ### A model error the DeliveredOnce witness found
 

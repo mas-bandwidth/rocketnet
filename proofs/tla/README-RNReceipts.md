@@ -337,3 +337,27 @@ type-5 record leaves the drop paths: `rn_endpoint_unreliable_drop_all` and
 finish or packet reports LOSS only for the records of that refused packet,
 which never reached the wire; once a record is in a committed packet its
 LOSS waits for the deadline sweep or the entry's eviction.
+
+## Revision 1.3: the twin table is an assumption, not an invariant
+
+Addendum row MA009. `PromotionTable` (`\A k \in PromotionSources : Twin(k) \in {2,4,6}`)
+read no state variable, so no action could make it fail. It would also have
+passed a table that mapped 0 to 6. `PromotedIsTwin` restated
+`EffectiveKind`'s definition. Both have left the invariants, and the four
+passing cfgs no longer list them. The exact table is now an `ASSUME` beside
+`Twin`: 0 to 2, 1 to 4, 5 to 6, and every other code to itself. That is the
+promotion rule of `rn_endpoint_send_route` (sdk/rocketnet_endpoint.cpp),
+where type 5 is sent as type 2 with its receipt kept, which is type 6 here.
+TLC checks the `ASSUME` once at start-up, and any other table stops every
+case before the first state. `PromotedNeverLoses`, which reads the outcome
+history, stays as an invariant.
+
+| Case | Expected | Exit | Generated | Distinct | Seconds |
+|---|---|---:|---:|---:|---:|
+| `MCRNReceipts.cfg` | pass | 0 | 68940 | 24304 | 6.365 |
+| `MCRNReceiptsMid.cfg` | pass | 0 | 3605460 | 793675 | 12.592 |
+| `MCRNReceiptsTimeoutOff.cfg` | pass | 0 | 247734 | 68960 | 2.090 |
+| `MCRNReceiptsOptedIn.cfg` | pass | 0 | 267438 | 84860 | 2.288 |
+
+The state counts are unchanged from revision 1.2: the two removed
+invariants pruned nothing.
