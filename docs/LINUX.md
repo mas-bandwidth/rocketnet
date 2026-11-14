@@ -154,10 +154,12 @@ at the probe's first `io_uring_setup`, before `gso` is tried: where the
 filter does that, set `ROCKETNET_SERVER_TRANSPORT=gso`. And `io_uring`'s
 memory plan is larger than `gso`'s: at 1000 players and 1416 byte payloads
 `transport_memory 1000 1416 <name> 0 --plan-only` reads 1,169,755,611
-allocator bytes for `io_uring` and 616,314,336 for `gso`. `auto` already sizes
-its plan for its largest candidate, and a failed allocation inside a candidate's
-create is not a refusal: start ends with `ROCKETNET_STATUS_OUT_OF_MEMORY` and
-does not fall to `gso` (`sdk/rocketnet_server_transport.cpp`).
+allocator bytes for `io_uring` and 616,314,336 for `gso`.
+`rocketnet_server_required_memory` already reports the largest candidate's plan
+([MEMORY.md](MEMORY.md)), so an allocator sized by it is unchanged, but a
+failed allocation inside a candidate's create is not a refusal: start ends
+with `ROCKETNET_STATUS_OUT_OF_MEMORY` and does not fall to `gso`
+(`sdk/rocketnet_server_transport.cpp`).
 
 **How start walks it.** Public create parses the list; server start tries
 candidates left to right and the first grant wins (`sdk/rocketnet_server_transport.cpp`). Each refusal logs a warning,
