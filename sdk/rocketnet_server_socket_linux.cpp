@@ -5121,9 +5121,17 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
     int statistics_passes = 0;
     bool reported_statistics_error = false;
 
+    // whether the last pass sampled main's quit: the exit count below is
+    // ordered by that acquire, so it runs only on that exit, not on the
+    // receive path's own break, which stores quit itself with main still
+    // staging
+
+    bool stopped_by_main = false;
+
     for ( ;; )
     {
         const bool stopping = socket->quit.load( std::memory_order_acquire );
+        stopped_by_main = stopping;
 
         // Complete one final nonwaiting I/O pass after stop was requested.
         // busy poll the transport
@@ -5522,7 +5530,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
     // this thread has sent nothing on the queue since the stall latched,
     // and packets staged into it after the stall are in its buffers
 
-    if ( socket->send_stalled.load( std::memory_order_relaxed ) )
+    if ( stopped_by_main && socket->send_stalled.load( std::memory_order_relaxed ) )
     {
         const uint32_t consumer = __atomic_load_n( socket->send_queue.consumer, __ATOMIC_ACQUIRE );
         const uint32_t on_ring = *socket->send_queue.producer - consumer;
