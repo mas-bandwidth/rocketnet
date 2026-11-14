@@ -147,4 +147,14 @@ static inline int rocketnet_rio_lanes_for( int asked, int several, int test_lane
     return ROCKETNET_RIO_DEFAULT_LANES;
 }
 
+// Whether the RIO transport warns at create that its lanes share physical
+// cores: more lanes than the machine's cores (lane l takes the first logical
+// processor of core l, and a lane past the last core takes a processor on a
+// core an earlier lane and its worker already use). Never a clamp: the lanes
+// still run. Pure; any thread.
+static inline int rocketnet_rio_lanes_share_cores( int lanes, int cores )
+{
+    return lanes > cores ? 1 : 0;
+}
+
 #endif // ROCKETNET_SDK_ROCKETNET_NETWORK_THREADS_H

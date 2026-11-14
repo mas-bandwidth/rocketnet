@@ -92,8 +92,10 @@ and starts one I/O worker for each lane. The lanes are `num_rio_lanes`
 (`ROCKETNET_SERVER_NUM_RIO_LANES`, 1 to 32; default 6 on a specific bind
 address, 1 on the wildcard). With more than one lane, lane `l` takes the
 first logical processor of core `l` from core 0 up, in the same order as
-`iocp`, and its worker the other logical processors of that core; more lanes
-than cores share processors, with a warning. All of this happens when the
+`iocp`, and its worker the other logical processors of that core. More lanes
+than physical cores still run: a lane past the last core takes a processor on
+a core an earlier lane already uses, and the server logs one warning at start
+naming the lane count, the core count and `num_rio_lanes`. All of this happens when the
 server starts, and the line it logs then names each lane's region size:
 
 ```text
@@ -142,7 +144,9 @@ Do the same.
    lane `l` is on processor `2l` and its worker on `2l + 1`, and the lanes use
    processors 0 to `2 x lanes - 1`. Keep the main thread and game threads
    above them (the measured rows ran the main thread on processor
-   `2 x lanes`).
+   `2 x lanes`). This needs at least as many cores as lanes (6 for the
+   default); with fewer, the lanes past the last core share cores, and the
+   server warns at start.
 2. Set a specific bind address (above):
 
    ```bat

@@ -111,7 +111,10 @@ processors, the only machine setting they changed. For RIO:
 
 1. Choose the lane count, or take the default of 6. Lane `l` is on processor
    `2l` and its worker on `2l + 1` (two logical processors a core), from core
-   0; keep the main thread and game threads above processor `2 x lanes - 1`.
+   0; keep the main thread and game threads above processor `2 x lanes - 1`
+   (11 for 6 lanes). That needs at least as many cores as lanes: with fewer,
+   the lanes past the last core share cores with earlier lanes, and the server
+   warns at start.
 2. Set a specific bind address:
    `set ROCKETNET_SERVER_BIND_IPV4_ADDRESS=10.0.0.5`.
 3. Steer receive to the lanes' processors, one queue a lane (elevated
