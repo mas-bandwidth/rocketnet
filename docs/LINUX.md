@@ -834,10 +834,18 @@ What each path does with the errors it can see:
   count in `ROCKETNET_COUNTER_GSO_SEND_DROPPED`, never resent
   (`sdk/rocketnet_server_gso_linux.cpp`,
   `sdk/rocketnet_server_gso.h`, `proofs/tla/RNGsoHandoff.tla` SentOrHeld).
-- **io_uring**: a send completion with a negative result counts in
+- **io_uring**: a send completion refused with `EAGAIN`, `EINTR`, `ENOBUFS`
+  or `ENOMEM` (a full socket) drops nothing while the server runs: the
+  worker keeps the run and sends it again after its retry timer
+  (`ROCKETNET_URING_SEND_RETRY_SECONDS`, the same 1 ms as gso). Once the
+  server has begun to stop, after `ROCKETNET_URING_SEND_RETRIES_AFTER_QUIT`
+  (100) waits with no run done what still waits is abandoned and counted in
+  `ROCKETNET_COUNTER_URING_SEND_DROPPED`. A segmented run its destination
+  refuses (`EINVAL`, `EIO`, `EOPNOTSUPP`) comes back as one plain run per
+  packet. Any other negative result, and a refused one-packet run, drops the run's packets and counts them in
   `ROCKETNET_COUNTER_URING_SEND_DROPPED`
-  (`sdk/rocketnet_server_uring_linux.cpp`,
-  `sdk/rocketnet_server_uring.h`); a multishot receive that ends is armed
+  (`sdk/rocketnet_uring_queue_send.cpp` `rocketnet_uring_queue_send_result`,
+  `sdk/rocketnet_uring_queue_worker.cpp`); a multishot receive that ends is armed
   again (section 5); a submit error other than `EINTR`, `EAGAIN` or `EBUSY` is
   logged (`sdk/rocketnet_server_uring_linux.cpp`).
 
