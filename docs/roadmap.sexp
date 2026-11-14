@@ -988,6 +988,11 @@
    :text "nightly clang-cl x64 and nightly-windows-sanitizers clangcl-asan: tests/functional/windows_socket_errors.cpp 'missing field client initializer' (lines 559 to 918 across commits); lld cannot resolve __cpu_model in client_frame_time.vcxproj; duplicate operator new and delete in test.vcxproj under ASan; tests/load/harden_load.cpp -Wshorten-64-to-32 and -Wsign-conversion. Red on 11-13 too. Smallest fix: name the client field in those initializers, cast at the harden_load lines, and link clang_rt.builtins (or avoid __builtin_cpu_supports) under clang-cl; where __cpu_model comes from is a GUESS."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14")
 
+  (item "packets-received-counter-gso-uring" :group "review-v1-2" :area "sdk"
+   :title "Server stats packets_received misses datagrams the gso and io_uring workers drop"
+   :text "sdk/rocketnet.h documents rocketnet_server_stats_t packets_received as 'UDP datagrams received'. A raw socket sending a 100-byte then a 7-byte non-protocol datagram to a wildcard server (tests/functional/server_bind_address.cpp) reads 2 on portable; on gso the stats field reads 0 while the transport's ROCKETNET_COUNTER_PACKETS_RECEIVED reads 2, and on io_uring the stats field reads 0 while the counter reads 1 with PREFILTER_TOO_SHORT 1 (aws-mut-2, 2026-11-14, a temporary print in rn_server_running_counts). The field is main's count (rocketnet_server_wire_totals_add_received), and the queue workers' prefilter drops reach only the counters (sdk/rocketnet_receive_prefilter.h); on io_uring one of the two is in neither. Fix the field or its documentation, and find io_uring's missing datagram; then test_server_bind_address_not_reached_on_another_address can run under every Linux server pin."
+   :date "2026-11-14" :origin "Cold read of known-defects-linux at f89c21e87")
+
   (item "mutation-slice-survivors" :group "review-v1-2" :area "tests"
    :title "Mutation campaign: the daily slices are not baselined"
    :text "nightly linux / mutation reports 194 new survivors (150 on 11-13) against the 181 rows of tools/mutation/survivors.tsv, and 46 of 515 mutants do not compile. The daily slices were never triaged into the baseline. Fix: triage each slice's survivors into a test or a survivors.tsv row with its reason."
