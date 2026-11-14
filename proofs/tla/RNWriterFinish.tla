@@ -299,10 +299,14 @@ SendPackets ==
     /\ phase' = "main"
     /\ owner' = [c \in Clients |-> NoOwner]
     /\ build' = [c \in Clients |-> 0]
-    /\ \E q \in AtMost(queued), h \in AtMost(held) :
-          /\ queued' = IF KeepLeft THEN q ELSE [c \in Clients |-> 0]
-          /\ held' = IF KeepLeft THEN h ELSE [c \in Clients |-> 0]
-          /\ walked' = walked + Total([c \in Clients |-> Left(c)]) - Total(q) - Total(h)
+    /\ IF KeepLeft
+          THEN /\ queued' \in AtMost(queued)
+               /\ held' \in AtMost(held)
+               /\ walked' = walked + Total([c \in Clients |-> Left(c)]) - Total(queued') - Total(held')
+          ELSE \E q \in AtMost(queued), h \in AtMost(held) :
+                  /\ queued' = [c \in Clients |-> 0]
+                  /\ held' = [c \in Clients |-> 0]
+                  /\ walked' = walked + Total([c \in Clients |-> Left(c)]) - Total(q) - Total(h)
     /\ cap' = Capacity
     /\ UNCHANGED << touched, open, starts, sent, refused, cancelled, lost >>
 
