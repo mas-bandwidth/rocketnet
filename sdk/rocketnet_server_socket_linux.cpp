@@ -3469,9 +3469,11 @@ static uint32_t rocketnet_server_xdp_buffer_staged( const rocketnet_server_socke
 // (MA027): the frames on the TX ring and the worker's copied batch, the
 // staged packets it has not copied in the buffer it claimed, the staged
 // packets in the buffers main published, and the producer buffer main was
-// filling. Every started packet is in exactly one of these; send_idle
-// releases the queue after the stall, so none of them is sent or counted
-// again. The handoff is read under its mutex, once per stall.
+// filling. Every started packet is in exactly one of these; the stall only
+// fires once a stop has been draining for the full bound, so main is no
+// longer staging, and send_idle releases the queue after the stall, so
+// none of them is sent or counted again. The handoff is read under its
+// mutex, once per stall.
 
 static uint32_t rocketnet_server_xdp_stall_abandoned( rocketnet_server_xdp_socket_t * socket, int worker_index, int batch_packets, uint32_t on_ring )
 {
@@ -4878,14 +4880,17 @@ bool rocketnet_server_socket_test_stall_abandoned()
         queue->send_buffer[buffer].packet_info[slot].packet_bytes = bytes;
     };
 
-    // the producer (buffer 0) stages three slots, one of them empty, and is
+    // the producer (buffer 0) stages four slots, two of them empty, and is
     // published; the next producer stages two and is published; the third
-    // producer is still filling with one
+    // producer is still filling, with an empty slot after its one packet.
+    // An empty slot inside a counted range is what makes the count read the
+    // byte counts rather than the staged count.
 
     stage( 0, 0, 10 );
     stage( 0, 1, 0 );
     stage( 0, 2, 20 );
-    queue->send_buffer[0].num_packets.store( 3, std::memory_order_relaxed );
+    stage( 0, 3, 0 );
+    queue->send_buffer[0].num_packets.store( 4, std::memory_order_relaxed );
     queue->send_handoff.publish();
 
     stage( 1, 0, 30 );
@@ -4894,7 +4899,8 @@ bool rocketnet_server_socket_test_stall_abandoned()
     queue->send_handoff.publish();
 
     stage( 2, 0, 50 );
-    queue->send_buffer[2].num_packets.store( 1, std::memory_order_relaxed );
+    stage( 2, 1, 0 );
+    queue->send_buffer[2].num_packets.store( 2, std::memory_order_relaxed );
 
     // the worker claims the first published buffer and has copied one packet
 
