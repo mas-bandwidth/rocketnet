@@ -3193,7 +3193,15 @@ void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server
 
 void rocketnet_server_stop( struct rocketnet_server_t * server )
 {
-    if ( !rocketnet_api_null_guard( server ) || !server->running )
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return;
+    }
+
+    // the running server read once, and that copy used throughout
+
+    struct rocketnet_message_server_t * running = rn_server_sending( server );
+    if ( !running )
     {
         return;
     }
@@ -3201,7 +3209,7 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
     // a running server always holds a server transport: start creates the
     // message server over one, and so does every development adopter
 
-    struct rocketnet_server_transport_t * transport = rn_server_transport( server );
+    struct rocketnet_server_transport_t * transport = rocketnet_message_server_transport( running );
     rocketnet_assert( transport );
 
     // one main-thread operation, checked whole before anything stops: the
@@ -3211,6 +3219,15 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
 
     rocketnet_fill_phase_main_scope_t phase( rocketnet_server_transport_fill_phase( transport ) );
     if ( !phase.entered )
+    {
+        return;
+    }
+
+    // a stop that ran whole between the read and the check (a second thread's,
+    // a rule broken that the check did not meet) left this one nothing to do:
+    // the copy is retiring, kept by the server until the next start or destroy
+
+    if ( rn_server( server ) != running )
     {
         return;
     }
@@ -3225,10 +3242,10 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
             rocketnet_server_transport_disconnect_client_shutdown( transport, i );
         }
 
-        rn_message_object_kick( &rn_server( server )->object, i, ROCKETNET_DISCONNECT_REASON_NONE );
+        rn_message_object_kick( &running->object, i, ROCKETNET_DISCONNECT_REASON_NONE );
     }
 
-    server->retiring = server->running;
+    server->retiring = running;
     server->running = NULL;
 
     rocketnet_server_transport_stop( transport );
@@ -4041,13 +4058,17 @@ const struct rocketnet_message_batch_t * rocketnet_server_receive_messages( stru
         return NULL;
     }
 
-    server->batch.num_messages = 0;
-    if ( server->running )
+    // the running server read once; the batch is written only inside the
+    // receive's check, so a refused receive leaves the held batch as it was
+    // (rocketnet.h, rocketnet_server_t)
+
+    struct rocketnet_message_server_t * running = rn_server_sending( server );
+    if ( !running )
     {
-        (void) rocketnet_message_server_receive_messages( rn_server( server ), &server->batch );
+        return NULL;
     }
 
-    return server->batch.num_messages > 0 ? &server->batch : NULL;
+    return rocketnet_message_server_receive_messages( running, &server->batch ) > 0 ? &server->batch : NULL;
 }
 
 int rocketnet_server_receipts( struct rocketnet_server_t * server, int client_index, struct rocketnet_receipt_t * out, int capacity )
