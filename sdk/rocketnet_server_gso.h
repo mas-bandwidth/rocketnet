@@ -150,8 +150,9 @@ bool rocketnet_server_gso_buffer_note( char * line, int line_bytes, bool receive
                                        int force_error );
 
 // send batching geometry: sendmmsg messages per call, GSO segments per
-// super-datagram (the kernel's UDP_MAX_SEGMENTS is 64), and a total-bytes
-// cap keeping every super-datagram inside the 16-bit UDP payload space
+// super-datagram (64, the library's own cap; the kernel's UDP_MAX_SEGMENTS
+// is larger, 128 in Linux 6.12), and a total-bytes cap keeping every
+// super-datagram inside the 16-bit UDP payload space
 
 #define ROCKETNET_GSO_SEND_BATCH                                           128
 #define ROCKETNET_GSO_MAX_SEGMENTS                                          64

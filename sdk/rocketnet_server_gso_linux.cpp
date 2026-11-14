@@ -1042,20 +1042,21 @@ static bool rocketnet_server_gso_commit_receive( struct rocketnet_server_gso_que
     return next >= 0;
 }
 
-// the worker's screen of one datagram before it takes a bank slot. First the
-// size pass every transport makes, below the smallest packet a server reads
-// or above the receive ceiling, so a size drop reads the same on every
-// transport (PREFILTER_TOO_SHORT or _TOO_LARGE and the transport's
-// RECEIVE_DROPPED_SIZE); then, when the transport has the packet filter, the
-// server's stateless prefilter (sdk/rocketnet_receive_prefilter.h), so
-// garbage never evicts a player's packet and is counted exactly as main's
-// check sequence would count it.
+// the worker's screen of one datagram before it takes a bank slot. Every
+// drop here is counted exactly as main's check sequence would count the same
+// datagram (standard/TRANSPORT.md t10: PACKETS_RECEIVED, then the reason;
+// sdk/rocketnet_receive_prefilter.h), so the gso transport makes no native
+// size drop: io_uring, IOCP and RIO do (t10 rule 2), and leave theirs out of
+// PACKETS_RECEIVED. Above the receive ceiling is PREFILTER_TOO_LARGE, as
+// main's prefilter says; then, when the transport has the packet filter, the
+// server's stateless prefilter, so garbage never evicts a player's packet; a
+// datagram shorter than the smallest server packet but holding a prefilter
+// header gets the reason main gives it (its type's WRONG_SIZE, a wrong
+// value or a reserved type), never PREFILTER_TOO_SHORT. Without the filter,
+// only a datagram shorter than the prefilter header is dropped
+// (PREFILTER_TOO_SHORT, main's own reason); the rest go to main.
 static enum rocketnet_receive_drop_t rocketnet_server_gso_screen( const struct rocketnet_server_gso_t * gso, const uint8_t * packet_data, int packet_bytes )
 {
-    if ( packet_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
-    {
-        return ROCKETNET_RECEIVE_DROP_TOO_SHORT;
-    }
     if ( packet_bytes > ROCKETNET_RECEIVE_CEILING )
     {
         return ROCKETNET_RECEIVE_DROP_TOO_LARGE;
@@ -1063,6 +1064,10 @@ static enum rocketnet_receive_drop_t rocketnet_server_gso_screen( const struct r
     if ( gso->has_filter )
     {
         return rocketnet_receive_prefilter( packet_data, packet_bytes, gso->packet_filter );
+    }
+    if ( packet_bytes < ROCKETNET_PREFILTER_BYTES )
+    {
+        return ROCKETNET_RECEIVE_DROP_TOO_SHORT;
     }
     return ROCKETNET_RECEIVE_ACCEPT;
 }
@@ -1248,8 +1253,8 @@ static bool rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * qu
                 continue;
             }
 
-            // a zero-length datagram is below the smallest packet a
-            // server reads: the size pass counts it, as io_uring's does
+            // a zero-length datagram is shorter than a prefilter header: the
+            // size pass counts it TOO_SHORT before any GRO segmentation
 
             if ( message_bytes == 0 )
             {
@@ -3942,6 +3947,15 @@ bool rocketnet_server_gso_test_drain_prefilter()
     p = denied;
     rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_DENIED_PACKET, filter );
 
+    // shorter than the smallest server packet but holding a prefilter header:
+    // main would count it PACKETS_RECEIVED, KEEP_ALIVE_RECEIVED and
+    // KEEP_ALIVE_WRONG_SIZE (t10 rules 1, 2 and 6), never PREFILTER_TOO_SHORT
+    static_assert( ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1 >= ROCKETNET_PREFILTER_BYTES, "a short datagram holds a prefilter header" );
+    uint8_t short_keep_alive[ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1];
+    memset( short_keep_alive, 'k', sizeof( short_keep_alive ) );
+    p = short_keep_alive;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, filter );
+
     const uint8_t one_byte[1] = { 0 };
 
     bool valid = true;
@@ -3959,8 +3973,10 @@ bool rocketnet_server_gso_test_drain_prefilter()
     rocketnet_server_gso_drain( queue, &full );
     datagram = { one_byte, 1, 1 };
     rocketnet_server_gso_drain( queue, &full );
+    datagram = { short_keep_alive, (int) sizeof( short_keep_alive ), 1 };
+    rocketnet_server_gso_drain( queue, &full );
 
-    valid = valid && buffer->num_packets == 1 && buffer->dropped_prefilter == 3 && buffer->dropped_size == 1;
+    valid = valid && buffer->num_packets == 1 && buffer->dropped_prefilter == 4 && buffer->dropped_size == 1;
 
     uint64_t totals[ROCKETNET_RECEIVE_NUM_DROPS];
     rocketnet_server_gso_receive_drop_totals( gso, totals );
@@ -3971,7 +3987,8 @@ bool rocketnet_server_gso_test_drain_prefilter()
         {
             expect = 2;
         }
-        else if ( drop == ROCKETNET_RECEIVE_DROP_WRONG_DIRECTION || drop == ROCKETNET_RECEIVE_DROP_TOO_SHORT )
+        else if ( drop == ROCKETNET_RECEIVE_DROP_WRONG_DIRECTION || drop == ROCKETNET_RECEIVE_DROP_TOO_SHORT ||
+                  drop == ROCKETNET_RECEIVE_DROP_KEEP_ALIVE_WRONG_SIZE )
         {
             expect = 1;
         }
@@ -3985,7 +4002,7 @@ bool rocketnet_server_gso_test_drain_prefilter()
     uint64_t counters[ROCKETNET_NUM_COUNTERS];
     rocketnet_server_gso_counters( gso, counters );
     valid = valid && counters[ROCKETNET_COUNTER_GSO_PACKETS_RECEIVED] == 1 &&
-            rocketnet_server_gso_receive_dropped_prefilter( gso ) == 3 &&
+            rocketnet_server_gso_receive_dropped_prefilter( gso ) == 4 &&
             counters[ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SIZE] == 1;
 
     // no worker ran, so stop is complete once the queue's stopped flag is set
