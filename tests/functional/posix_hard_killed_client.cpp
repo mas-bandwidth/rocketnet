@@ -60,6 +60,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "../check_count.h"
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
@@ -98,6 +99,7 @@ void rocketnet_functional_log_ring_dump();
 #define ROCKETNET_COUNTERS_CHECK posix_hard_killed_require
 static void posix_hard_killed_check( bool condition, const char * expression, const char * function, int line )
 {
+    ROCKETNET_TEST_COUNT_CHECK();
     if ( condition )
     {
         return;
@@ -731,6 +733,21 @@ static void posix_hk_wire_read( struct rocketnet_server_transport_t * server, co
 
 static void posix_hk_wire_mark( struct rocketnet_server_transport_t * server, std::vector<posix_hk_live_t> & live )
 {
+    // one receive-only pass first: posix_hk_quiesce's last pass ends with the
+    // server's send, so those datagrams are still in flight here. Counted as
+    // sent before the mark and received after it, they would shrink lost_down,
+    // the allowance posix_hk_require_accounted grants, and a real loopback drop
+    // could then fail the case. One pass's sleep, then every end receives and
+    // the server sends nothing; the payloads are of the old epoch and dropped.
+
+    rocketnet_platform_sleep( 0.005 );
+    const double now = rocketnet_platform_time();
+    for ( size_t i = 0; i < live.size(); i++ )
+    {
+        rocketnet_client_transport_update( live[i].client, now );
+    }
+    rocketnet_server_transport_update( server, now );
+
     for ( size_t i = 0; i < live.size(); i++ )
     {
         posix_hk_wire_read( server, live[i], &live[i].wire_up_sent, &live[i].wire_up_received, &live[i].wire_down_sent, &live[i].wire_down_received );
