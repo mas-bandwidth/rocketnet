@@ -102,7 +102,7 @@ static_assert( ROCKETNET_XDP_FRAME_SIZE == 4096, "ROCKETNET_XDP_FRAME_SIZE must 
 struct alignas( 64 ) rocketnet_server_socket_send_packet_info_t
 {
     rocketnet_address_t to;
-    size_t packet_bytes;
+    size_t packet_bytes;                // main stores it and the stall count reads the producer's through __atomic builtins; owner-thread reads are plain
     uint8_t destination_mac[ETH_ALEN];  // chosen at start by the reply-MAC rule
     bool mac_learned;                   // destination_mac is the client's learned MAC
 };
@@ -2970,7 +2970,7 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     // packet; the xdp thread sends this copy and never reads the table
 
     send_buffer->packet_info[packet_index].to = *to;
-    send_buffer->packet_info[packet_index].packet_bytes = 0;
+    __atomic_store_n( &send_buffer->packet_info[packet_index].packet_bytes, (size_t) 0, __ATOMIC_RELAXED );
     memcpy( send_buffer->packet_info[packet_index].destination_mac, destination_mac, ETH_ALEN );
 
     const uintptr_t learned_begin = (uintptr_t) &server_socket->reply_macs.entries[0];
@@ -3206,7 +3206,7 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     // is prepended here -- the xdp thread adds the ethernet, ip and udp
     // headers when it copies the packet into its umem frame
 
-    info->packet_bytes = (size_t) packet_bytes;
+    __atomic_store_n( &info->packet_bytes, (size_t) packet_bytes, __ATOMIC_RELAXED );
 }
 
 void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data )
@@ -3233,7 +3233,7 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
         return;
     }
 
-    send_buffer->packet_info[packet_index].packet_bytes = 0;
+    __atomic_store_n( &send_buffer->packet_info[packet_index].packet_bytes, (size_t) 0, __ATOMIC_RELAXED );
 }
 
 // proofs/tla/RNXdpReplay.tla Commit, HoldGreetingUntilMarked: before a producer
@@ -3266,7 +3266,7 @@ static void rocketnet_server_socket_hold_greetings( struct rocketnet_server_sock
         }
         if ( rocketnet_xdp_replay_sink_holds_greeting( server_socket->replay_marks, hold_all, &info->to ) )
         {
-            info->packet_bytes = 0;
+            __atomic_store_n( &info->packet_bytes, (size_t) 0, __ATOMIC_RELAXED );
             server_socket->replay_greetings_held++;
         }
     }
@@ -3457,7 +3457,10 @@ static uint32_t rocketnet_server_xdp_buffer_staged( const rocketnet_server_socke
     uint32_t count = 0;
     for ( int i = first; i < staged; i++ )
     {
-        if ( buffer->packet_info[i].packet_bytes > 0 )
+        // packet_bytes is stored atomically by its writers (start, finish,
+        // abort, hold_greetings) because this count reads the producer
+        // buffer while main may still be staging into it during a stop
+        if ( __atomic_load_n( &buffer->packet_info[i].packet_bytes, __ATOMIC_RELAXED ) > 0 )
         {
             count++;
         }
@@ -3469,11 +3472,14 @@ static uint32_t rocketnet_server_xdp_buffer_staged( const rocketnet_server_socke
 // (MA027): the frames on the TX ring and the worker's copied batch, the
 // staged packets it has not copied in the buffer it claimed, the staged
 // packets in the buffers main published, and the producer buffer main was
-// filling. Every started packet is in exactly one of these; the stall only
-// fires once a stop has been draining for the full bound, so main is no
-// longer staging, and send_idle releases the queue after the stall, so
-// none of them is sent or counted again. The handoff is read under its
-// mutex, once per stall.
+// filling. Every started packet is in exactly one of these once main's
+// staging is seen; the published and claimed buffers are stable (publish
+// and claim move them under the mutex, and only the worker copies from
+// its claim), while the producer is still main's during a stop, so its
+// byte counts are read atomically and a finish landing in that same
+// instant may not be seen. send_idle releases the queue after the stall,
+// so none of them is sent or counted again. The handoff is read under
+// its mutex, once per stall.
 
 static uint32_t rocketnet_server_xdp_stall_abandoned( rocketnet_server_xdp_socket_t * socket, int worker_index, int batch_packets, uint32_t on_ring )
 {
