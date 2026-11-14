@@ -407,22 +407,63 @@ static void test_receipts_listed_per_update_by_the_c_api()
 
 static void test_rnreceipts_code5_witness_replays()
 {
-    // BrokenTwoOutcomes: LOSS at the deadline, then a late packet ACK.
-    // The serial's sent-map slot is a tombstone, so only LOSS is observable.
+    // BrokenTwoOutcomes (proofs/tla/README-RNReceipts.md): on a 1-entry ring,
+    // SweepLoss emits LOSS and tombstones the sent-map reference while the
+    // packet entry stays indexed. Without the tombstone, a late transport ACK
+    // in the Same update would overwrite LOSS with ACKED in the 1-entry ring,
+    // and in the Next update would emit a second outcome.
 
     receipt_fixture_t f;
     receipt_fixture_init( &f );
+    f.region->receipt_entries = 1;
     rn_window_ack_receipt_begin_update( &f.ack );
 
-    const uint32_t serial = 71;
-    rn_window_ack_commit_receipt_packet( &f.ack, 401, &serial, 1, 1.0 );
+    const uint32_t serial_a = 71;
+    rn_window_ack_commit_receipt_packet( &f.ack, 401, &serial_a, 1, 1.0 );
     rn_window_ack_receipt_sweep( &f.ack, 10.0 );
     rocketnet_unit_check( rn_window_ack_on_ack( &f.ack, 401, 10.1 ) == 1 );
-    rocketnet_unit_check( rn_window_ack_on_ack( &f.ack, 401, 10.2 ) == 0 );
 
-    rocketnet_message_receipt_t out[16];
-    rocketnet_unit_check( receipt_list( &f, out, 16 ) == 1 );
-    rocketnet_unit_check( out[0].serial == serial && out[0].status == ROCKETNET_RECEIPT_STATUS_LOSS );
+    rocketnet_message_receipt_t out[1];
+    rocketnet_unit_check( receipt_list( &f, out, 1 ) == 1 );
+    rocketnet_unit_check( out[0].serial == serial_a && out[0].status == ROCKETNET_RECEIPT_STATUS_LOSS );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL] == 0 );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == 0 );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 1 );
+
+    // Across updates: LOSS drained in update 1, late ACK arrives in update 2.
+
+    rn_window_ack_receipt_begin_update( &f.ack );
+    const uint32_t serial_b = 72;
+    rn_window_ack_commit_receipt_packet( &f.ack, 402, &serial_b, 1, 20.0 );
+    rn_window_ack_receipt_sweep( &f.ack, 30.0 );
+    rocketnet_unit_check( receipt_list( &f, out, 1 ) == 1 );
+    rocketnet_unit_check( out[0].serial == serial_b && out[0].status == ROCKETNET_RECEIPT_STATUS_LOSS );
+
+    rn_window_ack_receipt_begin_update( &f.ack );
+    rocketnet_unit_check( rn_window_ack_on_ack( &f.ack, 402, 30.1 ) == 1 );
+    rocketnet_unit_check( rn_window_ack_on_ack( &f.ack, 402, 30.2 ) == 0 );
+    rocketnet_unit_check( receipt_list( &f, out, 1 ) == 0 );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == 0 );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 2 );
+
+    // BrokenTimeoutWhenOff (proofs/tla/RNReceipts.tla): with the default off
+    // setting (reliable_timeout == 0), an unacked reliable send never triggers
+    // RELIABLE_TIMED_OUT; once opted in, it triggers at the deadline.
+
+    rocketnet_unit_check( f.ack.reliable_timeout == 0.0 );
+    uint64_t numbered = 0;
+    uint64_t ring_start = 0;
+    rocketnet_unit_check( rn_window_send_first_write( &f.send, ROCKETNET_MESSAGE_CODE_RELIABLE, 16,
+                                                      RN_DESCRIPTOR_NONE, &numbered, &ring_start ) == RN_WINDOW_SEND_NUMBERED );
+    rn_window_ack_commit_packet( &f.ack, 403, &numbered, 1, 40.0 );
+    rocketnet_unit_check( rn_window_ack_check_timeout( &f.ack, 1000.0 ) == 0 );
+    rocketnet_unit_check( f.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    f.ack.reliable_timeout = 5.0;
+    rocketnet_unit_check( rn_window_ack_check_timeout( &f.ack, 44.99 ) == 0 );
+    rocketnet_unit_check( rn_window_ack_check_timeout( &f.ack, 45.0 ) == 1 );
+    rocketnet_unit_check( f.ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
+
     receipt_fixture_destroy( &f );
 }
 
@@ -464,7 +505,7 @@ static void test_promoted_type5_block_replays_last_index_and_reliable_loss_witne
     rocketnet_unit_check( serial != 0 );
 
     const rn_send_descriptor_t * descriptor = &connection->region->send_descriptors[d];
-    rocketnet_unit_check( descriptor->reliability == ROCKETNET_RELIABILITY_RELIABLE );
+    rocketnet_unit_check( descriptor->reliability == ROCKETNET_CHANNEL_TYPE_RELIABLE );
     rocketnet_unit_check( ( descriptor->flags & RN_SEND_FLAG_RECEIPT_PROMOTED ) != 0 );
     rocketnet_unit_check( descriptor->fragments == 2 && descriptor->serial == serial );
 
@@ -528,28 +569,37 @@ static void test_promoted_type5_block_replays_last_index_and_reliable_loss_witne
 }
 #endif // #if ROCKETNET_DEV
 
-static uint64_t receipt_allocations;
+static uint64_t receipt_malloc_calls;
+static uint64_t receipt_free_calls;
 
 static void * receipt_malloc( void *, size_t bytes )
 {
-    receipt_allocations++;
+    receipt_malloc_calls++;
     return malloc( bytes );
 }
 
 static void receipt_free( void *, void * pointer )
 {
+    receipt_free_calls++;
     free( pointer );
 }
 
 static void test_receipts_no_allocation_after_create()
 {
-    rocketnet_term();
+    receipt_malloc_calls = 0;
+    receipt_free_calls = 0;
+    rocketnet_unit_check( rocketnet_term() == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL, receipt_malloc, receipt_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( receipt_malloc_calls == 0 );
+    rocketnet_unit_check( receipt_free_calls == 0 );
 
     receipt_fixture_t f;
     receipt_fixture_init( &f );
 
-    const uint64_t allocations_before = receipt_allocations;
+    const uint64_t mallocs_after_create = receipt_malloc_calls;
+    const uint64_t frees_after_create = receipt_free_calls;
+    rocketnet_unit_check( mallocs_after_create > 0 );
+
     rn_window_ack_receipt_begin_update( &f.ack );
 
     for ( uint32_t i = 1; i <= 32; i++ )
@@ -557,17 +607,25 @@ static void test_receipts_no_allocation_after_create()
         rn_window_ack_commit_receipt_packet( &f.ack, 500 + i, &i, 1, 1.0 + i * 0.01 );
         if ( i & 1 )
         {
-            rn_window_ack_on_ack( &f.ack, 500 + i, 1.01 + i * 0.01 );
+            rocketnet_unit_check( rn_window_ack_on_ack( &f.ack, 500 + i, 1.01 + i * 0.01 ) == 1 );
         }
     }
 
     rn_window_ack_receipt_sweep( &f.ack, 10.0 );
 
     rocketnet_message_receipt_t out[16];
-    receipt_list( &f, out, 16 );
-    rocketnet_unit_check( receipt_allocations == allocations_before );
+    rocketnet_unit_check( receipt_list( &f, out, 16 ) == 16 );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == 16 );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 16 );
+    rocketnet_unit_check( f.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL] == 16 );
+    rocketnet_unit_check( receipt_malloc_calls == mallocs_after_create );
+    rocketnet_unit_check( receipt_free_calls == frees_after_create );
+
     receipt_fixture_destroy( &f );
-    rocketnet_term();
+    rocketnet_unit_check( receipt_free_calls > frees_after_create );
+    rocketnet_unit_check( receipt_malloc_calls == receipt_free_calls );
+
+    rocketnet_unit_check( rocketnet_term() == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 

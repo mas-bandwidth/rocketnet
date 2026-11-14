@@ -200,8 +200,8 @@ static void test_hostile_block_shape_at_each_bound()
 // (rn_channels_dispatch_chunk), code 2 (rn_channels_dispatch_reliable_chunk)
 // and code 4 in turn (rn_sequenced_block). A fragment that is not the last
 // counts the last one as 16 bytes; the last one counts its own size rounded
-// to 16. A block that ends exactly at the ring's end is taken, one unit later
-// is BAD_RING.
+// to 16. A block that ends exactly at the ring's end is taken; one unit later,
+// or 17 bytes in the ring's last unit, is BAD_RING.
 
 static void hostile_span_edges( hostile_t * h, int code )
 {
@@ -222,7 +222,8 @@ static void hostile_span_edges( hostile_t * h, int code )
     check( ( base + 1 ) * 16 + F <= ring );                                 // the fragment's own span still fits
     hostile_expect_refused( h, &record, ROCKETNET_COUNTER_MESSAGE_BAD_RING );
 
-    // fragment 1 of 2, 16 and 18 bytes: the block ends at base * 16 + F + round16( bytes )
+    // fragment 1 of 2, 16 and 18 bytes: the block ends at base * 16 + F + round16( bytes );
+    // at that base it is taken, and one unit later is BAD_RING
     const int sizes[2] = { 16, 18 };
     for ( int i = 0; i < 2; i++ )
     {
@@ -230,7 +231,14 @@ static void hostile_span_edges( hostile_t * h, int code )
         const uint32_t last_base = ( ring - F - rounded ) / 16;
         hostile_chunk( &record, code, 0, 1, 2, last_base + HOSTILE_UNITS, sizes[i] );
         hostile_expect_taken( h, &record, ROCKETNET_CHANNEL_DISPATCH_HELD );
+
+        hostile_chunk( &record, code, 0, 1, 2, last_base + 1 + HOSTILE_UNITS, sizes[i] );
+        hostile_expect_refused( h, &record, ROCKETNET_COUNTER_MESSAGE_BAD_RING );
     }
+
+    // 17 bytes in the ring's last unit rounds up to 32 and writes past the ring
+    hostile_chunk( &record, code, 0, 1, 2, ( ring / 16 ) - 1, 17 );
+    hostile_expect_refused( h, &record, ROCKETNET_COUNTER_MESSAGE_BAD_RING );
 }
 
 static void test_hostile_block_span_ends_at_the_ring_end()

@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "test_unit_registry.h"
+#include "unit_arena.h"
 
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_allocator.h"
@@ -1028,40 +1029,34 @@ static void test_config_vector_is_library_default()
     check( config.message_resend_delay_min_ms == 0 );
     check( config.message_resend_delay_max_ms == 2000 );
 
-    // the body rn_ordered_announce_config writes for a NULL/default config
+    // emit the wire CONFIG packet directly through rn_ordered_announce_config
+    // and rn_ordered_write for a NULL/default config
 
-    struct rocketnet_message_config_body_t body;
-    body.version = ROCKETNET_MESSAGE_CONFIG_VERSION;
-    body.enabled = ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION & 0xFFu;
-    body.num_channels = (uint32_t) config.num_channels;
-    body.reliable_messages_in_flight = (uint32_t) config.reliable_messages_in_flight;
-    body.receive_message_buffer_bytes = (uint32_t) config.receive_message_buffer_bytes;
-    body.max_message_bytes = (uint32_t) config.max_message_bytes;
-    body.fragment_bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    rn_arena_t * arena = rn_unit_arena_create( NULL, 1, NULL );
+    check( arena != NULL );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    check( region != NULL );
+
+    rn_ordered_t ordered;
+    check( rn_ordered_init( &ordered, region, NULL, NULL, 1, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
+    check( rn_ordered_announce_config( &ordered, NULL ) );
 
     // the first version's mask is all eight types: the intended default
 
-    check( body.enabled == 0xFF );
+    check( ordered.config.enabled == 0xFF );
 
-    uint8_t config_bytes[ROCKETNET_MESSAGE_CONFIG_BYTES];
-    rocketnet_message_write_config_body( config_bytes, &body );
-
-    struct rocketnet_message_record_t record;
-    memset( &record, 0, sizeof( record ) );
-    record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
-    record.data = config_bytes;
-    record.bytes = ROCKETNET_MESSAGE_CONFIG_BYTES;
-    record.control = 1;
+    alignas( 16 ) uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint8_t * payloads[1] = { payload };
+    check( rn_ordered_write( &ordered, 0.0, payloads, 1 ) == 1 );
+    check( ordered.send.next == 1 );
 
     uint8_t expected[] = { 0x22, 0x1c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0xff, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
                            0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 };
     expected[10] = (uint8_t) ROCKETNET_DEFAULT_NUM_CHANNELS; // num_channels: 32, or the build's ROCKETNET_MAX_CHANNELS when lower
-    uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
-    struct rocketnet_message_writer_t writer;
-    rocketnet_message_writer_begin( &writer, payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-    check( rocketnet_message_writer_add( &writer, &record ) == 1 );
-    check( rocketnet_message_writer_finish( &writer ) == (int) sizeof( expected ) );
+    check( ordered.builder.packet[0].payload_bytes == sizeof( expected ) );
     check( memcmp( payload, expected, sizeof( expected ) ) == 0 );
+
+    rn_unit_arena_destroy( arena );
 }
 
 // The sent-packet map against the window (standard/MESSAGES.md m9.1; proofs/tla/RNSentMap.tla NoLiveEviction): under the
