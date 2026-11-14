@@ -136,22 +136,21 @@
     alive: the post-warmup sample at the first planned reconnect, a peak
     sample at every later reconnect and every 10 s, and the end sample after
     the bound, once the last client is destroyed and before the server is.
-    THE WINSOCK THREAD HANDLES (Windows, iocp server only). A thread's
-    first ws2_32 call gives that thread two handles that are Winsock's,
-    not the library's: ws2_32's own copy of the thread's handle
-    (WahOpenCurrentThread, a DuplicateHandle) and one manual-reset event
-    mswsock creates; Winsock keeps both until the thread exits. cdb
-    breakpoint stacks (2026-11-14, Windows Server) show it under
-    WS2_32!WSASendTo on the server's send thread at startup and under
-    WS2_32!WSARecvFrom on each client's thread at its connect. At this
-    soak's 16 clients the server runs 1 send thread (1 send lane), which
-    carries the first client, so its pair is in the post-warmup sample.
-    Its completion workers post receives through WSARecvMsg's extension
-    pointer, which makes no such call; in the runs that stepped, a handle
-    listing showed one of them gaining the pair after the post-warmup
-    sample (1800 s impaired iocp soak: 97 live handles for clients 1-5,
-    99 for clients 6-60, then flat). So the end sample may hold up to 2
-    handles per completion worker above the post-warmup count. The handle
+    THE WINSOCK THREAD HANDLES (Windows, iocp server only). Winsock gives
+    a thread two handles that are its own, not the library's: ws2_32's
+    copy of the thread's handle (WahOpenCurrentThread, a DuplicateHandle)
+    and one manual-reset event mswsock creates, kept until the thread
+    exits. cdb breakpoint stacks (2026-11-14, Windows Server) caught two
+    calls that create them: WS2_32!WSASendTo on the server's send thread
+    at startup and WS2_32!WSARecvFrom on each client's thread at its
+    connect. At this soak's 16 clients the server runs 1 send thread (1
+    send lane), which carries the first client, so its pair is in the
+    post-warmup sample. In the runs that stepped, a handle listing showed
+    one of the 2 completion workers gaining the pair after the
+    post-warmup sample (1800 s impaired iocp soak: 97 live handles for
+    clients 1-5, 99 for clients 6-60, then flat); the call that created
+    it was not caught under the debugger. So the end sample may hold up
+    to 2 handles per completion worker above the post-warmup count. The handle
     check allows that as a ceiling on the total, never per reconnect
     (soak_winsock_handle_allowance), so a handle leaked per reconnect
     still fails once it passes the ceiling. An environment override of
