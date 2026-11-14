@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release  # noqa: E402
 import release_gates as rg  # noqa: E402
 from release_testkit import (ANCESTOR, NOW, OTHER, SHA, VERSION, FakeApi, green_release, header,  # noqa: E402
-                             job, CI_JOBS, CI_SKIPPED)
+                             job, nightly_gates, CI_JOBS, CI_SKIPPED)
 
 REPO = "mas-bandwidth/rocketnet"
 
@@ -40,6 +40,15 @@ class Gates(unittest.TestCase):
         gates = rg.load_gates()
         self.assertGreater(len(gates), 10)
         kinds = {g.kind for g in gates}
+        self.assertTrue({"run", "jobs", "jobs-if-ran", "skip", "full", "tag"} <= kinds)
+
+    def test_the_repository_list_holds_no_nightly_row(self):
+        # owner, 2026-11-14: "These are things for nightly, not for gating a release"
+        gates = rg.load_gates()
+        self.assertEqual([g.label() for g in gates if "nightly" in g.events or g.kind == "tlc-rerun"], [])
+
+    def test_the_nightly_fixture_rows_parse(self):
+        kinds = {g.kind for g in nightly_gates()}
         self.assertTrue({"run", "jobs", "job", "skip", "tlc-rerun", "tag"} <= kinds)
 
     def test_zero_gates_is_an_error(self):
@@ -76,9 +85,24 @@ class Release(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertIn("VERDICT: PASS v1.2.0", text)
         self.assertIn("PASS  ci.yml [jobs, push,pull_request, from v1.1.8]", text)
-        self.assertIn("'MemorySanitizer': success", text)
+        self.assertNotIn("nightly", text)
         self.assertIn("dry run: nothing tagged", text)
         self.assertEqual(api.writes, [])
+
+    def test_a_minor_release_is_not_held_by_a_red_nightly_run(self):
+        # owner, 2026-11-14: the soak and the other nightly jobs are for the nightly, not a cut
+        api = green_release(FakeApi())
+        run = next(r for r in api.runs if r["path"].endswith("/nightly-soak.yml"))
+        api.jobs[run["id"]][1] = job("soak per transport (main / 1800 s per cell)", "failure")
+        api.runs = [r for r in api.runs if not r["path"].endswith("/msan.yml")]
+        code, text = run_release(api)
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("nightly-soak", text)
+
+    def test_green_with_the_nightly_fixture_rows_passes(self):
+        code, text = run_release(green_release(FakeApi()), gates=nightly_gates())
+        self.assertEqual(code, 0, text)
+        self.assertIn("'MemorySanitizer': success", text)
 
     def test_cancelled_job_refuses(self):
         api = green_release(FakeApi())
@@ -216,7 +240,7 @@ class Release(unittest.TestCase):
         api = green_release(FakeApi())
         api.add_run("cbmc.yml", [job("cbmc (arithmetic leaf proofs)", "failure")], SHA, "schedule",
                     started=NOW - datetime.timedelta(minutes=10))
-        code, text = run_release(api)
+        code, text = run_release(api, gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("(newest completed of 2 runs decides): failure", text)
 
@@ -224,7 +248,7 @@ class Release(unittest.TestCase):
         api = green_release(FakeApi())
         api.add_run("cbmc.yml", [job("cbmc (arithmetic leaf proofs)", "failure")], SHA, "schedule",
                     started=NOW - datetime.timedelta(days=1))
-        code, text = run_release(api)
+        code, text = run_release(api, gates=nightly_gates())
         self.assertEqual(code, 0, text)
         self.assertIn("(newest completed of 2 runs decides): success", text)
 
@@ -232,7 +256,7 @@ class Release(unittest.TestCase):
         api = green_release(FakeApi())
         run = next(r for r in api.runs if r["path"].endswith("/nightly-ci.yml"))
         api.jobs[run["id"]][2] = job("full / unit-case coverage", "skipped", secs=0)
-        code, text = run_release(api)
+        code, text = run_release(api, gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("full / unit-case coverage: skipped (no skip row", text)
 
@@ -240,7 +264,7 @@ class Release(unittest.TestCase):
         api = green_release(FakeApi())
         run = next(r for r in api.runs if r["path"].endswith("/msan.yml"))
         api.jobs[run["id"]][0] = job("MemorySanitizer", "failure")
-        code, text = run_release(api)
+        code, text = run_release(api, gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("'MemorySanitizer': failure", text)
 
@@ -249,7 +273,7 @@ class Release(unittest.TestCase):
         api = green_release(FakeApi())
         run = next(r for r in api.runs if r["path"].endswith("/nightly-soak.yml"))
         api.jobs[run["id"]][1] = job("soak per transport (main / 1800 s per cell)", "failure")
-        code, text = run_release(api)
+        code, text = run_release(api, gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("FAIL  nightly-soak.yml [jobs, nightly, from v1.1.8]", text)
 
@@ -259,13 +283,13 @@ class Release(unittest.TestCase):
         run = next(r for r in api.runs if r["path"].endswith("/nightly-soak.yml"))
         api.jobs[run["id"]][1] = job("soak per transport (main / 1800 s per cell)", "failure")
         api.runs = [r for r in api.runs if not r["path"].endswith("/msan.yml")]
-        code, text = run_release(api, version="v1.1.8")
+        code, text = run_release(api, version="v1.1.8", gates=nightly_gates())
         self.assertEqual(code, 0, text)
         self.assertIn("MINOR ONLY nightly-soak.yml [jobs, nightly, from v1.1.8]", text)
         self.assertIn("MINOR ONLY msan.yml 'MemorySanitizer'", text)
         self.assertNotIn("FAIL", text)
         api.jobs[ci_run(api)["id"]][0] = job("linux / Debug / unit", "failure")
-        code, text = run_release(api, version="v1.1.8")
+        code, text = run_release(api, version="v1.1.8", gates=nightly_gates())
         self.assertEqual(code, 1, text)
 
     def test_point_release_is_light_a_red_full_job_is_printed_and_does_not_gate(self):
@@ -305,7 +329,7 @@ class Release(unittest.TestCase):
         api = green_release(FakeApi(), version="v1.2.0")
         run = next(r for r in api.runs if r["path"].endswith("/nightly-soak.yml"))
         api.jobs[run["id"]][1] = job("soak per transport (main / 1800 s per cell)", "failure")
-        code, text = run_release(api, version="v1.2.0")
+        code, text = run_release(api, version="v1.2.0", gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("FAIL  nightly-soak.yml [jobs, nightly, from v1.1.8]", text)
         self.assertNotIn("MINOR ONLY", text)
@@ -314,7 +338,7 @@ class Release(unittest.TestCase):
         api = green_release(FakeApi())
         run = next(r for r in api.runs if r["path"].endswith("/nightly.yml"))
         api.jobs[run["id"]] = [j for j in api.jobs[run["id"]] if not j["name"].startswith("windows / Release")]
-        code, text = run_release(api)
+        code, text = run_release(api, gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("no nightly run of nightly.yml on", text)
         self.assertIn("windows / Release functional nightly tier", text)
@@ -323,7 +347,7 @@ class Release(unittest.TestCase):
         api = green_release(FakeApi(), version="v1.1.7")
         api.runs = [r for r in api.runs if not r["path"].endswith("/nightly-soak.yml")]
         out = io.StringIO()
-        gates = release.gates_as_of(rg.load_gates(), "v1.1.8", out)
+        gates = release.gates_as_of(nightly_gates(), "v1.1.8", out)
         code, text = run_release(api, version="v1.1.7", gates=gates)
         self.assertEqual(code, 1, text)
         self.assertIn("GATES AS OF v1.1.8", out.getvalue())
@@ -338,7 +362,7 @@ class Release(unittest.TestCase):
         api.runs = [r for r in api.runs if not r["path"].endswith("/msan.yml")]
         api.jobs[ci_run(api)["id"]][0] = job("linux / Debug / unit", "cancelled", secs=125)
         ci_run(api)["conclusion"] = "cancelled"
-        code, text = run_release(api, version="v1.1.7")
+        code, text = run_release(api, version="v1.1.7", gates=nightly_gates())
         # v1.1.7: the run-level rule; the cancelled job made the run cancelled, so it is still red
         self.assertEqual(code, 1)
         self.assertIn("NOT IN FORCE for v1.1.7: msan.yml 'MemorySanitizer'", text)
@@ -348,7 +372,7 @@ class Release(unittest.TestCase):
         api = green_release(FakeApi(), version="v1.1.7")
         api.runs = [r for r in api.runs if not r["path"].endswith(("/msan.yml", "/tlc.yml"))]
         api.add_run("tlc.yml", [job("Model records are current")], SHA, "workflow_dispatch")
-        code, text = run_release(api, version="v1.1.7")
+        code, text = run_release(api, version="v1.1.7", gates=nightly_gates())
         self.assertEqual(code, 0, text)
         self.assertIn("NOT IN FORCE for v1.1.7: tlc.yml 'TLC re-run'", text)
 
@@ -358,7 +382,7 @@ class Release(unittest.TestCase):
         for r in api.runs:
             if r["path"].endswith(("/ci.yml", "/nightly-ci.yml", "/tlc.yml")):
                 r["conclusion"] = "failure"
-        code, text = run_release(api, version="v1.0.0")
+        code, text = run_release(api, version="v1.0.0", gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("FAIL  ci.yml [run, push", text)
         self.assertIn("FAIL  nightly-ci.yml [run, nightly", text)
@@ -378,7 +402,7 @@ class TlcRerun(unittest.TestCase):
         api.jobs[run["id"]] = [job("Model records are current")]
 
     def test_full_rerun_on_the_exact_commit_passes(self):
-        code, text = run_release(green_release(FakeApi()))
+        code, text = run_release(green_release(FakeApi()), gates=nightly_gates())
         self.assertEqual(code, 0, text)
         self.assertIn("'TLC re-run full': success on the exact commit", text)
 
@@ -386,7 +410,7 @@ class TlcRerun(unittest.TestCase):
         api = green_release(FakeApi())
         self.without_full(api)
         self.slices(api, 3, [0, 1, 2])
-        code, text = run_release(api)
+        code, text = run_release(api, gates=nightly_gates())
         self.assertEqual(code, 0, text)
         self.assertIn("every slice of the last 3 days succeeded on an ancestor", text)
 
@@ -394,7 +418,7 @@ class TlcRerun(unittest.TestCase):
         api = green_release(FakeApi())
         self.without_full(api)
         self.slices(api, 3, [0, 2])
-        code, text = run_release(api)
+        code, text = run_release(api, gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("slices of N=3 missing in the last 3 days on ancestors: 1/3", text)
 
@@ -403,7 +427,7 @@ class TlcRerun(unittest.TestCase):
         self.without_full(api)
         self.slices(api, 2, [0])
         self.slices(api, 2, [1], sha=OTHER)
-        code, text = run_release(api)
+        code, text = run_release(api, gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("1/2", text)
 
@@ -412,13 +436,13 @@ class TlcRerun(unittest.TestCase):
         self.without_full(api)
         self.slices(api, 2, [0], age_days=1)
         self.slices(api, 2, [1], age_days=5)
-        code, text = run_release(api)
+        code, text = run_release(api, gates=nightly_gates())
         self.assertEqual(code, 1)
 
     def test_no_rerun_evidence_refuses(self):
         api = green_release(FakeApi())
         self.without_full(api)
-        code, text = run_release(api)
+        code, text = run_release(api, gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("no 'TLC re-run full' job", text)
 
@@ -426,7 +450,7 @@ class TlcRerun(unittest.TestCase):
         api = green_release(FakeApi())
         run = next(r for r in api.runs if r["path"].endswith("/tlc.yml"))
         api.jobs[run["id"]][1] = job("TLC re-run full", "failure")
-        code, text = run_release(api)
+        code, text = run_release(api, gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("'TLC re-run full' in run", text)
 

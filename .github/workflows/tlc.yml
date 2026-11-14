@@ -1,4 +1,6 @@
-# The release gate on the TLA+ records, and the nightly re-run of the models.
+# The nightly check of the TLA+ records, and the nightly re-run of the models.
+# Not a release gate (owner, 2026-11-14: nightly checks are "for nightly, not
+# for gating a release"; tools/release_gates.txt): a red here is a red to fix.
 #
 # `Model records are current` runs every case of a stale group that is not
 # timeout debt, with no project elapsed-time cutoff, then requires every
@@ -53,8 +55,7 @@
 # 7.3559 factor as the debt rows above (proofs/tla/BUDGETS.tsv).
 #
 # Neither job runs any other timeout-debt case: those have taken up to 87
-# hours each (run 41337755290). They run in tlc-debt.yml, a weekly watch that
-# is not a release gate.
+# hours each (run 41337755290). They run in tlc-debt.yml, a weekly watch.
 # Finite models, configured properties, pinned engine/JAR, worker/heap limits
 # and bounded committed RUNS.tsv records are unchanged. Separate nightly JSON
 # evidence records outcomes; it must never be merged as a bounded measurement.
@@ -75,7 +76,7 @@ permissions:
   contents: read
 
 # A group holds one running and one pending run, and a newer run replaces the
-# pending one. Every dispatched run (a release's) has a group of its own, so no
+# pending one. Every dispatched run has a group of its own, so no
 # scheduled run can replace or cancel it; scheduled runs share one group.
 concurrency:
   group: tlc-records-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}

@@ -16,9 +16,11 @@ tools/release_gates.py. In order:
     to the same order).
  2. Every gate in force for the version, for exactly that commit, each printed
     with its run id and conclusion: the per-commit push run on main of each
-    per-commit workflow, the nightly tier (Nightly CI, CBMC, TLC records and
-    the TLC re-run evidence, the threaded TSan leg, MemorySanitizer). Gates in
-    force only from a later version are printed as NOT IN FORCE.
+    per-commit workflow, every job and every required job name. The nightly
+    tier is not a release gate (owner, 2026-11-14: "These are things for
+    nightly, not for gating a release"): it runs on main's schedule and a red
+    there is fixed, but it does not block a cut. Gates in force only from a
+    later version are printed as NOT IN FORCE.
  3. Only when all are green: creates the annotated tag on the commit and pushes
     it (the git data API: a tag object, then refs/tags/<version>), waits for
     Release Check on the tag, and requires its tag jobs (the second check,

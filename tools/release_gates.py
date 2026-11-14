@@ -66,8 +66,11 @@ def version_key(text):
 
 
 # From v1.1.8 a point release (PATCH not 0) is gated by the per-commit tier
-# and the tag run only; the nightly-tier rows gate a minor or major release
-# (owner, 2026-11-13: "I want each point release to have fast tests only").
+# and the tag run only, light (the `full` rows print and do not gate); a
+# minor or major release holds the `full` rows too, and would be judged by
+# `nightly` rows (owner, 2026-11-13: "I want each point release to have fast
+# tests only"). tools/release_gates.txt holds no `nightly` row since
+# 2026-11-14 (owner: "These are things for nightly, not for gating a release").
 POINT_RELEASE_RULE_FROM = "v1.1.8"
 
 

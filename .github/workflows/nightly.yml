@@ -383,7 +383,7 @@ jobs:
     steps:
 
       # the leg for the run's own ref checks out the run's head commit, so a
-      # green leg is evidence about that exact commit (tools/check_release_tsan.py)
+      # green leg is evidence about that exact commit
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}

@@ -32,6 +32,33 @@ RELEASE_CHECK_JOBS = ["version consistency", "unreleased wire changes"]
 RELEASE_CHECK_SKIPPED = ["threaded tsan run on the release commit", "release gates passed on the tag"]
 REQUIRED = CI_JOBS + STATIC_JOBS + DOCS_JOBS + RELEASE_CHECK_JOBS
 
+# The nightly-tier rows tools/release_gates.txt held until 2026-11-14 (owner:
+# "These are things for nightly, not for gating a release"). The repository
+# list has none; the tools still read the `nightly` event and the `tlc-rerun`
+# kind, and the tests hold that code with these rows (nightly_gates()).
+NIGHTLY_ROWS = """\
+nightly-ci.yml | - | run | v1.0.0-preview-6 | nightly | Nightly CI (ci.yml with full: true) green
+nightly-ci.yml | - | jobs | v1.1.8 | nightly | Nightly CI: every job success (none skipped, none cancelled)
+cbmc.yml | - | run | v1.0.0-preview-6 | nightly | CBMC arithmetic leaf proofs green
+tlc.yml | - | run | v1.0.0-preview-6 | nightly | TLC records run green
+tlc.yml | Model records are current | job | v1.1.8 | nightly | the committed TLC records are current
+tlc.yml | TLC re-run | tlc-rerun | v1.1.8 | nightly | the models were re-run by TLC, not only their records read
+nightly.yml | tsan (threaded transport) (<ref>) | job | v1.0.0-preview-6 | nightly | threaded TSan leg on the run's own head commit
+msan.yml | MemorySanitizer | job | v1.1.8 | nightly | MemorySanitizer
+nightly.yml | linux / Release functional nightly tier (<ref>) | job | v1.1.8 | nightly | functional nightly tier, Linux
+nightly.yml | macos / Release functional nightly tier (<ref>) | job | v1.1.8 | nightly | functional nightly tier, macOS
+nightly.yml | windows / Release functional nightly tier (<ref>) | job | v1.1.8 | nightly | functional nightly tier, Windows
+nightly-soak.yml | - | jobs | v1.1.8 | nightly | every soak job success
+nightly-leaks.yml | - | jobs | v1.1.8 | nightly | asan + ubsan + lsan over the full suite
+nightly-macos-sanitizers.yml | - | jobs | v1.1.8 | nightly | macOS asan+ubsan, tsan and leaks
+nightly-channels-stress.yml | - | jobs | v1.1.8 | nightly | the channel stress runs
+"""
+
+
+def nightly_gates():
+    """The repository list plus NIGHTLY_ROWS: a fresh list each call (gates_as_of edits rows)."""
+    return rg.load_gates() + rg.parse_gates(NIGHTLY_ROWS, "NIGHTLY_ROWS")
+
 
 def iso(dt):
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -167,7 +194,7 @@ class FakeApi:
 
 
 def green_release(api, version=VERSION, sha=SHA, branch_ruleset=True):
-    """Every gate green for sha."""
+    """Every gate green for sha, NIGHTLY_ROWS' runs included."""
     api.files[("sdk/rocketnet.h", sha)] = header(version)
     api.files[(f"docs/RELEASE-NOTES-{version}.md", sha)] = f"# rocketnet {version}\n"
     if branch_ruleset:

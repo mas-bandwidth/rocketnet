@@ -48,7 +48,7 @@ PINNED_JAR_SHA256 = "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e0
 PINNED_BUDGET = "110"
 
 # The cases declared timeout debt, by name. A debt row in CASES.tsv takes a
-# case out of the release gate (tlc-debt.yml runs it weekly), so declaring one
+# case out of the records check (tlc-debt.yml runs it weekly), so declaring one
 # must be an edit here that a reviewer sees, never a CASES.tsv edit alone
 # (VERIFY-6 A13). A name here must stay declared debt in CASES.tsv.
 DECLARED_DEBT = frozenset(

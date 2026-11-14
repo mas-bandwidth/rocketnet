@@ -31,6 +31,7 @@
 #           tlc-rerun    a `TLC re-run full` job success on the exact commit, or
 #                        every `TLC re-run slice K/N` (K = 0..N-1) success in
 #                        scheduled runs of the last N days on ancestors of the commit
+#                        (no row has this kind: see "No nightly rows" below)
 #           tag          a job of the run the release tag's push starts; the
 #                        release tool waits for it and publishes only on success
 # from      the first version the gate is in force for (earlier versions are
@@ -38,17 +39,24 @@
 # events    push          the push to main of the commit (per-commit tier)
 #           pull_request  the pull request's head commit (tools/land.py)
 #           nightly       any run whose head is the commit (schedule or dispatch);
-#                         minor-only: from v1.1.8 a point release (vX.Y.Z, Z
-#                         not 0, no pre-release suffix) skips these rows, printed
-#                         as MINOR ONLY; a pre-release or a
-#                         minor or major release (Z = 0) is judged by them
-#                         (owner, 2026-11-13: point releases have fast tests only)
+#                         a point release would skip such a row, printed as
+#                         MINOR ONLY (no row has this event: see below)
 #           tag           the push of the release tag
 #
-# The run, nightly-tier and tag gates in force from v1.0.0-preview-6 are the
-# ones docs/RELEASING.md and Release Check required then; the rest are new in
-# v1.1.8 (2026-11-12: every job success, Nightly CI every job, the TLC re-run
-# evidence, MemorySanitizer, the tag run's final job).
+# No nightly rows (owner, 2026-11-14: "These are things for nightly, not for
+# gating a release", and of the nightly-tier rows: "Remove them all"). A
+# release is judged on checks that finish in minutes: the per-commit runs on
+# main and Release Check on the tag. The nightly tier (Nightly CI, CBMC, TLC
+# and its re-run, the threaded TSan leg, MemorySanitizer, the nightly
+# functional tiers, soak, leaks, macOS sanitizers, channel stress) still runs
+# on main's schedule and a red there is a red to fix, but it does not block a
+# cut. The tools still read the `nightly` event and the `tlc-rerun` kind (their
+# tests hold them with fixture rows, tools/release_testkit.py NIGHTLY_ROWS); a
+# row of either here would gate releases again.
+#
+# The run and tag gates in force from v1.0.0-preview-6 are the ones
+# docs/RELEASING.md and Release Check required then; the rest are new in
+# v1.1.8 (2026-11-12: every job success, the tag run's final job).
 
 # --- per-commit tier: the push run on main (release) and the pull request head (landing)
 ci.yml | - | run | v1.0.0-preview-6 | push | CI per-commit run green (RELEASING.md "The release gates")
@@ -101,23 +109,6 @@ release-check.yml | release gates passed on the tag | skip | v1.1.8 | push,pull_
 roadmap.yml | - | jobs-if-ran | v1.1.8 | push,pull_request | path-filtered: judged when it ran
 roadmap.yml | roadmap (sexp parses, ids unique) | skip | v1.1.8 | push | if: pull_request
 roadmap.yml | roadmap (regenerate ROADMAP.md on main) | skip | v1.1.8 | pull_request | if: not a pull request, on main
-
-# --- nightly tier: runs whose head is the release commit (minor and major releases only)
-nightly-ci.yml | - | run | v1.0.0-preview-6 | nightly | Nightly CI (ci.yml with full: true) green
-nightly-ci.yml | - | jobs | v1.1.8 | nightly | Nightly CI: every job success (none skipped, none cancelled)
-cbmc.yml | - | run | v1.0.0-preview-6 | nightly | CBMC arithmetic leaf proofs green
-tlc.yml | - | run | v1.0.0-preview-6 | nightly | TLC records run green
-tlc.yml | Model records are current | job | v1.1.8 | nightly | the committed TLC records are current
-tlc.yml | TLC re-run | tlc-rerun | v1.1.8 | nightly | the models were re-run by TLC, not only their records read
-nightly.yml | tsan (threaded transport) (<ref>) | job | v1.0.0-preview-6 | nightly | threaded TSan leg on the run's own head commit
-msan.yml | MemorySanitizer | job | v1.1.8 | nightly | MemorySanitizer, a release gate from v1.1.8 (advisory before)
-nightly.yml | linux / Release functional nightly tier (<ref>) | job | v1.1.8 | nightly | the functional suite's nightly tier on Linux
-nightly.yml | macos / Release functional nightly tier (<ref>) | job | v1.1.8 | nightly | the functional suite's nightly tier on macOS
-nightly.yml | windows / Release functional nightly tier (<ref>) | job | v1.1.8 | nightly | the functional suite's nightly tier on Windows
-nightly-soak.yml | - | jobs | v1.1.8 | nightly | every soak job success (v1.1.7 was tagged 2.5 h after soak per transport went red)
-nightly-leaks.yml | - | jobs | v1.1.8 | nightly | asan + ubsan + lsan over the full suite
-nightly-macos-sanitizers.yml | - | jobs | v1.1.8 | nightly | macOS asan+ubsan, tsan and leaks
-nightly-channels-stress.yml | - | jobs | v1.1.8 | nightly | the channel stress runs
 
 # --- the tag push: waited for by tools/release.py before it publishes
 release-check.yml | threaded tsan run on the release commit | tag | v1.0.0-preview-6 | tag | the second check, on the tag, of every gate above

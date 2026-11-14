@@ -48,8 +48,9 @@
 # functional run moved without a weaker oracle to the existing
 # nightly-leaks.yml job, which runs it daily at 06:20 UTC under the same
 # asan+ubsan flags plus LSan. A red nightly has a commit range and the next
-# morning's estate owner; it remains a required release gate, not an advisory
-# replacement for the focused per-commit signal.
+# morning's estate owner and is a red to fix, not an advisory replacement for
+# the focused per-commit signal; since 2026-11-14 no nightly job gates a
+# release (tools/release_gates.txt).
 #
 # Everything else that was over the line was SPLIT, not moved: tsan into two
 # parallel legs, windows Release into (a), (b) and (c), every Linux and macOS row into
@@ -4625,7 +4626,7 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^[1-9][0-9]* release version fixtures passed$' <<<"$output"
 
-      - name: Test the release nightly-gates check
+      - name: Test the release gates check on the tag
         if: ${{ !cancelled() }}
         run: |
           set -euo pipefail

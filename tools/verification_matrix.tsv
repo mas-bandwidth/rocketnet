@@ -74,7 +74,7 @@ functional|linux|s390x|gcc-guest|Release|devON|none|auto~auto|default	nightly-bi
 functional|linux|s390x|gcc-guest|Release|devON|none|portable~portable|default	nightly-bigendian-system.yml	bigendian-system	*	functional && portable	nightly	PLATFORMS.md: portable pinned in the guest
 functional|linux|x86_64|clang-18|Debug|devON|none|auto~auto|default	nightly-toolchains.yml	linux-compilers	*	functional	nightly	nightly-toolchains matrix
 functional|linux|x86_64|clang-18|Release|devON|none|auto~auto|default	nightly-toolchains.yml	linux-compilers	*	functional	nightly	nightly-toolchains matrix
-functional|linux|x86_64|clang|Release|devON|msan|portable~portable|default	-	-	-	functional && portable	owed:2026-11-19	MSan is a claimed release gate (TESTING.md, release_gates.txt); real sockets reach uninitialised-read paths the unit suite fakes
+functional|linux|x86_64|clang|Release|devON|msan|portable~portable|default	-	-	-	functional && portable	owed:2026-11-19	MSan is a nightly check (TESTING.md); real sockets reach uninitialised-read paths the unit suite fakes
 functional|linux|x86_64|clang|Release|devON|none|auto~auto|default	nightly.yml	linux-clang	*	functional	nightly	nightly.yml linux-clang claims clang
 functional|linux|x86_64|gcc-11-ubuntu-22.04|Release|devON|none|auto~auto|default	-	-	-	functional	owed:2026-11-19	PLATFORMS.md: 22.04 LTS row, build and unit suite (container); the row claims the unit suite only, but the claim 'supported release to build and deploy on' needs the functional suite on that toolchain
 functional|linux|x86_64|gcc-13-ubuntu-24.04|Release|devON|none|auto~auto|default	-	-	-	functional	owed:2026-11-19	PLATFORMS.md: 24.04 LTS row, build and unit suite (container); LINUX.md lists it supported; the row claims the unit suite only, but the claim 'supported release to build and deploy on' needs the functional suite on that toolchain
@@ -405,7 +405,7 @@ tools/check_public_header.py|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.
 tools/check_refusal_mutants.py|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	lint-source	Every split-load refusal is tested	tools/check_refusal_mutants.py	per-commit	registered checker; self-test and zero-input refusal (tools/checkers.txt)
 tools/check_release_doc.py|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	lint	Self-tests of the registered checkers	tools/test_check_dll_consumer.py	per-commit	registered checker; self-test and zero-input refusal (tools/checkers.txt)
 tools/check_release_gates.py|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	lint-source	Test the release and landing tools; check the release gates list	tools/check_release_gates.py	per-commit	registered checker; self-test and zero-input refusal (tools/checkers.txt)
-tools/check_release_tsan.py|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	lint-source	Test the release nightly-gates check	tools/test_check_release_tsan.py	per-commit	registered checker; self-test and zero-input refusal (tools/checkers.txt)
+tools/check_release_tsan.py|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	lint-source	Test the release gates check on the tag	tools/test_check_release_tsan.py	per-commit	registered checker; self-test and zero-input refusal (tools/checkers.txt)
 tools/check_run_matrix.py|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	lint	Every verification cell is declared and wired to the job that runs it	tools/check_run_matrix.py	per-commit	registered checker; self-test and zero-input refusal (tools/checkers.txt)
 tools/check_run_shell.py|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	lint	Every run step stops on its first failure	tools/check_run_shell.py	per-commit	registered checker; self-test and zero-input refusal (tools/checkers.txt)
 tools/check_scheduled_watched.py|linux|x86_64|gcc|Release|devON|none|-~-|default	ci.yml	lint	Every scheduled workflow is in the nightly watch's list	tools/check_scheduled_watched.py	per-commit	registered checker; self-test and zero-input refusal (tools/checkers.txt)
@@ -449,7 +449,7 @@ unit(byte cases+filter)|linux|s390x|s390x-linux-gnu-gcc|Release|devON|none|-~-|d
 unit|linux|s390x|gcc-guest|Release|devON|none|-~-|default	nightly-bigendian-system.yml	bigendian-system	*	test	nightly	PLATFORMS.md s390x guest row
 unit|linux|x86_64|clang-18|Debug|devON|none|-~-|default	nightly-toolchains.yml	linux-compilers	*	test	nightly	nightly-toolchains matrix
 unit|linux|x86_64|clang-18|Release|devON|none|-~-|default	nightly-toolchains.yml	linux-compilers	*	test	nightly	nightly-toolchains matrix
-unit|linux|x86_64|clang|Release|devON|msan|-~-|default	msan.yml	msan	Run the MSan gate	tools/run_msan.sh	nightly	MSan release gate (TESTING.md)
+unit|linux|x86_64|clang|Release|devON|msan|-~-|default	msan.yml	msan	Run the MSan gate	tools/run_msan.sh	nightly	MSan nightly check (TESTING.md)
 unit|linux|x86_64|clang|Release|devON|none|-~-|default	nightly.yml	linux-clang	*	test	nightly	nightly.yml linux-clang claims clang
 unit|linux|x86_64|gcc-11-ubuntu-22.04|Release|devON|none|-~-|default	-	-	-	test	owed:2026-11-19	PLATFORMS.md: 22.04 LTS row, build and unit suite (container)
 unit|linux|x86_64|gcc-13-ubuntu-24.04|Release|devON|none|-~-|default	-	-	-	test	owed:2026-11-19	PLATFORMS.md: 24.04 LTS row, build and unit suite (container); LINUX.md lists it supported

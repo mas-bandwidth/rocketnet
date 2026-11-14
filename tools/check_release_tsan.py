@@ -10,10 +10,10 @@ the same list, the same rules) again on the tag push, from Release Check's
 tools/release.py publishes only when both are green.
 
 The gates judged are those in force for the tag's version, for the push and
-nightly events: the per-commit push runs on main, Nightly CI, CBMC, TLC
-records and the TLC re-run evidence, nightly.yml's `tsan (threaded transport)
-(<ref>)` leg on the run's own head commit, MemorySanitizer. It also checks the
-commit is on main and sdk/rocketnet.h's shipping version equals the tag.
+nightly events: the per-commit push runs on main (every job, every required
+job name). The list holds no nightly row since 2026-11-14 (the nightly tier
+does not gate a release); the job keeps its historical name. It also checks
+the commit is on main and sdk/rocketnet.h's shipping version equals the tag.
 
 Environment: GITHUB_REPOSITORY (owner/name), GITHUB_SHA (the tagged commit),
 GITHUB_REF_NAME (the tag, the version), GITHUB_TOKEN (actions: read,

@@ -115,30 +115,22 @@ In outline, from v1.1.8:
   docs and Release Check (roadmap when it ran), every job `success`, and
   every name in [.github/rulesets/main.json](../.github/rulesets/main.json)
   present;
-- the nightly tier, runs whose head is the release commit: Nightly CI
-  (nightly-ci.yml) with every job `success`; CBMC; TLC records with
-  `Model records are current`; the TLC re-run evidence (a `TLC re-run full`
-  job on the exact commit, or every `TLC re-run slice K/N` of the last N days'
-  scheduled runs on ancestors of the commit); nightly.yml's
-  `tsan (threaded transport) (<ref>)` and its three `Release functional
-  nightly tier` jobs (linux, macos, windows); msan.yml's `MemorySanitizer`;
-  and every job of nightly-soak.yml, nightly-leaks.yml,
-  nightly-macos-sanitizers.yml and nightly-channels-stress.yml;
 - on the tag push: Release Check's `threaded tsan run on the release commit`
-  (the second check) and `release gates passed on the tag` (the tag run's
+  (the second check: the per-commit tier judged again by the same list; the
+  name is historical) and `release gates passed on the tag` (the tag run's
   final job, red unless the second check and the version check succeeded).
 
-Which tiers gate which release (the owner, 2026-11-13: "I want each point
-release to have fast tests only"): from v1.1.8 a point release (vX.Y.Z with
-Z not 0 and no pre-release suffix) is gated by the per-commit tier and the
-tag push only. A minor or major release (Z is 0), and every pre-release, is
-gated by every tier. The rows whose events are `nightly` are the minor-only
-rows: both `tools/release.py` and the second
-check on the tag skip them for a point release and print each as `MINOR ONLY`.
-The nightly tier still runs on `main`'s schedule; none of it is deleted or
-muted, and a red in it is fixed in the next point release.
+The nightly tier is not a release gate (the owner, 2026-11-14: "These are
+things for nightly, not for gating a release"). A release is judged on checks
+that finish in minutes; the soak and the other long nightly jobs (Nightly CI,
+CBMC, TLC and its re-run, the threaded TSan leg, MemorySanitizer, the nightly
+functional tiers, leaks, macOS sanitizers, channel stress) are for the
+nightly. They still run on `main`'s schedule, none of them is deleted or
+muted, and a red in one is a red to fix, but it does not block a cut.
 
-Inside the per-commit tier, from v1.1.10 a point release and every landing
+Inside the per-commit tier (the owner, 2026-11-13: "I want each point
+release to have fast tests only"), from v1.1.10 a point release (vX.Y.Z with
+Z not 0 and no pre-release suffix) and every landing
 (`tools/land.py` without `--full`) are light: the jobs a `full` row names
 (functional suites, transport matrix, happy path, sanitizer legs, fuzz smoke)
 still run on every commit and are printed with their result, but do not gate;
@@ -147,33 +139,29 @@ instruction count, static analysis, docs, Release Check) do. A red FULL job is
 fixed in the next point release. A minor or major release and a pre-release
 hold every job.
 
-A version is judged by the gates in force for it: the gates that were the
-release requirement from v1.0.0-preview-6 (the per-commit runs green, Nightly
-CI, CBMC, TLC records and the threaded TSan leg green) and the gates added on
-2026-11-12, in force from v1.1.8 (every job `success`, Nightly CI every job,
-the TLC re-run evidence, MemorySanitizer, the nightly functional tiers, soak,
-leaks, macOS sanitizers and channel stress, the tag run's final job). The tool
-prints each gate not in force for the version it judges; `--dry-run
---gates-as-of VERSION` judges a commit by another version's gates. v1.0.0
-(9904027045) is refused by the gates in force for it: its CI push run failed
-and its Nightly CI, CBMC and TLC records runs are not green. v1.1.7
-(76edea48e) passes the gates in force for it and is refused by v1.1.8's: no
-TLC re-run, MemorySanitizer, soak, leaks, macOS sanitizers or channel stress
-run exists on that commit (it was tagged 2.5 hours after soak per transport
-went red).
+A version is judged by the gates in force for it: the per-commit runs green
+and the tag run (from v1.0.0-preview-6), and every job `success` with the tag
+run's final job (from v1.1.8). The tool prints each gate not in force for the
+version it judges; `--dry-run --gates-as-of VERSION` judges a commit by
+another version's gates. v1.0.0 (9904027045) is refused by the gates in force
+for it: its CI push run failed. Until 2026-11-14 the list also held the
+nightly tier as gates (from v1.0.0-preview-6; from v1.1.8 not for point
+releases); v1.2.0 was the last release judged by them. The tools
+still read such a row if one is added (their tests hold that with fixture
+rows).
 
-MSan, called advisory until v1.1.7, is a release gate from v1.1.8; it stays
-out of the per-PR set.
+MSan is a nightly check; it stays out of the per-PR set.
 
 The [GCC analyzer evidence limit](TESTING.md#static-analysis-evidence-limit)
 also applies to release qualification: the gate covers its selected translation
 units and compares findings with the baseline. Required green jobs do not
 override a known failure in the checks they are intended to run.
 
-The other `nightly*.yml` workflows, the fuzz-nightly workflow and
-[tlc-debt.yml](../.github/workflows/tlc-debt.yml) (weekly, each timeout-debt
-case run to its declared result as its own job, with its own 96-hour deadline
-and its own evidence artifact) are watches, not release gates.
+Every `nightly*.yml` workflow, msan.yml, cbmc.yml, tlc.yml, the fuzz-nightly
+workflow and [tlc-debt.yml](../.github/workflows/tlc-debt.yml) (weekly, each
+timeout-debt case run to its declared result as its own job, with its own
+96-hour deadline and its own evidence artifact) are watches, not release
+gates.
 
 ## Landing on main
 
@@ -213,17 +201,12 @@ makes the same checks required on `main` itself.
 3. Land the release pull request with `python3 tools/land.py <pr>`. `land.py`
    does not read the version: add `--full` for a minor or major release or a
    pre-release, so that it holds the jobs the `full` rows name too.
-4. For a minor or major release or a pre-release, dispatch the nightly tier
-   on the merged commit once it is `main`'s head; `tools/release.py` requires
-   every tier for these (`is_point_release` in `tools/release_gates.py`). A
-   point release skips this step:
-   `gh workflow run nightly-ci.yml --ref main`, and the same for `nightly.yml`,
-   `cbmc.yml`, `tlc.yml` (a dispatched run is never replaced by a scheduled
-   one) and `msan.yml`. Resolve the analyzer evidence limitation above before
-   treating the GCC result as a clean analyzer pass.
-5. `python3 tools/release.py <version> <commit> --dry-run` prints every gate
+4. `python3 tools/release.py <version> <commit> --dry-run` prints every gate
    with its run id and conclusion, and the verdict. Wait until it passes.
-6. `python3 tools/release.py <version> <commit>`. What the tool does:
+   Nothing from the nightly tier is dispatched or waited for. Resolve the
+   analyzer evidence limitation above before treating the GCC result as a
+   clean analyzer pass.
+5. `python3 tools/release.py <version> <commit>`. What the tool does:
    - checks the version format, that the commit is on `main` (an ancestor of
      `origin/main`), that the shipping `ROCKETNET_VERSION_FULL` at the commit
      equals the version, that the notes file exists at the commit, that the

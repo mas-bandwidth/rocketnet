@@ -20,12 +20,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import check_release_tsan  # noqa: E402
-from release_testkit import NOW, REPO, SHA, VERSION, FakeApi, green_release, job  # noqa: E402
+from release_testkit import NOW, REPO, SHA, VERSION, FakeApi, green_release, job, nightly_gates  # noqa: E402
 
 
-def verdict(api, version=VERSION):
+def verdict(api, version=VERSION, gates=None):
     out = io.StringIO()
-    code = check_release_tsan.check(api, REPO, SHA, version, out, now=NOW)
+    code = check_release_tsan.check(api, REPO, SHA, version, out, gates=gates, now=NOW)
     return code, out.getvalue()
 
 
@@ -40,23 +40,39 @@ class CheckReleaseTsan(unittest.TestCase):
         api.tags[VERSION] = SHA
         code, text = verdict(api)
         self.assertEqual(code, 0, text)
-        self.assertIn("'tsan (threaded transport) (main)': success", text)
+        self.assertNotIn("nightly", text)
         self.assertIn("VERDICT: PASS", text)
 
-    def test_point_release_tag_is_judged_by_the_per_commit_tier_only(self):
-        api = green_release(FakeApi(), version="v1.1.8")
-        api.tags["v1.1.8"] = SHA
-        api.jobs[run_of(api, "nightly.yml")["id"]][1] = job("tsan (threaded transport) (main)", "failure")
-        code, text = verdict(api, "v1.1.8")
-        self.assertEqual(code, 0, text)
-        self.assertIn("MINOR ONLY nightly.yml 'tsan (threaded transport) (<ref>)'", text)
-        self.assertIn("VERDICT: PASS", text)
-
-    def test_minor_release_tag_is_judged_by_the_nightly_tier(self):
+    def test_minor_release_tag_is_not_held_by_a_red_nightly_run(self):
+        # owner, 2026-11-14: the nightly tier is for the nightly, not for gating a release
         api = green_release(FakeApi(), version="v1.2.0")
         api.tags["v1.2.0"] = SHA
         api.jobs[run_of(api, "nightly.yml")["id"]][1] = job("tsan (threaded transport) (main)", "failure")
         code, text = verdict(api, "v1.2.0")
+        self.assertEqual(code, 0, text)
+        self.assertIn("VERDICT: PASS", text)
+
+    def test_green_with_the_nightly_fixture_rows_passes(self):
+        api = green_release(FakeApi())
+        api.tags[VERSION] = SHA
+        code, text = verdict(api, gates=nightly_gates())
+        self.assertEqual(code, 0, text)
+        self.assertIn("'tsan (threaded transport) (main)': success", text)
+
+    def test_point_release_tag_skips_nightly_rows(self):
+        api = green_release(FakeApi(), version="v1.1.8")
+        api.tags["v1.1.8"] = SHA
+        api.jobs[run_of(api, "nightly.yml")["id"]][1] = job("tsan (threaded transport) (main)", "failure")
+        code, text = verdict(api, "v1.1.8", gates=nightly_gates())
+        self.assertEqual(code, 0, text)
+        self.assertIn("MINOR ONLY nightly.yml 'tsan (threaded transport) (<ref>)'", text)
+        self.assertIn("VERDICT: PASS", text)
+
+    def test_minor_release_tag_is_judged_by_nightly_rows(self):
+        api = green_release(FakeApi(), version="v1.2.0")
+        api.tags["v1.2.0"] = SHA
+        api.jobs[run_of(api, "nightly.yml")["id"]][1] = job("tsan (threaded transport) (main)", "failure")
+        code, text = verdict(api, "v1.2.0", gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("'tsan (threaded transport) (main)': failure", text)
 
@@ -70,7 +86,7 @@ class CheckReleaseTsan(unittest.TestCase):
     def test_failed_tsan_leg_fails(self):
         api = green_release(FakeApi())
         api.jobs[run_of(api, "nightly.yml")["id"]][1] = job("tsan (threaded transport) (main)", "failure")
-        code, text = verdict(api)
+        code, text = verdict(api, gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("'tsan (threaded transport) (main)': failure", text)
         self.assertIn("::error::Release gates are not green", text)
@@ -78,14 +94,14 @@ class CheckReleaseTsan(unittest.TestCase):
     def test_leg_for_another_ref_does_not_count(self):
         api = green_release(FakeApi())
         api.jobs[run_of(api, "nightly.yml")["id"]][1] = job("tsan (threaded transport) (rowan/feature)")
-        code, text = verdict(api)
+        code, text = verdict(api, gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("MISSING", text)
 
     def test_missing_nightly_ci_fails(self):
         api = green_release(FakeApi())
         api.runs.remove(run_of(api, "nightly-ci.yml"))
-        code, text = verdict(api)
+        code, text = verdict(api, gates=nightly_gates())
         self.assertEqual(code, 1)
         self.assertIn("MISSING: no nightly run of nightly-ci.yml", text)
 
