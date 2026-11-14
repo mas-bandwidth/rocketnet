@@ -819,12 +819,16 @@ int main( int argc, char ** argv )
 {
     if ( argc < 3 || argc > 6 )
     {
-        fprintf( stderr, "usage: transport_memory clients payload_bytes [transport [queues [--plan-only|--session-plan-only|--lifecycle|--light-lifecycle]]]\n" );
+        fprintf( stderr, "usage: transport_memory clients payload_bytes [transport [queues [--plan-only|--plan-only-at-address|--session-plan-only|--lifecycle|--light-lifecycle]]]\n" );
         return 1;
     }
 
     const char * transport = argc >= 4 ? argv[3] : "portable";
-    const bool plan_only = argc == 6 && strcmp( argv[5], "--plan-only" ) == 0;
+    // --plan-only-at-address: the plan for a specific bind address (10.0.0.5),
+    // where the Windows transports take their default worker and lane counts
+    // instead of one on the wildcard; nothing binds
+    const bool plan_at_address = argc == 6 && strcmp( argv[5], "--plan-only-at-address" ) == 0;
+    const bool plan_only = argc == 6 && ( strcmp( argv[5], "--plan-only" ) == 0 || plan_at_address );
     const bool session_plan_only = argc == 6 && strcmp( argv[5], "--session-plan-only" ) == 0;
     const bool lifecycle_only = argc == 6 && strcmp( argv[5], "--lifecycle" ) == 0;
     const bool light_lifecycle_only = argc == 6 && strcmp( argv[5], "--light-lifecycle" ) == 0;
@@ -839,6 +843,10 @@ int main( int argc, char ** argv )
     if ( strlen( transport ) >= sizeof( config.transport ) )
     {
         return 1;
+    }
+    if ( plan_at_address )
+    {
+        snprintf( config.bind_ipv4_address, sizeof( config.bind_ipv4_address ), "%s", "10.0.0.5" );
     }
     snprintf( config.transport, sizeof( config.transport ), "%s", transport );
     config.max_clients = number( argv[1] );

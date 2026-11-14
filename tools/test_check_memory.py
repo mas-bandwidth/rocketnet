@@ -46,6 +46,35 @@ planned = 10000 + 1000 * clients
 # the library's worker count: "drift" moves every transport's count, as a
 # change of defaults or sizing does, and the tool must follow the plan
 workers = {"gso": 1, "iocp": 3}.get(transport, 2) + (1 if mode == "drift" else 0)
+if flag in ("--plan-only", "--plan-only-at-address") and queues == 0:
+    # a default configuration: the library's defaults, read from the same
+    # header the tool reads; "default-drift" plans one more than the default
+    defaults = {}
+    with open(os.environ["FAKE_NETWORK_THREADS_H"]) as header:
+        for line in header:
+            fields = line.split()
+            if len(fields) == 3 and fields[0] == "#define" and fields[2].isdigit():
+                defaults[fields[1]] = int(fields[2])
+    extra = 1 if mode == "default-drift" else 0
+    at_address = flag == "--plan-only-at-address"
+    if transport == "gso":
+        count = sockets = defaults["ROCKETNET_GSO_DEFAULT_WORKERS"] + extra
+    elif transport == "io_uring":
+        count = sockets = defaults["ROCKETNET_IO_URING_DEFAULT_WORKERS"] + extra
+    elif transport == "xdp":
+        count = sockets = defaults["ROCKETNET_XDP_DEFAULT_THREADS"] + extra
+    elif transport == "msgx":
+        count, sockets = defaults["ROCKETNET_MSGX_DEFAULT_TRANSMIT_WORKERS"] + 1 + extra, 2
+    elif transport == "rio":
+        count = sockets = defaults["ROCKETNET_RIO_DEFAULT_LANES"] + extra if at_address else 1
+    elif transport == "iocp":
+        sockets = (defaults["ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS"] if at_address else 1) + extra
+        count = sockets + 1
+    else:
+        count = sockets = 2
+    out({"worker_threads": count, "sockets": sockets, "thread_stack_bytes": stack * count, "allocator_bytes": planned,
+         "planned_bytes": planned, "os_bytes": stack * count})
+    sys.exit(0)
 if flag == "--plan-only":
     if transport == "xdp":
         umem = 1 << 20
@@ -101,6 +130,8 @@ class CheckMemoryProcessTest(unittest.TestCase):
         self.probe = self.dir / "transport_memory"
         self.probe.write_text("#!" + sys.executable + " -S\n" + FAKE_PROBE)
         self.probe.chmod(0o755)
+        # the fake plans the defaults the library defines, from the header the tool reads
+        os.environ["FAKE_NETWORK_THREADS_H"] = str(TOOL.parent.parent / "sdk" / "rocketnet_network_threads.h")
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -157,6 +188,21 @@ class CheckMemoryProcessTest(unittest.TestCase):
         result = self.run_tool(self.probe, "unplanned")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("started_threads", result.stderr)
+
+    def test_default_plan_off_the_library_default_fails(self):
+        # a transport whose plan at its default configuration is not the
+        # default the library defines fails, on every platform branch
+        runner = ("import runpy, sys; sys.platform = sys.argv.pop(1); "
+                  "sys.path.insert(0, sys.argv[1]); sys.argv = sys.argv[2:]; "
+                  "runpy.run_path(sys.argv[0], run_name='__main__')")
+        for platform in ("linux", "darwin", "win32"):
+            env = dict(os.environ, FAKE_MEMORY="default-drift")
+            env.pop("ROCKETNET_SERVER_MAX_CLIENTS", None)
+            env.pop("ROCKETNET_DEV_SERVER_LATENCY_MS", None)
+            result = subprocess.run([sys.executable, "-c", runner, platform, str(TOOL.parent), str(TOOL), str(self.probe)],
+                                    capture_output=True, text=True, env=env, cwd=self.dir)
+            self.assertNotEqual(result.returncode, 0, platform)
+            self.assertIn("default", result.stderr, (platform, result.stderr[-800:]))
 
     def test_zero_rows_fail(self):
         result = self.run_tool(self.probe, "silent")

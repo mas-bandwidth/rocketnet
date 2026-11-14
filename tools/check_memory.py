@@ -138,6 +138,56 @@ for transport in transports:
         assert server['os_bytes'] == server['thread_stack_bytes'] + server['umem_bytes'] + server['mapped_ring_bytes']
         assert server['thread_stack_bytes'] > 0 and server['worker_threads'] == planned_workers(profile, transport), (
             transport, profile, server)
+# Each transport's plan at its DEFAULT configuration (queues 0: nothing asked),
+# held to the defaults where the library defines them,
+# sdk/rocketnet_network_threads.h, read here and never copied, so a change of a
+# default (rio's lanes, gso's workers) is checked on the day it lands.
+header = Path(__file__).resolve().parent.parent / 'sdk' / 'rocketnet_network_threads.h'
+defaults = {}
+for line in header.read_text().splitlines():
+    fields = line.split()
+    if len(fields) == 3 and fields[0] == '#define' and fields[2].isdigit():
+        defaults[fields[1]] = int(fields[2])
+for name in ('ROCKETNET_GSO_DEFAULT_WORKERS', 'ROCKETNET_IO_URING_DEFAULT_WORKERS', 'ROCKETNET_XDP_DEFAULT_THREADS',
+             'ROCKETNET_RIO_DEFAULT_LANES', 'ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS', 'ROCKETNET_IOCP_DEFAULT_SEND_THREADS',
+             'ROCKETNET_MSGX_DEFAULT_TRANSMIT_WORKERS'):
+    assert defaults.get(name, 0) >= 1, (str(header), name, 'not defined as a positive number')
+
+
+def default_plan(transport, flag='--plan-only'):
+    row, = run(1, 1416, transport, 0, flag)
+    return row
+
+
+if sys.platform.startswith('linux'):
+    gso = default_plan('gso')
+    assert gso['worker_threads'] == defaults['ROCKETNET_GSO_DEFAULT_WORKERS'] == gso['sockets'], ('gso default', gso)
+    xdp_default = default_plan('xdp')
+    assert xdp_default['worker_threads'] == defaults['ROCKETNET_XDP_DEFAULT_THREADS'], ('xdp default', xdp_default)
+    uring_default = subprocess.run([str(binary), '1', '1416', 'io_uring', '0', '--plan-only'],
+                                   capture_output=True, text=True, timeout=execution_timeout(10))
+    if uring_default.returncode == 0:
+        uring_row = json.loads(uring_default.stdout)
+        assert uring_row['worker_threads'] == defaults['ROCKETNET_IO_URING_DEFAULT_WORKERS'], ('io_uring default', uring_row)
+    else:
+        assert 'memory plan unavailable' in uring_default.stderr, (uring_default.returncode, uring_default.stdout, uring_default.stderr)
+if sys.platform == 'darwin':
+    msgx = default_plan('msgx')
+    # the transmit workers and the one receive worker
+    assert msgx['worker_threads'] == defaults['ROCKETNET_MSGX_DEFAULT_TRANSMIT_WORKERS'] + 1, ('msgx default', msgx)
+if sys.platform == 'win32':
+    # on the wildcard the Windows transports take one lane and one completion
+    # worker; on a specific address, their defaults
+    rio_wildcard = default_plan('rio')
+    assert rio_wildcard['worker_threads'] == 1, ('rio wildcard', rio_wildcard)
+    rio_default = default_plan('rio', '--plan-only-at-address')
+    assert rio_default['worker_threads'] == defaults['ROCKETNET_RIO_DEFAULT_LANES'] == rio_default['sockets'], ('rio default', rio_default)
+    iocp_default = default_plan('iocp', '--plan-only-at-address')
+    assert iocp_default['sockets'] == defaults['ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS'], ('iocp default', iocp_default)
+    # the send threads are the default, or the send lanes when fewer (one
+    # client's server is sized at its minimum lanes)
+    send_threads = iocp_default['worker_threads'] - iocp_default['sockets']
+    assert 1 <= send_threads <= defaults['ROCKETNET_IOCP_DEFAULT_SEND_THREADS'], ('iocp default send threads', iocp_default)
 if sys.platform.startswith('linux'):
     xdp, = run(1000, 1416, 'xdp', 7, '--plan-only')
     # UMEM is rocketnet_xdp_umem_bytes in the SDK. Do not restate the product here.
