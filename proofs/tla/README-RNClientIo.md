@@ -1,15 +1,45 @@
 # RNClientIo
 
-**Historical design.** RNClientIo models the two-send-ring, two-receive-buffer,
-flag-handshake client I/O that `sdk/rocketnet_client_io.h` replaced. Today's
-code has three rings and three buffers exchanged by
-`sdk/rocketnet_buffer_handoff.h` under a try-acquired mutex, with a LATE
-hand-off on contention; that exchange, each ring's destination binding
-(`io->to`, `io->to_held`, `rocketnet_client_io_rebind_held`) and
+**Partly historical.** RNClientIo's buffer exchange is history: it models the
+two-send-ring, two-receive-buffer, flag-handshake client I/O that
+`sdk/rocketnet_client_io.h` replaced. Today's code sends from three rings
+exchanged by `sdk/rocketnet_buffer_handoff.h` under a try-acquired mutex,
+with a LATE hand-off on contention; that exchange, each ring's destination
+binding (`io->to`, `io->to_held`, `rocketnet_client_io_rebind_held`) and
 `SentToCommitted` are modelled and checked in
-[RNBufferHandoff](README-RNBufferHandoff.md). The code names RNClientIo
-actions only as that history. The cases below stay as the record of the
-earlier design; they are not evidence for the current source.
+[RNBufferHandoff](README-RNBufferHandoff.md). It receives into three buffers
+exchanged by `sdk/rocketnet_receive_handoff.h`, modelled by RNReceiveHandoff.
+`sdk/rocketnet_client_io.h`
+`sdk/rocketnet_client_io.h` names RNClientIo's exchange steps only as that
+history. `sdk/rocketnet_client_transport.cpp` still names `HandOff`,
+`Defer`, `Reopen`, `Write` and `Commit` at its hand-off for the two rules
+that carry over (a hand-off never waits, a ring the I/O thread holds is never
+reused); the ring count and the LATE rule there are RNBufferHandoff's. For
+the exchange (`HandOff`, `Defer`, `Reopen`, `Expose`, `Return`, `IoPublish`,
+`IoOwe`, `IoFinishRing` and the invariants over them) the cases below are the
+record of the earlier design, not evidence for the current source.
+
+The rest of the model is still a current model the code cites, at its level
+of abstraction:
+
+- the step-driven mode (`StepBegin`, `CallerStep`, `StepEnd`,
+  `NoIoThreadActionInStepMode`, `MCRNClientIoStepDriven.cfg`,
+  `MCRNClientIoBrokenStepStartsThread.cfg`): with `step_in_update` set no I/O
+  thread starts and `rocketnet_client_io_step` runs with block false inside
+  update, send_packets and destroy (`sdk/rocketnet_client_transport.cpp`, the
+  `RNClientIo CallerStep` sites). No other module models this mode's rule;
+- the thread's lifecycle, `Init`, `Stop`, `Join`, `Free` in that order
+  (`FreedOnlyAfterJoin`), cited by the transport's create and destroy and by
+  each I/O driver's (`sdk/rocketnet_driver_builtin.cpp`,
+  `sdk/rocketnet_client_gso_linux.cpp`, `sdk/rocketnet_client_iocp_windows.cpp`);
+- the level-triggered wake and the full-buffer wait on the wake alone
+  (`IoWait`, `IoWake`, `FullWaitsOnWake`), cited by those drivers and the
+  platform waits (`sdk/rocketnet_platform.cpp`).
+
+RNBufferHandoff (its wake, `WorkerWakes` and the `BrokenSkipWake` witness)
+and [RNClientIoShutdown](README-RNClientIoShutdown.md) also model the wake
+and the shutdown, over the current exchange; the transport and driver files
+above cite RNClientIo for the thread-level order.
 
 **Shutdown scope:** This model retains its earlier synchronous shutdown
 abstraction and exact historical evidence. The approved request/completion API
