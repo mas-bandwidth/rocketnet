@@ -42,7 +42,10 @@ prefilter, and which only main's keyed rungs refuse.
 ## Invariants
 
 - `InBounds`: `num_packets` never passes the capacity.
-- `Accounted`: every datagram is in the bank, delivered, or dropped.
+- `Accounted`: every datagram is in the bank, delivered, or dropped. It holds
+  by construction (each arrival lands in exactly one place, and `Drain` only
+  moves the bank to delivered), has no witness and cannot fail: a check on the
+  model's bookkeeping. The counting claim over the code is `EveryDropCounted`.
 - `EveryDropCounted`: every drop is counted under a named reason.
 - `NoGarbageBanked`: once the filter is published, garbage never takes a slot.
 - `NoEvictionByGarbage`: garbage never causes a player's datagram to be refused.

@@ -1079,6 +1079,7 @@ MCRNRioLaneLayoutBrokenNoBound.cfg	MCRNRioLaneLayout.tla	invariant	LaneInRange	i
 MCRNRioLaneLayoutBrokenModLane.cfg	MCRNRioLaneLayout.tla	invariant	FinishOwn	ignore-terminal	rnriolanelayout	required	-
 MCRNRioLaneLayoutBrokenLeastFull.cfg	MCRNRioLaneLayout.tla	invariant	OneLanePerDest	ignore-terminal	rnriolanelayout	required	-
 MCRNRioLaneLayoutBrokenReverse.cfg	MCRNRioLaneLayout.tla	invariant	InOrder	ignore-terminal	rnriolanelayout	required	-
+MCRNRioLaneLayoutBrokenNoSlotBound.cfg	MCRNRioLaneLayout.tla	invariant	NoReissue	ignore-terminal	rnriolanelayout	required	-
 MCRNRioWorkerGarbage.cfg	MCRNRioWorker.tla	pass	-	check	rnrioworker	required	-
 MCRNRioWorkerBrokenBankGarbage.cfg	MCRNRioWorker.tla	invariant	NoGarbageBanked	check	rnrioworker	required	-
 MCRNRioWorkerBrokenTakeBeforeRetire.cfg	MCRNRioWorker.tla	invariant	DrainedReturnedAtPost	check	rnrioworker	required	-

@@ -66,7 +66,8 @@ turns and the slot's hold until its completion are
   it: no generation is carried, so finishing or aborting each start once is the
   caller's contract, and this model does not hand finish such an id.
 - **`NoReissue`**: every issued id names its own reserved slot, so no slot is
-  handed to two frames at once.
+  handed to two frames at once. It holds by `Start` taking the lane's next
+  unused slot; its witness is `NoSlotBound` below.
 - **`OneLanePerDest`**: every frame reserved and not yet sent for one
   destination is in one lane.
 - **`InOrder`**: each destination's frames are posted in the order they were
@@ -102,6 +103,13 @@ values.
   from the last down. Fails `InOrder`: two starts for `d1` take lane 0 slots 0
   and 1, both finish, and the send posts start 1 before start 0. The code's
   `rocketnet_rio_post_phase` walks `slot = 0 .. count - 1`.
+- **`MCRNRioLaneLayoutBrokenNoSlotBound.cfg`**: start without its refusal
+  once the slots are used (`L = 2`, `F = 1`, one destination, two starts).
+  Fails `NoReissue`: the first start takes lane 0 slot 0, id 0; the second
+  takes slot 1, past the lane, and hands id 1, which decodes to lane 1 slot 0,
+  a slot start never reserved. The code refuses at
+  `slot >= send_queue_size` in `rocketnet_rio_lane_start_packet`
+  (`ROCKETNET_COUNTER_RIO_SEND_FULL`).
 
 Each counterexample was checked against the code by hand.
 

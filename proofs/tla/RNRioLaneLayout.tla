@@ -46,6 +46,9 @@
 (*                and can overtake each other.                             *)
 (*   "Reverse"    the worker posts a lane's slots from the last down,      *)
 (*                not in slot order: a client's later frame leaves first.  *)
+(*   "NoSlotBound" start without the refusal once the slots are used     *)
+(*                (slot >= send_queue_size): the id of the slot past the   *)
+(*                last names a slot start never reserved (NoReissue).      *)
 (*                                                                         *)
 (* The checked claims:                                                     *)
 (*   LaneInRange    every decoded lane is 0 .. L - 1.                      *)
@@ -56,6 +59,8 @@
 (*                  destination is in one lane.                            *)
 (*   NoReissue      every outstanding id names its own reserved slot: a    *)
 (*                  slot is handed to one frame at a time.                 *)
+(*                  Its witness is NoSlotBound; under every other Mode it  *)
+(*                  holds by Start taking the next unused slot.            *)
 (*   InOrder        each destination's frames are posted in the order      *)
 (*                  they were started.                                     *)
 (***************************************************************************)
@@ -70,7 +75,7 @@ CONSTANTS L,          \* lanes: rocketnet_server_rio_t.num_lanes (the server's n
 
 ASSUME L >= 1 /\ F >= 1 /\ MaxStarts >= 1
 ASSUME \A h \in Hashes : h \in Nat
-ASSUME Mode \in {"Code", "NoBound", "ModLane", "LeastFull", "Reverse"}
+ASSUME Mode \in {"Code", "NoBound", "ModLane", "LeastFull", "Reverse", "NoSlotBound"}
 
 Dests == Hashes   \* a destination is its hash: the lane reads nothing else of it
 
@@ -133,8 +138,8 @@ Start(d) ==
     /\ LET lane == StageLane(d)
            i == next[lane]
            id == Encode(lane, i)
-       IN /\ i < F
-          /\ slot' = [slot EXCEPT ![lane][i] = <<d, started[d], "res">>]
+       IN /\ i < F \/ Mode = "NoSlotBound"
+          /\ slot' = IF i < F THEN [slot EXCEPT ![lane][i] = <<d, started[d], "res">>] ELSE slot
           /\ next' = [next EXCEPT ![lane] = i + 1]
           /\ issued' = [x \in DOMAIN issued \cup {id} |-> IF x = id THEN d ELSE issued[x]]
     /\ started' = [started EXCEPT ![d] = @ + 1]

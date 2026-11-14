@@ -24,22 +24,28 @@
 (* stateless prefilter: wrong filter value, a size its type forbids and   *)
 (* the rest of rocketnet_receive_drop_t), and hostile (well formed, so it *)
 (* passes the prefilter, but not a player's: a forged request, a replay;  *)
-(* only main's keyed rungs refuse it).  The property the blast row        *)
-(* measured broken: garbage never evicts a player.  A player's datagram   *)
-(* may still be refused as BANK_FULL when the bank is full of well-formed *)
-(* datagrams (players' or hostile): that is option 2's case, not this     *)
-(* layer's.                                                                *)
+(* only main's keyed rungs refuse it).  The property the old order        *)
+(* (capacity check first) broke: garbage never evicts a player.  A        *)
+(* player's datagram may still be refused as BANK_FULL when the bank is    *)
+(* full of well-formed datagrams (players' or hostile): that is the        *)
+(* known-source share's case, not this layer's.                            *)
 (*                                                                         *)
 (* Ghost state: evicted, set when a player's datagram is refused BANK_FULL *)
 (* while the bank holds garbage.                                          *)
 (*                                                                         *)
-(* Reversed witnesses: BankFirst = TRUE is the order the blast row         *)
-(* measured (the capacity check first, the prefilter on main after        *)
+(* Reversed witnesses: BankFirst = TRUE is the order the code replaced    *)
+(* (the capacity check first, the prefilter on main after                 *)
 (* banking): garbage takes the slots and a player is refused             *)
 (* (NoEvictionByGarbage).  UncountedFull = TRUE drops the BANK_FULL count, *)
 (* the drop the server's counters never saw (EveryDropCounted).           *)
 (* CheckPastEnd = TRUE is the capacity check num_packets <= capacity, one *)
 (* slot past the bank (InBounds).                                         *)
+(*                                                                         *)
+(* Accounted has no witness and cannot fail: every arrival adds one to    *)
+(* arrived and one to exactly one of the bank, refused or full, and Drain *)
+(* only moves the bank to delivered.  It is the model's own bookkeeping,  *)
+(* kept as a check on the model; the counting claim with force over the   *)
+(* code is EveryDropCounted (witness UncountedFull).                      *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences
 
@@ -47,7 +53,7 @@ CONSTANTS
     Capacity,       \* a worker's bank: rocketnet_server_iocp_receive_queue_size( max_clients, workers )
     MaxArrivals,    \* exploration bound: datagrams completed
     FilterOn,       \* the filter is published (rocketnet_server_iocp_set_packet_filter)
-    BankFirst,      \* defect: capacity before the prefilter, the order the blast row measured
+    BankFirst,      \* defect: capacity before the prefilter, the order the code replaced
     UncountedFull,  \* defect: a bank-full drop is not counted
     CheckPastEnd    \* defect: the capacity check num_packets <= capacity
 
@@ -150,7 +156,9 @@ InBounds == Len( bank ) <= Capacity
 
 InBank( k ) == Len( SelectSeq( bank, LAMBDA x : x = k ) )
 
-\* every completed datagram is in exactly one place: the bank, main, or a drop
+\* every completed datagram is in exactly one place: the bank, main, or a drop;
+\* true by construction of the actions (no defect switch reaches it), so it
+\* checks the model's bookkeeping, not the code
 Accounted == \A k \in Kinds : arrived[k] = InBank( k ) + delivered[k] + refused[k] + full[k]
 
 \* every drop is counted by a named reason (no datagram goes uncounted)
@@ -159,7 +167,7 @@ EveryDropCounted == \A k \in Kinds : counted[k] = refused[k] + full[k]
 \* with the filter on, garbage never takes a slot
 NoGarbageBanked == FilterOn => ( ~HoldsGarbage /\ delivered[ "garbage" ] = 0 )
 
-\* the property the blast row measured broken
+\* the property the old order (capacity check first) broke
 NoEvictionByGarbage == ~evicted
 
 =============================================================================

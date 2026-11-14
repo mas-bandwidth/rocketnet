@@ -35,24 +35,31 @@ The `RNIocpRetryStop` line (the two "IOCP server queues and send leases" rows of
 
 ## Comment re-citations for package C (sdk/, comment only)
 
-- `sdk/rocketnet_server_iocp_windows.cpp` (rocketnet_iocp_receive_admit), the comment above it, line 294 at 85e18fcb8
-  now: `// proofs/tla/RNIocpReceiveAdmit.tla Arrive: Refuse, then Bank or Full.`
+- `sdk/rocketnet_server_iocp_windows.cpp` (rocketnet_iocp_receive_admit), the comment above it, line 294 at 084cb20af
+  now: `// proofs/tla/RNIocpReceiveAdmit.tla Arrived: Refuse, then Bank or Full.`
   new: `// proofs/tla/RNIocpReceiveAdmit.tla Refuse, then Bank or Full: the verdict.`
-  (the module has no action Arrive)
-- `sdk/rocketnet_server_iocp_windows.cpp` (rocketnet_iocp_receive_admit), the plant comment inside it, line 300 at 85e18fcb8
+  (main renamed Arrive to Arrived, the model's shared conjunct of the three
+  actions, not an action; naming the actions is clearer; optional)
+- `sdk/rocketnet_server_iocp_windows.cpp` (rocketnet_iocp_receive_admit), the plant comment inside it, line 300 at 084cb20af
   now: `// first, the order the blast row measured. Its trace must fail.`
   new: `// first, the order this code replaced. Its trace must fail.`
-- `sdk/rocketnet_server_iocp_windows.cpp` (rocketnet_iocp_bank_datagram), the comment above it, line 1405 at 85e18fcb8
-  now: `... proofs/tla/RNIocpReceiveAdmit.tla Arrive: Bank, or the`
+- `sdk/rocketnet_server_iocp_windows.cpp` (rocketnet_iocp_bank_datagram), the comment above it, line 1405 at 084cb20af
+  now: `... proofs/tla/RNIocpReceiveAdmit.tla Arrived: Bank, or the`
   new: `... proofs/tla/RNIocpReceiveAdmit.tla Bank, or the`
   (line 1406 keeps `count of Refuse and Full (EveryDropCounted).`)
-- `sdk/rocketnet_server_rio_windows.cpp` (rocketnet_rio_post_phase), the last line of the comment above it, line 1863 at 85e18fcb8
+- `sdk/rocketnet_server_rio_windows.cpp` (rocketnet_rio_post_phase), the last line of the comment above it, line 1863 at 084cb20af
   now: `// proofs/tla/RNRioLaneLayout.tla Send: a lane's worker posts the frames staged in its own lane, oldest first.`
   new: `// proofs/tla/RNRioLaneLayout.tla Send: a lane's worker posts the finished frames of its own lane in slot order (InOrder).`
 
-## Records in other modules' files
+## Text in another module's README (MA035)
 
-`proofs/tla/RNIocpReceiveAdmit.tla` (lines 27, 36, 50, 162) and
-the first line of `MCRNIocpReceiveAdmitBrokenBankFirst.cfg` still say "the blast row"; that
-module is not in this package's files. Suggested text: "the order the code
-replaced (capacity check first)".
+`proofs/tla/README-RNIocpRefQueue.md`, the paragraph on `NeverRefused`, says
+the one-consumer case is "`retry_receives` under one completion worker, the
+count production runs". The default is `ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS`,
+2, on a specific bind (`sdk/rocketnet_network_threads.h`), and one worker only
+on a wildcard bind with no count asked (`iocp_workers` in
+`sdk/rocketnet_driver_builtin.cpp`). Suggested text: "That is
+`retry_receives` under one completion worker, the count on a wildcard bind
+with no count asked; the default on a specific bind is two workers, each a
+consumer (`MCRNIocpRefQueueRefusedTwoConsumers.cfg`)." The cfg's own comment
+(`MCRNIocpRefQueueOneConsumer.cfg`) is corrected on this branch.
