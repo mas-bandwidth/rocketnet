@@ -257,6 +257,26 @@ or flushing the send buffer. TLC must reject it, and does:
     in `sdk/rocketnet_server_transport.cpp` now cites this model. The source
     locations and measurements in this historical trace describe its old base.
 
+`MCRNDriverSendStagingBrokenAbortLeavesArmed.cfg` (`AbortDisarmsSlot =
+FALSE`) fails **`Invariant WithdrawnNeverSent`** at depth 3, 158 distinct
+states (aws-mut-3, 2026-11-13):
+
+1. `Update`'s maintenance reserves frame 1, finds nothing due and aborts it;
+   the abort leaves the slot armed (`buffer = {1}`, `withdrawn = {1}`) and
+   update's `send_staged++` makes the counters differ (`staged = 1`).
+2. `send_packets` flushes: frame 1 is handed to the driver (`sent = {1}`).
+
+Against the code by hand: `rocketnet_server_transport_update` calls
+`rocketnet_server_abort_send_frame` when no keep-alive or ack is due, and
+later `send_staged++` on a staged transport; the next
+`rocketnet_server_transport_send_packets` sees the counters differ and
+flushes the bank. What keeps the aborted slot off the wire is the driver's
+abort zeroing its byte count (`packet_info[packet_index].packet_bytes = 0`
+in `rocketnet_server_socket_abort_packet`, `slot->packet_bytes = 0` in
+`rocketnet_uring_send_queues_abort`); without it the flush would send the
+slot with whatever byte count it held. The passing model with the slot claimed: 105,288
+distinct states in 23.7 s.
+
 ## Runs
 
 The original two rows were in `proofs/tla/RUNS.tsv` from the runs on a Linux bench (TLC 2.19,

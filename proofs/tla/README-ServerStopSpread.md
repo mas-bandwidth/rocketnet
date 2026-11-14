@@ -110,11 +110,11 @@ control) against a staging of three, so it spreads across steps.
 | `MCServerStopSpreadBrokenNoLinkDrain.cfg` | `StopFinishesWhileUnjammed` violated (deadlock check off) |
 
 Measured on aws-mut-3 (the pinned jar, two workers for a control and one for a witness, 2026-11-13): the control 3,506,156
-distinct states in 56.7 s; `Live` and `LiveNoRoom` 804,126 in 66.2 s and
-66.0 s; `Queues` 303,256 in 6.2 s and `QueuesLive` in 52.0 s; `NoAbandon`
-fails at 713,340 in 71.9 s; `PooledRoom` at 162,994 in 25.4 s; the simulator
-configs reach 32,150 distinct states (2.0 s, 3.9 s, and 5.1 s for the jam);
-`StopWithHeld` fails at 187 and `NoLinkDrain` at 2,336. `RUNS.tsv` holds the
+distinct states in 57.0 s; `Live` and `LiveNoRoom` 804,126 in 64.3 s and
+62.3 s; `Queues` 303,256 in 6.2 s and `QueuesLive` in 50.3 s; `NoAbandon`
+fails at 713,340 in 72.3 s; `PooledRoom` at 162,994 in 17.8 s; the simulator
+configs reach 78,336 distinct states (2.4 s, 6.4 s, and 9.9 s for the jam);
+`StopWithHeld` fails at 1,189 and `NoLinkDrain` at 11,688. `RUNS.tsv` holds the
 records.
 
 The configs above `QueueCount = 1` are the transport with one send queue. With
@@ -167,10 +167,14 @@ for good, `FewestRoom` stays 0, the drain never re-stages a held copy, and
 `rocketnet_server_destroy`'s bounded wait gives up and keeps the server
 unfreed.
 `MCServerStopSpreadSimulatorJam.cfg` is that trace and fails
-`StopFinishesWithoutRoom`, as the code does. TLC's trace: a client connects,
-queue 0 jams, the server stops, both packets of the burst are sealed into the
-simulator (`held = 2`), queue 1 jams, and the run stutters in STOPPING with
-the ring empty, `held = 2` and no room. Against the code by hand: the stop
+`StopFinishesWithoutRoom`, as the code does. TLC's trace: two clients
+connect (session 1 on queue 1, session 2 on queue 0), queue 1 jams, the
+server stops, the stop step abandons session 1's burst for want of room on
+its queue, one packet of session 2's burst is sealed into the simulator
+(`held = 1`, its zeroed slot claimed on queue 0) and flushed, session 2
+loses its route and the rest of its burst is abandoned, and the run stays in
+STOPPING with the ring empty and `held = 1`: queue 1's jam keeps the fewest
+room at 0, so the link drain never moves the copy. Against the code by hand: the stop
 step at the merged head reaches the `link_empty` test with
 `disconnect_burst_count == 0`, `link_drain` breaks at once on
 `io_send_room <= 0`, and nothing else empties the simulator. The model takes
@@ -178,10 +182,14 @@ no step the code cannot take; the committed case is expected to fail until
 the code fix lands, and its expected column then turns to pass.
 
 `Defect = "stopwithheld"` drops the `link_empty` test: TLC's trace seals a
-stopping client's burst into the simulator, the ring empties, and the I/O
-stop is requested with `held = 2` (`NoCopyHeldAtStop`). `Defect =
-"nolinkdrain"` removes the drain, in the update and the stop step alike: with no queue jammed, a held copy never
-leaves and the stop stutters (`StopFinishesWhileUnjammed`).
+stopping client's two packets into the simulator (`held = 2`, two zeroed
+slots claimed on its queue), flushes them, the queue jams (so `send_idle`
+gives up on it), and the I/O stop is requested with `held = 2`
+(`NoCopyHeldAtStop`). `Defect = "nolinkdrain"` removes the drain, in the
+update and the stop step alike: TLC's trace seals both packets into the
+simulator, flushes the two claimed slots and has the worker recycle them,
+and with no queue jammed and every queue's room back the held copies never
+leave and the stop stutters (`StopFinishesWhileUnjammed`).
 
 ## The reversed witnesses
 
