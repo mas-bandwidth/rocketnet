@@ -209,8 +209,12 @@ cleanup()
         on_shell "$server_host" "$server_pkill -f '$tool server' 2>/dev/null; true" || true
     fi
     on_shell "$client_host" "pkill -f '$client_tool clients' 2>/dev/null; sudo pkill -f '$client_tool hostile' 2>/dev/null; true" || true
-    if [ "$netem_on" = 1 ] && [ "$server_os" = linux ]; then
-        on_shell "$server_host" "sudo -n tc qdisc del dev $server_dev root 2>/dev/null; true" || true
+    # the client's netem goes on for every server os (a Windows server's end
+    # carries none), so the client's is removed whenever netem went on
+    if [ "$netem_on" = 1 ]; then
+        if [ "$server_os" = linux ]; then
+            on_shell "$server_host" "sudo -n tc qdisc del dev $server_dev root 2>/dev/null; true" || true
+        fi
         on_shell "$client_host" "sudo -n tc qdisc del dev $client_dev root 2>/dev/null; true" || true
     fi
     # each removal reports its own failure; the cell's status is set before this runs
