@@ -6,7 +6,7 @@
 // The wide fill: the game's own threads fill and seal each client's sends
 // between update and send_packets, one thread per client at a time
 // (sdk/rocketnet_fill_phase.h, proofs/tla/RNFillPhase.tla), each holding one
-// open message on its own client (proofs/tla/RNMessageOpen.tla).
+// open message on its own client (no model yet: roadmap message-open-model).
 //
 //   - the concurrent fill: N threads, each owning a disjoint set of clients
 //     that moves every frame, start and finish unreliable, unreliable

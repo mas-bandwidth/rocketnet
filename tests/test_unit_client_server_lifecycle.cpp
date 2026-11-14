@@ -4693,20 +4693,24 @@ static void test_server_slot_freed_in_an_update_reports_its_end_before_reuse()
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     lifecycle_token( server, rocketnet_server_port( server ), &world.identity, 0x5202, 300, token );
     check( rn_test_client_connect_after_completion( client_b, token ) == ROCKETNET_STATUS_OK );
-    for ( int i = 0; i < 400; i++ )
+
+    // B runs until the server has answered its request with a challenge, and
+    // stops there with the challenge unread: the update that reads it sends
+    // the response at once (TRANSPORT.md t11 rule 7), so it must not run
+    // while the slot is free
+
+    const uint64_t * server_counters = rocketnet_server_transport_counter_block( server )->values;
+    const uint64_t challenges_before = server_counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE];
+    for ( int i = 0; i < 400 && server_counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_SENT_CHALLENGE] == challenges_before; i++ )
     {
         lifecycle_now = world.time;
         rocketnet_client_update( client_b, world.time );
-        if ( rocketnet_client_state( client_b ) == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE )
-        {
-            break;
-        }
         rocketnet_client_send_packets( client_b );
         rocketnet_server_update( server, world.time );
         rocketnet_server_send_packets( server );
         world.time += 0.01;
     }
-    check( rocketnet_client_state( client_b ) == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE );
+    check( rocketnet_client_state( client_b ) == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST );
     check( rocketnet_server_client_connected( server, 0 ) == 0 );
 
     // B sits out while A connects

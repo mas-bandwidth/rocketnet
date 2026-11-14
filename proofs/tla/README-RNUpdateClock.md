@@ -27,8 +27,10 @@ or the slots.
   last good time until the caller's clock passed that value again, so the
   keep-alive, the send-rate gate, the reliable resends and the dead-connection
   timeout all stood still for the whole step.
-- **NonFiniteStep.** A NaN or infinite sample changes neither value and
-  counts one misuse.
+- **NonFiniteStep.** A NaN, infinite or negative sample is refused before
+  the clock reads it: it changes neither value and counts one misuse. Every
+  negative sample is one, not only the first, so raw times are never
+  negative and BackwardStep's target is drawn from `0..raw-1`.
 - **Done.** The step budget is spent; the model stops.
 
 ## Properties

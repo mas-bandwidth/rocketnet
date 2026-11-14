@@ -130,6 +130,8 @@ class FakeApi:
             if key not in self.files:
                 raise rg.NotFound(path)
             return {"encoding": "base64", "content": base64.b64encode(self.files[key].encode()).decode()}
+        if path == f"/repos/{REPO}/git/matching-refs/tags/v":
+            return [{"ref": f"refs/tags/{name}"} for name in sorted(self.tags) if name.startswith("v")]
         m = re.fullmatch(rf"/repos/{REPO}/git/ref/tags/(.+)", path)
         if m:
             if m.group(1) not in self.tags:

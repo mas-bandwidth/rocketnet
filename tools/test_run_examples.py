@@ -77,6 +77,25 @@ class RunExamplesTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("FAIL example_hello: did not print PASS last", result.stderr)
 
+    def test_a_game_thread_failure_is_refused(self):
+        # the default run passes; only the game-thread frame fails
+        self.plant()
+        self.example("game_loop", "#!/bin/sh\nif [ \"$1 $2\" = \"--game-threads 4\" ]; then echo 'FAIL: a message of the wrong size arrived'; exit 1; fi\n"
+                     + FAKE_EXAMPLE.split("\n", 1)[1])
+        result = self.run_tool()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PASS example_game_loop\n", result.stdout)
+        self.assertIn("FAIL example_game_loop --game-threads 4 --clients 64: exited 1, expected 0", result.stderr)
+
+    def test_a_server_game_thread_failure_is_refused(self):
+        # client_server runs alone in this tree, so the server arguments reach it
+        self.plant()
+        self.example("client_server", "#!/bin/sh\nif [ \"$1 $2\" = \"--game-threads 4\" ]; then echo 'FAIL: a game thread'; exit 1; fi\n"
+                     + FAKE_EXAMPLE.split("\n", 1)[1])
+        result = self.run_tool()
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("FAIL example_client_server server --game-threads 4: exited 1, expected 0", result.stderr)
+
     def test_no_examples_is_refused(self):
         result = self.run_tool()
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)

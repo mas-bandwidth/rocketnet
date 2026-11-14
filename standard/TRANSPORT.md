@@ -400,6 +400,7 @@ Registry rules:
 | client redundant disconnect packets | `10` | packets | protocol value | [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) |
 | ack debt threshold | `1` | packet | protocol value | [t15 Acknowledgement](#t15) |
 | used-token history per slot | `8` | entries | protocol value | [t12 Handshake: server](#t12) |
+| slot count maximum | `32768` | slots | protocol value | [t10 Receive processing](#t10) |
 
 The token identifier of a connect token is the BLAKE2b hash, of token
 identifier size and with no key, of the token's signed connect data. For the
@@ -1500,7 +1501,7 @@ The keep-alive is a session packet. Its sealed plaintext is the ack block follow
 | sequence | 6 | 4 | u32 | the sender's session sequence | any; a reconstructed value of zero is ignored ([t4 Wire encoding primitives](#t4)) |
 | ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
 | client index | 10 plus the ack block size | 4 | u32 | the slot that holds this connection | below max clients |
-| max clients | 14 plus the ack block size | 4 | u32 | the server's slot count | any |
+| max clients | 14 plus the ack block size | 4 | u32 | the server's slot count | 1 to the slot count maximum |
 | AEAD tag | 18 plus the ack block size | 16 | bytes[16] | the tag over the ack block and the keep-alive fields | any |
 
 <a id="t8.6"></a>
@@ -2178,10 +2179,10 @@ a row marked server or client applies only at that end.
 16. For session types, a receiver MUST check the opened size less the ack
     block against the type. A mismatch is `WRONG_OPENED_SIZE`.
 17. Before applying the ack block, a client MUST validate the index and
-    slot count in a keep-alive. The slot count MUST be at least 1 and the
-    index MUST be less than the slot count; the client has no opinion about
-    the server's slot count. An invalid value is
-    `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE`.
+    slot count in a keep-alive. The slot count MUST be at least 1 and at
+    most the slot count maximum, and the index MUST be less than the slot
+    count; within that the client has no opinion about the server's slot
+    count. An invalid value is `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE`.
 18. After the session checks pass, a receiver MUST apply the ack block's
     delivery information and refresh the connection's receive time, then
     perform the type-specific processing. A type-specific refusal increments
@@ -2465,7 +2466,7 @@ The client is in exactly one of the states of the table below. A state number is
 4. An attempt MUST begin with a fresh connection salt and a fresh ephemeral keypair. The handshake and session sending sequences MUST start at one and MUST NOT be reset within the attempt.
 5. The client MUST enter requesting cookie (1), sending connection request (2), sending connection response (3) and connected (4) in that order, each at most once per attempt.
 6. While the client is in requesting cookie (1) or sending connection request (2), it MUST abandon the attempt for connect token expired (-7) once the token's lifetime, the difference between its expire timestamp and its create timestamp, has elapsed since the attempt began. The check does not apply in sending connection response (3) or connected (4): from the moment the client has sent its connection response the server can already hold it connected, so from then on the only clock that ends the attempt is the timeout of rule 8, and in sending connection response (3) the client waits for the timeout even when the timeout is larger than the token's lifetime.
-7. In requesting cookie (1), sending connection request (2) and sending connection response (3), the client MUST retransmit its current packet at the send rate of [t17 Timing and defaults](#t17) until a packet advances it or a deadline ends the attempt. A client MUST NOT send a packet because a packet arrived.
+7. In requesting cookie (1), sending connection request (2) and sending connection response (3), the client MUST retransmit its current packet at the send rate of [t17 Timing and defaults](#t17) until a packet advances it or a deadline ends the attempt. When a packet advances the client from requesting cookie (1) to sending connection request (2), or from sending connection request (2) to sending connection response (3), the client MAY send the packet of the new state at its next protocol update without waiting for the send rate, at most once for each advance; the send rate then runs from that send. In those three states, apart from that one send for each advance, a client MUST NOT send a packet because a packet arrived, and it MUST NOT send from inside the processing of a received packet. Each state is entered at most once in an attempt, so an attempt sends at most two packets more than the send rate alone would send, whatever arrives: a cookie that does not advance the client, a later or a forged one ([t11.1 Cookie processing](#t11.1)), brings nothing forward, and the packet brought forward is the one the next scheduled send would have carried, so no arrival can be turned into an amplifier.
 8. In a positive state below connected (4), a client that has accepted no authenticated packet for the token's timeout MUST move to the state whose number is one less than the negation of its current state: requesting cookie (1) to cookie request timed out (-2), sending connection request (2) to connection request timed out (-3), sending connection response (3) to connection response timed out (-4). In connected (4) the same silence MUST move the client to connection timed out (-5). An authenticated packet is one that opens under the attempt's keys: a connection challenge or a session packet. The timeout runs from the attempt's start until the first one, and a connection cookie never restarts it ([t11.1 Cookie processing](#t11.1)).
 9. A negative state MUST persist until the client disconnects or accepts a new connect token after any retiring transport from the ended attempt has finished stopping. A disconnect from any state MUST perform the per-connection reset of [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) and MUST return the client to disconnected (0). From disconnected (0), or from a negative state once any retiring transport has finished stopping, the client MAY connect again with a new token.
 
@@ -2499,7 +2500,7 @@ connection.
 <a id="t11.1"></a>
 ### t11.1. Cookie processing
 
-A connection cookie packet MUST be processed in requesting cookie (1) and sending connection request (2) and MUST be ignored in every other state. A client MUST refuse a packet whose size is not the cookie packet size of [t8 Packet formats](#t8), and MUST ignore one whose echoed connection salt is not the attempt's salt. A client that accepts a cookie MUST store its last 24 bytes and MUST send nothing in response. The first cookie accepted in an attempt is the kept cookie, and no later cookie replaces it. A cookie accepted in sending connection request (2) MUST replace only the latest cookie, and once a latest cookie is stored the client's requests MUST alternate between the kept cookie and the latest cookie, starting with the kept cookie, so the kept cookie goes out on at least every second request. In requesting cookie (1) the accepted cookie MUST move the client to sending connection request (2); in sending connection request (2) the state MUST NOT change. The client trusts only the server: a cookie's salt rides in the clear, so anyone who sees the request can echo it, and an accepted cookie MUST NOT refresh the client's last-received time and MUST NOT be taken as a round-trip sample. Both come only from the connection challenge and the packets after it that open under the attempt's keys. For the same reason a cookie never displaces the kept cookie: a forged cookie can cost the client a request, but no packet that does not open under the attempt's keys moves the handshake backwards, and a genuine fresh cookie, sent by the server once the kept cookie has expired, still goes out on every second request.
+A connection cookie packet MUST be processed in requesting cookie (1) and sending connection request (2) and MUST be ignored in every other state. A client MUST refuse a packet whose size is not the cookie packet size of [t8 Packet formats](#t8), and MUST ignore one whose echoed connection salt is not the attempt's salt. A client that accepts a cookie MUST store its last 24 bytes and MUST NOT send a packet from its processing; the first accepted cookie of an attempt advances the client and MAY bring its next request forward to the next protocol update, once, as [t11 Handshake: client](#t11) rule 7 allows, and a later cookie brings nothing forward. The first cookie accepted in an attempt is the kept cookie, and no later cookie replaces it. A cookie accepted in sending connection request (2) MUST replace only the latest cookie, and once a latest cookie is stored the client's requests MUST alternate between the kept cookie and the latest cookie, starting with the kept cookie, so the kept cookie goes out on at least every second request. In requesting cookie (1) the accepted cookie MUST move the client to sending connection request (2); in sending connection request (2) the state MUST NOT change. The client trusts only the server: a cookie's salt rides in the clear, so anyone who sees the request can echo it, and an accepted cookie MUST NOT refresh the client's last-received time and MUST NOT be taken as a round-trip sample. Both come only from the connection challenge and the packets after it that open under the attempt's keys. For the same reason a cookie never displaces the kept cookie: a forged cookie can cost the client a request, but no packet that does not open under the attempt's keys moves the handshake backwards, and a genuine fresh cookie, sent by the server once the kept cookie has expired, still goes out on every second request.
 
 <a id="t11.2"></a>
 ### t11.2. Challenge and denial processing order
@@ -2532,14 +2533,14 @@ A session packet opens under the session keys from sending connection response (
 | any negative state | disconnect | | per-connection reset | disconnected (0) |
 | any negative state | any other event | | ignore | unchanged |
 | requesting cookie (1) | update, send due | | send request with a zero return cookie | requesting cookie (1) |
-| requesting cookie (1) | cookie | size correct, salt matches | store the last 24 bytes as the kept cookie | sending connection request (2) |
+| requesting cookie (1) | cookie | size correct, salt matches | store the last 24 bytes as the kept cookie; a client that takes the early send of [t11 Handshake: client](#t11) rule 7 arms it | sending connection request (2) |
 | requesting cookie (1) | cookie | size wrong or salt differs | ignore | requesting cookie (1) |
 | requesting cookie (1) | timeout | no authenticated packet for the token timeout since the attempt began | | cookie request timed out (-2) |
 | requesting cookie (1) | total deadline | token lifetime elapsed | | connect token expired (-7) |
-| sending connection request (2) | update, send due | | send request with the kept cookie, or, once a latest cookie is stored, with the kept and the latest cookie in turn | sending connection request (2) |
+| sending connection request (2) | update, send due or early send armed | | send request with the kept cookie, or, once a latest cookie is stored, with the kept and the latest cookie in turn; clear the early send | sending connection request (2) |
 | sending connection request (2) | cookie | size correct, salt matches | replace the latest cookie; the kept cookie stays | sending connection request (2) |
 | sending connection request (2) | cookie | size wrong or salt differs | ignore | sending connection request (2) |
-| sending connection request (2) | challenge | size correct, opens | derive keys; erase the ephemeral secret; build the response | sending connection response (3) |
+| sending connection request (2) | challenge | size correct, opens | derive keys; erase the ephemeral secret; build the response; a client that takes the early send of [t11 Handshake: client](#t11) rule 7 arms it | sending connection response (3) |
 | sending connection request (2) | challenge | size wrong | refuse as WRONG_SIZE | sending connection request (2) |
 | sending connection request (2) | challenge | sequence zero or does not open | refuse; an unopened packet counts an integrity failure | sending connection request (2) |
 | sending connection request (2) | denied | size correct, opens | release the connection state | connection denied (-1) |
@@ -2547,7 +2548,7 @@ A session packet opens under the session keys from sending connection response (
 | sending connection request (2) | denied | sequence zero or does not open | refuse; an unopened packet counts an integrity failure | sending connection request (2) |
 | sending connection request (2) | timeout | no authenticated packet for the token timeout since the attempt began (a cookie does not count) | | connection request timed out (-3) |
 | sending connection request (2) | total deadline | token lifetime elapsed | | connect token expired (-7) |
-| sending connection response (3) | update, send due | | send the stored response byte for byte | sending connection response (3) |
+| sending connection response (3) | update, send due or early send armed | | send the stored response byte for byte; clear the early send | sending connection response (3) |
 | sending connection response (3) | keep-alive | opens | store the client index and the slot count | connected (4) |
 | sending connection response (3) | payload | | refuse as WRONG_STATE | sending connection response (3) |
 | sending connection response (3) | ack | opens | refresh the last-received time; apply the ack block | sending connection response (3) |
@@ -2734,6 +2735,7 @@ The server turns a connection request into an encryption mapping, and a connecti
     3. Ignore, unanswered, a request whose token identifier carries a live request claim held by a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`.
     4. Ignore, unanswered, a request that finds no free encryption mapping slot before the signature, seal and keypair rungs run, counting `CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING` and `MAPPING_TABLE_FULL`.
     5. Ignore, unanswered, a request whose token identifier finds no free or expired slot in the request-claim table, counting `CONNECTION_REQUEST_CLAIM_TABLE_FULL`.
+    6. Ignore, unanswered, a request whose token identifier a request earlier in the same update had verified and that rule 10 then refused because its client id already held a slot, or that rule 11 denied because no slot was free, counting that earlier refusal's counter (`CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED` or `CONNECTION_REQUEST_NO_SLOTS`). A server MUST remember those token identifiers in memory sized at creation for the largest handshake work budget (one for each verification an update can make), and MUST forget them at the start of each update, so that one token costs at most one verification an update and its next update's request is verified again. With a work budget of one, such a token's first request in each update can still take that update's only verification; a budget of two or more leaves the rest to other requests.
 The claim is checked, without being recorded, before the signature; the first request whose signature verifies records the claim for its source address before any seal or keypair work, so a request whose signature fails records nothing; the claim ends at the handshake deadline, when its half-open mapping is removed before that deadline (rule 14), when processing the request refuses it without retaining a mapping, or when a response binds the token ([t17 Timing and defaults](#t17) item 13). A client refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED` recovers by retrying from its own address within its token timeout once the claim is gone.
 10. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
 11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
@@ -2815,6 +2817,7 @@ list is ignored in that state.
 | no mapping | request | token claimed from another address until the handshake deadline or its half-open mapping's removal | ignore, count | no mapping |
 | no mapping | request | encryption mapping table full | ignore, count | no mapping |
 | no mapping | request | request-claim table full | ignore, count | no mapping |
+| no mapping | request | token refused this update for a client id connected or no free slot | ignore, count that reason | no mapping |
 | no mapping | request | handshake work budget spent | ignore, count | no mapping |
 | no mapping | request | signature, seal, private zero pad or sealed-field check fails | ignore, count | no mapping |
 | no mapping | request | client id connected | ignore, count | no mapping |
@@ -3057,7 +3060,7 @@ The type data of a keep-alive is:
 | Name | Offset | Size | Type | Meaning | Valid values |
 |---|---|---|---|---|---|
 | client index | 0 | 4 | u32 | the slot the server assigned this connection | 0 to one less than the client slot count |
-| client slot count | 4 | 4 | u32 | the server's configured number of client slots | at least 1 |
+| client slot count | 4 | 4 | u32 | the server's configured number of client slots | 1 to the slot count maximum |
 
 A keep-alive's type data is eight bytes and follows the ack block
 ([t15 Acknowledgement](#t15)). A keep-alive carries no application bytes.
@@ -3533,7 +3536,12 @@ an input ([t1.4 Conventions](#t1.4)).
 1. A sender MUST retransmit a handshake packet, and a server MUST generate a
    keep-alive, at the send rate of [t17 Timing and defaults](#t17). The
    schedule is driven by elapsed time, not by the number of application
-   updates.
+   updates. The one send that a handshake advance brings forward
+   ([t11 Handshake: client](#t11) rule 7) is not a retransmission, and the
+   schedule runs from it. A sender MAY treat a send interval as elapsed up to
+   one microsecond before it has, so that a clock summed from a fixed
+   application step (six steps of 1/60 second sum to just under 0.1 second)
+   does not push every interval to the next update.
 2. A sender MUST keep the send rate constant for the duration of one attempt.
    It MUST NOT back off after a retransmission and MUST NOT derive the rate
    from a round-trip estimate.
@@ -3578,7 +3586,10 @@ an input ([t1.4 Conventions](#t1.4)).
     of a connection request and immediately before its signature verification,
     and MUST charge it only for a request that reaches that point. A request
     past the budget MUST be refused with no reply and counted as a refusal.
-    The budget MUST be reset at the start of each update.
+    The budget MUST be reset at the start of each update. The cheap refusals
+    include the repeat of a token refused earlier in the update past the
+    verification ([t12 Handshake: server](#t12) rule 9 item 6), which
+    spends none of it.
 12. A server MUST apply the failed-signature budget before the signature
     verification. This budget MUST identify a source by its host address,
     excluding its port. Once the failed-signature budget is spent, a request
@@ -3595,7 +3606,10 @@ an input ([t1.4 Conventions](#t1.4)).
     signed fields, or its client ephemeral key is a small-order point MUST be
     recorded against its source as a failure, exactly as a failed
     verification is. A request refused because its client id already holds a
-    slot, or denied because the server is full, MUST NOT be recorded.
+    slot, or denied because the server is full, MUST NOT be recorded; its
+    token is instead refused before verification for the rest of that update
+    ([t12 Handshake: server](#t12) rule 9 item 6), so it costs at most one verification an
+    update.
  13. A server MUST refuse a request whose token identifier is claimed by a
      different source address, and one that finds no free
      encryption mapping slot, before any signature, seal or keypair work. The
@@ -4334,14 +4348,21 @@ protocol one. See [t2.4 Transport selection](#t2.4).
 ### Segmented sends
 
 A Linux server transport may coalesce a run of one destination's packets into
-one UDP segmented send. A route that cannot carry one (an IPsec policy, or a
-path MTU below the segment) makes the kernel refuse it for that destination
-alone. The transport resends that run unsegmented and remembers the
+one UDP segmented send. A route that cannot carry one (an IPsec policy, say)
+makes the kernel refuse it for that destination alone. The transport resends
+that run unsegmented and remembers the
 destination, so its later runs go unsegmented without a refusal, while every
 other destination keeps segmenting. It stops segmenting for all destinations
 only when a threshold of destinations refused and no segmented send was ever
 accepted, which is a kernel that cannot segment. See
 [t2.4 Transport selection](#t2.4), rule 7.
+
+Every Linux socket, server or client, never fragments a datagram (IPv4 sets
+DF) and sizes it by the interface MTU, never by a path MTU the kernel learned
+from ICMP (`IP_PMTUDISC_PROBE`, `IPV6_PMTUDISC_PROBE`): one forged fragmentation-needed
+or packet-too-big message naming the server's address would otherwise make
+the kernel refuse every larger datagram to that client until the route
+exception expires.
 
 ### Kernel prefilter and XDP
 
@@ -4428,7 +4449,8 @@ uses the larger configured budget. An unlimited budget (`ROCKETNET_SEND_KBPS_UNL
 
 The descriptor pool adds `ceil(R / 128)` entries. The 128-, 512-, and 1152-byte
 fixed pools add `ceil(R / 128)`, `ceil(R / 512)`, and `ceil(R / 1024)` chunks,
-respectively, including each chunk's four-byte link and alignment. The send-span
+respectively, including each chunk's four bytes of metadata, its four-byte free-stack
+entry and alignment. The send-span
 arena adds R plus up to 15 padding bytes per 1153 payload bytes, rounded to 64.
 Receive-ring and reliable-window wire parameters do not change. This extends the
 base headroom formula and default sizes above; runtime sizing reports

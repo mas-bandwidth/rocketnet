@@ -33,7 +33,8 @@ quiet=1.5
 
 usage()
 {
-    echo "usage: sudo $0 --bin DIR --transport NAME --row control|bar|space|churn|impair|duplicate|hostile|longrun --out DIR [--slot N] [--seconds S] [--clients N] [--threads T] [--burst-clients K] [--fill-jobs J] [--payload pattern|copy] [--hostile-pps P] [--frame-p99-us U]" >&2
+    echo "usage: sudo $0 --bin DIR --transport NAME --row control|bar|space|churn|impair|duplicate|hostile|longrun --out DIR [--slot N] [--seconds S] [--clients N] [--threads T] [--burst-clients K] [--fill-jobs J] [--payload pattern|copy] [--hostile-pps P] [--frame-p99-us U] [--warm-seconds S] [--quiet-seconds S] [--xdp-queues N]" >&2
+    echo "  --xdp-queues N sets the xdp transport's thread count only (--num-xdp-threads); the other transports keep their defaults" >&2
     exit 2
 }
 

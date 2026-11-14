@@ -1034,7 +1034,7 @@ REGISTER_UNIT_TEST( test_claim_released_when_response_crosses_token_expiry );
 #endif // #if ROCKETNET_DEV
 
 // Copied-request claim lifecycle (standard/TRANSPORT.md t12 rules 9 and 14;
-// proofs/tla/ReceiveOrder.tla ClaimCheck/ClaimWrite and proofs/tla/MCReceiveOrder.tla
+// proofs/tla/ReceiveOrder.tla AdvanceStep at ClaimWriteRung, and proofs/tla/MCReceiveOrder.tla
 // IdleRemove). Only the signed request bytes are copied and only the
 // address-bound cookie is recomputed for the second address; no ephemeral
 // private key is copied, derived, inspected or used.

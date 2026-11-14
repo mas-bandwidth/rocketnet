@@ -42,6 +42,9 @@ ROCKETNET_SERVER_MAX_CLIENTS=5 child with a server create refused for another
 reason it must exit 1 rather than pass as the bad-value child; and
 example_soak, example_game_loop and example_client_server_server refuse
 arguments out of range or not whole numbers before they create anything.
+The servers' game-thread frame runs too: example_game_loop with
+--game-threads 4 --clients 64, and the client_server pair with its server at
+--game-threads 4, each of which must exit 0 and print PASS.
 """
 
 import argparse
@@ -64,7 +67,11 @@ PORT_TRIES = 3
 READY_SECONDS = 30
 SINGLE_ARGS = {"soak": ["--clients", "64"]}
 # further runs. "run" is a pair (its client gets "args") or one program;
-# "env" is added to the environment; "odd_path" runs the program through a
+# "env" is added to the environment; "server_args" go to a pair's server, and
+# that pair is then judged as a default run (exit 0, PASS last on both ends);
+# a program of that name that runs alone (a tree with no _client) gets them
+# as its own arguments;
+# "odd_path" runs the program through a
 # link in a directory whose name holds a space and a $; "code" is the exit
 # status and "line" the start of a line the output must hold; no_drive_environment
 # removes only hidden Windows drive entries for that child process;
@@ -81,6 +88,8 @@ EXTRA_RUNS = [
     {"run": "soak", "args": ["--seed", "12x"], "code": 1, "line": "FAIL: --seed takes a whole number"},
     {"run": "game_loop", "args": ["--clients", "1x"], "code": 1, "line": "usage: example_game_loop"},
     {"run": "client_server_server", "args": ["--port", "70000"], "code": 1, "line": "FAIL: the port takes 1 .. 65535"},
+    {"run": "game_loop", "args": ["--game-threads", "4", "--clients", "64"], "code": 0, "line": "PASS"},
+    {"run": "client_server", "server_args": ["--game-threads", "4"], "code": 0, "line": "PASS"},
 ]
 # pairs that need more than a server and a client, run by their own script
 RUN_ELSEWHERE = {"backend"}  # tools/run_backend_examples.py
@@ -249,12 +258,12 @@ def free_udp_port():
         return probe.getsockname()[1]
 
 
-def run_pair(base, server_binary, client_binary, client_args=None):
+def run_pair(base, server_binary, client_binary, client_args=None, server_args=None):
     for attempt in range(1, PORT_TRIES + 1):
         port = free_udp_port()
         workdir = tempfile.mkdtemp(prefix=f"rocketnet_example_{base}_")
         try:
-            ok = run_pair_once(base, server_binary, client_binary, port, workdir, client_args)
+            ok = run_pair_once(base, server_binary, client_binary, port, workdir, client_args, server_args)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
         if ok != "bind":
@@ -264,14 +273,15 @@ def run_pair(base, server_binary, client_binary, client_args=None):
     return failure(base, f"server could not bind a free port in {PORT_TRIES} tries")
 
 
-def run_pair_once(base, server_binary, client_binary, port, workdir, client_args):
+def run_pair_once(base, server_binary, client_binary, port, workdir, client_args, server_args=None):
     """Runs the pair once. With client_args the client runs with them, the
     server is stopped once the client exits, and the client's output and exit
-    status are returned for the caller to judge."""
+    status are returned for the caller to judge. server_args go to the
+    server, and the run is judged as a default one."""
     env = dict(os.environ)
     env["ROCKETNET_EXAMPLE_PORT"] = str(port)
     server = subprocess.Popen(
-        [str(server_binary)],
+        [str(server_binary)] + (server_args or []),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -391,10 +401,21 @@ def main():
         if name not in binaries and name not in pairs:
             print(f"FAIL: a further run names example_{name}, which is not among the examples", file=sys.stderr)
             return 1
-        label = " ".join([name, *args, *(f"{k}={v}" for k, v in environment.items()),
+        if "server_args" in extra:
+            assert not args, "a server-argument run takes server arguments only"
+            args = extra["server_args"]
+        label = " ".join([name, *(["server"] if "server_args" in extra else []), *args, *(f"{k}={v}" for k, v in environment.items()),
                           *(["(from a path with a space and a $)"] if extra.get("odd_path") else []),
                           *(["(without Windows drive environment entries)"] if extra.get("no_drive_environment") else []),
                           *(["(with argv[0] lacking .exe)"] if extra.get("suffixless_argv0") else [])])
+        if name in pairs and "server_args" in extra:
+            assert not environment and not extra.get("odd_path") and not extra.get("no_drive_environment") and not extra.get("suffixless_argv0"), "a pair's server-argument run takes server arguments only"
+            assert extra["code"] == 0 and extra["line"] == "PASS", "a pair's server-argument run is judged as a default run"
+            if not run_pair(name, binaries[pairs[name][0]], binaries[pairs[name][1]], server_args=args):
+                failure(label, "the pair's run failed (its lines are above)")
+                return 1
+            print(f"PASS example_{label}")
+            continue
         if name in pairs:
             assert not environment and not extra.get("odd_path") and not extra.get("no_drive_environment") and not extra.get("suffixless_argv0"), "a pair's further run takes client arguments only"
             outcome = run_pair(name, binaries[pairs[name][0]], binaries[pairs[name][1]], args)

@@ -192,6 +192,59 @@ def rule_carried(docs, rationale, ident, rule):
     return False
 
 
+def strip_comments(text, line_comment, block_open, block_close, nested):
+    """Blank comments and string literals, keeping line breaks, so a name left
+    only in a comment or a string is not a definition."""
+    out = list(text)
+    i, n = 0, len(text)
+
+    def blank(start, end):
+        for k in range(start, end):
+            if out[k] != "\n":
+                out[k] = " "
+
+    while i < n:
+        if text[i] == '"':
+            j = i + 1
+            while j < n and text[j] != '"' and text[j] != "\n":
+                j += 2 if text[j] == "\\" else 1
+            j = min(j + 1, n)
+            blank(i, j)
+            i = j
+        elif text.startswith(block_open, i):
+            depth, j = 1, i + len(block_open)
+            while j < n and depth > 0:
+                if nested and text.startswith(block_open, j):
+                    depth, j = depth + 1, j + len(block_open)
+                elif text.startswith(block_close, j):
+                    depth, j = depth - 1, j + len(block_close)
+                else:
+                    j += 1
+            blank(i, j)
+            i = j
+        elif text.startswith(line_comment, i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            blank(i, j)
+            i = j
+        else:
+            i += 1
+    return "".join(out)
+
+
+def tla_code(text):
+    """TLA+ text with its (* *) and \\* comments and strings blanked."""
+    return strip_comments(text, "\\*", "(*", "*)", True)
+
+
+def c_code(text):
+    """C or C++ text with its // and /* */ comments and strings blanked."""
+    return strip_comments(text, "//", "/*", "*/", False)
+
+
+C_SOURCES = (".c", ".cpp", ".h", ".hpp", ".inc")
+
+
 def anchor_invariant_exists(root, name):
     tla_dir = os.path.join(root, "proofs", "tla")
     pattern = re.compile(r"(?m)^\s*" + re.escape(name) + r"\s*==")
@@ -199,7 +252,7 @@ def anchor_invariant_exists(root, name):
         if not entry.endswith(".tla"):
             continue
         with open(os.path.join(tla_dir, entry), "r", encoding="utf-8", errors="replace") as handle:
-            if pattern.search(handle.read()):
+            if pattern.search(tla_code(handle.read())):
                 return entry
     return None
 
@@ -225,10 +278,15 @@ def property_defined(root, module_relpath, name):
         return False
     pattern = re.compile(r"(?m)^\s*" + re.escape(name) + r"\s*==")
     with open(path, "r", encoding="utf-8", errors="replace") as handle:
-        return pattern.search(handle.read()) is not None
+        return pattern.search(tla_code(handle.read())) is not None
 
 
-def anchor_name_exists(root, anchor):
+def anchor_name_exists(root, anchor, code_anchor=False):
+    """The anchor's path when its file exists and, when it names one, the name
+    is in the file. code_anchor (the code_function column): the name is
+    required, and in a C or C++ file it must be outside comments and strings,
+    so a deleted function whose name a comment keeps does not resolve. (A test
+    anchor's name is the registration string, which the unit registry checks.)"""
     path, _, function = anchor.partition(":")
     if not path:
         return None
@@ -236,9 +294,11 @@ def anchor_name_exists(root, anchor):
     if not os.path.isfile(full):
         return None
     if not function:
-        return path
+        return None if code_anchor else path
     with open(full, "r", encoding="utf-8", errors="replace") as handle:
         text = handle.read()
+    if code_anchor and path.endswith(C_SOURCES):
+        text = c_code(text)
     if re.search(r"\b" + re.escape(function) + r"\b", text):
         return path
     return None
@@ -285,7 +345,7 @@ def module_closure(root, module_file):
             continue
         seen.append(name)
         with open(path, "r", encoding="utf-8", errors="replace") as handle:
-            text = re.sub(r"\\\*.*", "", handle.read())
+            text = tla_code(handle.read())
         for match in re.finditer(r"\bEXTENDS\b([^\n]*)", text):
             pending.extend(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", match.group(1)))
         pending.extend(re.findall(r"\bINSTANCE\s+([A-Za-z_][A-Za-z0-9_]*)", text))
@@ -298,7 +358,7 @@ def definition_body(root, modules, name):
     for module in modules:
         with open(os.path.join(root, "proofs", "tla", module + ".tla"), "r", encoding="utf-8",
                   errors="replace") as handle:
-            match = pattern.search(re.sub(r"\\\*.*", "", handle.read()))
+            match = pattern.search(tla_code(handle.read()))
         if match:
             return match.group(1)
     return None
@@ -435,8 +495,9 @@ def run(root=None):
             failures.extend(model_row_failures(root, where, invariant, test, cases, runs))
 
         if code != "-":
-            if anchor_name_exists(root, code) is None:
-                failures.append("%s: code anchor %r does not resolve" % (where, code))
+            if anchor_name_exists(root, code, code_anchor=True) is None:
+                failures.append("%s: code anchor %r does not resolve (a code anchor is path:function, "
+                                "the function outside comments)" % (where, code))
 
         if tier == "none":
             if test != "-":

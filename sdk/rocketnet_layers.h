@@ -943,6 +943,7 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
  * @param public_address_string [in] Non-NULL numeric address; port zero requests dynamic binding when supported by the selected transport.
  * @param config [in] Optional full configuration; NULL selects defaults and does not supply production keys.
  * @return A caller-owned transport or NULL on any creation failure. Use create_internal to obtain the specific refusal status.
+ * @details A create that fails after its I/O worker started stops that worker and waits for it to exit before it returns NULL, with no deadline: the transport is freed only once its worker no longer owns it. rocketnet_server_start bounds that wait at one second and keeps the transport in the server instead (rocketnet.h).
  */
 struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config );
 
@@ -1705,7 +1706,13 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 // connection (the client's one, one per server slot) -- and allocates nothing
 // after create. memory is optional: NULL makes the one allocation, and a
 // caller block of at least *_required_memory bytes, 64-aligned, makes none
-// (the transport still allocates its own at its create).
+// (the transport still allocates its own at its create). A create whose
+// object fails after its transport was created (with memory NULL, the one
+// allocation refused) stops that transport and waits for its worker to exit,
+// with no deadline, before it returns NULL and OUT_OF_MEMORY: nothing it made
+// stays live, and the create blocks for as long as the worker runs. A caller
+// block of at least *_required_memory bytes cannot fail there
+// (proofs/tla/RNCreateUnwind.tla).
 //
 // The update order, on the main thread: update (the transport's update, the
 // transport's acked packet ids into the channels -- the only ack there is --

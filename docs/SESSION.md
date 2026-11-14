@@ -38,7 +38,9 @@ mints local tokens signed with the published development key matching
 those helpers are compiled out and development keys, tokens, and the default
 test `packet_filter` are refused; your backend service holds the 64-byte
 Ed25519 signing secret key, registers each started server's
-`rocketnet_server_public_key` and bound addresses, and issues opaque token
+`rocketnet_server_public_key` and advertised addresses (as
+`rocketnet_server_ipv4_address` and `rocketnet_server_ipv6_address` report
+them, with the bound port), and issues opaque token
 strings ([KEYS.md](KEYS.md), [AGENTS.md](AGENTS.md#before-production),
 [USAGE.md](USAGE.md#connection-lifecycle)).
 

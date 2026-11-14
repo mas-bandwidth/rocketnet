@@ -10,27 +10,27 @@
 ; leave the blank lines around it.
 (roadmap "v1"
  :title "RocketNet roadmap"
- :text "Planned work for RocketNet that is not on main. Work lands on main before new work starts (Glenn, 2026-10-31). Audit item numbers refer to FABLE-AUDIT.md, the 12:05 PDT edition of 2026-10-31. Branch names are plain branches holding started work to resume from. Landed work is in git. Pull requests edit only docs/roadmap.sexp; this page is regenerated on main."
+ :text "Planned work for RocketNet that is not on main. Work lands on main before new work starts. Branch names are plain branches holding started work to resume from. Landed work is in git. Pull requests edit only docs/roadmap.sexp; this page is regenerated on main."
 
  :groups
  (
-  (group "audit-remaining" :title "Audit items not yet fixed"
-   :text "Suspects from FABLE-AUDIT.md that nothing on main fixes. Each is verified at the cited line first; a confirmed defect gets a lock-in test and a negative control.")
+  (group "audit-remaining" :title "Suspected defects not yet fixed"
+   :text "Suspected defects found by review that nothing on main fixes. Each is verified at the cited line first; a confirmed defect gets a lock-in test and a negative control.")
   (group "quiet-host" :title "Investigations that need a quiet host"
    :text "Findings that only a quiet fleet host can measure or reproduce.")
   (group "proof-debt" :title "Existing nightly proof debt"
-   :text "Incomplete proof measurements remain explicit failures under the existing nightly workflows. These are distinct from the completed audit correspondence repairs.")
+   :text "Incomplete proof measurements remain explicit failures under the existing nightly workflows. These are distinct from the model and code correspondence repairs already on main.")
 
   (group "after-v1-0-1" :title "Found while preparing v1.0.1"
    :text "Defects, gaps and measurements found by the v1.0.1 review and test campaign that a point release does not carry. Each is checked at the cited code first.")
   (group "trace-check" :title "Trace check: gaps the README declares"
-   :text "What proofs/tla/README-TraceCheck.md says the trace check trusts rather than enforces (v2, 2026-11-12, after three cold reads). Each item says what enforcing it would take.")
-  (group "decisions" :title "Decisions for Glenn"
+   :text "What proofs/tla/README-TraceCheck.md says the trace check trusts rather than enforces (v2, 2026-11-12, after three reviews). Each item says what enforcing it would take.")
+  (group "decisions" :title "Decisions"
    :text "Choices that change behavior, remove machinery, or touch repository and fleet settings.")
-  (group "after-v1-1-landing" :title "Found while landing and re-measuring the v1.1.x pieces"
+  (group "after-v1-1-landing" :title "Found while landing and re-measuring the v1.1.x transport work"
    :text "Known and not done after the transport work landed on main as v1.1.x point releases and was measured again from main (2026-11-13). Each says where it is and how it was found.")
   (group "review-v1-2" :title "Found by the review before v1.2.0, not fixed for it"
-   :text "Findings of the review that started on 2026-11-13 (main 5488a5443) that are not being fixed for v1.2.0. Read, not run, unless an entry says so; each names the file and lines.")
+   :text "Findings of the review that started on 2026-11-13 that are not being fixed for v1.2.0. Read, not run, unless an entry says so; each names the file and lines.")
  )
 
  :items
@@ -67,32 +67,32 @@
 
   (item "windows-reflush" :group "audit-remaining" :area "rocketnet"
    :title "Windows iocp and rio re-flush"
-   :text "Audit 88 and 124: measure on captain, then add re-flush counters if the measurement supports it."
-   :date "2026-10-31" :origin "Audit items 88, 124")
+   :text "The iocp and rio transports do not declare ROCKETNET_TRANSPORT_REFLUSHES (iocp_operations and rio_operations in sdk/rocketnet_driver_builtin.cpp), so send_packets flushes them only after a new commit or at shutdown (the REFLUSHES test in rocketnet_server_transport_flush, sdk/rocketnet_server_transport.cpp); gso, io_uring, msgx and XDP (when built) declare it. Measure on a Windows host whether sends left unfinished at one flush wait for the next commit; add re-flush, with counters, if the measurement supports it."
+   :date "2026-10-31" :origin "sdk/rocketnet_driver_builtin.cpp; sdk/rocketnet_server_transport.cpp")
 
 
   (item "load-md-generated" :group "audit-remaining" :area "docs"
    :title "Generate LOAD.md's byte tables"
-   :text "The page's exact byte figures go stale with every merge. Generate them, with a CI check that the page matches the generator."
+   :text "The page's exact byte figures go stale with every merge. Generate them, with a CI check that the page matches the generator. The same goes for the planner figures quoted in docs/MEMORY.md (the default and light server and client plans, the DEV=0 figures and the example program's output): one generator for both pages, printing every cell from rocketnet_*_required_memory, rocketnet_message_connection_sizing and bin/transport_memory."
    :date "2026-10-31" :origin "#721 follow-on")
 
   (item "audit-follow-on-proposals" :group "decisions" :area "tools"
-   :title "Optional audit follow-on proposals"
-   :text "The concrete low-severity docs, standard, test and tooling mismatches are repaired. Four audit suggestions introduce new requirements: 148 extends the make-jobs policy to cmake --build --parallel; 185 cross-checks each t8 field-table sum against its summary row; 223 adds in-loop protocol assertions to the structured receive fuzzer; 226 changes the socket-error loopback burst/deadline. Evaluate these separately; they are not unresolved violations of the existing gates."
-   :date "2026-11-01" :origin "FABLE-AUDIT.md items 148, 185, 223, 226; #835, #837, #838, #839")
+   :title "Optional follow-on proposals"
+   :text "The concrete low-severity docs, standard, test and tooling mismatches are repaired. Four suggestions introduce new requirements: extend the make-jobs policy to cmake --build --parallel; cross-check each t8 field-table sum against its summary row; add in-loop protocol assertions to the structured receive fuzzer; change the socket-error loopback burst/deadline. Evaluate these separately; they are not unresolved violations of the existing gates."
+   :date "2026-11-01" :origin "#835, #837, #838, #839")
 
   (item "xdp-receive-loss" :group "quiet-host" :area "rocketnet"
    :title "Loaded-host XDP receive loss report: not reproduced"
    :text "The requested quiet reproduction is complete. At SDK source 3e8e4d17 on 2026-11-01, the existing 1000-client, 60-second XDP cell passed with host and guest both on 7.0.0-38-generic: 600000 sent/received, zero drops, and descriptor/thread baselines restored. The earlier 7.0.0-34 guest pass is separate evidence. The reported loss under host load 170 did not reproduce; its cause remains unknown. This controlled native observation establishes neither an SDK fix, a per-frame-budget result, nor a green GitHub workflow run."
-   :date "2026-10-31" :origin "Audit item 41; quiet/current-kernel observation 2026-11-01")
+   :date "2026-10-31" :origin "A report of XDP receive loss under host load; quiet/current-kernel observation 2026-11-01")
 
 
 
 
   (item "decision-resend-cap" :group "decisions" :area "rocketnet"
    :title "Cap the single-packet resend delay at timeout/4"
-   :text "Audit 16: with message_resend_delay_max_ms above reliable_message_timeout_ms/4, a single-packet record gets fewer than four sends before timeout. Recommended: cap it as chunks are. Then both resend classes share one delay, and the two resend queues could collapse to one; that removes machinery."
-   :date "2026-10-31" :origin "Audit item 16")
+   :text "With message_resend_delay_max_ms above reliable_message_timeout_ms/4, a single-packet record gets fewer than four sends before timeout. Recommended: cap it as chunks are. Then both resend classes share one delay, and the two resend queues could collapse to one; that removes machinery."
+   :date "2026-10-31" :origin "Review of the reliable message resend timing")
 
 
 
@@ -103,12 +103,12 @@
 
   (item "apply-main-ruleset" :group "decisions" :area "github"
    :title "Apply the main ruleset before the first outside pull request"
-   :text "Main has no ruleset on GitHub that requires a check (audit 44), on purpose for now. Apply .github/rulesets/main.json on GitHub before the first outside pull request. Left off for now (owner, 2026-11-12)."
-   :date "2026-11-12" :origin "Audit item 44; owner, 2026-11-12")
+   :text "Main has no ruleset on GitHub that requires a check, on purpose for now. Apply .github/rulesets/main.json on GitHub before the first outside pull request. Left off for now."
+   :date "2026-11-12" :origin ".github/rulesets/main.json")
 
   (item "frame-budget-runner-label" :group "decisions" :area "fleet"
-   :title "A runner label for the nightly frame budget held only by amd-2 and amd-3"
-   :text "rocketnet-quiet also covers hetzner2; the frame budget is a wall-clock gate that compares only on one machine class."
+   :title "A runner label for the nightly frame budget held only by two fleet runners"
+   :text "rocketnet-quiet also covers a third, different machine; the frame budget is a wall-clock gate that compares only on one machine class."
    :date "2026-10-31" :origin "#731")
 
   (item "uring-enomem-status" :group "after-v1-0-1" :area "rocketnet"
@@ -134,16 +134,16 @@
   (item "xdp-worker-lock-contention" :group "after-v1-0-1" :area "rocketnet"
    :title "Measure xdp worker lock contention"
    :text "Try-lock failures between the main thread and the xdp workers were never measured. Measure them on a two-queue guest on a quiet bench before any change."
-   :date "2026-11-11" :origin "v1.0.1 xdp review, item M6")
+   :date "2026-11-11" :origin "v1.0.1 xdp review")
 
   (item "xdp-receive-time-seam" :group "after-v1-0-1" :area "rocketnet"
    :title "xdp receive path reads the platform clock"
    :text "The xdp receive path still reads rocketnet_platform_time() instead of the update's time. Passing the time in needs the driver seam widened."
-   :date "2026-11-11" :origin "v1.0.1 xdp gateway review, item L13")
+   :date "2026-11-11" :origin "v1.0.1 xdp gateway review")
 
   (item "xdp-tx-queue-hash" :group "after-v1-0-1" :area "rocketnet"
    :title "xdp TX queue choice is an unkeyed hash; gso send bank at 32768 clients"
-   :text "xdp picks the TX queue with an unkeyed FNV-1a of the destination (rocketnet_server_socket_send_queue), so spoofed sources can aim replies at one queue: key it per server. gso's fixed 4096-packet send bank is short at max_clients 32768."
+   :text "xdp picks the TX queue with an unkeyed FNV-1a of the destination (rocketnet_server_socket_send_queue), so spoofed sources can aim replies at one queue: key it per server."
    :date "2026-11-11" :origin "v1.0.1 review")
 
   (item "load-split-xdp-flaky" :group "quiet-host" :area "rocketnet"
@@ -154,12 +154,12 @@
   (item "uring-rotation-reordering" :group "quiet-host" :area "rocketnet"
    :title "Measure reordering from io_uring per-send socket rotation"
    :text "Since v1.0.1, io_uring picks the send socket per send run instead of per batch, so consecutive packets to one client can leave on different reuseport sockets within one update. Measure any extra reordering against v1.0.0."
-   :date "2026-11-11" :origin "v1.0.1 cold read")
+   :date "2026-11-11" :origin "v1.0.1 review")
 
   (item "uring-receive-view-640" :group "after-v1-0-1" :area "rocketnet"
    :title "io_uring receive view larger than the payload batch"
    :text "Below 640 clients the io_uring receive view is larger than the server payload batch. Check what the server does with the difference and pin it."
-   :date "2026-11-11" :origin "v1.0.1 server transport review, item F5")
+   :date "2026-11-11" :origin "v1.0.1 server transport review")
 
   (item "large-messages-under-loss" :group "after-v1-0-1" :area "tests"
    :title "Functional case: large messages under loss"
@@ -179,12 +179,12 @@
   (item "model-citations-by-name" :group "after-v1-0-1" :area "proofs"
    :title "Cite code by function or action name, not line number"
    :text "Model citations point at source line numbers (for example ServerSession.tla citing rocketnet_server_transport_disconnect_client by line), and check_tla_coverage.py enforces them, so a function moving 21 lines forced every serversession case to be rerun. Cite by function or action name so a move does not stale the records."
-   :date "2026-11-10" :origin "Owner request, 2026-11-10")
+   :date "2026-11-10" :origin "Requested, 2026-11-10")
 
   (item "transports-shared-setup" :group "after-v1-0-1" :area "rocketnet"
    :title "Transports repeat themselves: share socket setup"
    :text "The transports are large and repeat each other: socket setup is duplicated between gso and io_uring and between iocp and rio. Share it."
-   :date "2026-11-10" :origin "Owner request, 2026-11-10")
+   :date "2026-11-10" :origin "Requested, 2026-11-10")
 
   (item "windows-transport-gaps" :group "after-v1-0-1" :area "rocketnet"
    :title "Windows transport gaps"
@@ -234,52 +234,61 @@
   (item "xdp-private-link" :group "quiet-host" :area "fleet"
    :title "Private 10G link for XDP packet blaster and bare-metal LAN runs"
    :text "The XDP packet blaster, bare-metal XDP LAN runs and the zero-copy load_split series need a private 10G link between the XDP bench and a second 10G machine; today the XDP bench's only cabled port is its uplink."
-   :date "2026-11-10" :origin "Owner request, 2026-11-10; docs/runs/xdp-zero-copy.md")
+   :date "2026-11-10" :origin "Requested, 2026-11-10; docs/runs/xdp-zero-copy.md")
 
   (item "trace-spec-invariants" :group "trace-check" :area "proofs"
    :title "Check the spec's own invariants on every trace"
    :text "The trace cfg allows INVARIANT TraceConsistent only, so the spec's invariants are checked at the model's small sizes and never on the trace at the code's real sizes: code that follows a model which is wrong at 4096 slots passes. Enforcing it: an invariants list in each LAYERS row, the checker verifying each is a plain state predicate of the spec (the reach-predicate check already does this) and allowing INVARIANT lines for exactly those names, the writer emitting them, and a planted row whose model breaks an invariant only past its TLC size. Cost per layer: no extra TLC run, since the invariants are evaluated in the clean trace's existing run, once per record (401 at the default 400 steps). An invariant over a fixed array costs about slots x records evaluations, about 1.6 million for a 4096-slot ring at 400 steps, a few seconds on the bench and unmeasured until the first such layer lands. A plant trace stops at its rejection, and the plant run must not take the invariants, or a planted invariant break could stand in for the trace rejection the plant must cause."
-   :date "2026-11-12" :origin "Trace check v2, third cold reader (README 'What the check trusts')")
+   :date "2026-11-12" :origin "Trace check v2 review (README 'What the check trusts')")
 
   (item "trace-library-copy" :group "trace-check" :area "tools"
    :title "Refuse a copy of library code in a layer's test file"
    :text "The walk must call the library, not a copy of it left in tests/tla_trace_<layer>.cpp beside a real sdk include. Today a reviewer checks this by reading the file. Enforcing it: after the clean build, run nm on the layer's object file and refuse any defined symbol with the library's prefix (rocketnet_) or any name the sdk files define. Also refuse a layer file that defines a function an sdk header declares. This needs the object path from CMake ($<TARGET_OBJECTS:tla_trace>, written next to tla_trace_config.txt) and nm or dumpbin on each OS. Add a planted row that copies one sdk function into the example."
-   :date "2026-11-12" :origin "Trace check v2, third cold reader")
+   :date "2026-11-12" :origin "Trace check v2 review")
 
   (item "trace-config-per-source" :group "trace-check" :area "tools"
    :title "Read the trace binaries' configuration from the layer's own unit"
    :text "CONFIG is printed by tests/tla_trace.cpp, so a COMPILE_DEFINITIONS set on one layer's source file, or a configuration macro without the ROCKETNET_ prefix, changes the layer's code without the checker seeing it. Enforcing it: CMake refuses source-file COMPILE_DEFINITIONS on tests/tla_trace_*.cpp. Each layer's walk prints CONFIG through a macro in tla_trace_record.h expanded in its own unit. The macro list is every identifier an #if of the included sdk files tests, read from those files, not a fixed list of ROCKETNET_ names. Add planted rows for a per-source define and for an unprefixed macro."
-   :date "2026-11-12" :origin "Trace check v2, third cold reader")
+   :date "2026-11-12" :origin "Trace check v2 review")
 
   (item "thread-rules-nesting-model" :group "proof-debt" :area "proofs"
    :title "Model the nested calls and the refused look's three writes in RNFillPhase"
-   :text "proofs/tla/RNFillPhase.tla leaves out the nesting depths, and takes a refused look (sdk/rocketnet_fill_phase.cpp rocketnet_fill_phase_fill_begin: the word, the owner and the word again) as one step. A cold reader found an interleaving in that gap: a call that a main thread call ran inside puts the owner back while the word still reads as held at depth 1, the thread it gives the client back to reads its own next call as nested, and its end leaves a fills_in line it never entered, after which every main thread call is refused. Fixed by the order of the writes (the word goes back to the lock's form first); no test fails without the fix and no model step sees it. Add the nested path and the three writes to the model with a reversed witness for the old order, and a trace point between the writes."
-   :date "2026-11-13" :origin "Piece G (sending from the game threads), cold reader finding 1")
+   :text "proofs/tla/RNFillPhase.tla leaves out the nesting depths, and takes a refused look (sdk/rocketnet_fill_phase.cpp rocketnet_fill_phase_fill_begin: the word, the owner and the word again) as one step. A review found an interleaving in that gap: a call that a main thread call ran inside puts the owner back while the word still reads as held at depth 1, the thread it gives the client back to reads its own next call as nested, and its end leaves a fills_in line it never entered, after which every main thread call is refused. Fixed by the order of the writes (the word goes back to the lock's form first); no test fails without the fix and no model step sees it. Add the nested path and the three writes to the model with a reversed witness for the old order, and a trace point between the writes."
+   :date "2026-11-13" :origin "Review of sending from the game threads")
 
   (item "payload-ring-chunk-layout-model" :group "proof-debt" :area "proofs"
    :title "Model the chunked payload ring claims at the layout level"
    :text "rocketnet_server_payload_ring_take (sdk/rocketnet_server_transport.cpp) claims payload ring slots in chunks held on per-thread lines, with index arithmetic on a packed [end:32][next:32] word, a guard, a clip at send_capacity and a give-up when another thread on the line installs first. proofs/tla/RNServerPayloadRingLayout.tla still models one fetch-add a slot. Model the same arithmetic at capacity 3 or 4 with reversed witnesses: a lost install that keeps its first slot (one client's packets then leave out of start order; test_server_fill_ring_chunk_lost_install_keeps_start_order pins the fix), and a line's unused slots not marked empty before the flush."
-   :date "2026-11-13" :origin "Piece G, cold reader finding 2; the layout rule")
+   :date "2026-11-13" :origin "Review of sending from the game threads; the layout rule")
 
   (item "send-reserve-tails-named-implied" :group "proof-debt" :area "proofs"
    :title "RNSendReserve: TailsNamed is implied by NeverStarved"
    :text "As defined, with no other thread holding a tail RoomFor and RoomPastTails are the same predicate, so unnamed implies starved: the invariant TailsNamed adds nothing NeverStarved does not check, and its witness MCRNSendReserveBrokenNoTailReturn.cfg would fail NeverStarved too. The model also marks the counter choice at the decision, where the code reads the tails after the take back and the retest. Restate TailsNamed so it can fail alone, and move the choice to where the code makes it."
-   :date "2026-11-13" :origin "Piece G, cold reader (TLA+ section)")
+   :date "2026-11-13" :origin "Review of sending from the game threads (TLA+)")
 
   (item "thread-rule-counters-production-test" :group "audit-remaining" :area "tests"
    :title "Read the three thread rule counters on the production library"
    :text "MAIN_THREAD_CALL_OVERLAP, CLIENT_SEND_TWO_THREADS and SEND_RESERVE_REFUSED_TAILS_HELD are counted in every build, and each is read by value in a test, but every such test links the development library (bin/test_wide_fill, tests/test_unit_server_send_reserve.cpp). Add a case to the production functional binary that breaks each of the two thread rules through the public API and reads the counters; the same case can check the API misuse count of a message left open at update, which no test reads."
-   :date "2026-11-13" :origin "Piece G, cold reader (counters and tests sections)")
+   :date "2026-11-13" :origin "Review of sending from the game threads (counters and tests)")
 
   (item "ring-order-across-thread-change" :group "audit-remaining" :area "sdk"
    :title "Start order of one client's packets when its sending thread changes between flushes"
    :text "On a transport that buffers payloads in the server's ring, a thread's unused chunk slots stay on its line until the flush. If one thread sends to a client, a checked main thread call that is not send_packets follows, and another thread then sends to the same client, the second thread's packets may sit in lower slots and leave first. rocketnet.h states it. Returning every line's chunk at each checked main thread call would keep start order; it costs a walk of the 64 lines a call."
-   :date "2026-11-13" :origin "Piece G, cold reader finding 2 (second case)")
+   :date "2026-11-13" :origin "Review of sending from the game threads")
 
+  (item "msgx-partial-send-no-sleep" :group "audit-remaining" :area "sdk"
+   :title "Do not sleep after a partial sendmsg_x"
+   :text "A partial sendmsg_x result ends the call kept (sdk/rocketnet_msgx_send_runs.h), so the transmit worker marks the socket full and waits 1 ms (sdk/rocketnet_server_msgx_apple.cpp) although the socket took data. Loop again at once when the kept call made progress, and wait only when a call took nothing. Measured nowhere yet: the four space rows pass as it is."
+   :date "2026-11-13" :origin "v1.1.x review")
   (item "posix-hk-mark-after-last-send" :group "audit-remaining" :area "tests"
    :title "Hard-killed client cases: take the wire mark after the clients read the last pass's sends"
    :text "posix_hk_quiesce (tests/functional/posix_hard_killed_client.cpp) updates the clients, then the server, then sends the server's packets, so a datagram the server sends in the last pass is counted sent at posix_hk_wire_mark and received after it. That datagram hides one real loss in lost_down, and a payload lost on the way then fails posix_hk_require_accounted with lost 0. Seen once on a parallel macOS run (send_to_closed_port, server portable, ipv6, client msgx: down 79/80, lost 0). Fix: end the quiesce with a client-only read pass before the mark, or mark the client and server reads at the same point."
-   :date "2026-11-13" :origin "Piece P CI read")
+   :date "2026-11-13" :origin "v1.1.x CI review")
+
+  (item "dst-mirror-observations" :group "review-v1-2" :area "proofs"
+   :title "DST: the observations the narrowed mirrors still owe (crash, clock, opening, receipts)"
+   :text "COVERAGE.tsv now states what the DST checks in tests/dst_checks.h actually observe. Still owed: a crash fault so CrashedEndpointSilent can fail (the harness passes live endpoints only); a ClockMonotone check (clock-back steps a clock back on purpose, and RNSimFaults' SkewBounded bound grows with t while the DST uses the fixed bound it is passed); an open ledger on the receiving side so AckedMeansPacketOpened and AckReportsOnlyReceived mean more than issued-once; for AckedMeansSurfaced, a comparison of the sender's internally acked records against the ids that entered its ACK batch (the DST already sees the surfaced ids); fragment observation for BlockAckedOnlyWhenAllFragmentsAcked (a type 7 behind an earlier undelivered sequence passes unobserved); a type 6/7 deadline for ReceiptProgress; and a replay-bit read for HighestIsReceived. Add each observation to the DST harness and restore the full mirror claims."
+   :date "2026-11-13" :origin "Models review M2 (MM013-MM018): claims narrowed to the checks; observations deferred here")
 
   (item "msgx-dead-socket-placeholder" :group "review-v1-2" :area "sdk"
    :title "macOS msgx: stop a socket retired as dead from taking its client's datagrams until it closes"
@@ -294,96 +303,96 @@
   (item "msgx-port-exclusive" :group "review-v1-2" :area "sdk"
    :title "macOS msgx: keep the server's port from other local sockets"
    :text "The msgx shared socket sets SO_REUSEPORT so its per-client connected sockets can join the port, and so any later local socket that sets SO_REUSEPORT can bind the port too; a more specific one (the server's own address, or AF_INET beside a dual-stack [::] server) then receives every datagram meant for the shared socket, handshakes included, uncounted (measured, one user; docs/MACOS.md, Who else can bind a server's port). Darwin has no exclusive option that still lets the server's own sockets share the port. A real fix: drop the per-client connected sockets and demultiplex every client on the shared socket, so the shared socket needs no SO_REUSEPORT; with a specific bind address no later socket then receives its datagrams, as measured for a plain socket on a specific address. Costs: the per-client sockets' receive split and send path, to be measured against the load test row before it is taken. Also owed: run the intruder cases as a second user on a bench Mac (not measured)."
-   :date "2026-11-13" :origin "Review before v1.2.0, macOS reader, finding P2 (run, one user)")
+   :date "2026-11-13" :origin "Review before v1.2.0 (run, one user)")
 
   (item "rio-destroy-stuck-lane" :group "audit-remaining" :area "rocketnet"
    :title "rio destroy: free the stopped lanes when one lane is stuck"
-   :text "rocketnet_server_rio_destroy returns before destroying any lane when one lane never reports stopped (a completion queue reported corrupt, or a send the kernel never completes). The lanes that did stop stay allocated until process exit. Measured as intended for this piece: the leak is bounded and named. Fix: destroy every lane that reports stopped and leak only the stuck one, as the create rollback already does (rocketnet_server_rio_create_leaks), with a unit case that holds one lane's sends."
-   :date "2026-11-13" :origin "Piece N (rio rebuilt), cold read")
+   :text "rocketnet_server_rio_destroy returns before destroying any lane when one lane never reports stopped (a completion queue reported corrupt, or a send the kernel never completes). The lanes that did stop stay allocated until process exit. Measured as intended for this change: the leak is bounded and named. Fix: destroy every lane that reports stopped and leak only the stuck one, as the create rollback already does (rocketnet_server_rio_create_leaks), with a unit case that holds one lane's sends."
+   :date "2026-11-13" :origin "Review of the rebuilt rio transport")
 
   (item "gso-layout-model-send-step" :group "audit-remaining" :area "proofs"
    :title "Layout model coverage of the gso send step's order, held slot and plain resend"
    :text "proofs/tla/RNGsoQueueBankLayout.tla models the claim, the id and the slot rule. lane->order (the gather's positions), send_step's held_slot and the position it resumes from, and resend_plain's first_slot arithmetic index the banks too and have no layout model or trace layer; they are covered by unit cases only."
-   :date "2026-11-13" :origin "Piece K, cold reader")
+   :date "2026-11-13" :origin "v1.1.x review")
 
   (item "gso-packet-id-zero-queue-zero" :group "audit-remaining" :area "sdk"
    :title "Packet id 0 names queue 0 slot 0 of turn 0"
    :text "The gso packet id is ( turn * slots + slot ) * queues + queue, so the first packet of the first turn on queue 0 has id 0. Nothing treats 0 as no packet today (finish and abort check the pointer against the slot), but a caller that keeps 0 as its own empty value would lose that packet. Decide whether the id should start at 1."
-   :date "2026-11-13" :origin "Piece K, cold reader")
+   :date "2026-11-13" :origin "v1.1.x review")
 
   (item "send-reserve-multi-queue-capacity" :group "proof-debt" :area "proofs"
    :title "RNSendReserveCalls: a Capacity per send queue"
    :text "send_capacity_available is one number: with several send queues it is the fewest free slots of any queue, an upper bound on what the next start may find. The send reserve's per-queue room (send_queues, send_queue_of, send_room_queue) is read by the reserve, but RNSendReserveCalls models one Capacity. Model a Capacity per queue, bind the code's call to it in the trace check, and say in the transport standard what a start on a queue with room may rely on. The trace check is narrower than that today: tests/tla_trace_send_reserve.cpp (213-221) only ever runs one queue, so the per-queue reserve code in sdk/rocketnet_server_transport.cpp (about 1060-1093, 1207-1253) is on no checked trace and a defect there cannot turn it red. Walk several queues."
-   :date "2026-11-13" :origin "Piece M follow-on, cold reader; review before v1.2.0, finding M3 (2026-11-13)")
+   :date "2026-11-13" :origin "v1.1.x review; review before v1.2.0")
 
   (item "portable-server-shared-handoff" :group "audit-remaining" :area "sdk"
    :title "Portable server transport on the shared buffer handoff"
-   :text "PR #1043 (refactor/v1.1.x/server-shared-handoff, extraction E5) moved the portable and gso server transports off their hand-written bank queues onto rocketnet_buffer_handoff_t (sdk/rocketnet_buffer_handoff.h). Its gso half is overtaken by the rebuilt gso transport (#1103), which rewrites sdk/rocketnet_server_gso_linux.cpp and also changes sdk/rocketnet_driver_builtin.cpp. After the rebuilt gso lands, redo the portable half alone on main (the portable TX and RX commits and the rocketnet_buffer_handoff_started helper), with its gates: rnportabletx, rnportablerx and rnbufferhandoff TLC, the unit mutation cases and the light memory pins. With it, give the portable receive worker what the rebuilt transports have: it runs no prefilter (sdk/rocketnet_driver_builtin.cpp about 613-645, drop hooks NULL about 1962-1966), so junk reaches the main thread (bounded per update), and datagrams held in its banks at stop are counted nowhere (about 932-944), so RECEIVE_DROPPED_STOPPED reads 0 on portable. Not worse than v1.0.0."
-   :date "2026-11-13" :origin "Open-PR triage 2026-11-13: #1043 not landed; review before v1.2.0, finding PO1")
+   :text "PR #1043 (refactor/v1.1.x/server-shared-handoff) moved the portable and gso server transports off their hand-written bank queues onto rocketnet_buffer_handoff_t (sdk/rocketnet_buffer_handoff.h). Its gso half is overtaken by the rebuilt gso transport (#1103), which rewrites sdk/rocketnet_server_gso_linux.cpp and also changes sdk/rocketnet_driver_builtin.cpp. After the rebuilt gso lands, redo the portable half alone on main (the portable TX and RX commits and the rocketnet_buffer_handoff_started helper), with its gates: rnportabletx, rnportablerx and rnbufferhandoff TLC, the unit mutation cases and the light memory pins. With it, give the portable receive worker what the rebuilt transports have: it runs no prefilter (sdk/rocketnet_driver_builtin.cpp about 613-645, drop hooks NULL about 1962-1966), so junk reaches the main thread (bounded per update), and datagrams held in its banks at stop are counted nowhere (about 932-944), so RECEIVE_DROPPED_STOPPED reads 0 on portable. Not worse than v1.0.0."
+   :date "2026-11-13" :origin "#1043, not landed; review before v1.2.0")
 
   (item "rio-registered-region-red-zones" :group "audit-remaining" :area "tests"
    :title "ASan red zones between the rio registered region's arrays"
    :text "In an AddressSanitizer build the rio transport's sized block (rocketnet_rio_sized_layout: slot bytes, retry slices, process arrays, drops, each bank's data, from and packet bytes) carries poisoned red zones between its carves. The registered region laid out by sdk/rocketnet_rio_layout.h (send frames, send addresses, receive slices, receive addresses; one RIORegisterBuffer) does not: its offsets are the layout RNRioLaneLayout models and the trace check binds, so a pad there changes a modelled layout. Add the pads to the layout and its model together, or record why that region stays uncovered."
    :date "2026-11-13" :origin "#1047 merge with the rebuilt rio")
 
-  (item "uring-carve-red-zones" :group "audit-remaining" :area "tests"
-   :title "ASan red zones between the rebuilt io_uring transport's carved arrays"
-   :text "#1047 carved red zones into the replaced io_uring transport's bank block (rocketnet_server_uring_buffers_create). The rebuilt transport (#1104) removed that block; its carved allocations are now in sdk/rocketnet_uring_queue_send.cpp, sdk/rocketnet_uring_receive_queue.cpp and sdk/rocketnet_uring_send_queue.cpp, each one rocketnet_malloc of a layout. Add ROCKETNET_RED_ZONE_CARVE to each where the layout is not a modelled or kernel-registered region, and record why where it is."
-   :date "2026-11-13" :origin "#1047 merge with the rebuilt io_uring")
+  (item "sodium-windows-lock-owner" :group "audit-remaining" :area "sdk"
+   :title "Owner-aware leave for the vendored sodium's Windows lock"
+   :text "sodium_misuse leaves sodium's critical section before taking it again. On POSIX the vendored leave refuses unless this thread holds the lock (the holder's pthread_self recorded under the lock and read with atomics, tools/generate_sodium.py LIFECYCLE_ADAPTATIONS, sodium/README.md \"POSIX lock\"). The Windows branch keeps upstream's check of the process-wide locked flag, so a fatal misuse on a thread outside the section while another thread holds the SRW lock clears that thread's flag and releases a lock it does not own. Reachable only on the abort path. Give the Windows branch the same owner test (GetCurrentThreadId recorded under the lock, read with Interlocked operations), carried through the generator; never a thread-local, which a production build may not carry (tools/check_no_thread_local.py)."
+   :date "2026-11-13" :origin "fix-review build-sanitizers 4703c70f0 B02")
 
   (item "uring-lifecycle-rss-plan" :group "audit-remaining" :area "tests"
    :title "The io_uring provided buffers are 264 MiB a queue whatever the GRO tier"
    :text "With ROCKETNET_SERVER_TRANSPORT=io_uring forced over the whole functional suite, test_lifecycle_transport peaks at 1269 MB resident against 698 MB, which is the suite's per-case bound (suite_case_rss_mb), not a plan bound. The cause is the receive buffers: 4096 buffers of 66 KiB a queue (ROCKETNET_URING_RECV_BUFFERS, ROCKETNET_URING_RECV_BUFFER_BYTES), 264 MiB a queue and two queues by default (num_io_uring_workers), made resident once the multishot writes into them, whether or not UDP_GRO was granted. Size the buffers by the tier (a buffer need only hold a whole datagram without GRO) or lower the count, and say so in the plan."
-   :date "2026-11-13" :origin "Piece L (io_uring), amd-3 run and cold reader")
+   :date "2026-11-13" :origin "Review of the io_uring transport work, and a bench run")
 
   (item "uring-cancel-ealready" :group "audit-remaining" :area "sdk"
    :title "A cancel answered -EALREADY in the io_uring worker"
    :text "The worker counts a cancel it submitted when its completion arrives (rocketnet_uring_queue_worker_reap_one, ROCKETNET_URING_TAG_CANCEL). A cancel the kernel answers -EALREADY (the target already completed) reads the same as one that took effect; the model (RNUringQueueWorker.tla CancelRecv, CancelWake, CancelPoll) has one outcome. Check the worker against the answers and add the case to the model."
-   :date "2026-11-13" :origin "Piece L (io_uring), cold reader")
+   :date "2026-11-13" :origin "Review of the io_uring transport work")
 
   (item "flaky-reply-opens-a-later-update" :group "audit-remaining" :area "tests"
    :title "test_transport_reply_opens_a_later_update failed once on a loaded macOS runner"
-   :text "On PR #1124's first CI run (43476345841, attempt 1) macos / Release / functional on studio-4 failed at tests/functional/rocketnet_functional_tests.cpp:10204: one of the 200 replies was never seen within the case's 12000 updates (9.8 s). The case sends unreliable datagrams over real loopback and answers each once, so one lost request or reply fails it. The rerun passed on mini-m5, and the case passed 40 of 40 on amd-2 (Linux) both at #1124's head and at its base a756b3398. The cause is not shown. PR #1118 (transport reply waits resend through the loss gate) is the candidate fix, held until it shows the cause."
-   :date "2026-11-13" :origin "PR #1124 CI, studio-4")
+   :text "On PR #1124's first CI run (43476345841, attempt 1) macos / Release / functional on one macOS runner failed at tests/functional/rocketnet_functional_tests.cpp:10204: one of the 200 replies was never seen within the case's 12000 updates (9.8 s). The case sends unreliable datagrams over real loopback and answers each once, so one lost request or reply fails it. The rerun passed on another macOS runner, and the case passed 40 of 40 on a Linux bench both at #1124's head and at its base a756b3398. The cause is not shown. PR #1118 (transport reply waits resend through the loss gate) is the candidate fix, held until it shows the cause."
+   :date "2026-11-13" :origin "PR #1124 CI")
 
   (item "uring-offline-cpu-holes" :group "audit-remaining" :area "sdk"
    :title "Offline cpu holes in the io_uring pin"
    :text "rocketnet_uring_pin_check refuses a cpu at or past the online count, but a machine with cpus offline has holes below that count (cpu 5 offline, cpu 6 online). A pin to a hole is refused by the kernel, counted, and the worker is confined to its own mask past the OS's cpus (rocketnet_uring_pin_confine_words, which never names a hole), so it is placed but not where the config said. Read the online mask (sched_getaffinity or /sys/devices/system/cpu/online) and place the workers on online cpus past the OS's."
-   :date "2026-11-13" :origin "Piece L (io_uring), cold reader")
+   :date "2026-11-13" :origin "Review of the io_uring transport work")
 
   (item "transport-thread-start-mask" :group "audit-remaining" :area "sdk"
    :title "A transport thread runs on its creator's mask until its first call"
    :text "Every transport thread (io_uring and gso queue workers, the XDP thread, and the other transports' network threads) pins itself as its first call, so between rocketnet_platform_thread_create and that call it runs on the creating thread's mask, which may hold cpu 0 (the OS's on Linux); the gso creator also raises the priority in that window. Give rocketnet_platform_thread_create an optional affinity (pthread_attr_setaffinity_np on Linux) so the thread starts on its placement: one place in the platform layer, used by every transport. Also: _SC_NPROCESSORS_ONLN is a count, used as the highest cpu id, so a machine with an offline cpu in the middle is misjudged (read the online set instead)."
-   :date "2026-11-13" :origin "Piece K cold reader; piece L (io_uring) second cold reader")
+   :date "2026-11-13" :origin "v1.1.x review; review of the io_uring transport work")
 
   (item "uring-receive-folds" :group "audit-remaining" :area "sdk"
    :title "io_uring receive refusals that are not in the server's drop reasons"
    :text "The rebuilt io_uring transport's receive drop totals are the worker prefilter's and the bank's reasons plus refused completions (RECEIVE_FAILED). A truncated source (URING_RECEIVE_DROPPED_SOURCE), a completion naming no buffer (URING_RECEIVE_DROPPED_NO_BUFFER) and segments past one receive (URING_RECEIVE_DROPPED_OVERFLOW) are counted only in their URING_ rows, where the replaced transport also folded them into RECEIVE_FAILED and BANK_FULL. A source drop is also counted once per completion, even for a GRO batch of several datagrams (sdk/rocketnet_uring_receive_queue.cpp about 598-624), where gso counts each datagram into RECEIVE_FAILED (sdk/rocketnet_server_gso_linux.cpp about 1052, 1197-1205). Decide the fold and the unit, and test both by value."
-   :date "2026-11-13" :origin "Piece L (io_uring), second cold reader; review before v1.2.0, finding L2 (2026-11-13)")
+   :date "2026-11-13" :origin "Review of the io_uring transport work; review before v1.2.0")
 
   (item "uring-complete-without-more" :group "audit-remaining" :area "sdk"
    :title "RNUringQueueReceive: Complete without F_MORE"
    :text "The model's Complete takes a datagram completion and keeps the multishot armed; the code (rocketnet_uring_receive_queue_cqe) also ends it when the completion has no IORING_CQE_F_MORE and arms again on the next pass. Add the ending to Complete with a reversed witness, and a trace point."
-   :date "2026-11-13" :origin "Piece L (io_uring), cold reader")
+   :date "2026-11-13" :origin "Review of the io_uring transport work")
 
   (item "uring-gro-cmsg-one-datagram" :group "audit-remaining" :area "sdk"
    :title "A malformed UDP_GRO control message is passed as one datagram"
    :text "A receive whose control area is truncated or malformed (GRO_CMSG_FAULTS) is taken as one datagram, so a coalesced buffer of several datagrams reaches the prefilter as one long one and fails its checks there. Decide whether the receive module should drop it by name instead, with a counter row, and test the split on a malformed control area."
-   :date "2026-11-13" :origin "Piece L (io_uring), cold reader")
+   :date "2026-11-13" :origin "Review of the io_uring transport work")
 
   (item "uring-rearm-spin" :group "audit-remaining" :area "sdk"
    :title "The io_uring receive re-arm spins on a kernel that refuses multishot"
    :text "A kernel that refuses multishot receive (Linux before 6.0) ends every arm at once; the worker arms again on its next pass without a bound, burning its core. The refusals are visible as RECEIVE_FAILED now (the receive module's ERRORS reach the drop totals). Bound the re-arms, back off, and name the kernel in the create log."
-   :date "2026-11-13" :origin "Piece L (io_uring), cold reader")
+   :date "2026-11-13" :origin "Review of the io_uring transport work")
 
   (item "tlc-plant-behaviour-not-printed" :group "trace-check" :area "tools"
    :title "Find why TLC sometimes prints no behaviour for a plant's violation"
-   :text "TLC 2.19 exits 12 on a plant trace and reports the invariant violated, then sometimes prints no behaviour; the statistics lines that follow are printed, so the log is not cut off. tools/tla_trace_check.py reruns such a plant up to five times and prints PLANT-ATTEMPTS (#1106). Ruled out on byte-identical inputs of the msgxsendruns seed 1 plant (hetzner1, 2026-11-13): TLC's -seed and -fp index (both pinned, -workers 1: a behaviour in 5/10, 6/10 and 7/10 runs for three pairs) and a shared or reused metadir (a fresh directory and -metadir each run). Start from a TLC-side cause: the trace file's write and read-back at the violation."
-   :date "2026-11-13" :origin "Piece P, #1093 trace shard 0/6")
+   :text "TLC 2.19 exits 12 on a plant trace and reports the invariant violated, then sometimes prints no behaviour; the statistics lines that follow are printed, so the log is not cut off. tools/tla_trace_check.py reruns such a plant up to five times and prints PLANT-ATTEMPTS (#1106). Ruled out on byte-identical inputs of the msgxsendruns seed 1 plant (one Linux host, 2026-11-13): TLC's -seed and -fp index (both pinned, -workers 1: a behaviour in 5/10, 6/10 and 7/10 runs for three pairs) and a shared or reused metadir (a fresh directory and -metadir each run). Start from a TLC-side cause: the trace file's write and read-back at the violation."
+   :date "2026-11-13" :origin "#1093 trace shard 0/6")
 
   (item "reconcile-sndbuf-resends" :group "after-v1-0-1" :area "tests/load"
    :title "Reconcile: tell a refused-then-resent send from a real drop"
-   :text "The harden_load reconcile counts the kernel's SndbufErrors as named drops in the server-to-client chain. When the 1 MB socket send buffer is full the kernel refuses a gso send and the gso worker sends it again, so nothing is lost: on main 3218cf5f6 (X710 pair) library_sent equals library_received and players deliver 100%, yet every gso row reports chains=FAIL on 124k to 571k of them (REMEASURE-MAIN.md, gso). Count the refusals the transport resent in their own term, apart from sends the kernel refused and nothing sent again, so the chain still fails a real drop."
+   :text "The harden_load reconcile counts the kernel's SndbufErrors as named drops in the server-to-client chain. When the 1 MB socket send buffer is full the kernel refuses a gso send and the gso worker sends it again, so nothing is lost: on main 3218cf5f6 (X710 pair) library_sent equals library_received and players deliver 100%, yet every gso row reports chains=FAIL on 124k to 571k of them (the gso re-measure). Count the refusals the transport resent in their own term, apart from sends the kernel refused and nothing sent again, so the chain still fails a real drop."
    :date "2026-11-13" :origin "gso re-measure on main 3218cf5f6")
 
   (item "fill-phase-trace-gaps" :group "trace-check" :area "tests"
@@ -403,8 +412,8 @@
 
   (item "uring-peak-qdisc-drops" :group "after-v1-1-landing" :area "rocketnet"
    :title "io_uring at peak: whole segmented sends dropped at the server's device queue"
-   :text "On the X710 pair with 2 io_uring threads, peak load and no game load, the server's fq_codel queue drops whole UDP_SEGMENT sends: each is one player's 15-packet tick, so 2 to 13 drops in a 60 second row lose 30 to 195 packets (s2c 99.9997 to 100%; players whole, rows pass). The kernel accepted the sendmsg, so the transport counts the packets sent and nothing names the loss. The same rows also see 8.6 to 10.7 million EAGAIN completions a peak row against the documented 1,000,000-byte send buffer, where gso on the same pair and buffer sees 124k to 571k; a 4096-entry ring of sends in flight per queue is the likely reason, not measured. gso and XDP on the same pair: sent equals received. Tuning deferred by the owner ('we can do fine tuning later')."
-   :date "2026-11-13" :origin "io_uring re-measure on main 3afea2aed, rows U1 and r2-r4 (REMEASURE-MAIN, io_uring)")
+   :text "On the X710 pair with 2 io_uring threads, peak load and no game load, the server's fq_codel queue drops whole UDP_SEGMENT sends: each is one player's 15-packet tick, so 2 to 13 drops in a 60 second row lose 30 to 195 packets (s2c 99.9997 to 100%; players whole, rows pass). The kernel accepted the sendmsg, so the transport counts the packets sent and nothing names the loss. The same rows also see 8.6 to 10.7 million EAGAIN completions a peak row against the documented 1,000,000-byte send buffer, where gso on the same pair and buffer sees 124k to 571k; a 4096-entry ring of sends in flight per queue is the likely reason, not measured. gso and XDP on the same pair: sent equals received. Tuning is deferred."
+   :date "2026-11-13" :origin "io_uring re-measure on main 3afea2aed")
 
   (item "reconcile-segmented-drops" :group "after-v1-1-landing" :area "tests/load"
    :title "Reconcile: a dropped segmented send is 15 packets, not 1"
@@ -418,18 +427,18 @@
 
   (item "uring-retry-probe-first" :group "after-v1-1-landing" :area "sdk"
    :title "io_uring full-socket retry: probe with one run before sending the rest"
-   :text "The io_uring worker waits on a 1 ms timer after a full answer (the gso worker's wait; never POLLOUT, which would spin on -ENOBUFS). When the timer fires it sends every held run again, and on a socket that is still full most come back refused. Measured on amd-3 at 1 Gbit tbf, 4096 packets a frame: URING_SEND_DEFERRED 191.9k/s and 0.29 worker cores, against 41.6k/s and 0.16 cores with the old POLLOUT wait, for the same packets sent (86.0k/s against 82.0k/s). Send one run first after the timer, and the rest only once it is sent, so a socket still full refuses one run a wait, not all of them. Model it in RNUringQueueWorker.tla with the change."
-   :date "2026-11-13" :origin "io_uring review fixes (E1, E6, L1, L3), the after-fix repro")
+   :text "The io_uring worker waits on a 1 ms timer after a full answer (the gso worker's wait; never POLLOUT, which would spin on -ENOBUFS). When the timer fires it sends every held run again, and on a socket that is still full most come back refused. Measured on a Linux bench at 1 Gbit tbf, 4096 packets a frame: URING_SEND_DEFERRED 191.9k/s and 0.29 worker cores, against 41.6k/s and 0.16 cores with the old POLLOUT wait, for the same packets sent (86.0k/s against 82.0k/s). Send one run first after the timer, and the rest only once it is sent, so a socket still full refuses one run a wait, not all of them. Model it in RNUringQueueWorker.tla with the change."
+   :date "2026-11-13" :origin "io_uring review fixes, the after-fix repro")
 
   (item "uring-prefilter-wrong-value-once" :group "after-v1-1-landing" :area "sdk"
    :title "PREFILTER_WRONG_VALUE seen once on io_uring under heavy bench load"
-   :text "A Debug functional row of the io_uring piece reported PREFILTER_WRONG_VALUE 1274 once, under heavy load on amd-3; 12 reruns did not reproduce it and the cause was not found. A DEV-only sampler now records the first refused datagrams (source, length, first 16 bytes) in sdk/rocketnet_receive_prefilter.h and prints them in the clean-run report. When it recurs, read the samples; the open question is whether a datagram can reach the io_uring prefilter with wrong bytes or length (provided-buffer index, completion length, GRO split, a buffer returned while still referenced)."
-   :date "2026-11-13" :origin "Piece L (io_uring), gate at ad93b2ad6")
+   :text "A Debug functional row of the io_uring work reported PREFILTER_WRONG_VALUE 1274 once, under heavy load on a Linux bench; 12 reruns did not reproduce it and the cause was not found. A DEV-only sampler now records the first refused datagrams (source, length, first 16 bytes) in sdk/rocketnet_receive_prefilter.h and prints them in the clean-run report. When it recurs, read the samples; the open question is whether a datagram can reach the io_uring prefilter with wrong bytes or length (provided-buffer index, completion length, GRO split, a buffer returned while still referenced)."
+   :date "2026-11-13" :origin "Review of the io_uring transport work")
 
   (item "server-update-task-callbacks" :group "after-v1-1-landing" :area "sdk"
    :title "Distribute the server update with task callbacks in the config, only on measured need"
    :text "The split server update (update_receive, update_client, update_finish) landed as an opt-in; rocketnet runs no job system of its own. If a measured row shows the game's own job system cannot spread the update well enough through the public calls, add box3d-style task callbacks to the server config, off by default (see how box3d and fixed3d do it), and not before."
-   :date "2026-11-13" :origin "Owner rulings on piece I, 2026-11-13 (V12-ON-MAIN)")
+   :date "2026-11-13" :origin "Decided 2026-11-13, with the split server update")
 
   (item "space-frame-row-transports" :group "after-v1-1-landing" :area "scripts"
    :title "scripts/space-frame-row runs XDP only"
@@ -444,92 +453,143 @@
   (item "trace-reach-vacuous" :group "trace-check" :area "tools"
    :title "Refuse a reach predicate that already holds in the first state"
    :text "tools/tla_trace_check.py checks that each row's reach predicates are reached in some clean trace (a TLC run with ~predicate as the invariant). A predicate that holds in the initial state, or always, passes that check without proving any edge was walked. Refuse a predicate that holds at the first record, with a planted row."
-   :date "2026-11-13" :origin "Piece A (#1074) cold reader, item 5")
+   :date "2026-11-13" :origin "#1074 review")
 
   (item "xdp-gateway-refresh-main-thread" :group "review-v1-2" :area "rocketnet"
    :title "XDP: the gateway refresh blocks the main thread every 5 seconds"
    :text "On XDP, rocketnet_server_socket_receive_packets (sdk/rocketnet_server_socket_linux.cpp about 4745) runs the gateway refresh on the main thread every 5 s (rocketnet_xdp_gateway_refresh, sdk/rocketnet_xdp_frame.h about 1473, through rocketnet_server_socket_resolve_gateway about 648). rocketnet_gateway_netlink_refresh opens a NETLINK_ROUTE socket, dumps the whole route table for the family (RTM_GETROUTE with NLM_F_DUMP), then queries the neighbour (RTM_GETNEIGH), each receive blocking with a 1 s timeout (sdk/rocketnet_gateway_netlink_linux.cpp about 751-840, 1006); with both families, twice. The cost grows with the host's route count and can block the main thread up to the timeout under rtnl contention; it does not show on a bench with a small table. Resolve it off the main thread (on a network thread), or query the one destination without blocking."
-   :date "2026-11-13" :origin "Review before v1.2.0, finding X5")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "iocp-stop-repost-hang" :group "review-v1-2" :area "rocketnet"
    :title "IOCP stop can hang on a receive reposted after its owner's worker exited"
    :text "Any IOCP worker reposts a refused receive on the owning endpoint's socket (sdk/rocketnet_server_iocp_windows.cpp about 1684-1699), reading stopping (1184) before it raises pending and posts (1235-1237); each stopping worker cancels only its own endpoint's receives and exits when the global pending count reads 0 (1501-1516). A repost that lands after its owner's worker has exited is never cancelled: rocketnet_server_iocp_stopped never turns true, destroy refuses (3722-3726) and create's failure path waits with no bound (3027-3035). Very rare. The model hides it: RNIocpEndpoints.tla Retry (89-96) checks ~stopping and posts in one atomic step. Fix: raise pending before the stopping check, or have every stopping worker cancel every endpoint's receives; split Retry in the model with a reversed witness."
-   :date "2026-11-13" :origin "Review before v1.2.0, Windows reader, finding W1")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "send-capacity-overload-walk" :group "review-v1-2" :area "sdk"
    :title "Send capacity is reported for frames the caller cannot take, so an overloaded frame walks every client"
    :text "send_capacity_available counts own frames and every queue's budget (sdk/rocketnet_server_transport.cpp about 1510-1528), more than the next start can take, so under overload the serial walk visits every client and is refused for each (sdk/rocketnet_message_server.cpp about 2073-2080, 2195, 2225): main thread work grows with the client count on exactly the frames that are already over. Report what the caller can take."
-   :date "2026-11-13" :origin "Review before v1.2.0, send reserve reader, finding M1")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "send-capacity-one-full-queue" :group "review-v1-2" :area "sdk"
    :title "One full send queue makes the send capacity 0 for every client"
    :text "Capacity is the fewest free slots of any queue (sdk/rocketnet_server_transport.cpp about 1549, through io_send_room 984-1000), so one full queue stops sends to every client, including clients on queues with room. io_send_room_total (1101-1119) already does this right for disconnect drains. Use the client's own queue's room (or the total) for its start. See also send-reserve-multi-queue-capacity."
-   :date "2026-11-13" :origin "Review before v1.2.0, send reserve reader, finding M2")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "uring-stop-retry-bound" :group "review-v1-2" :area "sdk"
    :title "io_uring stop-time send retry bound counts every refusal and never resets on progress"
    :text "The io_uring worker's stop-time bound counts each refused send and neither waits nor resets when a send makes progress (sdk/rocketnet_uring_queue_worker.cpp about 185-196, 275-278), so a slow drain at stop can give up early; gso resets on progress and waits (sdk/rocketnet_server_gso_linux.cpp about 722-733). Only reachable when stop runs with sends outstanding. Match gso."
-   :date "2026-11-13" :origin "Review before v1.2.0, gso and io_uring reader, finding L1")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "uring-send-enobufs" :group "review-v1-2" :area "sdk"
    :title "io_uring drops a send refused with ENOBUFS or ENOMEM, where gso retries"
    :text "sdk/rocketnet_uring_queue_send.cpp (about 423-438) treats ENOBUFS and ENOMEM on a send as FAILED: the packets are dropped and counted. gso sends them again (sdk/rocketnet_server_gso_linux.cpp about 2554). Make the two transports treat a transient refusal the same way."
-   :date "2026-11-13" :origin "Review before v1.2.0, gso and io_uring reader, finding L3")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "xdp-send-trace-layer" :group "review-v1-2" :area "proofs"
    :title "The XDP send side has models and no trace layer; the receive-ring walk never runs the real worker loop"
    :text "No trace layer binds the XDP send half to its models: the buffer exchange publish, claim and recycle (sdk/rocketnet_server_socket_linux.cpp about 158-210, RNBankFifoLayout.tla), the producer publish and turn bump in rocketnet_server_socket_send_packets (about 3268-3316, RNDriverSendStaging.tla Publish), the worker's claim, copy, recycle and send-frame free list (about 5008-5156, WorkerRetire), and the stop drain (rocketnet_server_socket_send_idle about 3051, rocketnet_xdp_send_stall_pass in sdk/rocketnet_server_socket.h about 108, RNXdpSendDrain.tla). Only unit cases cover them (tests/test_unit_xdp_send_staging.cpp, tests/test_xdp.cpp). The xdp-receive-ring trace (tests/tla_trace_xdp_receive_ring.cpp about 287-460) calls the pass helpers in an order the walk composes and never runs rocketnet_server_socket_xdp_thread_function (about 4825). Add send layers, and drive the receive walk through the real loop."
-   :date "2026-11-13" :origin "Review before v1.2.0, XDP reader, finding X1")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "xdp-vlan-stripped-tags" :group "review-v1-2" :area "rocketnet"
    :title "An XDP server on a VLAN takes frames from other VLANs when the NIC strips tags"
    :text "sdk/xdp/server_xdp.c (about 483-516) and sdk/rocketnet_xdp_frame.h (about 383-405) take an untagged frame on a tagged server. With receive VLAN offload on (the i40e and ixgbe default) native XDP sees every stripped frame untagged, so a frame of any VLAN the NIC accepts, or of the native segment, addressed to the server's address and port is processed, and the reply goes out tagged with the server's VLAN: layer-2 isolation is bypassed for the game port and spoofed sources skip the router's filters. Smallest fix: refuse a VLAN server unless rx-vlan-offload is off, or read the stripped tag (bpf_xdp_metadata_rx_vlan_tag, Linux 6.8 and later)."
-   :date "2026-11-13" :origin "Review before v1.2.0, XDP reader, finding X2")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "xdp-martian-sources" :group "review-v1-2" :area "rocketnet"
    :title "XDP accepts sources the kernel stack drops as martian, and does not verify checksums on receive"
    :text "sdk/xdp/server_xdp.c has no source check, and userspace refuses only IPv4-mapped IPv6 (sdk/rocketnet_xdp_frame.h about 675, sdk/rocketnet_address.h about 65): 0.0.0.0/8, 127/8, 224/4, 255.255.255.255, the server's own address, ::, ::1, ff00::/8 and source port 0 reach the main thread and get replies. IPv4 header and UDP checksums are not verified on receive (rocketnet_xdp_frame_parse_vlan about 420-537), and the kernel fast path does not check the version nibble (server_xdp.c about 552). The socket transports get all of this from the kernel. Refuse these in the kernel program and check the sums."
-   :date "2026-11-13" :origin "Review before v1.2.0, XDP reader, finding X3")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "xdp-receive-stopped-uncounted" :group "review-v1-2" :area "rocketnet"
    :title "XDP: datagrams received and not handed to the main thread at stop are counted nowhere"
    :text "The XDP operations table passes NULL for receive_drop_totals (sdk/rocketnet_driver_builtin.cpp about 2523), the only feed of RECEIVE_DROPPED_STOPPED, so at stop (sdk/rocketnet_server_socket_linux.cpp about 4887-5285) the staged, ready, unread-tail (about 4761) and receive-ring datagrams are dropped uncounted. Every other rebuilt transport counts them. Feed the row, with a test that reads it by value. Separate from xdp-stop-abandoned-buffers, which is the send side."
-   :date "2026-11-13" :origin "Review before v1.2.0, XDP reader, finding X4")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "rio-lane-trace-harness-state" :group "review-v1-2" :area "proofs"
    :title "The rio-lane trace checks the harness's own slot table, not the transport's"
    :text "tests/tla_trace_rio_lane.cpp calls the real hash, lane_of, packet_id and decode (about 126-140) but keeps every state field itself (slot, issued, staged, starts, strayed, misrouted; about 56-68, 129-211): it picks the slot with its own loop and decides misrouted itself. The transport's slot take and frame check, start_packet, finish_packet, abort_packet and lane staging in sdk/rocketnet_server_rio_windows.cpp (about 485-514, 1713-1744, 4162-4198) never run under the trace, so NoReissue, FinishOwn and OneLanePerDest cannot go red for a library defect. The hash is called with family 1 where the transport passes to->type (134, 240), and the comment at line 11 overstates what is bound. Drive lane start and finish on the no-socket fixture and read the library's state, or say plainly what the layer binds."
-   :date "2026-11-13" :origin "Review before v1.2.0, checks reader C1 and Windows reader W3")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "iocp-admit-trace-verdict-only" :group "review-v1-2" :area "proofs"
    :title "The iocp-admit trace binds only the admit verdict"
    :text "tests/tla_trace_iocp.cpp (about 169-194) calls rocketnet_server_iocp_test_receive_admit for the verdict, then pushes to its own bank and increments its own full, refused and counted. rocketnet_iocp_bank_datagram (sdk/rocketnet_server_iocp_windows.cpp about 1309-1325) and the drop counters never run, so EveryDropCounted and Accounted are checked against the harness's arithmetic: a BANK_FULL datagram dropped uncounted stays green. Drive the real bank and read the library's counters."
-   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding C2")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "xdp-gateway-refresh-trace-order" :group "review-v1-2" :area "proofs"
    :title "The xdp-gateway-refresh trace cannot see the refresh moved"
    :text "tests/tla_trace_xdp_gateway_refresh.cpp (about 192, 240-253, 326) decides when the refresh runs with the walk's own phase string; the real call site (sdk/rocketnet_server_socket_linux.cpp about 673) never runs, and the untraced ReceiveWithoutRefresh is justified by assumption (tools/tla_trace_check.py about 157). The deadline part is bound; the ordering part (the model's RefreshInFill witness) is not, so a refresh moved into the send path stays green. Drive the walk through the real call site."
-   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding C3")
+   :date "2026-11-13" :origin "Review before v1.2.0")
+
+  (item "finish-message-starting-thread" :group "review-v1-2" :area "sdk"
+   :title "finish_message and abort_message from the starting thread are not checked against game threads"
+   :text "In sdk/rocketnet_api.cpp (about 3642-3689) and sdk/rocketnet_fill_phase.cpp (about 203-210) the hand-over runs its main thread check only when another thread owns the client. When the owner is the caller or nobody, rn_server_pending_slot scans every connection's plain open.pending while other threads write theirs. rocketnet.h says one thread at a time, and nothing refuses a call that breaks it. Refuse and count it, as the other thread rules are."
+   :date "2026-11-13" :origin "Review before v1.2.0")
+
+  (item "client-acked-batch-full-test" :group "review-v1-2" :area "tests"
+   :title "A test that fills the client's delivery batch and reads CLIENT_ACKED_BATCH_FULL by value"
+   :text "Every test reads ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL only as == 0 (tests/test_unit_sequence_burn.cpp, sdk/rocketnet_tests.cpp, tests/functional/server_receive_low_tick.cpp). check_counter_observed.py counted it observed through a name a check read only as == 0; with that path closed it is listed in OWED. The server's twin, ACKED_BATCH_FULL, has a unit case (tests/test_unit_client_receive_counters.cpp, the batch that holds two). The client's batch is fixed at ROCKETNET_SENT_PACKET_BUFFER_SIZE (rocketnet_client_protocol.cpp, the ack block's process call), so the case needs a seam that shrinks it, or more acks in one update than the batch holds; then drop the OWED row."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding FG-G5 (R108)")
+
+  (item "counter-observed-scoped-paths" :group "review-v1-2" :area "tools"
+   :title "check_counter_observed holds its indirect paths to the clauses that can show a move"
+   :text "tools/check_counter_observed.py now credits a direct check only through a clause that can show the counter moved, but three indirect paths still read looser text: a name assigned from a counter is matched against checks anywhere in the file, not in the assigning function's scope; a table row's field is matched against the unfiltered check text; and a returned or folded predicate is credited without the movement filter. A zero-only check through any of the three still counts as observing the counter. Scope the assignment path to its function and pass the other two through the same clause filter, each with a self-test case."
+   :date "2026-11-13" :origin "Review before v1.2.0, gates review of 1b98c9bb6 (Astra P3, R108)")
+
+  (item "tla-records-reverify-changed-rows" :group "review-v1-2" :area "proofs"
+   :title "The nightly re-run re-verifies every RUNS.tsv row changed since it was last verified"
+   :text "A hand edit to proofs/tla/RUNS.tsv (MCLink generated/distinct set to 1/1, shown on the bench) still passes tools/check_tla_records.py: the record carries nothing a hand edit cannot fake without re-running TLC. The guard today is the nightly re-run comparer, which checks a third of the cases each night, so a false record is caught within about three nights. Make the nightly selection always include every row changed since that row's last verified re-run, so a changed record is re-run the next night. A point release re-runs nothing (the light point-release rule, 2026-11-13)."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R105)")
+
+  (item "ruleset-apply-reconcile-light-landing" :group "review-v1-2" :area "ci"
+   :title "When .github/rulesets/main.json is applied, reconcile its required names with light landing"
+   :text "The live ruleset on main carries only deletion and non_fast_forward; the committed .github/rulesets/main.json is deliberately not applied until the first outside pull request (owner, 2026-11-12). It requires the FULL job names, which tools/land.py by default prints but does not hold (light landing, 2026-11-13). Before applying it, make the required names the per-commit names light landing holds, or applying it blocks every light landing."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R102)")
+
+  (item "release-tag-push-ruleset" :group "review-v1-2" :area "ci"
+   :title "A tag ruleset so a v* tag is made only by the release tooling"
+   :text "Nothing stops a v* tag being pushed by hand around tools/release.py and its gates. A tag ruleset that limits v* creation to the release path closes it."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R110)")
+
+  (item "wire-paths-tie-to-wire-version" :group "review-v1-2" :area "ci"
+   :title "Classify the 17 pending wire paths and tie a wire change to ROCKETNET_WIRE_VERSION"
+   :text "tools/wire_paths.txt lists 17 files as classification pending since 2026-11-12. Classify them, then make a change to a wire path that leaves ROCKETNET_WIRE_VERSION unchanged need a reviewed reason."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader (R103)")
+
+
+  (item "ack-apply-walk-many-ids" :group "review-v1-2" :area "proofs"
+   :title "The ack-apply trace walk sends blocks that apply many ids"
+   :text "tests/tla_trace_ack_apply.cpp makes every block acknowledge one new sequence with its ranges over sequences already acknowledged, so each apply gives exactly one id; a defect in the apply of a block that acknowledges several new sequences at once (the common case on a lossy link) is never walked. Let the walk draw blocks whose ranges cover unacknowledged sequences, within the batch, and extend RNAckApplyPhase's Receive to carry the id count."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding FG-A5 (R115)")
+
+  (item "client-connection-integrity-limit" :group "review-v1-2" :area "proofs"
+   :title "ClientConnection.tla models the AEAD integrity limit"
+   :text "sdk/rocketnet_client_protocol.cpp rocketnet_client_integrity_failure disconnects the client after ROCKETNET_INTEGRITY_LIMIT failed opens (TRANSPORT.md t14); proofs/tla/ClientConnection.tla has no action for it. Add the action, with the limit as a small constant, and a reversed witness that never disconnects."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding FG-A6 (R115)")
+
+  (item "message-open-model" :group "review-v1-2" :area "proofs"
+   :title "A model of the open message per connection and the object's count of open starts"
+   :text "sdk/rocketnet_message_object.h (the open-message fields), sdk/rocketnet_message_server.cpp (rn_message_open_line_index and the one-start-pending refusal in the start path) and tests/wide_fill_cases.cpp cited proofs/tla/RNMessageOpen.tla, which was never written; the citations now say there is no model. The state: at most one open start per connection, fill threads opening and closing on different connections at once, the object's count of open starts and its last index as atomics, a reset's cancel (RNSlots ResetCancel). A model would carry the count's arithmetic at capacity 3 with a reversed witness (a second start on one connection admitted) and a trace walk of the wide fill."
+   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding FG-A4 (R111)")
 
   (item "counter-observed-loose-paths" :group "review-v1-2" :area "tools"
    :title "check_counter_observed.py accepts tests that assert nothing about a counter's value"
    :text "This gate enforces that a counter row lands only with a test that reads it by value, and it accepts empty assertions. tools/check_counter_observed.py (about 426-434) excludes only a clause ending == 0, so check( v[X] >= 0 ), check( v[X] == 0u ), check( !v[X] ) and check( v[X] == v[X] ) count as observed; it accepts T name = v[X]; when any check anywhere in the file reads an identifier of that name (about 465-475); and the return path matches a function of the same name in any file (about 510-513). Run on a scratch tree, it reported 5 of 5 counters observed with five empty assertions; its 26 self-test cases have none of these forms. On the real tree 238 of 301 rows are observed by a value check and 53 more only through the loose paths. Close the three paths, add the forms as self-test cases, and give the 53 rows real value checks."
-   :date "2026-11-13" :origin "Review before v1.2.0, checks reader, finding C4 (run)")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "msgx-refused-batch-prefix" :group "review-v1-2" :area "sdk"
    :title "msgx may resend a batch whose first packets the kernel already sent"
    :text "sdk/rocketnet_msgx_send_runs.h (about 32-41, 330-374) takes a sendmsg_x that returns -1 as none taken: the run is kept and sent again whole from the same cursor (the worker retries every 1 ms, sdk/rocketnet_server_msgx_apple.cpp about 794-799, 879-903). The repo's own measured note says xnu can deliver part of a batch and still return -1 with no count (sdk/rocketnet_platform.cpp about 505-512, 2692-2701), and the client and portable pump handle that; msgx does not. If an ENOBUFS at peak does this, the delivered prefix goes out two or more times into a full queue: duplicates the client's replay window drops, sent counters under the wire, SEND_FAILED over on the error path. The model (RNMsgxSendRuns.tla) has the same assumption in its fake kernel. Open until measured: one peak row on the 10 GbE pair (received against packets_sent with send_dropped 0) decides; a loopback probe of 2000 batches of 64 never saw a refusal."
-   :date "2026-11-13" :origin "Review before v1.2.0, macOS reader, finding P3")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "strict-keep-off-cpu-zero" :group "review-v1-2" :area "sdk"
    :title "A strict option: refuse to start when a Linux transport worker cannot be kept off CPU 0"
    :text "When the pin and then the fallback confinement are both refused (XDP leave_core_zero in sdk/rocketnet_server_socket_linux.cpp about 4236-4256, io_uring confine_worker in sdk/rocketnet_server_uring_linux.cpp about 411-431, and gso's fallback), the worker carries on with the inherited mask, CPU 0 included, for good: a cpuset limited to CPU 0 does this. The count and the warning are being fixed for v1.2.0. Left: an option, off by default, that makes the server refuse to start instead when the host has more than one CPU (a one-CPU host must still run)."
-   :date "2026-11-13" :origin "Review before v1.2.0, Stella's finding S3")
+   :date "2026-11-13" :origin "Review before v1.2.0")
 
   (item "code-4-block-walks-per-fragment" :group "review-v1-2" :area "sdk"
    :title "A code-4 block fragment walks its block's count twice"
-   :text "In sdk/rocketnet_channel_sequenced.cpp a fragment that anchors a new in-turn code-4 block runs the stale-sibling scan over the block's count (about 272-288), and a newer one releases the old block by walking its count (rn_sequenced_release_slot, about 123-140), whatever arrived. Measured on amd-3 (Release, rn_ordered_receive called directly, W = 1024): a first fragment of a 910-fragment block costs 1.71 us against 0.11 us for a block of 2. The cost is bounded by the count, which max_message_bytes caps (at most 911 fragments at 1 MiB), not by W. To repeat it a sender must also send the block's other numbers, because a newer block whose numbers overlap a live code-4 one ends the connection (BAD_BLOCK). That makes about 13 more packets for each walk, so per byte received the cost stays flat. Dense 1-byte last fragments (70 a payload) cost 2.7-4.1 us a payload at either count, because the stale scan stops at the first released sibling. Not a point-release defect. A walk over only the fragments received (the anchor's block_have) would make it proportional."
-   :date "2026-11-13" :origin "Audit round 1, ordered duplicate scan fix: measured the second reader's code-4 estimate")
+   :text "In sdk/rocketnet_channel_sequenced.cpp a fragment that anchors a new in-turn code-4 block runs the stale-sibling scan over the block's count (about 272-288), and a newer one releases the old block by walking its count (rn_sequenced_release_slot, about 123-140), whatever arrived. Measured on a Linux bench (Release, rn_ordered_receive called directly, W = 1024): a first fragment of a 910-fragment block costs 1.71 us against 0.11 us for a block of 2. The cost is bounded by the count, which max_message_bytes caps (at most 911 fragments at 1 MiB), not by W. To repeat it a sender must also send the block's other numbers, because a newer block whose numbers overlap a live code-4 one ends the connection (BAD_BLOCK). That makes about 13 more packets for each walk, so per byte received the cost stays flat. Dense 1-byte last fragments (70 a payload) cost 2.7-4.1 us a payload at either count, because the stale scan stops at the first released sibling. Not a point-release defect. A walk over only the fragments received (the anchor's block_have) would make it proportional."
+   :date "2026-11-13" :origin "Ordered duplicate scan fix: the code-4 estimate, measured")
 
   (item "receive-reservation-trace-binding" :group "review-v1-2" :area "proofs"
    :title "The receive reservation's models are bound by citation only"
@@ -635,4 +695,54 @@
    :title "The Go and C# example backends parse the protocol id differently"
    :text "examples/backend/go/main.go (about 344-350) parses the protocol id with base auto-detect, so 010 is octal 8 there, while the C# backend parses it as decimal 10; make both parse one way and say which in the examples' docs."
    :date "2026-11-13" :origin "Review before v1.2.0, wave 2, finding W2-119")
+
+  (item "sent-map-receipts-give-way" :group "review-v1-2" :area "sdk"
+   :title "Receipt-only packets can push a reliable entry out of the sent map before its ack lands"
+   :text "Packets that carry only unreliable receipt serials (rn_window_ack_commit_receipt_packet) take entries in the same P-entry sent map as packets with reliable numbers, and W does not bound them. When reliable and receipt-only packets written within one round trip pass P, rn_window_ack_commit (sdk/rocketnet_window_ack.cpp) evicts the oldest entry with its ack on the way: the ack is ignored, its numbers are resent and can hold U, and a steady excess can evict every send of a reliable number until reliable_message_timeout_ms ends the connection. For v1.2.0 this is the documented contract (packets_in_flight in sdk/rocketnet.h, standard/MESSAGES.md m9.1, docs/CHANNELS.md: size P for every tracked packet sent between a send and the processing of its ack, since an entry is evicted only by the P-th tracked write after it), and tests/test_unit_sent_map_receipt_eviction.cpp pins it by value. Model: proofs/tla/RNSentMap.tla, witness MCRNSentMapReceiptEviction.cfg. Red-test recipe at W = P = 64: (1) 64 one-number reliable packets then one receipt-only packet in one update: 63 of 64 acks found, U stays 0, number 0 stays due for resend; (2) reliable, receipt-only, then 63 reliable: the oldest reliable entry is evicted, not the receipt-only one, so refusing only at the receipt-only commit is not enough; (3) 60 Hz, 100 ms round trip, 11 receipt-only packets an update and one reliable message, 2 s reliable timeout: every send is evicted and the connection ends RELIABLE_TIMED_OUT. Reachability at the defaults (W = P = 1024, 10 Mbps per client, 60 Hz, at most 16 receipt records a packet): full 1416 B packets give about 88 tracked packets per 100 ms, so it needs a round trip above about 1.16 s; tiny receipt messages packed 16 to a packet (about 250 B) give about 500 per 100 ms, so about 205 ms with about 1300 receipt messages a client an update (10 Gbps at 1000 clients); 1 to 3 tracked packets an update needs 6 to 17 s; the 1000 kbps client default needs acks delayed about 2 s (about 500 packets of 250 B a second against P = 1024). Reachable with an unlimited send budget (256 packets an update), small maps (P = 64: 11 an update at 100 ms), or acks delayed about a second. Repair options: (A) receipts give way inside the one ring: when a write needs room and the head holds an unacked reliable number, give up the oldest entry that holds none (a receipt-only entry, an acked hole or a copy whose numbers another copy's ack completed), shifting the entries in front of it and their refs up one place; if every entry holds one, a reliable write evicts the head (P >= W proves its ack is not on its way only while acks arrive in send order; out of order, faster acks of later packets (resends of lost lower numbers among them) let more than W reliable packets follow a live entry, so the repair's model needs variable ack delay) and a receipt-only write is not entered and reports LOSS at once. Memory flat, no layout change, nothing changes while the map has room; but the overflow path scans and shifts up to P entries with up to 16 refs each on the main thread exactly when the remote endpoint withholds acks, a cost a hostile client or server can drive, so it needs a bound before it ships (for example a cap on the scan, or keeping receipt-only entries off the reliable head's path). (B) a ring of its own for receipt-only packets: the reliable ring and its proof are untouched, but the region layout in rocketnet_allocator.cpp changes and memory grows 128 B x its entries a connection (+128 KiB a client at P entries, +125 MiB for 1000 clients), or LOSS starts earlier with a smaller ring. Either changes RNSentMap (and for A RNSentRingLayout and RNReceipts EvictMap) in the same commit, with MCRNSentMapReceiptEviction.cfg run on the old rule as the reversed witness."
+   :date "2026-11-13" :origin "Audit round 2, finding S002 (three readers); reproduced and documented in fix/v1.1.x/sent-map-receipt-eviction")
+
+  (item "receipts-after-transport-end" :group "after-v1-1-landing" :area "sdk"
+   :title "Keep a transport-ended connection's receipt outcomes readable for one update"
+   :text "Today a connection ended by an explicit disconnect or kick, or by the message layer at the end of an update, keeps its outcomes readable until the next update (or, on the client, a connect that ends it), but a connection the transport ends inside an update (timed out, disconnected by the other side), or that an update ends for MESSAGE_NOT_RECEIVED, reports no outcomes from that update on, so outcomes recorded since the previous update are lost; rocketnet.h, docs/REQUIREMENTS.md and docs/RELIABILITY.md now say so (fix round 1 of the 2026-11-10 review). Keeping them is a lifecycle change: a KEEP decision for the receipt ring in the connection reset inventory (docs/CONNECTION-RESET.md), a read gate that admits an ended slot for one update instead of only live slots, an end_update for the dropped slot on the update after, RNReceipts and RNSlots carrying the ended-but-readable state with reversed witnesses and the trace walk, and on the client storage that survives a retrying connect (connect reuses the block today)."
+   :date "2026-11-13" :origin "2026-11-10 review, fix round 1, item 4")
+
+  (item "windows-create-status-unset" :group "after-v1-1-landing" :area "sdk"
+   :title "Windows create failures that leave the status unset"
+   :text "The POSIX and macOS wake create now set OUT_OF_MEMORY for ENOMEM and ENOBUFS (sdk/rocketnet_platform.cpp, rocketnet_platform_wake_create, fix round 1 of the 2026-11-10 review). The Windows paths named by the same finding are not fixed: several failure paths of rocketnet_rio_lane_create (sdk/rocketnet_server_rio_windows.cpp, from about 1243; the mutex create at about 1310-1313 is one) reach failed with no status set, and a Winsock refusal for want of buffers there reads as a plain failure, not OUT_OF_MEMORY. Each failure path is to be checked, given its status (rocketnet_platform_windows_create_status for a Winsock or Win32 error), and pinned by a fail_stage unit case run on a Windows bench."
+   :date "2026-11-13" :origin "2026-11-10 review, fix round 1, item 7")
+
+  (item "loopback-exchange-only-handoff" :group "after-v1-1-landing" :area "sdk"
+   :title "Loopback: hand datagrams over by exchange only, not under the hub mutex"
+   :text "sdk/rocketnet_driver_loopback.cpp holds the hub-wide mutex across the destination lookup and the copies of a send, a whole server batch send, and a receive (about 727-885), against docs/decisions/BUFFER-HANDOFF-DECISION-20261021.md, which allows the mutex to protect the exchange only. Nothing is unsafe; it serialises every endpoint on a hub. The decision file records it as a scoped exception (2026-11-13). The rewrite: a bounded per-destination queue filled outside any lock and published by an index exchange, the receiver consuming published slots the same way, refusals counted as today, the lookup reading a table that changes only at endpoint create and destroy, and the loopback models (LoopbackHub, LoopbackQueue, LoopbackHubLayout, RNLoopbackBindLayout) carried with it."
+   :date "2026-11-13" :origin "2026-11-10 review, ROUND1-MERGED row R127 (Stella's Astra A09)")
+
+  (item "message-destroy-misuse-owner" :group "after-v1-1-landing" :area "sdk"
+   :title "Message destroy misuse: an owner for a transport whose worker outlives the wait"
+   :text "The failed-create unwind now waits for the worker with no deadline (rn_message_link_abort_create, proofs/tla/RNCreateUnwind.tla). What remains: rocketnet_message_server_destroy or rocketnet_message_client_destroy called before the transport stopped is a counted misuse that stops the transport itself and waits one second (RN_MESSAGE_LINK_STOP_WAIT_SECONDS, rn_message_object_destroy in sdk/rocketnet_message_server.cpp). If the worker has not exited by then the transport is logged as kept, not freed, and the object is freed, so nothing owns the transport. The public server and client destroys stop first and keep their own handle while the worker runs, so only a layered caller that skips stop reaches it. The fix: a wait with no deadline there too, or keep the object while the worker runs as rocketnet_server_destroy does."
+   :date "2026-11-13" :origin "2026-11-10 review, fix round 1, cold read of review fix 1; reduced when the create unwind was fixed")
+
+  (item "loopback-hub-destroy-check-and-free" :group "review-v1-2" :area "sdk"
+   :title "Loopback hub destroy checks for endpoints, then frees the hub outside the lock"
+   :text "rocketnet_loopback_hub_destroy (sdk/rocketnet_driver_loopback.cpp about 521-559) reads registered under the hub mutex, releases it, then destroys the mutex and frees the block. A create on another thread in that window registers into memory about to be freed. Creating while destroying is misuse, but the in-use guard reads as if it catches it. Make the check and the retirement one step under the mutex (a create after it refused with the hub's in-use or mismatch status), show it red with two threads through a deterministic seam, and make LoopbackHub.tla's Destroy (atomic today) two steps with a reversed witness. A create that is already waiting on the mutex when the hub is freed stays misuse that no flag can catch: say so in rocketnet.h."
+   :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-11 (read, not run)")
+
+  (item "loopback-port-zero-bind-walk" :group "review-v1-2" :area "sdk"
+   :title "A loopback port-0 bind walks every endpoint for each candidate port under the hub mutex"
+   :text "loopback_create (sdk/rocketnet_driver_loopback.cpp about 588-668) checks each candidate port of the ephemeral range against every live endpoint record, O(range x endpoints) with the hub mutex held, although hub->bound[family][port] already answers each port in one lookup (RNLoopbackBindLayout.tla LookupIsWalk). Use the table for both the explicit-port conflict check and the search; show it with a counted bound on a nearly full hub."
+   :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-12 (read, not run)")
+
+  (item "loopback-server-drain-budget" :group "review-v1-2" :area "sdk"
+   :title "The server's loopback queue is sized by the hub's clients, its receive budget by the server's"
+   :text "rocketnet_loopback_server_queue_packets sizes the server endpoint's queue from the hub's max_clients, and the server transport's loopback receive drains up to a budget from the server's own max_clients (server_transport loopback receive about 4340-4430). With a hub larger than the server, a full queue holds more than one update drains: an update of added latency. Size the drain so one update empties the queue, or say why not."
+   :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-20 (read, not run)")
+
+  (item "loopback-queue-model-full-drop" :group "review-v1-2" :area "proofs"
+   :title "LoopbackQueue cannot reach its full drop, and its Drop does not count"
+   :text "MCLoopbackQueue.cfg (Capacity 4, BacklogMax 2) never fills the queue, so Send's full-drop branch is never explored (COVERAGE.tsv says so), and Drop does not increment dropped although loopback_client_receive and loopback_server_receive_batch count it. Give the cfg a backlog that reaches the drop and model the counter, with a reversed witness of an uncounted drop."
+   :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-10 (read, not run)")
+
+  (item "ci-functional-step-name-per-os" :group "review-v1-2" :area "github"
+   :title "The functional suite step says 'on Linux' on the macOS runner"
+   :text "One step of .github/workflows/ci.yml, 'Run functional suite (automatic transport order — the fall, on Linux; RSS enforced)', runs on the Linux and the macOS rows, so docs/PLATFORMS.md's macOS 27 row, which must name the step word for word (tools/check_platform_policy.py), reads 'on Linux'. Rename the step so it names no OS (or give each OS its own step), and change tools/planted_violations.tsv and both PLATFORMS.md rows in the same commit."
+   :date "2026-11-13" :origin "Review before v1.2.0")
  ))
