@@ -136,6 +136,23 @@
     alive: the post-warmup sample at the first planned reconnect, a peak
     sample at every later reconnect and every 10 s, and the end sample after
     the bound, once the last client is destroyed and before the server is.
+    THE WINSOCK THREAD HANDLES (Windows, iocp server only). The first
+    WSASendTo a thread makes gives that thread two handles that are
+    Winsock's, not the library's: ws2_32's own copy of the thread's handle
+    (WahOpenCurrentThread, a DuplicateHandle) and one manual-reset event
+    mswsock creates; Winsock keeps both until the thread exits. An iocp
+    server send thread lives as long as the server and makes its first
+    send when it first carries a client, which may be after the post-warmup
+    sample, so the end sample may hold 2 handles per server send thread
+    above it, once (measured 2026-11-14 on Windows Server, 1800 s impaired
+    iocp soak: 97 live handles for clients 1-5, 99 for clients 6-60; cdb
+    breakpoints on the send thread: ZwDuplicateObject under
+    WS2_32!WahOpenCurrentThread under WS2_32!WSASendTo, then NtCreateEvent
+    under mswsock under WS2_32!WSASendTo). The handle
+    check allows that as a ceiling on the total above the post-warmup
+    count, never per reconnect (soak_winsock_handle_allowance), so a
+    handle leaked per reconnect still fails once it passes the ceiling;
+    every other transport and OS keeps the exact rule.
     On Linux the post-warmup sample comes after the warm-up of
     tests/process_resources.h (process_resources_touch_all): every page of
     every private mapping faulted in once, so memory preallocated at create
@@ -182,9 +199,11 @@
     "soak resources: none (the run ended inside the warm cycle)".
 
     --assert-flat holds the counts to process_resources.h's flat rule: the
-    fd (handle) and thread counts at the end equal their post-warmup counts,
-    and library_bytes, the library's own bytes (allocator and direct),
-    grows by at most one page per ten minutes of run since the post-warmup
+    fd (handle) and thread counts at the end equal their post-warmup counts
+    (the handles of an iocp server on Windows may end at most 2 per server
+    send thread above it: THE WINSOCK THREAD HANDLES above; the allowance
+    prints as "soak resources: handles allowance=<n> ..."), and
+    library_bytes, the library's own bytes (allocator and direct), grows by at most one page per ten minutes of run since the post-warmup
     sample (at least one page), on every transport. Thread stacks are held
     by the thread count. The process's memory count (resident_bytes, or
     private_bytes on Windows) is printed and never asserted, since it counts
@@ -966,6 +985,35 @@ static int soak_os_pool_settle( const struct process_resources_t * start, struct
     (void) start;
     (void) end;
     return 1;
+#endif // #if defined( _WIN32 )
+}
+
+// THE WINSOCK THREAD HANDLES (Windows, iocp server; the header comment says
+// what they are): the handles the end sample may hold above the post-warmup
+// sample, 2 per iocp server send thread. The count is the one soak configures
+// (server_config.num_iocp_send_threads; zero selects the library's default,
+// SOAK_IOCP_DEFAULT_SEND_THREADS, from rocketnet.h). The soak cannot read the
+// running server's count (rocketnet_server_iocp_send_thread_count is behind an
+// internal header), so with fewer send lanes than that the ceiling is looser,
+// never tighter. 0 on every other transport and OS. A ceiling on the total
+// above the post-warmup count, taken once, never per reconnect.
+
+#define SOAK_IOCP_DEFAULT_SEND_THREADS 2   // rocketnet.h num_iocp_send_threads: zero selects 2
+#define SOAK_WINSOCK_HANDLES_PER_THREAD 2  // ws2_32's copy of the thread's handle and mswsock's event
+
+static int64_t soak_winsock_handle_allowance( const char * server_transport_name, int configured_send_threads )
+{
+#if defined( _WIN32 )
+    if ( strcmp( server_transport_name, "iocp" ) == 0 )
+    {
+        const int send_threads = configured_send_threads > 0 ? configured_send_threads : SOAK_IOCP_DEFAULT_SEND_THREADS;
+        return (int64_t) SOAK_WINSOCK_HANDLES_PER_THREAD * send_threads;
+    }
+    return 0;
+#else
+    (void) server_transport_name;
+    (void) configured_send_threads;
+    return 0;
 #endif // #if defined( _WIN32 )
 }
 
@@ -2107,10 +2155,31 @@ int main( int argc, char ** argv )
                 continue;
             }
 
-            if ( assert_flat && !process_resources_flat( i, resources_start.values[i], resources_end.values[i], seconds_since_start ) )
+            // the handles of an iocp server on Windows: compared against the
+            // post-warmup count plus THE WINSOCK THREAD HANDLES allowance
+
+            int64_t flat_start = resources_start.values[i];
+            int64_t allowance = 0;
+            if ( i == PROCESS_RESOURCES_HANDLES && flat_start >= 0 )
+            {
+                allowance = soak_winsock_handle_allowance( server_transport_name, server_config.num_iocp_send_threads );
+                flat_start += allowance;
+                if ( allowance > 0 )
+                {
+                    printf( "soak resources: handles allowance=%lld (iocp server: %d Winsock handles per server send thread, once; ceiling end<=%lld)\n",
+                            (long long) allowance, SOAK_WINSOCK_HANDLES_PER_THREAD, (long long) flat_start );
+                }
+            }
+
+            if ( assert_flat && !process_resources_flat( i, flat_start, resources_end.values[i], seconds_since_start ) )
             {
                 printf( "soak: --assert-flat FAILED: %s start=%lld end=%lld", process_resources_name( i ),
                         (long long) resources_start.values[i], (long long) resources_end.values[i] );
+
+                if ( allowance > 0 )
+                {
+                    printf( " (allowed above start %lld)", (long long) allowance );
+                }
 
                 if ( i == PROCESS_RESOURCES_MEMORY )
                 {
