@@ -272,17 +272,21 @@ every reliability to reach B under every config; `rocketnet_fuzz_xdp_filter`
 writes three frames (structured, with a replay entry, raw) per
 server-facing packet type, size and family, each replayed to the verdict
 the userspace rungs name for its payload (where the filter is not built as
-host C: MSVC, and the Makefile's Darwin build, it writes them without replaying). Each seed is replayed through the target before it is written. The
-generator exits 1 and prints `INCOMPLETE` unless every packet type the
+host C: MSVC, and the Makefile's Darwin build, it writes them without replaying). The other generators replay each seed through the target before writing it;
+`rocketnet_fuzz_config`, `rocketnet_fuzz_round_trip` and
+`rocketnet_fuzz_token_private` write their seeds without replaying them, and
+have no completeness check. Every other generator
+exits 1 and prints `INCOMPLETE` unless every packet type the
 target's receive loop reads has a seed that raises that type's counter (or,
 for the session target, unless every reliability type is delivered in both
 directions). A type with no seed would be a parser the fuzzer never enters,
 because random mutation cannot produce a valid AEAD tag. Seeds are
 deterministic, so a regenerated corpus differs only when the code under it
-changed. The generator exits the process itself, from
+changed. Every generator but those three exits the process itself, from
 `LLVMFuzzerInitialize`, in the libFuzzer build and the replay driver alike:
 libFuzzer ignores that function's return value, and so does the replay
-driver. ci.yml's macOS checks leg, on the nightly tier, runs all fifteen
+driver. Those three return 0 from `LLVMFuzzerInitialize` once their seeds
+are written, and the binary goes on as usual. ci.yml's macOS checks leg, on the nightly tier, runs all fifteen
 generators and requires each to exit 0, and requires
 `rocketnet_fuzz_connect_token` and `rocketnet_fuzz_receive_structured` to
 exit 1 with `INCOMPLETE` when a seed is withheld

@@ -34,8 +34,9 @@
 //
 // ORACLES: the deterministic pair must connect (a seed replays the same
 // handshake); nothing allocates after create; every payload the server hands
-// up is within the receive payload bound; the server's counters obey their
-// conservation law at the end.
+// up is within the receive payload bound; every counter block of the pair (the
+// server transport, the message server, the message client and the client
+// transport) obeys its conservation law at the end.
 
 #include "rocketnet_fuzz_pair.h"
 
@@ -180,6 +181,12 @@ static uint64_t rocketnet_fuzz_server_run( const uint8_t * data, size_t size )
     char report[240];
     rocketnet_fuzz_pair_require( rocketnet_counters_conserved( &pair->transport->counters, report, sizeof( report ) ) != 0,
                                  "the server transport's counters are conserved" );
+    rocketnet_fuzz_pair_require( rocketnet_counters_conserved( rocketnet_message_server_counters( pair->server ), report, sizeof( report ) ) != 0,
+                                 "the message server's counters are conserved" );
+    rocketnet_fuzz_pair_require( rocketnet_counters_conserved( rocketnet_message_client_counters( pair->client ), report, sizeof( report ) ) != 0,
+                                 "the message client's counters are conserved" );
+    rocketnet_fuzz_pair_require( rocketnet_counters_conserved( rocketnet_fuzz_pair_client_counters( pair ), report, sizeof( report ) ) != 0,
+                                 "the client transport's counters are conserved" );
 
     rocketnet_fuzz_pair_check_no_allocation( pair );
     return rocketnet_fuzz_pair_fingerprint( pair );

@@ -29,7 +29,10 @@
 // misbehaving, and a forged ack may legitimately end a resend. An input that
 // uses it keeps the safety checks on deliveries it can attribute and drops
 // the liveness check. A connection the script itself tears down (a sealed
-// disconnect, or a long enough silence) also skips liveness.
+// disconnect, or a long enough silence) also skips liveness; a script with
+// neither, whose wire was never silent either way for half the timeout before
+// either side dropped or the handshake failed (the quiet that follows never
+// counts), must end connected.
 //
 // INPUT: [selector][op]...
 //   selector bit 4: start the script during the handshake
@@ -61,6 +64,7 @@
 #define ROCKETNET_FUZZ_SESSION_SERVER      0       // the dst session the server's slot 0 receives on
 #define ROCKETNET_FUZZ_SESSION_CLIENT      16      // the dst session client 0 receives on
 #define ROCKETNET_FUZZ_SESSION_QUIET_STEPS 300
+#define ROCKETNET_FUZZ_SESSION_TIMEOUT_SECONDS 10.0      // the pair's connect token timeout_seconds (rocketnet_fuzz_pair.h)
 
 static struct rocketnet_fuzz_pair_t rocketnet_fuzz_session_pair;
 static struct rocketnet_dst_check_state_t rocketnet_fuzz_session_checks;
@@ -68,6 +72,26 @@ static uint32_t rocketnet_fuzz_session_next[2][8];     // [direction][channel] n
 static bool rocketnet_fuzz_session_tainted;
 static uint64_t rocketnet_fuzz_session_step;
 static uint64_t rocketnet_fuzz_session_delivered_tally[2][ROCKETNET_FUZZ_NUM_CHANNELS];   // the generator's every-type check
+// the time each way (0 client -> server, 1 server -> client) last carried a
+// clean delivery, and the longest silence either way so far
+static double rocketnet_fuzz_session_heard[2];
+static double rocketnet_fuzz_session_dark;
+// whether each side was connected after the last step, and whether either
+// dropped (or the handshake failed) since the script began: from then on the
+// silence is frozen
+static bool rocketnet_fuzz_session_was_up[2];     // [0] the client CONNECTED, [1] the server's slot 0 connected
+static bool rocketnet_fuzz_session_went_down;
+
+// the silence one way (0 client -> server, 1 server -> client) up to now, kept
+// when it is the longest so far; compared by hand, since windows.h defines max
+static void rocketnet_fuzz_session_note_silence( const struct rocketnet_fuzz_pair_t * pair, int direction )
+{
+    const double silence = pair->time - rocketnet_fuzz_session_heard[direction];
+    if ( silence > rocketnet_fuzz_session_dark )
+    {
+        rocketnet_fuzz_session_dark = silence;
+    }
+}
 
 static int rocketnet_fuzz_session_stream_index( int session, int channel )
 {
@@ -247,12 +271,54 @@ static void rocketnet_fuzz_session_update( struct rocketnet_fuzz_pair_t * pair, 
     rocketnet_fuzz_session_receive( pair );
     rocketnet_fuzz_pair_send( pair );
     rocketnet_fuzz_pair_check_no_allocation( pair );
+
+    // a side dropping (the client leaving CONNECTED, the server freeing slot 0)
+    // or the client handshake failing: the longest silence either way up to
+    // now is the one that has to account for it, so it is taken here and frozen
+    const int client_state = rocketnet_message_client_state( pair->client );
+    const bool up[2] = { client_state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED, rocketnet_message_server_client_connected( pair->server, 0 ) != 0 };
+    const bool dropped = ( rocketnet_fuzz_session_was_up[0] && !up[0] ) || ( rocketnet_fuzz_session_was_up[1] && !up[1] ) ||
+                         client_state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
+    if ( dropped && !rocketnet_fuzz_session_went_down )
+    {
+        rocketnet_fuzz_session_went_down = true;
+        for ( int direction = 0; direction < 2; direction++ )
+        {
+            rocketnet_fuzz_session_note_silence( pair, direction );
+        }
+    }
+    rocketnet_fuzz_session_was_up[0] = up[0];
+    rocketnet_fuzz_session_was_up[1] = up[1];
+}
+
+// the wire delivering everything captured one way (0 client -> server, 1
+// server -> client), at least one datagram: the receiver hears the sender now.
+// The time since the last such delivery is a silence, measured only until a
+// drop (rocketnet_fuzz_session_update), so a drop cannot excuse itself with
+// the quiet it causes; the longest is kept
+static void rocketnet_fuzz_session_heard_from( const struct rocketnet_fuzz_pair_t * pair, int direction )
+{
+    const struct rocketnet_fuzz_ring_t * ring = direction == 0 ? &pair->c2s : &pair->s2c;
+    if ( ring->count == 0 || rocketnet_fuzz_session_went_down )
+    {
+        return;
+    }
+    rocketnet_fuzz_session_note_silence( pair, direction );
+    rocketnet_fuzz_session_heard[direction] = pair->time;
+}
+
+// every captured datagram delivered both ways, clean
+static void rocketnet_fuzz_session_deliver_all( struct rocketnet_fuzz_pair_t * pair )
+{
+    rocketnet_fuzz_session_heard_from( pair, 0 );
+    rocketnet_fuzz_session_heard_from( pair, 1 );
+    rocketnet_fuzz_pair_deliver_all( pair );
 }
 
 static void rocketnet_fuzz_session_clean_step( struct rocketnet_fuzz_pair_t * pair )
 {
     rocketnet_fuzz_session_update( pair, ROCKETNET_FUZZ_DT );
-    rocketnet_fuzz_pair_deliver_all( pair );
+    rocketnet_fuzz_session_deliver_all( pair );
 }
 
 static void rocketnet_fuzz_session_faulty_step( struct rocketnet_fuzz_pair_t * pair, struct rocketnet_fuzz_cursor_t * cursor )
@@ -335,6 +401,12 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
     struct rocketnet_fuzz_pair_t * pair = &rocketnet_fuzz_session_pair;
     rocketnet_fuzz_pair_acquire( pair, ( selector & 0x10 ) == 0 );
     rocketnet_fuzz_session_checks_reset();
+    rocketnet_fuzz_session_heard[0] = pair->time;
+    rocketnet_fuzz_session_heard[1] = pair->time;
+    rocketnet_fuzz_session_dark = 0.0;
+    rocketnet_fuzz_session_was_up[0] = rocketnet_message_client_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
+    rocketnet_fuzz_session_was_up[1] = rocketnet_message_server_client_connected( pair->server, 0 ) != 0;
+    rocketnet_fuzz_session_went_down = false;
 
     static uint8_t buffer[ROCKETNET_RECEIVE_CEILING];
     static uint8_t packet[ROCKETNET_RECEIVE_CEILING];
@@ -365,26 +437,26 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
             case 4:
                 rocketnet_fuzz_session_update( pair, ROCKETNET_FUZZ_DT );
                 pair->c2s.count = 0;
-                rocketnet_fuzz_pair_deliver_all( pair );
+                rocketnet_fuzz_session_deliver_all( pair );
                 break;
 
             case 5:
                 rocketnet_fuzz_session_update( pair, ROCKETNET_FUZZ_DT );
                 pair->s2c.count = 0;
-                rocketnet_fuzz_pair_deliver_all( pair );
+                rocketnet_fuzz_session_deliver_all( pair );
                 break;
 
             case 6:
                 rocketnet_fuzz_session_update( pair, ROCKETNET_FUZZ_DT );
                 rocketnet_fuzz_session_duplicate_all( pair );
-                rocketnet_fuzz_pair_deliver_all( pair );
+                rocketnet_fuzz_session_deliver_all( pair );
                 break;
 
             case 7:
                 rocketnet_fuzz_session_update( pair, ROCKETNET_FUZZ_DT );
                 rocketnet_fuzz_session_reverse( &pair->c2s );
                 rocketnet_fuzz_session_reverse( &pair->s2c );
-                rocketnet_fuzz_pair_deliver_all( pair );
+                rocketnet_fuzz_session_deliver_all( pair );
                 break;
 
             case 8:
@@ -402,6 +474,8 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
                     d->data[position % d->bytes] ^= mask;
                 }
 
+                // the corrupted way counts as silent this step
+                rocketnet_fuzz_session_heard_from( pair, ( direction & 1 ) ? 0 : 1 );
                 rocketnet_fuzz_pair_deliver_all( pair );
                 break;
             }
@@ -415,8 +489,12 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
                     buffer[i] = rocketnet_fuzz_u8( &cursor );
                 }
 
+                // a zero length injects one zero byte, never a byte a previous
+                // input left in the static buffer: an input replays the same
+                // whatever ran before it
                 if ( length < 1 )
                 {
+                    buffer[0] = 0;
                     length = 1;
                 }
 
@@ -493,7 +571,24 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
         rocketnet_fuzz_session_clean_step( pair );
     }
 
+    // the longest silence either way, to the end of the quiet window; when the
+    // connection dropped, the silence that counts is the one before the drop
+    // (rocketnet_fuzz_session_update), not the quiet the drop itself caused
+    for ( int direction = 0; direction < 2 && !rocketnet_fuzz_session_went_down; direction++ )
+    {
+        rocketnet_fuzz_session_note_silence( pair, direction );
+    }
+
+    // a script the remote endpoint did not forge into (untainted) whose wire
+    // never went silent either way for half the token's timeout before any drop
+    // (rocketnet_fuzz_session_update) gives neither side a reason to end the
+    // connection: it must still be up, so an unexpected disconnect cannot
+    // switch the liveness check below off
     const bool live = rocketnet_fuzz_pair_connected( pair );
+    if ( !rocketnet_fuzz_session_tainted && rocketnet_fuzz_session_dark < 0.5 * ROCKETNET_FUZZ_SESSION_TIMEOUT_SECONDS )
+    {
+        rocketnet_fuzz_pair_require( live, "a script that never silenced the wire for half the timeout ends connected" );
+    }
     if ( live && !rocketnet_fuzz_session_tainted )
     {
         int session_live[ROCKETNET_DST_CHECK_MAX_SESSIONS];
@@ -516,6 +611,7 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
     rocketnet_fuzz_pair_require( rocketnet_counters_conserved( &pair->transport->counters, report, sizeof( report ) ) != 0, "the server transport's counters are conserved" );
     rocketnet_fuzz_pair_require( rocketnet_counters_conserved( rocketnet_message_server_counters( pair->server ), report, sizeof( report ) ) != 0, "the message server's counters are conserved" );
     rocketnet_fuzz_pair_require( rocketnet_counters_conserved( rocketnet_message_client_counters( pair->client ), report, sizeof( report ) ) != 0, "the message client's counters are conserved" );
+    rocketnet_fuzz_pair_require( rocketnet_counters_conserved( rocketnet_fuzz_pair_client_counters( pair ), report, sizeof( report ) ) != 0, "the client transport's counters are conserved" );
     rocketnet_fuzz_pair_check_no_allocation( pair );
     return rocketnet_fuzz_pair_fingerprint( pair );
 }

@@ -155,14 +155,15 @@ struct audit_t
 };
 
 // Find the closing brace line of a block whose opening brace is on or
-// after line `from` (searching at most 2 lines), counting braces.
-static int guard_block_end( const std::vector<std::string> & lines, size_t from )
+// after line `from` (searching at most 2 lines), counting braces from `column` on
+// line `from` and from the start of every later line.
+static int guard_block_end( const std::vector<std::string> & lines, size_t from, size_t column )
 {
     int depth = 0;
     bool opened = false;
     for ( size_t i = from; i < lines.size() && i < from + 80; i++ )
     {
-        for ( size_t k = 0; k < lines[i].size(); k++ )
+        for ( size_t k = i == from ? column : 0; k < lines[i].size(); k++ )
         {
             if ( lines[i][k] == '{' )
             {
@@ -195,6 +196,51 @@ static bool uses_name( const std::string & line, const std::string & name )
         const size_t after_at = at + name.size();
         const bool after = after_at < line.size() && ( isalnum( (unsigned char) line[after_at] ) || line[after_at] == '_' );
         if ( !before && !after )
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// whether line writes through name: a memcpy or memset into it, an index or a
+// dereference of it, or a member access through it
+static bool writes_through( const std::string & line, const std::string & name )
+{
+    for ( size_t at = line.find( name ); at != std::string::npos; at = line.find( name, at + 1 ) )
+    {
+        const bool before = at > 0 && ( isalnum( (unsigned char) line[at - 1] ) || line[at - 1] == '_' );
+        const size_t after_at = at + name.size();
+        if ( before || after_at >= line.size() || isalnum( (unsigned char) line[after_at] ) || line[after_at] == '_' )
+        {
+            continue;
+        }
+        if ( line[after_at] == '[' || line.compare( after_at, 2, "->" ) == 0 )
+        {
+            return true;
+        }
+        // a dereference: a * before the name that is not a multiplication or a declaration
+        size_t star = at;
+        while ( star > 0 && line[star - 1] == ' ' )
+        {
+            star--;
+        }
+        if ( star > 0 && line[star - 1] == '*' )
+        {
+            size_t left = star - 1;
+            while ( left > 0 && line[left - 1] == ' ' )
+            {
+                left--;
+            }
+            const char c = left > 0 ? line[left - 1] : '\0';
+            if ( !isalnum( (unsigned char) c ) && c != '_' && c != ')' && c != ']' )
+            {
+                return true;
+            }
+        }
+        const std::string head = trim( line.substr( 0, at ) );
+        const size_t call = head.size() >= 7 ? head.size() - 7 : 0;
+        if ( head.size() >= 7 && ( head.compare( call, 7, "memcpy(" ) == 0 || head.compare( call, 7, "memset(" ) == 0 ) )
         {
             return true;
         }
@@ -281,27 +327,23 @@ static void audit_blob( audit_t & audit, const std::string & file, const std::ve
         // next non-empty line must be `if ( var )` (or the same line, for a one-line snippet)
         const std::string want_if = "if ( " + var + " )";
         const std::string want_if2 = "if (" + var + ")";
-        if ( contains( line, want_if.c_str() ) || contains( line, want_if2.c_str() ) )
+        size_t next = i;
+        if ( !contains( line, want_if.c_str() ) && !contains( line, want_if2.c_str() ) )
         {
-            guard_t g;
-            g.side = side;
-            g.var = var;
-            g.begin = i;
-            g.end = i;
-            guards.push_back( g );
-            continue;
+            next = i + 1;
+            while ( next < lines.size() && trim( lines[next] ).empty() )
+            {
+                next++;
+            }
+            if ( next >= lines.size() || ( !contains( lines[next], want_if.c_str() ) && !contains( lines[next], want_if2.c_str() ) ) )
+            {
+                audit.fail( file, line_offset + i, "start_message is not followed by if ( " + var + " )" );
+                continue;
+            }
         }
-        size_t next = i + 1;
-        while ( next < lines.size() && trim( lines[next] ).empty() )
-        {
-            next++;
-        }
-        if ( next >= lines.size() || ( !contains( lines[next], want_if.c_str() ) && !contains( lines[next], want_if2.c_str() ) ) )
-        {
-            audit.fail( file, line_offset + i, "start_message is not followed by if ( " + var + " )" );
-            continue;
-        }
-        const int end = guard_block_end( lines, next );
+        // a one-line snippet's guard block starts at its if, not at a brace before it
+        const size_t guard_column = next == i ? ( contains( line, want_if.c_str() ) ? line.find( want_if ) : line.find( want_if2 ) ) : 0;
+        const int end = guard_block_end( lines, next, guard_column );
         if ( end < 0 )
         {
             audit.fail( file, line_offset + i, "guard block for " + var + " has no closing brace" );
@@ -332,6 +374,40 @@ static void audit_blob( audit_t & audit, const std::string & file, const std::ve
                 {
                     audit.fail( file, line_offset + j, "a game thread start's guard has an else: the NULL path must do nothing" );
                 }
+            }
+        }
+
+        // after the guard's block, to the end of its function or the next
+        // start, nothing writes through the pointer: the path that got NULL
+        // writes nothing (a one-line snippet: nor does the rest of its line)
+        if ( next == i )
+        {
+            int depth = 0;
+            for ( size_t k = guard_column; k < line.size(); k++ )
+            {
+                if ( line[k] == '{' )
+                {
+                    depth++;
+                }
+                else if ( line[k] == '}' )
+                {
+                    depth--;
+                    if ( depth == 0 )
+                    {
+                        if ( writes_through( line.substr( k + 1 ), var ) )
+                        {
+                            audit.fail( file, line_offset + i, "write through " + var + " after its guard" );
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        for ( size_t j = (size_t) end + 1; j < lines.size() && lines[j].compare( 0, 1, "}" ) != 0 && !( contains( lines[j], "_start_message(" ) && uses_name( lines[j].substr( 0, lines[j].find( '=' ) ), var ) ); j++ )
+        {
+            if ( writes_through( lines[j], var ) )
+            {
+                audit.fail( file, line_offset + j, "write through " + var + " after its guard" );
             }
         }
 
@@ -535,13 +611,16 @@ static void test_example_send_safety_every_example_and_snippet()
 }
 
 // the audit's own cases, in memory: a game thread start passes only when its
-// result is tested before any write and the NULL path does nothing
+// result is tested before any write and the NULL path does nothing; then an
+// ordinary start's cases (send_safety_writes_after_the_guard_cases, below)
 static size_t send_safety_failures( const char * text )
 {
     audit_t audit;
     audit_blob( audit, "case", split_lines( text ), 0 );
     return audit.failures.size();
 }
+
+static void send_safety_writes_after_the_guard_cases();
 
 static void test_example_send_safety_game_thread_start_is_held_to_its_null_test()
 {
@@ -591,8 +670,95 @@ static void test_example_send_safety_game_thread_start_is_held_to_its_null_test(
     rocketnet_unit_check( send_safety_failures( no_guard ) > 0 );
     rocketnet_unit_check( send_safety_failures( null_path_writes ) > 0 );
     rocketnet_unit_check( send_safety_failures( no_marker ) > 0 );
+    send_safety_writes_after_the_guard_cases();
 }
 
 REGISTER_UNIT_TEST( test_example_send_safety_game_thread_start_is_held_to_its_null_test );
+
+// an ordinary start: a write through the pointer after its guard's block
+// is the NULL path writing, and a one-line snippet is held to the same rules
+// (a matching finish inside the guard, nothing written after it)
+static void send_safety_writes_after_the_guard_cases()
+{
+    static const char * const good =
+        "if ( rocketnet_client_can_send_message( client, 0, mode, 12 ) )\n"
+        "{\n"
+        "    uint8_t * p = rocketnet_client_start_message( client, 0, mode, 12 );\n"
+        "    if ( p )\n"
+        "    {\n"
+        "        memcpy( p, data, 12 );\n"
+        "        sent = rocketnet_client_finish_message( client, 12 );\n"
+        "    }\n"
+        "}\n";
+    static const char * const index_after =
+        "if ( rocketnet_client_can_send_message( client, 0, mode, 12 ) )\n"
+        "{\n"
+        "    uint8_t * p = rocketnet_client_start_message( client, 0, mode, 12 );\n"
+        "    if ( p )\n"
+        "    {\n"
+        "        sent = rocketnet_client_finish_message( client, 12 );\n"
+        "    }\n"
+        "    p[0] = 1;\n"
+        "}\n";
+    static const char * const memcpy_after =
+        "if ( rocketnet_client_can_send_message( client, 0, mode, 12 ) )\n"
+        "{\n"
+        "    uint8_t * p = rocketnet_client_start_message( client, 0, mode, 12 );\n"
+        "    if ( p )\n"
+        "    {\n"
+        "        sent = rocketnet_client_finish_message( client, 12 );\n"
+        "    }\n"
+        "    memcpy( p, data, 12 );\n"
+        "}\n";
+    static const char * const one_line_good =
+        "if ( rocketnet_client_can_send_message( client, 0, mode, 12 ) )\n"
+        "    { uint8_t * p = rocketnet_client_start_message( client, 0, mode, 12 ); if ( p ) { memcpy( p, data, 12 ); sent = rocketnet_client_finish_message( client, 12 ); } }\n";
+    static const char * const one_line_no_finish =
+        "if ( rocketnet_client_can_send_message( client, 0, mode, 12 ) )\n"
+        "    { uint8_t * p = rocketnet_client_start_message( client, 0, mode, 12 ); if ( p ) { memcpy( p, data, 12 ); } }\n";
+    static const char * const one_line_write_after =
+        "if ( rocketnet_client_can_send_message( client, 0, mode, 12 ) )\n"
+        "    { uint8_t * p = rocketnet_client_start_message( client, 0, mode, 12 ); if ( p ) { sent = rocketnet_client_finish_message( client, 12 ); } p[0] = 1; }\n";
+    static const char * const deref_after =
+        "if ( rocketnet_client_can_send_message( client, 0, mode, 12 ) )\n"
+        "{\n"
+        "    uint8_t * p = rocketnet_client_start_message( client, 0, mode, 12 );\n"
+        "    if ( p )\n"
+        "    {\n"
+        "        sent = rocketnet_client_finish_message( client, 12 );\n"
+        "    }\n"
+        "    *p = 1;\n"
+        "}\n";
+    static const char * const write_after_another_start =
+        "if ( rocketnet_client_can_send_message( client, 0, mode, 12 ) )\n"
+        "{\n"
+        "    uint8_t * p = rocketnet_client_start_message( client, 0, mode, 12 );\n"
+        "    if ( p )\n"
+        "    {\n"
+        "        sent = rocketnet_client_finish_message( client, 12 );\n"
+        "    }\n"
+        "    uint8_t * q = rocketnet_client_start_message( client, 0, mode, 12 );\n"
+        "    if ( q )\n"
+        "    {\n"
+        "        sent = rocketnet_client_finish_message( client, 12 );\n"
+        "    }\n"
+        "    p[0] = 1;\n"
+        "}\n";
+    static const char * const one_line_outer_brace_write =
+        "if ( rocketnet_client_can_send_message( client, 0, mode, 12 ) )\n"
+        "{ uint8_t * p = rocketnet_client_start_message( client, 0, mode, 12 ); if ( p ) { sent = rocketnet_client_finish_message( client, 12 ); }\n"
+        "    p[0] = 1;\n"
+        "}\n";
+
+    rocketnet_unit_check( send_safety_failures( good ) == 0 );
+    rocketnet_unit_check( send_safety_failures( index_after ) > 0 );
+    rocketnet_unit_check( send_safety_failures( memcpy_after ) > 0 );
+    rocketnet_unit_check( send_safety_failures( one_line_good ) == 0 );
+    rocketnet_unit_check( send_safety_failures( one_line_no_finish ) > 0 );
+    rocketnet_unit_check( send_safety_failures( one_line_write_after ) > 0 );
+    rocketnet_unit_check( send_safety_failures( deref_after ) > 0 );
+    rocketnet_unit_check( send_safety_failures( write_after_another_start ) > 0 );
+    rocketnet_unit_check( send_safety_failures( one_line_outer_brace_write ) > 0 );
+}
 
 REGISTER_UNIT_TEST( test_example_send_safety_every_example_and_snippet );

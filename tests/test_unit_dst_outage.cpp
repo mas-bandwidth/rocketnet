@@ -27,12 +27,13 @@
 
 #if ROCKETNET_DEV
 
-static void dst_outage_unit_run( const char * label, const dst_outage_options_t * options )
+static dst_outage_result_t dst_outage_unit_run( const char * label, const dst_outage_options_t * options )
 {
     dst_outage_result_t result;
     check( dst_outage_run( options, &result ) == 1 );
     dst_outage_print( label, options, &result );
     check( result.passed );
+    return result;
 }
 
 // T = 10, D = 9 in each direction at a 150 ms round trip and 2% loss.
@@ -108,9 +109,13 @@ static void test_dst_outage_opted_in_reliable_timeout()
 // An outage at each stage of the handshake, T = 10, D = 9, a 30 s token,
 // 150 ms round trip. States 1 and 2, the true X1 window, the server's and the
 // client's CONNECTED: survives. State 3 with the client's direction dark:
-// the server never sees the response (its handshake window is 5 s), and the
-// attempt fails with CONNECTION_RESPONSE_TIMED_OUT at T; with only the
-// server's direction dark it survives.
+// the client sends its first response in the update that enters state 3
+// (W2-51), before the harness can see the state and go dark, so that one
+// response escapes, the server holds the client, and the attempt survives;
+// with only the server's direction dark it survives too. The row is judged
+// as RESPONSE_TIMEOUT so the harness measures the escape, and it asserts the
+// escape. The state 3 timeout end itself is reached in
+// test_unit_handshake_witness.cpp and test_unit_status_codes_reached.cpp.
 
 static void test_dst_outage_at_each_handshake_stage()
 {
@@ -138,10 +143,83 @@ static void test_dst_outage_at_each_handshake_stage()
         options.dark = rows[i].dark;
         options.expect = rows[i].expect;
         options.large_bytes = 0;
-        dst_outage_unit_run( "handshake", &options );
+        const dst_outage_result_t result = dst_outage_unit_run( "handshake", &options );
+
+        // the state 3 client-dark row ends by the branch it claims: the
+        // response escaped in the update that entered state 3, so the
+        // harness judged survival, and the connection survived (no end on
+        // either side). A library that held the response to its send step
+        // would end this row with CONNECTION_RESPONSE_TIMED_OUT and fail here
+        if ( rows[i].expect == DST_OUTAGE_EXPECT_RESPONSE_TIMEOUT )
+        {
+            check( result.response_escaped );
+            check( result.connected );
+            check( !result.client_ended );
+            check( !result.server_ended );
+        }
     }
 }
 
+// The receipt oracle on hand-built lists (no library): the client's
+// unreliable receipt send has serial 7 and its reliable one serial 8,
+// delivered. Each list is what one update surfaced.
+
+static void dst_outage_receipt_world( dst_outage_world_t * w, dst_outage_result_t * result )
+{
+    memset( result, 0, sizeof( *result ) );
+    w->result = result;
+    w->now = 1000.0;
+    dst_outage_message_t m;
+    memset( &m, 0, sizeof( m ) );
+    m.sent = 1000.0;
+    m.delivered = -1.0;
+    m.bytes = DST_OUTAGE_SMALL_BYTES;
+    m.mode = 5;
+    m.channel = 10;
+    w->messages.push_back( m );
+    m.mode = 6;
+    m.channel = 12;
+    m.delivered = 1000.0;
+    w->messages.push_back( m );
+    w->serials[0][7] = 0;
+    w->serials[0][8] = 1;
+}
+
+static int dst_outage_receipt_lists_pass( const rocketnet_receipt_t * first, int first_count, const rocketnet_receipt_t * second,
+                                          int second_count )
+{
+    dst_outage_world_t * w = new dst_outage_world_t();
+    dst_outage_result_t result;
+    dst_outage_receipt_world( w, &result );
+    dst_outage_receipts( w, 0, first, first_count );
+    dst_outage_receipts( w, 0, second, second_count );
+    delete w;
+    return result.failure[0] == 0 && result.receipts_bad == 0;
+}
+
+static void test_dst_outage_receipt_oracle()
+{
+    const rocketnet_receipt_t acked[2] = { { 7, ROCKETNET_RECEIPT_STATUS_ACKED }, { 8, ROCKETNET_RECEIPT_STATUS_ACKED } };
+    const rocketnet_receipt_t loss[1] = { { 7, ROCKETNET_RECEIPT_STATUS_LOSS } };
+    const rocketnet_receipt_t foreign[1] = { { 9, ROCKETNET_RECEIPT_STATUS_ACKED } };
+    const rocketnet_receipt_t none[1] = { { 7, ROCKETNET_RECEIPT_STATUS_NONE } };
+    const rocketnet_receipt_t again[1] = { { 8, ROCKETNET_RECEIPT_STATUS_ACKED } };
+
+    // clean: one outcome each, in one update or over two
+    check( dst_outage_receipt_lists_pass( acked, 2, NULL, 0 ) );
+    check( dst_outage_receipt_lists_pass( loss, 1, again, 1 ) );
+
+    // a serial this side never issued for a receipt-mode send
+    check( !dst_outage_receipt_lists_pass( foreign, 1, NULL, 0 ) );
+
+    // a status that is neither ACKED nor LOSS
+    check( !dst_outage_receipt_lists_pass( none, 1, NULL, 0 ) );
+
+    // the same outcome again in a later update's list
+    check( !dst_outage_receipt_lists_pass( acked, 2, again, 1 ) );
+}
+
+REGISTER_UNIT_TEST( test_dst_outage_receipt_oracle );
 REGISTER_UNIT_TEST( test_dst_outage_t_minus_one_each_direction );
 REGISTER_UNIT_TEST( test_dst_outage_t2_at_600_ms );
 REGISTER_UNIT_TEST( test_dst_outage_past_t_ends_by_the_timeout );

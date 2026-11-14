@@ -913,4 +913,29 @@
    :title "A NIGHTLY-DEBT row is not tied to the inputs it was measured on"
    :text "proofs/tla/NIGHTLY-DEBT.tsv records each nightly debt case's completed counts, time and budget, but not the input fingerprint they came from, so a model change after the row was written passes every per-commit check and is found only by the nightly: in v1.1.58 two rows were stale at once (MCRNClientIoDecrypt after 683c103bf; MCClientConnectionLCrash after e04c7f459 and 0d72e5804, whose state space grew past its 900 s budget). Give each row the input_sha256 its counts were measured at, and have check_tla_records refuse a row whose fingerprint differs from the case's current inputs (tlacheck inputs), as RUNS.tsv rows are refused."
    :date "2026-11-13" :origin "Fix round 1, the tlc workflow reds on v1.1.58 (run 43542939752)")
+
+  (item "harden-load-reliable-tail-ledger" :group "review-v1-2" :area "tests"
+   :title "harden_load: reconcile each connection's reliable and big sends against what arrived"
+   :text "tests/load/harden_load.cpp now requires a reliable stream to start at sequence 0 and fails a run whose server sent reliable or big messages that no client delivered, but the tail is not reconciled: no sender ledger checks each stable connection's reliable and big sends against its unique receives after a bounded drain. Add that ledger and its verdict term, with a planted dropped tail as the red witness."
+   :date "2026-11-13" :origin "Tests review TM016 (P12), follow-on")
+
+  (item "check-split-load-final-missing" :group "review-v1-2" :area "tools"
+   :title "check_split_load.py: a sequenced stream missing its newest send is a loss"
+   :text "tools/load_split_verify.h now fails a reliable-sequenced stream whose newest send never arrived instead of excusing it as a stale skip (TM051). tools/check_split_load.py has the same excuse; give it the same rule and a witness that withholds the newest send."
+   :date "2026-11-13" :origin "Tests review TM051 (P12), the same gap in the Python checker")
+
+  (item "harden-cell-per-role-verdict" :group "review-v1-2" :area "tests"
+   :title "harden-cell: require each role's own PASS verdict and exit status"
+   :text "scripts/harden-pair now requires every role to print its own PASS verdict, no FAIL, and exit 0 (TM017). scripts/harden-cell:202 still accepts any harden_verdict line in any log; give it the same per-role rule and a planted server FAIL as the red witness."
+   :date "2026-11-13" :origin "Tests review TM017 (P12), the same gap in harden-cell")
+
+  (item "queue-worker-trace-submit-refusals" :group "trace-check" :area "tests"
+   :title "Bind refused io_uring submits in the queue-worker trace"
+   :text "The queue-worker walk (tests/tla_trace_queue_worker.cpp) drives worker_step and never calls rocketnet_uring_queue_worker_run, so its fake qwork_submit is never called and always returns 0. RNUringQueueWorker has no refused-submit action (its Submit is SQE preparation). Add a prepared-but-unsubmitted state and a SubmitRefused action to the model, a per-step record seam so the walk can drive run, and scripted transient and fatal submit errors. Also decide what run should do on a persistent non-transient submit error: today it loops and logs once."
+   :date "2026-11-13" :origin "Tests review TM062, trace half (P12)")
+
+  (item "dst-large-message-coverage" :group "review-v1-2" :area "tests"
+   :title "DST: messages up to the fragment ceiling"
+   :text "DST caps messages at 16384 bytes (tests/dst_checks.h) and draws sizes from 14 to 16384 (rocketnet_dst_draw_size in tests/dst_harness.h), so it reaches about 15 fragments and never the 57-fragment default, the 64-fragment ceiling, or the resend bitmap words past them. 16384 is an input to the budget slack derivation (dst_checks.h, dst_harness.h), so raising it means deriving that slack again, not changing one constant."
+   :date "2026-11-13" :origin "Tests review TA030 (P12)")
  ))

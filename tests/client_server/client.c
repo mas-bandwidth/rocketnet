@@ -32,6 +32,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdint.h>
 #if defined( _WIN32 )
 #include <process.h>
@@ -107,7 +108,9 @@ static uint64_t parse_u64( const char * s, const char * flag )
 
     uint64_t v = strtoull( s, &end, 10 );
 
-    if ( !s[0] || !end || *end || errno )
+    // digits only: strtoull takes a leading space, sign or minus (and wraps
+    // "-1" to the largest value), which a count never is
+    if ( s[0] < '0' || s[0] > '9' || !end || *end || errno )
     {
         fprintf( stderr, "client: %s wants a nonnegative integer\n", flag );
         exit( 2 );
@@ -224,7 +227,14 @@ static void parse_args( opts_t * o, int argc, char ** argv, int * self_test, con
         }
         else if ( strcmp( a, "--cycles" ) == 0 && i + 1 < argc )
         {
-            o->cycles = (int) parse_u64( argv[++i], a );
+            // the windows are cycles + 1, counted in an int
+            const uint64_t cycles = parse_u64( argv[++i], a );
+            if ( cycles >= (uint64_t) INT_MAX )
+            {
+                fprintf( stderr, "client: --cycles wants less than %d\n", INT_MAX );
+                exit( 2 );
+            }
+            o->cycles = (int) cycles;
         }
         else if ( strcmp( a, "--stagger" ) == 0 && i + 1 < argc )
         {
@@ -1578,6 +1588,16 @@ static uint64_t run_matrix( opts_t * o )
         }
     }
 
+    // every requested window ran to its checks: an interrupt before the first
+    // window, or inside one (where the checks are skipped), leaves checks
+    // undone, which fails and never prints PASS
+    if ( quit || window != o->cycles + 1 )
+    {
+        r_event( res, o->label, window, "interrupted", "checks-not-completed" );
+        printf( "client: interrupted after %d of %d windows: the checks did not complete\n", window, o->cycles + 1 );
+        st.fails++;
+    }
+
     // section 7, per bench: connect and reconnect times, RTT quantiles, loss
 
     double reconnect_max = 0.0;
@@ -1661,7 +1681,12 @@ static int print_dev_tokens( int argc, char ** argv )
         printf( "%s\n", connect_token );
     }
 
-    rocketnet_term();
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+    {
+        fprintf( stderr, "client: term_status=%s: the library still holds allocations at term\n", rocketnet_status_name( term_status ) );
+        return 1;
+    }
     return 0;
 }
 
@@ -1783,7 +1808,14 @@ int main( int argc, char ** argv )
 
     rn_native_client_transport_stop_and_destroy( client );
 
-    rocketnet_term();
+    // term refuses while the library still holds an allocation: a run that
+    // leaked fails (TA022)
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "client: term_status=%s: the library still holds allocations at term\n", rocketnet_status_name( term_status ) );
+        return 1;
+    }
 
     return 0;
 }

@@ -22,11 +22,12 @@ sealed_ack="\x03\x00"
 sealed_response="\x04\x00"
 
 # lengths: empty (a quiet step), one byte, the 7-byte minimum ack block
-# (ROCKETNET_ACK_BLOCK_MIN_BYTES), and the receive ceiling (1472)
+# (ROCKETNET_ACK_BLOCK_MIN_BYTES), and the receive ceiling (1452,
+# ROCKETNET_RECEIVE_CEILING in sdk/rocketnet_wire.h)
 length_zero="\x00\x00"
 length_one="\x01\x00"
 length_ack_block_min="\x07\x00"
-length_ceiling="\xc0\x05"
+length_ceiling="\xac\x05"
 
 # --- the prefilter header (sdk/rocketnet_wire.h) ---
 

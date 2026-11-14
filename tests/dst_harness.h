@@ -349,6 +349,9 @@ struct rocketnet_dst_options_t
 // OUTAGE_BRIGHT (outage schedules): the wire drops one bright client's
 // packets in the window too, while the checks still judge it as bright
 #define ROCKETNET_DST_WITNESS_OUTAGE_BRIGHT 3
+// CONTROL_FAIL (outage schedules): the outage control run alone fails at
+// half its fault steps (a forced failure); the outage run itself is clean
+#define ROCKETNET_DST_WITNESS_CONTROL_FAIL  4
 
 struct rocketnet_dst_result_t
 {
@@ -1838,9 +1841,19 @@ static inline void rocketnet_dst_send_burst( rocketnet_dst_world_t * w, int inde
     }
 }
 
+// The types whose deliveries carry their send's channel: unreliable
+// sequenced, reliable ordered, reliable sequenced and reliable ordered with a
+// receipt. The rest arrive on channel zero.
+
+static inline int rocketnet_dst_type_has_channel( int type )
+{
+    return type == 1 || type == 3 || type == 4 || type == 7;
+}
+
 static inline void rocketnet_dst_check_deliveries( rocketnet_dst_world_t * w, int session,
                                                    uint32_t expected_generation, int expected_incarnation,
-                                                   uint64_t identity, const uint8_t * data, int bytes )
+                                                   uint64_t identity, const uint8_t * data, int bytes,
+                                                   int delivered_channel )
 {
     uint32_t sequence;
     uint32_t generation;
@@ -1871,6 +1884,19 @@ static inline void rocketnet_dst_check_deliveries( rocketnet_dst_world_t * w, in
         snprintf( detail, sizeof( detail ), "session=%d bytes=%d b4=%02x b5=%02x at=%d",
                   session, bytes, bytes > 4 ? data[4] : 0, bytes > 5 ? data[5] : 0, mismatch );
         rocketnet_dst_fail( w, "payload_pattern", detail );
+        return;
+    }
+
+    // the channel the library handed out with the message, against the one
+    // the payload says it was sent on: the send's channel for an ordered or
+    // sequenced type, zero for the others (rocketnet_message_batch_t)
+    const int channel_expected = rocketnet_dst_type_has_channel( type ) ? channel : 0;
+    if ( delivered_channel != channel_expected )
+    {
+        char detail[160];
+        snprintf( detail, sizeof( detail ), "session=%d type=%d sequence=%u sent on channel %d, delivered on %d", session,
+                  type, sequence, channel, delivered_channel );
+        rocketnet_dst_fail( w, "delivered_channel", detail );
         return;
     }
 
@@ -2997,14 +3023,15 @@ static inline int rocketnet_dst_run_world_seed( uint64_t seed, const struct rock
             const uint8_t * data;
             int bytes;
             int slot = 0;
-            while ( rocketnet_message_server_receive( w->message_server, &slot, NULL, &data, &bytes ) )
+            int delivered_channel = 0;
+            while ( rocketnet_message_server_receive( w->message_server, &slot, &delivered_channel, &data, &bytes ) )
             {
                 uint64_t client_id = rocketnet_client_slots_connected( w->server.client_slots, slot )
                                          ? rocketnet_client_slots_client_id( w->server.client_slots, slot )
                                          : w->check.slot_client_id[slot];
                 uint32_t expected_generation = (uint32_t) ( client_id >> 8 );
                 rocketnet_dst_check_deliveries( w, slot, expected_generation, w->server_incarnation,
-                                                client_id, data, bytes );
+                                                client_id, data, bytes, delivered_channel );
                 rocketnet_dst_outage_delivery( w, (int) ( client_id & 0xFF ), 0, client_id >> 8 );
                 rocketnet_message_server_release( w->message_server, data );
             }
@@ -3016,11 +3043,12 @@ static inline int rocketnet_dst_run_world_seed( uint64_t seed, const struct rock
             {
                 const uint8_t * data;
                 int bytes;
+                int delivered_channel = 0;
                 const uint32_t expected_generation = (uint32_t) client->generation;
-                while ( rocketnet_message_client_receive( client->message, NULL, &data, &bytes ) )
+                while ( rocketnet_message_client_receive( client->message, &delivered_channel, &data, &bytes ) )
                 {
                     rocketnet_dst_check_deliveries( w, 16 + i, expected_generation, w->server_incarnation,
-                                                    client->generation, data, bytes );
+                                                    client->generation, data, bytes, delivered_channel );
                     rocketnet_dst_outage_delivery( w, i, 1, client->generation );
                     rocketnet_message_client_release( client->message, data );
                 }
@@ -3296,10 +3324,21 @@ static inline int rocketnet_dst_run_seed_with_options( uint64_t seed, const stru
     struct rocketnet_dst_options_t control = *options;
     control.outage_control = 1;
     control.witness = ROCKETNET_DST_WITNESS_NONE;
-    control.force_fail_step = -1;
+    control.force_fail_step = options->witness == ROCKETNET_DST_WITNESS_CONTROL_FAIL ? (int) ( options->fault_steps / 2 ) : -1;
     if ( !rocketnet_dst_run_world_seed( seed, &control, result, NULL ) )
     {
         return 0;
+    }
+
+    // the control is judged by every check too: a failed invariant (a leak
+    // included) in the run with no client dark is the seed's verdict, never
+    // overwritten by the outage run
+    if ( !result->passed )
+    {
+        char detail[sizeof( result->detail )];
+        snprintf( detail, sizeof( detail ), "%s", result->detail );
+        snprintf( result->detail, sizeof( result->detail ), "outage control run: %.200s", detail );
+        return 1;
     }
     uint64_t gaps[ROCKETNET_DST_MAX_CLIENTS * 2];
     memcpy( gaps, result->bright_gap, sizeof( gaps ) );
