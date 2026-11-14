@@ -178,26 +178,27 @@ class CoverageTest(unittest.TestCase):
         errors = coverage.check(self.repo, [log], [])
         self.assertTrue(any("a run log without" in e for e in errors), errors)
 
-    def test_nightly_tier_counts_only_while_nightly_runs_it(self) -> None:
+    # TA028: the nightly table and nightly.yml's tier step credit nothing; a
+    # nightly case counts only where a list names it
+    def test_a_nightly_case_no_list_names_fails(self) -> None:
         (self.repo / "tests" / "test.cpp").write_text(
             'static const char * const rocketnet_unit_nightly_cases[] = {\n    "test_file_a",\n    NULL,\n};\n')
-        log = self.write_log("Linux-Debug", ["test_sdk_a", "test_sdk_production", "test_channels_a",
-                                             "test_file_production"])
-        errors = coverage.check(self.repo, [log], [])
-        self.assertEqual(len(errors), 1, errors)
-        self.assertIn("test_file_a", errors[0])
         workflows = self.repo / ".github" / "workflows"
         workflows.mkdir(parents=True)
         (workflows / "nightly.yml").write_text(
             "jobs:\n  a:\n    steps:\n      - name: Unit suite, nightly tier\n        env:\n"
             '          ROCKETNET_TEST_NIGHTLY: "1"\n        run: ./bin/test\n')
-        self.assertEqual(coverage.check(self.repo, [log], []), [])
+        log = self.write_log("Linux-Debug", ["test_sdk_a", "test_sdk_production", "test_channels_a",
+                                             "test_file_production"])
+        errors = coverage.check(self.repo, [log], [])
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("test_file_a (tests/test_unit_fixture.cpp) is compiled into no CI configuration", errors[0])
+        full = self.write_list("Linux-Release", ["test_file_a"])
+        self.assertEqual(coverage.check(self.repo, [log, full], []), [])
 
     def test_the_real_tree_has_no_stray_registration(self) -> None:
         repo = Path(__file__).resolve().parents[1]
         self.assertEqual(coverage.stray_registrations(repo), [])
-        self.assertTrue(coverage.nightly_cases(repo), "tests/test.cpp's nightly table read as empty")
-        self.assertTrue(coverage.nightly_step_runs_the_suite(repo), "nightly.yml's unit nightly-tier step not found")
 
     def test_a_missing_table_fails(self) -> None:
         (self.repo / "tests" / "test_channels.cpp").write_text("// no table\n")
@@ -215,7 +216,7 @@ class WideCasesWorkflowTest(unittest.TestCase):
         step = workflow.read_text().split("      - name: Wide-channel unit cases (ROCKETNET_MAX_CHANNELS=512)\n", 1)[1]
         step = step.split("\n      - name:", 1)[0]
         script = textwrap.dedent(step.split("        run: |\n", 1)[1])
-        common = ["test_shared", "test_unreliable_promotion_every_mode"]
+        common = ["test_shared", "test_unreliable_promotion_every_mode", "test_max_unfragmented_message_bytes_are_the_record_limits"]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "bin").mkdir()
@@ -249,7 +250,8 @@ class WideCasesWorkflowTest(unittest.TestCase):
         # en_US sort puts iocp first while comm expects io_uring first.
         result, executed, receipt = self.run_step(["test_iocp_fixture", "test_io_uring_fixture"])
         self.assertEqual(result.returncode, 0, result.stderr)
-        expected = ["test_io_uring_fixture", "test_iocp_fixture", "test_unreliable_promotion_every_mode"]
+        expected = ["test_io_uring_fixture", "test_iocp_fixture", "test_unreliable_promotion_every_mode",
+                    "test_max_unfragmented_message_bytes_are_the_record_limits"]
         self.assertEqual(executed, expected)
         self.assertEqual(receipt, expected)
 

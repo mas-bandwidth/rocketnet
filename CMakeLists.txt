@@ -655,6 +655,9 @@ if(ROCKETNET_BUILD_TESTS)
     # Isolated parity oracle only: never installed or linked into the SDK.
     add_library(rocketnet_sodium_oracle SHARED EXCLUDE_FROM_ALL sodium/sodium.c)
     set_target_properties(rocketnet_sodium_oracle PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    # sdk/rocketnet_tests.cpp is built only when ROCKETNET_DEV is on: a
+    # ROCKETNET_DEV=OFF build links the generated stub below in its place, so
+    # the #else half of every #if ROCKETNET_DEV inside that file never compiles.
     if(ROCKETNET_DEV)
         add_library(rocketnet_test_support STATIC sdk/rocketnet_tests.cpp tests/c_caller.c)
         target_link_libraries(rocketnet_test_support PUBLIC rocketnet_dev)
@@ -726,15 +729,12 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_ack_stats.cpp
             tests/test_unit_api_polish.cpp
             tests/test_unit_channel_ordered.cpp
-            tests/test_unit_client_memory_plan.cpp
             tests/test_unit_client_required_memory_validates.cpp
             tests/test_unit_connect_token_vectors.cpp
             tests/test_unit_connection_internal_error_counters.cpp
-            tests/test_unit_dev_keys_warning.cpp
             tests/test_unit_dst_core.cpp
             tests/test_unit_finish_requires_start.cpp
             tests/test_unit_max_clients.cpp
-            tests/test_unit_memory_plan_lifecycle.cpp
             tests/test_unit_platform_socket_hygiene.cpp
             tests/test_unit_portable_rx.cpp
             tests/test_unit_portable_tx.cpp
@@ -883,9 +883,12 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # more) on channel 300, past the default build's cap, so this binary
     # compiles the SDK once more with ROCKETNET_MAX_CHANNELS=512 for every file
     # (the promotion rule: oversize unreliable sends promote to their reliable twin).
+    # The one-record limits (test_unit_max_unfragmented_message.cpp) are built
+    # here too: on the last channel, 511, they take the WIDE header.
     # EXCLUDE_FROM_ALL: not part of the default build; built by name (`cmake --build build --target test_wide`).
     add_executable(test_wide EXCLUDE_FROM_ALL
         tests/test.cpp tests/test_channels.cpp tests/test_unit_unreliable_promotion.cpp tests/test_unit_channel_violation_counters.cpp
+        tests/test_unit_max_unfragmented_message.cpp
         sdk/rocketnet_tests.cpp tests/c_caller.c ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
     set_target_properties(test_wide PROPERTIES EXPORT_COMPILE_COMMANDS OFF)
     add_dependencies(test_wide rocketnet_xdp_header)

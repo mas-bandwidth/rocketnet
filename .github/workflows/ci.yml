@@ -1308,8 +1308,9 @@ jobs:
           readelf -d build-no-server-libs/bin/librocketnet.so | grep NEEDED
           python3 tools/check_package.py build-no-server-libs --config Release --client
 
-      # The cases only the wide build compiles, and the promotion case, whose
-      # boundary channel is 300 there; each is recorded as it passes.
+      # The cases only the wide build compiles, the promotion case, whose
+      # boundary channel is 300 there, and the one-record limits, whose last
+      # channel (511) takes the WIDE header there; each is recorded as it passes.
       - name: Wide-channel unit cases (ROCKETNET_MAX_CHANNELS=512)
         if: runner.os == 'Linux' && matrix.build_type == 'Debug' && matrix.leg == 'builds'
         run: |
@@ -1317,8 +1318,8 @@ jobs:
           # Give sort and comm the same byte ordering on every runner.
           export LC_ALL=C
           mkdir -p unit-cases
-          { comm -13 <(./bin/test --list | sort) <(./bin/test_wide --list | sort); echo test_unreliable_promotion_every_mode; } > wide-cases.txt
-          test "$(wc -l < wide-cases.txt)" -ge 2
+          { comm -13 <(./bin/test --list | sort) <(./bin/test_wide --list | sort); echo test_unreliable_promotion_every_mode; echo test_max_unfragmented_message_bytes_are_the_record_limits; } > wide-cases.txt
+          test "$(wc -l < wide-cases.txt)" -ge 3
           while read -r case; do
             ./bin/test_wide --run "$case"
             echo "$case" >> unit-cases/Linux-wide.txt
@@ -2290,6 +2291,34 @@ jobs:
         run: |
           set -euo pipefail
           ./bin/Release/test_lifecycle.exe
+
+      # The load harness census self-test on Windows (tools/test_load_census.c):
+      # the handle census, with a handle number reused by a new object.
+      - name: "Functional: load harness census self-test (Windows)"
+        if: matrix.leg == 'a'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./bin/Release/test_load_census.exe | tr -d '\r' | tee load-census.log
+          grep -qx 'test_load_census' load-census.log
+
+      # tests/functional/platform_primitives.cpp built standalone, as the Linux
+      # and macOS functional legs run it: the Windows branches (_putenv_s and
+      # the environment readers, the bind error, the DEV=OFF refusals, thread
+      # priority) run nowhere else. Leg (a) builds DEV=ON, leg (b) DEV=OFF, and
+      # the line it prints must name the DEV setting this leg built.
+      - name: "Functional: platform primitives (standalone, both DEV settings, Windows)"
+        if: matrix.leg == 'a' || matrix.leg == 'b'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./bin/Release/test_platform_primitives.exe | tr -d '\r' | tee platform-primitives.log
+          want=1
+          if [ "${{ matrix.leg }}" = b ]; then want=0; fi
+          if ! grep -q "^platform primitives OK: DEV=$want," platform-primitives.log; then
+            echo "test_platform_primitives did not report DEV=$want (leg ${{ matrix.leg }})"
+            exit 1
+          fi
 
       - name: Memory plans against allocator observations
         if: matrix.leg == 'a'

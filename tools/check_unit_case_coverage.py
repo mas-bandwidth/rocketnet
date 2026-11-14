@@ -38,9 +38,11 @@ which is not what it runs (VERIFY-3 W10, VERIFY-4 W1: --list names the
 nightly-tier cases, which a per-commit run leaves out). Lists remain readable
 for the configurations that have not moved to run logs.
 
-The nightly-tier cases (tests/test.cpp, rocketnet_unit_nightly_cases) run in
-nightly.yml's unit nightly-tier step (ROCKETNET_TEST_NIGHTLY=1 ./bin/test);
-they count as run there only while that step exists.
+The nightly-tier cases (tests/test.cpp, rocketnet_unit_nightly_cases) count
+only where a file names them, like every other case: the full tier takes its
+lists with ROCKETNET_TEST_NIGHTLY=1 (ci.yml), so a nightly case compiled into
+a configuration is listed there, and one compiled out of every configuration
+fails here (TA028: they were once credited from the table's source text).
 
 Usage:
   check_unit_case_coverage.py --repo . --expect NAME... -- FILE...
@@ -105,8 +107,6 @@ UNIT_GLOB_LINE = '"${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_*.cpp"'
 SOURCE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".inc")
 CASE_LINE = re.compile(r"^test_[a-z0-9_]+$")
 PASSED_BANNER = "*** ALL TESTS PASSED ***"
-NIGHTLY_TABLE = ("tests/test.cpp", "rocketnet_unit_nightly_cases[] = {")
-NIGHTLY_ROW = re.compile(r'^\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*,', re.M)
 
 
 def tracked_sources(repo: Path) -> list[str]:
@@ -138,29 +138,6 @@ def stray_registrations(repo: Path) -> list[str]:
             errors.append(f"{name} ({relative}) is registered in a file CMakeLists.txt builds into nothing "
                           "(the unit suite globs tests/test_unit_*.cpp), so it never runs")
     return errors
-
-
-def nightly_cases(repo: Path) -> list[str]:
-    relative, opener = NIGHTLY_TABLE
-    path = repo / relative
-    if not path.is_file():
-        return []
-    text = path.read_text(encoding="utf-8", errors="replace")
-    start = text.find(opener)
-    if start < 0:
-        return []
-    end = text.find("\n};", start)
-    return NIGHTLY_ROW.findall(text[start + len(opener):end])
-
-
-def nightly_step_runs_the_suite(repo: Path) -> bool:
-    """nightly.yml has a step with ROCKETNET_TEST_NIGHTLY "1" whose run is ./bin/test."""
-    path = repo / ".github" / "workflows" / "nightly.yml"
-    if not path.is_file():
-        return False
-    steps = re.split(r"(?m)^\s*- (?=name:|uses:|run:)", path.read_text(encoding="utf-8", errors="replace"))
-    return any(re.search(r'(?m)^\s*ROCKETNET_TEST_NIGHTLY:\s*"1"\s*$', step)
-               and re.search(r"(?m)^\s*run:\s*\./bin/test\s*$", step) for step in steps)
 
 
 def read_list(path: Path) -> set[str]:
@@ -202,8 +179,6 @@ def check(repo: Path, lists: list[Path], expect: list[str]) -> list[str]:
             errors.append(f"no list file for expected configuration {name}")
 
     listed: set[str] = set().union(*configurations.values()) if configurations else set()
-    if nightly_step_runs_the_suite(repo):
-        listed |= set(nightly_cases(repo)) & cases.keys()
 
     for name in sorted(listed - cases.keys()):
         where = ", ".join(sorted(c for c, names in configurations.items() if name in names))
