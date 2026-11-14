@@ -7625,6 +7625,24 @@ static struct rocketnet_test_placement_expect_t rocketnet_test_placement_expect(
     return expect;
 }
 
+#if ROCKETNET_DEV
+// a server on the transport config->transport names, for a case that then
+// reads the server's instance as that transport's type. The suite's server pin
+// (ROCKETNET_SERVER_TRANSPORT, which wins over config.transport) is set aside
+// for the create, as every case that names its transport does, and the server
+// must be on the named transport before the instance is read as one
+static struct rocketnet_server_transport_t * rocketnet_test_create_named_server( const char * address, const struct rocketnet_server_transport_config_t * config )
+{
+    struct rocketnet_test_env_guard_t server_pin_guard;
+    rocketnet_test_env_clear( &server_pin_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, address, config, sizeof( *config ) );
+    rocketnet_test_env_restore( &server_pin_guard );
+    rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), config->transport ) == 0 );
+    return server;
+}
+#endif // #if ROCKETNET_DEV
+
 // The gso client over the wire (sdk/rocketnet_client_gso_linux.cpp): the
 // client pinned to gso and granted it, a portable server, equal-sized
 // payloads both ways so every client send batch is runs that leave as
@@ -8057,8 +8075,7 @@ void rocketnet_test_server_gso_pin_refusals_reach_server_counters()
     server_config.num_gso_workers = 2;
     server_config.num_os_cpus = base;
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
-    rocketnet_check( server );
+    struct rocketnet_server_transport_t * server = rocketnet_test_create_named_server( "127.0.0.1:0", &server_config );
 
     // each worker publishes its pin state (release) after every refusal and
     // confinement it counts, so once both report, the row is complete
@@ -9541,9 +9558,7 @@ static struct rocketnet_server_transport_t * rocketnet_test_placement_server( co
     config.gso_reserve_cpu_0 = reserve_cpu_0;
     config.io_uring_reserve_cpu_0 = reserve_cpu_0;
     config.portable_reserve_cpu_0 = reserve_cpu_0;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &config, sizeof( config ) );
-    rocketnet_check( server );
-    return server;
+    return rocketnet_test_create_named_server( "127.0.0.1:0", &config );
 }
 
 static bool rocketnet_test_portable_wait_pins( void * portable )
@@ -9940,8 +9955,14 @@ void rocketnet_test_server_uring_rows_reach_the_server()
     config.num_os_cpus = 200;
     snprintf( config.transport, sizeof( config.transport ), "io_uring" );
 
+    // the suite's server pin, which wins over config.transport, set aside for
+    // the create: this case is about io_uring's rows
+    struct rocketnet_test_env_guard_t server_pin_guard;
+    rocketnet_test_env_clear( &server_pin_guard, "ROCKETNET_SERVER_TRANSPORT" );
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &config );
+    rocketnet_test_env_restore( &server_pin_guard );
     rocketnet_check( server );
+    rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "io_uring" ) == 0 );
 
     // every worker asks to pin and is refused: the row reads one a queue
     uint64_t refusals = 0;
