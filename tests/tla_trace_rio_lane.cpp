@@ -9,17 +9,28 @@
 // transport runs is sdk/rocketnet_rio_layout.h: the destination hash, its
 // lane, the packet id of a lane's slot and its bounded decode. The walk
 // drives exactly those calls as rocketnet_server_rio_start_packet,
-// finish_packet and abort_packet make them, keeps the slot table the lanes
-// keep, and after every step writes one record of the model's variables.
-// No socket, no clock, no thread.
+// finish_packet and abort_packet make them, and after every step writes one
+// record of the model's variables. No socket, no clock, no thread.
+//
+// What this binds, and what it does not: only that header arithmetic is the
+// code's. The slot table, each lane's reservation counter, the outstanding
+// ids, the post order and the started and posted orders are the walk's own,
+// written by hand from rocketnet_rio_lane_start_packet (the lane's next slot),
+// rocketnet_rio_lane_finish_packet and abort_packet (the slot's length) and
+// rocketnet_rio_post_phase (slot order, zero slots skipped): no call of the
+// transport's start, finish, abort, send_packets or post is made, so
+// NoReissue, OneLanePerDest and InOrder are checked against state the walk
+// wrote. Driving the transport's real start, finish and send path is a
+// roadmap entry.
 //
 //   tla_trace --layer rio-lane --seed N --out DIR [--steps K]
 //
 // writes DIR/MCTraceRioLaneSeed<seed>.tla and .cfg, one record a step: the
 // operation called (start, finish, foreign, send), its arguments, the model
 // action its own return value says it took (Start, Finish, Foreign, Send: a
-// start that finds its lane full, and a send that finds no frame staged,
-// change nothing and are not steps) and the model's variables after it. The
+// start that finds its lane's slots used, and a send of a lane with nothing
+// reserved or a slot still unfinished, change nothing and are not steps) and
+// the model's variables after it. The
 // plant build (ROCKETNET_TLA_PLANT sets ROCKETNET_RIO_LANE_PLANT, in
 // sdk/rocketnet_rio_layout.h) decodes the lane as id % lanes; its trace must
 // fail TraceConsistent. The walk reports (tla_report_t) the planted effect,
@@ -56,16 +67,26 @@ struct rio_lane_dest_t
 struct rio_lane_walk_t
 {
     rio_lane_dest_t dests[RIO_LANE_DESTS];
-    int slot[RIO_LANE_LANES][RIO_LANE_SLOTS];     // the destination staged there, or none
+    int slot[RIO_LANE_LANES][RIO_LANE_SLOTS];     // the destination reserved there, or none
+    int seq[RIO_LANE_LANES][RIO_LANE_SLOTS];      // its start number for that destination
+    int state[RIO_LANE_LANES][RIO_LANE_SLOTS];    // RIO_LANE_RESERVED, RIO_LANE_LIVE or RIO_LANE_ZERO
+    int next[RIO_LANE_LANES];                     // each lane's reservation counter
     std::vector<uint64_t> issued_id;              // reserved and not finished, in issue order
     std::vector<int> issued_dest;
-    std::vector<int> staged_dest;                 // finished and not yet sent, in order
-    std::vector<int> staged_lane;
+    int started[RIO_LANE_DESTS];
+    std::vector<int> posted[RIO_LANE_DESTS];      // start numbers, in post order
     int starts;
     bool strayed;
     bool misrouted;
     int astray;                                   // decodes that left the lane or slot they named
 };
+
+// a reserved slot's length: none yet, finished (bytes), aborted (zero)
+#define RIO_LANE_RESERVED 0
+#define RIO_LANE_LIVE 1
+#define RIO_LANE_ZERO 2
+
+static const char * const rio_lane_state_names[3] = { "res", "live", "zero" };
 
 // the model names a destination by its hash (RNRioLaneLayout.tla Hashes): the
 // walk's destinations' hashes as the model reads them, set by the walk
@@ -89,12 +110,26 @@ static tla_record_t rio_lane_record( const rio_lane_walk_t & w )
         for ( int i = 0; i < RIO_LANE_SLOTS; i++ )
         {
             keys.push_back( tla_int( i ) );
-            values.push_back( w.slot[l][i] == RIO_LANE_NONE ? tla_int( -1 ) : rio_lane_dest_name( w.slot[l][i] ) );
+            std::vector<std::string> entry;
+            if ( w.slot[l][i] != RIO_LANE_NONE )
+            {
+                entry.push_back( rio_lane_dest_name( w.slot[l][i] ) );
+                entry.push_back( tla_int( w.seq[l][i] ) );
+                entry.push_back( tla_string( rio_lane_state_names[w.state[l][i]] ) );
+            }
+            values.push_back( tla_sequence( entry ) );
         }
         lanes.push_back( tla_int( l ) );
         lane_values.push_back( tla_function( keys, values ) );
     }
     record.add( "slot", tla_function( lanes, lane_values ) );
+
+    std::vector<std::string> next_values;
+    for ( int l = 0; l < RIO_LANE_LANES; l++ )
+    {
+        next_values.push_back( tla_int( w.next[l] ) );
+    }
+    record.add( "next", tla_function( lanes, next_values ) );
 
     std::vector<std::string> issued_keys;
     std::vector<std::string> issued_values;
@@ -105,14 +140,22 @@ static tla_record_t rio_lane_record( const rio_lane_walk_t & w )
     }
     record.add( "issued", tla_function( issued_keys, issued_values ) );
 
-    std::string staged = "<<";
-    for ( size_t i = 0; i < w.staged_dest.size(); i++ )
+    std::vector<std::string> dest_keys;
+    std::vector<std::string> started_values;
+    std::vector<std::string> posted_values;
+    for ( int d = 0; d < RIO_LANE_DESTS; d++ )
     {
-        staged += ( i > 0 ? ", " : "" );
-        staged += "<<" + rio_lane_dest_name( w.staged_dest[i] ) + ", " + tla_int( w.staged_lane[i] ) + ">>";
+        dest_keys.push_back( rio_lane_dest_name( d ) );
+        started_values.push_back( tla_int( w.started[d] ) );
+        std::vector<std::string> items;
+        for ( int n : w.posted[d] )
+        {
+            items.push_back( tla_int( n ) );
+        }
+        posted_values.push_back( tla_sequence( items ) );
     }
-    staged += ">>";
-    record.add( "staged", staged );
+    record.add( "started", tla_function( dest_keys, started_values ) );
+    record.add( "posted", tla_function( dest_keys, posted_values ) );
     record.add( "starts", tla_int( w.starts ) );
     record.add( "strayed", tla_bool( w.strayed ) );
     record.add( "misrouted", tla_bool( w.misrouted ) );
@@ -126,28 +169,32 @@ static bool rio_lane_decode( uint64_t id, int * lane, int * index )
     return rocketnet_rio_lane_packet_decode( id, RIO_LANE_LANES, RIO_LANE_SLOTS, lane, index );
 }
 
-// rocketnet_server_rio_start_packet: the destination's lane, a free slot of
-// it (the lowest: the lane's own reservation takes its next), the id
+// rocketnet_server_rio_start_packet: the destination's lane, that lane's next
+// slot (rocketnet_rio_lane_start_packet's next[fill].fetch_add; refused once
+// the slots are used), the id
 static bool rio_lane_start( rio_lane_walk_t & w, int d )
 {
     const rio_lane_dest_t & dest = w.dests[d];
     const int lane = rocketnet_rio_lane_of( rocketnet_rio_lane_hash( 1, dest.port, dest.address, 4 ), RIO_LANE_LANES );
-    for ( int i = 0; i < RIO_LANE_SLOTS; i++ )
+    const int i = w.next[lane];
+    if ( i >= RIO_LANE_SLOTS )
     {
-        if ( w.slot[lane][i] == RIO_LANE_NONE )
-        {
-            w.slot[lane][i] = d;
-            w.issued_id.push_back( rocketnet_rio_lane_packet_id( lane, i, RIO_LANE_SLOTS ) );
-            w.issued_dest.push_back( d );
-            w.starts++;
-            return true;
-        }
+        return false;
     }
-    return false;
+    w.slot[lane][i] = d;
+    w.seq[lane][i] = w.started[d];
+    w.state[lane][i] = RIO_LANE_RESERVED;
+    w.next[lane]++;
+    w.issued_id.push_back( rocketnet_rio_lane_packet_id( lane, i, RIO_LANE_SLOTS ) );
+    w.issued_dest.push_back( d );
+    w.started[d]++;
+    w.starts++;
+    return true;
 }
 
-// rocketnet_server_rio_finish_packet (keep) or abort_packet: the decoded
-// lane and slot act; one that is not the reserved slot is misrouted
+// rocketnet_server_rio_finish_packet (keep: the slot's length) or
+// abort_packet (zero): the decoded lane and slot act, and the slot stays
+// reserved; one that is not the reserved slot is misrouted
 static void rio_lane_finish( rio_lane_walk_t & w, size_t k, bool keep )
 {
     const uint64_t id = w.issued_id[k];
@@ -161,14 +208,10 @@ static void rio_lane_finish( rio_lane_walk_t & w, size_t k, bool keep )
         w.strayed = true;
         w.astray++;
     }
-    if ( in_range && w.slot[lane][index] == d && rocketnet_rio_lane_packet_id( lane, index, RIO_LANE_SLOTS ) == id )
+    if ( in_range && w.slot[lane][index] == d && w.state[lane][index] == RIO_LANE_RESERVED &&
+         rocketnet_rio_lane_packet_id( lane, index, RIO_LANE_SLOTS ) == id )
     {
-        w.slot[lane][index] = RIO_LANE_NONE;
-        if ( keep )
-        {
-            w.staged_dest.push_back( d );
-            w.staged_lane.push_back( lane );
-        }
+        w.state[lane][index] = keep ? RIO_LANE_LIVE : RIO_LANE_ZERO;
     }
     else
     {
@@ -195,19 +238,34 @@ static void rio_lane_foreign( rio_lane_walk_t & w, uint64_t id )
     }
 }
 
-// a lane's worker posts the oldest frame staged in it
+// a lane's worker posts the lane's reserved slots in slot order, skipping the
+// zero ones (rocketnet_rio_post_phase), and the slots are free again: only
+// once the lane has a slot reserved and none of them is still unfinished
 static bool rio_lane_send( rio_lane_walk_t & w, int lane )
 {
-    for ( size_t k = 0; k < w.staged_lane.size(); k++ )
+    if ( w.next[lane] == 0 )
     {
-        if ( w.staged_lane[k] == lane )
+        return false;
+    }
+    for ( int i = 0; i < w.next[lane]; i++ )
+    {
+        if ( w.state[lane][i] == RIO_LANE_RESERVED )
         {
-            w.staged_dest.erase( w.staged_dest.begin() + (long) k );
-            w.staged_lane.erase( w.staged_lane.begin() + (long) k );
-            return true;
+            return false;
         }
     }
-    return false;
+    for ( int i = 0; i < w.next[lane]; i++ )
+    {
+        if ( w.state[lane][i] == RIO_LANE_LIVE )
+        {
+            w.posted[w.slot[lane][i]].push_back( w.seq[lane][i] );
+        }
+        w.slot[lane][i] = RIO_LANE_NONE;
+        w.state[lane][i] = RIO_LANE_RESERVED;
+        w.seq[lane][i] = 0;
+    }
+    w.next[lane] = 0;
+    return true;
 }
 
 static int rio_lane_walk( uint64_t seed, int steps, const char * out )
@@ -221,10 +279,17 @@ static int rio_lane_walk( uint64_t seed, int steps, const char * out )
     w.astray = 0;
     for ( int l = 0; l < RIO_LANE_LANES; l++ )
     {
+        w.next[l] = 0;
         for ( int i = 0; i < RIO_LANE_SLOTS; i++ )
         {
             w.slot[l][i] = RIO_LANE_NONE;
+            w.seq[l][i] = 0;
+            w.state[l][i] = RIO_LANE_RESERVED;
         }
+    }
+    for ( int d = 0; d < RIO_LANE_DESTS; d++ )
+    {
+        w.started[d] = 0;
     }
 
     // destinations: random IPv4 addresses and ports, as clients arrive

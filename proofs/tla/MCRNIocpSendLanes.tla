@@ -13,6 +13,9 @@
 (* MCRNIocpSendLanesBrokenOwnerShift.cfg (a thread posts the lane past its *)
 (* own, OnlyOwnerPosts) and MCRNIocpSendLanesBrokenOwnerInvert.cfg (the    *)
 (* ownership test inverted, OnlyOwnerPosts, both at two threads).         *)
+(* Zero-byte slots: MCRNIocpSendLanesBrokenAbortPosted.cfg (an aborted     *)
+(* slot posted, InOrder) and MCRNIocpSendLanesBrokenAbortStranded.cfg (an  *)
+(* aborted slot neither posted nor released, Conserved).                   *)
 (***************************************************************************)
 EXTENDS RNIocpSendLanes, TLC
 =============================================================================
