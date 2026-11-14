@@ -20,15 +20,22 @@ cover the shim's nondeterministic byte-write loop.
 | `harness_read_connect_token` | 768-byte symbolic token | 577 | 25/25 | 0 | 0 | 0 |
 | `harness_read_signed_connect_data` | 576-byte symbolic signed block | 433 | 88/88 | 0 | 0 | 0 |
 | `harness_read_connect_token_private` | 384-byte symbolic private block | 257 | 61/61 | 0 | 0 | 0 |
-| `harness_verify_signed_connect_data` | 576-byte signed block, 64-byte signature, 32-byte key | 1 | 12/12 | 0 | 0 | 0 |
-| `harness_open_connect_token_private` | 576-byte signed block, 432-byte sealed block, 384-byte output | 385 | 57/57 | 0 | 0 | 0 |
+| `harness_verify_signed_connect_data` | 576-byte signed block, 64-byte signature, 32-byte key | 1 | 14/14 | 0 | 0 | 0 |
+| `harness_open_connect_token_private` | 576-byte signed block, 432-byte sealed block, 384-byte output | 385 | 63/63 | 0 | 0 | 0 |
 | `harness_private_consistent` | symbolic private fields and 576-byte signed block | 1 | 36/36 | 0 | 0 | 0 |
 | `harness_connect_token_identifier` | 576-byte signed block, 16-byte identifier output | 17 | 10/10 | 0 | 0 | 0 |
 
 All seven ESBMC 8.5.0 runs ended `VERIFICATION SUCCESSFUL` at the full listed
-array bounds: 289/289 checked properties passed, with zero refuted, timed out,
-or otherwise unproved. Raw output is saved in the allocated Linux gate job's
-`evidence/harness_*.log`; the make summary is `evidence/make-connect-token-r3.log`.
+array bounds: 297/297 checked properties passed, with zero refuted, timed out,
+or otherwise unproved. Counts as of 2026-11-14 (aws-mut-3, ESBMC 8.5.0 x86_64
+release build, `make -C proofs/cbmc proofs-connect_token`, 53.7 s): the verify
+and open harnesses gained their tally accessor and the `sodium_is_zero` model.
+Without the accessor's body ESBMC failed the tally increment at
+`sdk/rocketnet_connect_token.cpp:431` as a dereference (nightly run
+43543134012); without the model a pad read one byte past the private block
+verified. The earlier 289/289 record's raw output is saved in the allocated
+Linux gate job's `evidence/harness_*.log`; its make summary is
+`evidence/make-connect-token-r3.log`.
 Each run used one CPU at nice 19; the target applied `timeout 1800s` and
 `prlimit --as=8589934592` separately to each ESBMC invocation. No reduced
 buffer bound was used.
