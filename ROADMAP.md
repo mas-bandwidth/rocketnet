@@ -10,10 +10,10 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (4)
 - [Existing nightly proof debt](#existing-nightly-proof-debt) (6)
 - [Found while preparing v1.0.1](#found-while-preparing-v101) (23)
-- [Trace check: gaps the README declares](#trace-check-gaps-the-readme-declares) (9)
-- [Decisions](#decisions) (6)
-- [Found while landing and re-measuring the v1.1.x transport work](#found-while-landing-and-re-measuring-the-v11x-transport-work) (26)
-- [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (58)
+- [Trace check: gaps the README declares](#trace-check-gaps-the-readme-declares) (8)
+- [Decisions](#decisions) (7)
+- [Found while landing and re-measuring the v1.1.x transport work](#found-while-landing-and-re-measuring-the-v11x-transport-work) (27)
+- [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (73)
 
 ## Suspected defects not yet fixed
 
@@ -407,12 +407,6 @@ tools/tla_trace_check.py checks that each row's reach predicates are reached in 
 
 From: #1074 review
 
-### A tenth tla-trace shard, so shard 3 leaves room under the 2-minute cap
-
-Shard 3 of tools/tla_trace_check.py SHARDS (msgx:4, msgxsendruns, gather and msgx's reach predicates) is the slowest per-commit trace shard: 98 s on a CI runner in v1.1.53, and on v1.1.54 106 s alone on a bench and 123.5 s when three shards shared a loaded one, against the job's 120 s cap. Moving gso or gather out of it within nine shards barely helped on the bench (fix/v1.1.x/trace-shard3-lighter, not merged). Add a tenth shard (matrix.shard N/10 in .github/workflows/ci.yml and the summary's shard names) and split shard 3's entries across it, with each shard's replay time recorded.
-
-From: v1.1.54 replays: trace shard 3 at 106 s alone
-
 ## Decisions
 
 Choices that change behavior, remove machinery, or touch repository and fleet settings.
@@ -452,6 +446,12 @@ From: #731
 fix/v1.1.x/token-clock moved rocketnet_time() to CLOCK_BOOTTIME on Linux and CLOCK_MONOTONIC on macOS. With token_epoch_unix_seconds 0, a server passing that clock now stays on the rate the host's time sync sets and counts suspend. Three gaps remain, each documented as the operator's: a wall-clock step after the first update (a server started before time sync set the clock); Windows QueryPerformanceCounter rate drift (not synchronized; 30 to 50 ppm typical, 50 ppm uses up the 30-second margin in about a week); and a game that passes its own clock. Option A closes all three for an epoch-0 server but changes the contract in rocketnet.h (ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS: the checks never read the wall clock, and pausing the caller's clock pauses token expiry), docs/SECURITY.md, and standard/TRANSPORT.md t2 rule 6 (no protocol decision from a clock the endpoint reads itself), so it is the owner's call. Design: token clock = epoch + caller time + offset, offset a double starting at 0, epoch-0 servers only (a configured epoch is the caller's and is untouched). Read the wall clock through the existing seam (rocketnet_platform_set_wall_clock_for_testing) once per 16 s of caller time, never per update. err = wall - token clock; nothing inside a 1 s dead band. Behind (err > 0): offset grows by at most 1 s per second of caller time since the last read, so the token clock runs at most 2x: a 1-hour lag is caught up in an hour. Ahead (err < 0): offset shrinks by at most 0.5 s per second of caller time, so the clock runs at least at half speed and never stands still or goes back. Why the bounds: going back is the security direction (an expired token valid again; a request-claim entry outlived), so the clock is non-decreasing, which keeps RNSecurityTables' and ServerConnection's forward-only clock actions valid as they are. Going forward costs only availability: whoever steps the wall clock gains at most 1 s of lead per second held, the lead is undone at 0.5 s per second afterwards, and a one-year step cannot lock connections out for good (an instant monotone follow would) or admit an expired token. Cost: one wall read per 16 s, a compare and a few adds per update; no thread, API, ABI or counter change. With it: a model proofs/tla/RNTokenClock.tla (Monotone, BoundedSlew, liveness: error within 1 s under a steady wall) with reversed witnesses for instant follow (lockout) and backward follow (resurrection), bound by a trace walk; header and SECURITY.md text (disciplined, and a paused caller clock then catches up at 2x); a TRANSPORT.md t12 sentence defining the server's current time and its bounds, as a carve-out from t2 rule 6. Red test to start from: tests/test_unit_token_clock_wall_drift.cpp with a fake wall clock that steps or drifts while the caller's clock does not.
 
 From: Review before v1.2.0, finding R40; option A of the three put to the owner
+
+### A worker-side known-source filter for gso and io_uring
+
+A session packet (keep-alive, payload, disconnect, ack) from a source with no session passes the stateless prefilter and is refused only on main (*_NO_MAPPING), because the receive worker has no table. The XDP kernel program now drops these (DROPPED_NO_SESSION); the other transports do not. Measured on amd-2 (2026-11-13) with harden_load and scripts/harden-cell: two netns over a veth, 100 players, 20 s, a flood of the prefixed kind (valid prefilter header, a session type at its wire floor plus 0 to 1200 random bytes) from 256 source ports. Main-thread update time avg/p99, before and during the flood: gso at 300k pps sent (about 245k/s reach main) 0.38/0.49 to 0.73/0.86 ms, players 100%; gso at 1M pps sent (about 500k/s reach main) 0.40/0.62 to 1.09/1.34 ms, players 76.6%, the loss in the kernel socket buffer (UDP InErrors 8.43M) at the gso receive worker's recvmmsg ceiling of about 620k/s, RECEIVE_DROPPED_FULL 0; io_uring at 1M pps sent (about 600k/s reach main) 0.58/0.66 to 1.33/1.4 ms, RECEIVE_DROPPED_FULL 4.02M, players lost 37 (99.98%); portable at 300k pps sent (main reads the socket itself, about 190k/s reach main) 0.53-0.74/0.96 to 1.55/1.8-2.0 ms, kernel InErrors 1.44M, players 100%. Main pays about 75 to 85 ns a refused packet. A worker-side filter (a set of session addresses main publishes each update, read by the receive workers before a packet takes a bank slot) would save that main time at the worker's ceiling and, on io_uring, the bank-full drops; on gso the honest loss is in the kernel before the worker, so it would not help there, and portable has no worker. It is new shared state between main and the workers, so it is a feature, not a point-release fix. It changes the same receive code as the receive-handoff fix, so it waits for that.
+
+From: Hostile-input-cost round 1, item 3c
 
 ## Found while landing and re-measuring the v1.1.x transport work
 
@@ -613,6 +613,12 @@ test_unit_client_bind_family.cpp checks ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN
 
 From: 2026-11-10 review, tests addendum row TA008, P7's site (optional)
 
+### A standalone ack waits one update before it is sent
+
+When a server update has nothing else for a client, the ack for what the client sent goes out alone, but only in the next update's send pass: it waits one update, 16.7 ms at 60 Hz. An attempt to send it in the same update (W2-52) was stopped because each form made some case worse. Four defects found on the way: a late send pass gated on the whole transport's capacity broke the one-queue send cap (test_server_send_cap_one_three_clients); a keep-alive and an accept in the same update sent two standalone acks (the per-update sweep had to skip what the late pass sent); stamping the ack time grew a pinned struct and delayed the keep-alive plus payload case; a full client I/O-core ring dropped the ack after its debt was cleared. Two room problems left it unshippable: on a buffered (portable) transport send capacity measures the payload ring while the ack goes into the control buffer, so under saturation acks starve, and reserving a control frame needs the cap test weakened; and a game that calls send_packets more than once per update gets extra standalone acks, up to one more packet per client per update. The design question: a send-end point that runs once per update, which capacity a control frame counts against (control buffer or payload ring), and capacity per destination queue rather than per transport.
+
+From: Fix round 1, W2-52, stopped; work kept on wip/standalone-ack-same-update (37abc02ad)
+
 ## Found by the review before v1.2.0, not fixed for it
 
 Findings of the review that started on 2026-11-13 that are not being fixed for v1.2.0. Read, not run, unless an entry says so; each names the file and lines.
@@ -641,9 +647,15 @@ The msgx shared socket sets SO_REUSEPORT so its per-client connected sockets can
 
 From: Review before v1.2.0 (run, one user)
 
+### Windows iocp: refused message starts at the 1000-player peak
+
+At the 1000-player peak, the current Windows receive-fix measurements with default IOCP placement remain MARGINAL: loaded peak sends 898.4-899.4k packets/s and refuses 18,663-56,479 starts per run; unloaded peak sends 900.0-900.3k and refuses 1,558-8,999. Both average workloads pass three of three runs with zero refused starts. The record is docs/runs/performance-native.md, the WF rows, summarized in docs/PERFORMANCE.md: two completion workers and two send threads on the stated Windows machine and RSS layout. The receive fix is awaiting hot-path integration; these rows do not qualify the assembled release. They record the rate, refusals and receive timing, not the component responsible for the remaining refusals. Next step: identify that cause on the documented peak workload before choosing a library or deployment change, then verify both throughput and receive delay. RIO is the Windows transport of choice for this peak workload with its measured placement; IOCP is the fallback.
+
+From: v1.2 audit, Windows runs
+
 ### XDP: the gateway refresh blocks the main thread every 5 seconds
 
-On XDP, rocketnet_server_socket_receive_packets (sdk/rocketnet_server_socket_linux.cpp about 4745) runs the gateway refresh on the main thread every 5 s (rocketnet_xdp_gateway_refresh, sdk/rocketnet_xdp_frame.h about 1473, through rocketnet_server_socket_resolve_gateway about 648). rocketnet_gateway_netlink_refresh opens a NETLINK_ROUTE socket, dumps the whole route table for the family (RTM_GETROUTE with NLM_F_DUMP), then queries the neighbour (RTM_GETNEIGH), each receive blocking with a 1 s timeout (sdk/rocketnet_gateway_netlink_linux.cpp about 751-840, 1006); with both families, twice. The cost grows with the host's route count and can block the main thread up to the timeout under rtnl contention; it does not show on a bench with a small table. Resolve it off the main thread (on a network thread), or query the one destination without blocking.
+On XDP, rocketnet_server_socket_receive_packets (sdk/rocketnet_server_socket_linux.cpp about 4745) runs the gateway refresh on the main thread every 5 s (rocketnet_xdp_gateway_refresh, sdk/rocketnet_xdp_frame.h about 1473, through rocketnet_server_socket_resolve_gateway about 648). rocketnet_gateway_netlink_refresh opens a NETLINK_ROUTE socket, dumps the whole route table for the family (RTM_GETROUTE with NLM_F_DUMP), then queries the neighbour (RTM_GETNEIGH); with both families, twice. The refresh's sockets are non-blocking, but that covers only the receive: the kernel handles each request inside sendto, building the first part of the dump there, and a kernel that takes the rtnl lock for these dumps makes sendto wait while another task holds it (route or link changes, other netlink dumps). The cost grows with the host's route count and can hold up the main thread under rtnl contention; it does not show on a bench with a small table. Resolve it off the main thread (on a network thread), or query the one destination without a dump. Rated medium by the wave 2 reader (W2-35).
 
 From: Review before v1.2.0
 
@@ -665,6 +677,24 @@ Capacity is the fewest free slots of any queue (sdk/rocketnet_server_transport.c
 
 From: Review before v1.2.0
 
+### A take across the fill guard can make a thread's ring slots fall, reordering one client's packets within a flush
+
+rocketnet_server_payload_ring_take (sdk/rocketnet_server_transport.cpp about 4913-4987), two game threads on one fill line, send_capacity C at least 512: (1) thread A sees the line empty (word 0), passes the guard and claims a chunk at base 0 (num_packets 0 to 8), and is preempted before its install compare-and-swap; (2) thread B sees the line still empty, the guard now fails (C - 8 < 8 * 64), and B takes single slots 8 and 9 by fetch-add, never touching the line word; (3) A's install compare-and-swap from 0 still succeeds, so the line holds [1, 8); (4) B's next take comes from the line: slot 1. B took 8, 9, 1, and the flush walks the ring in slot order, so one client's packets leave reordered within one flush; nothing is lost or duplicated. Rare: needs a preemption between a claim and its install while the counter crosses C - 512. Fix: a thread that fails the guard first swaps its line from empty to a closed word, so a late install fails and gives its chunk up; add SlotsRise to RNServerPayloadRingLayout with the guard path as its reversed witness. Not taken in a point release: the given-up chunk wastes up to 7 claimed slots near capacity, so sends that fit today would be refused.
+
+From: Review before v1.2.0
+
+### With several send queues and a live room, the send pass can skip one held connection every update
+
+rn_message_object_send_packets (sdk/rocketnet_message_server.cpp, the per-queue hold): a connection held for its full queue before any frame was written does not hold the cursor. Four connections, queues A (0, 2) and B (1, 3), each with room for one frame: update 1, both rooms free: 0 and 1 written, 2 finds no room anywhere, cut, cursor 2; update 2, A spent: 2 held with nothing written yet (cursor not held), 3 written on B, 0 cut, cursor 0; update 3 repeats update 1. If A's room alternates spent and free in step with the rotation, connection 2 is never written: reliable sends stay due (latency, and if it persisted a timeout for that client). Very unlikely (needs the alternation, busy clients ahead on A, room on B). TLC: proofs/tla/MCRNServerSendFairQueuesLive.cfg (models/v1.1.x/send-build). Fix: remember the last update's first held connection, and let a connection held before any frame was written hold the cursor when it was not also the first held at the previous update, so a queue full for many updates still does not pin the rotation. Not taken in a point release: a design change to the rotation.
+
+From: Review before v1.2.0, models package send-build, MM057
+
+### Receipt-only sends are sampled for RTT across an outage, so an outage with only receipt traffic in flight raises the resend delay
+
+standard/MESSAGES.md m9.1 samples a send that carried receipt serials and no reliable number, and m9.2 ends an acknowledgement silence only when the lowest unacknowledged reliable number was owed; the code does both (sdk/rocketnet_window_ack.cpp about 968, 977, 1107). So a receipt-only send made before an outage of a second or more, with no reliable number in flight, and acknowledged after it is sampled: each such ack moves srtt 5% of the way toward that send's send-to-ack time and the deviation 5% toward the gap (with only the ack direction down, delayed acks of receipt-only sends that the receiver's ack history still covers and the sender's sent map still holds can each give a sample, so there can be many; a send whose entry the sent map evicted (sdk/rocketnet_window_ack.cpp about 784-803) gives none, since its late ack is not found (about 891-895), while a receipt that only passed its deadline keeps its entry and can still be sampled). Example: srtt 50 ms, deviation 10 ms, one receipt-only send acked 1500 ms after it was sent (sent as the outage began): srtt 122.5 ms, deviation 82 ms, resend delay 170 ms to 603 ms (later reliable resends wait 433 ms more, 26 updates at 60 Hz); for equal samples, k such acks move srtt 1 - 0.95^k of the way toward that sample, and srtt and the deviation decay back as normal samples arrive; neither is clamped, but the resend delay derived from them stays clamped at message_resend_delay_max_ms (2000 ms default). A remote endpoint that withholds and then releases acks for receipt-only packets can drive it on purpose, within that clamp on the resend delay. Candidate rules: (A) take no sample from a send that carried no reliable number; or (B) run the silence test for a receipt-only send from its own send time, so an ack that waited out a silence is not sampled whatever the send carried. Either is a change to the standard (m9.1, m9.2) as well as the code, and changes proofs/tla/RNRttFilter.tla in the same commit: on main it models no receipt-only packet; the models package branch models/v1.1.x/receipts-rtt-resend-window adds them (SendReceipt, ReceiptPkts) with MCRNRttFilterReceiptOnlyPoisons.cfg, which becomes the reversed witness.
+
+From: Review before v1.2.0, models package receipts-rtt-resend-window, MM022
+
 ### io_uring stop-time send retry bound counts every refusal and never resets on progress
 
 The io_uring worker's stop-time bound counts each refused send and neither waits nor resets when a send makes progress (sdk/rocketnet_uring_queue_worker.cpp about 185-196, 275-278), so a slow drain at stop can give up early; gso resets on progress and waits (sdk/rocketnet_server_gso_linux.cpp about 722-733). Only reachable when stop runs with sends outstanding. Match gso.
@@ -683,15 +713,15 @@ No trace layer binds the XDP send half to its models: the buffer exchange publis
 
 From: Review before v1.2.0
 
-### An XDP server on a VLAN takes frames from other VLANs when the NIC strips tags
+### An XDP server on a VLAN reads the tag stripped by receive VLAN offload
 
-sdk/xdp/server_xdp.c (about 483-516) and sdk/rocketnet_xdp_frame.h (about 383-405) take an untagged frame on a tagged server. With receive VLAN offload on (the i40e and ixgbe default) native XDP sees every stripped frame untagged, so a frame of any VLAN the NIC accepts, or of the native segment, addressed to the server's address and port is processed, and the reply goes out tagged with the server's VLAN: layer-2 isolation is bypassed for the game port and spoofed sources skip the router's filters. Smallest fix: refuse a VLAN server unless rx-vlan-offload is off, or read the stripped tag (bpf_xdp_metadata_rx_vlan_tag, Linux 6.8 and later).
+sdk/xdp/server_xdp.c (about 483-516) and sdk/rocketnet_xdp_frame.h (about 383-405) take an untagged frame on a tagged server. With receive VLAN offload on (the i40e and ixgbe default) native XDP sees every stripped frame untagged, so a frame of any VLAN the NIC accepts, or of the native segment, addressed to the server's address and port would be processed and answered tagged with the server's VLAN. The point release (fix/v1.1.x/xdp-vlan-offload) closes this by refusal: scripts/rocketnet-provision turns the parent's rx-vlan-offload off and reads it back, and the pre-flight refuses a VLAN server whose parent has it on (rocketnet_server_socket_preflight_vlan_tag). Left here: read the stripped tag from the receive metadata (bpf_xdp_metadata_rx_vlan_tag, Linux 6.8 and later), so the offload can stay on and a veth parent is covered too (a veth keeps a tag its sender put beside the frame beside it, whatever its own flag, so the program sees that frame untagged); decide whether a VLAN server should take untagged frames at all once the tag is always readable (it still takes the untagged segment's frames for its address and port); cover a NIC that strips 802.1ad outer tags (rx-vlan-stag-hw-parse), which ETH_FLAG_RXVLAN does not show; and the mirror case, an untagged server on a trunk NIC with the offload on, which takes stripped frames of any VLAN for its address and port and is not refused.
 
 From: Review before v1.2.0
 
 ### XDP accepts sources the kernel stack drops as martian, and does not verify checksums on receive
 
-sdk/xdp/server_xdp.c has no source check, and userspace refuses only IPv4-mapped IPv6 (sdk/rocketnet_xdp_frame.h about 675, sdk/rocketnet_address.h about 65): 0.0.0.0/8, 127/8, 224/4, 255.255.255.255, the server's own address, ::, ::1, ff00::/8 and source port 0 reach the main thread and get replies. IPv4 header and UDP checksums are not verified on receive (rocketnet_xdp_frame_parse_vlan about 420-537), and the kernel fast path does not check the version nibble (server_xdp.c about 552). The socket transports get all of this from the kernel. Refuse these in the kernel program and check the sums.
+sdk/xdp/server_xdp.c has no source check, and userspace refuses only IPv4-mapped IPv6 (sdk/rocketnet_xdp_frame.h about 675, sdk/rocketnet_address.h about 65): 0.0.0.0/8, 127/8, 224/4, 255.255.255.255, the server's own address, ::, ::1, ff00::/8 and source port 0 reach the main thread and get replies. IPv4 header and UDP checksums are not verified on receive (rocketnet_xdp_frame_parse_vlan about 420-537). (The version nibble half is closed: the kernel program passes an IPv4 or IPv6 header whose version is not the ethertype's own, as the reader refuses it.) The socket transports get all of this from the kernel. Refuse these in the kernel program and check the sums.
 
 From: Review before v1.2.0
 
@@ -964,3 +994,69 @@ From: Review before v1.2.0, tests track row TM101 (optional), tests/v1.1.x/p8-st
 tools/check_unit_purity.py exempts tests/suite_runner.h and has no pattern for a file read (fopen, /proc, /sys) or a host query (sched_getaffinity, sysctlbyname, GlobalMemoryStatusEx), so a unit case that called the runner's live helpers read the host's cgroup, memory and affinity unseen (row TM036, repaired on tests/v1.1.x/p8-status-config-units by passing those inputs in). Teach the gate those patterns for unit sources, with the runner's own use (it plans the job count) allowed by name only.
 
 From: Review before v1.2.0, tests track row TM036 (Ro O-M1), tests/v1.1.x/p8-status-config-units
+
+### Isolate the open-side argument checks of the packet AEAD
+
+The open-side argument checks in sdk/rocketnet_protocol.cpp (327-340 at 5a2dbf403: the sequence-0 guard, the nonce guard and the ephemeral-key discipline) are not tested on their own: the two packets the test in sdk/rocketnet_tests.cpp feeds fail the AEAD anyway, so deleting either guard passes, and the ephemeral discipline on open is never called with a mismatched argument. Add cases whose only fault is the argument each guard refuses (a packet that would open but for that argument), each shown red when its guard is deleted.
+
+From: Tests review before v1.2.0, row TM220 (optional)
+
+### Hold the layer NULL-audit table to rocketnet_layers.h with a tool
+
+tools/check_exports.py holds rocketnet_test_exports (the public NULL audit in sdk/rocketnet_tests.cpp) to sdk/rocketnet.h, but nothing compares rocketnet_test_layer_exports with the entry points rocketnet_layers.h declares, so a new layer entry point with no row, no NULL-case list entry and no NULL call passes. Extend the tool (or add one beside it) to derive the layer entry points from the header and refuse a missing, undeclared or duplicate name, and to refuse a NULL-case name with no NULL call in rocketnet_test_public_api_null_is_a_counted_no_op.
+
+From: Tests review before v1.2.0, row TM085 (follow-up)
+
+### XDP: one provision step for a restart on NICs whose attach rebuilds the queue vectors
+
+On ixgbe-class NICs the XDP attach and detach rebuild the queue vectors onto the default affinity (cpu 0 under irqaffinity=0), so a safe start is three steps: provision, start the server, repin; and a restart needs provision again first, because the old server's detach moved the vectors back (docs/DEPLOYING.md step 4a). The library only warns after its attach and never changes affinity (standard/TRANSPORT.md t2 rule 5). A script mode that provisions, waits for the new server's attach, then repins (what repin already waits for: the program, the carrier, one queue vector a thread) would make it one operator step, for example a systemd ExecStartPost. Needs an ixgbe bench to show it. Provision refuses to unload rocketnet's program while any rocketnet server on the host is live and has no override (v1.2, no new options); such a mode is where a deliberate unload of a live server's program would belong, and the pin root could record its interface so a server on another interface no longer blocks. Also: create's post-attach re-read is silent when it finds no queue vector at all (a driver still rebuilding them when /proc/interrupts is read); counting the vectors the pre-flight saw against the re-read would let it say pinning could not be re-checked.
+
+From: Review before v1.2.0, wave 2, findings W2-36 and W2-71
+
+### XDP: accept a server with the needed capabilities instead of euid 0
+
+The pre-flight's R1 and the script refuse any euid but 0. What the XDP transport needs is a capability set: CAP_NET_ADMIN (attach, ethtool reads), CAP_BPF (program and map loads, with CAP_PERFMON on some kernels), CAP_NET_RAW (AF_XDP sockets), CAP_SYS_RESOURCE (the memlock rlimit), CAP_SYS_NICE (SCHED_RR and affinity), plus write access to the root-owned bpffs directory for the instance's pin root. Read the effective set (capget) in R1 and name the missing capabilities. Needs a run on a provisioned XDP bench as a non-root user with those capabilities, to find which the kernel really asks for.
+
+From: Review before v1.2.0, wave 2, finding W2-45
+
+### XDP: write the config map after the sockets are in the XSK map
+
+create writes the program's config map (address and port the program redirects) before every queue's socket is in the XSK map, so for a few microseconds before create returns a datagram to the port on a queue whose socket is not yet in the map is redirected to an empty slot and counted DROPPED_NO_SOCKET, where with the order reversed it would pass to the kernel stack and find no socket there either. Not shown red: the window is before create returns, and frames in it are lost either way. Reorder (sockets into the XSK map first, config map last) and cover it in the create-order unit seam.
+
+From: Review before v1.2.0, wave 2, finding W2-43
+
+### XDP: a pre-flight rule for an MTU native XDP refuses
+
+A driver refuses a native XDP attach when the link MTU is above what it can serve with one buffer a frame (ENA at 9001, i40e and ixgbe above about 3000 to 3500 without multi-buffer support). v1.2 names the errno and the link MTU in the attach refusal, so the operator can see it, but the pre-flight does not check it, and auto falls to gso only after the attach fails. A pre-flight rule reading /sys/class/net/IF/mtu against the transport's frame size would name it before anything is loaded. Needs the per-driver limits measured on the benches before it can refuse rightly.
+
+From: Review before v1.2.0, wave 2, finding W2-44
+
+### XDP: resolve a missing gateway neighbour entry instead of refusing
+
+create refuses the XDP transport when the gateway's neighbour entry is missing or unusable, and nothing makes the kernel resolve it; v1.2 says so and names the fix (ping the gateway once, ip neigh show, or ROCKETNET_GATEWAY_ETHERNET_ADDRESS). A probe at create (one datagram to the gateway through an ordinary socket, then the neighbour query again with a bounded retry) would resolve it the way the kernel would for any socket. Also from the same reading: only the first default route on the interface is used, and a multipath route's RTNH_F_DEAD and RTNH_F_LINKDOWN next hops are not skipped.
+
+From: Review before v1.2.0, wave 2, finding W2-40
+
+### XDP: a spinning SCHED_RR worker shares its core with its queue's interrupt
+
+R4 pins queue k's interrupt to the cpu xdp thread k spins on at SCHED_RR. The NAPI softirq runs on that cpu on interrupt exit, ahead of the thread, and is fine; but when softirq work is deferred to ksoftirqd (SCHED_OTHER) under overload, the spinning real-time worker can starve it, and the queue's receive stalls behind its own worker. Unsure: busy polling (R5) and the zero-copy path may keep the work out of ksoftirqd. Measure first: a peak run on the X710 pair with the worker at SCHED_RR against SCHED_OTHER, reading ksoftirqd's run time on the worker cpus (/proc/PID/schedstat) and the receive drops.
+
+From: Review before v1.2.0, wave 2, finding W2-38
+
+### XDP: a queue-count change or device unregister after start is silent
+
+After start, an ethtool -L on the interface or the device going away (driver reload, hot unplug) leaves the server bound to queues that no longer exist or to a dead device: datagrams on new queues count DROPPED_NO_SOCKET and nothing else says so, and nothing recovers. Watch the link with an RTNLGRP_LINK subscription on a network thread, log once by name, and say in the docs that a channel change needs a restart.
+
+From: Review before v1.2.0, wave 2, finding W2-42
+
+### rocketnet-provision: read-back of R5, a settle wait after R7, and an unprovision mode
+
+From the same reading as the repin fix: provision writes R5's napi_defer_hard_irqs and gro_flush_timeout and does not read them back (R7 and R8 do); after an R7 channel change R4 reads /proc/interrupts at once, while some drivers are still rebuilding their vectors (repin already waits for them; provision should wait the same way, bounded); and there is no mode that puts R4 to R8 back (affinities, busy-poll pair, channels, sched_rt_runtime_us) for a host leaving XDP service.
+
+From: Review before v1.2.0, wave 2, finding W2-75 (script parts)
+
+### RNServerReplaySlots has no trace check binding it to the walk
+
+proofs/tla/RNServerReplaySlots.tla models the per-slot records of rocketnet_server_replay_marks_walk (seen record, mark, owed mark, skip mark) and their supersedes, but no trace check runs the code's walk against it: the xdp-replay trace check (tests/tla_trace_xdp_replay.cpp) excludes a slot reused while another address's forget is owed. The model also takes the mark pass as one step (Cand and Blocked from the records after the forget pass), where the code decides slot by slot after earlier slots' supersedes; a trace check would need either a per-slot mark step in the model or a refinement mapping that allows it. Bind it as the other layers are: the walk's random driver emits traces, TLC checks each is a behaviour, in CI beside the witnesses.
+
+From: Hostile-input-cost round 1, the replay orphan fix (Astra H01), cold read finding L3
