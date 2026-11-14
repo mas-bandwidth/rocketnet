@@ -98,7 +98,8 @@ permissions:
   contents: read
 
 # Test execution has no repository wall-clock cap; GitHub still limits
-# self-hosted jobs to five days.
+# self-hosted jobs to five days. One exception: windows / Release ASan keeps
+# the per-case watchdog (its own comment says why).
 env:
   ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
 
@@ -807,13 +808,26 @@ jobs:
   # test_lifecycle.exe 3 s, test_iocp.exe 5 s, functional.exe 23 s
   # (then unpinned, which ran portable), 28 s (iocp) and 20 s (rio): about 5.5
   # minutes end to end.
+  #
+  # This job keeps the suites' per-case watchdog (ROCKETNET_NIGHTLY_NO_TIMEOUT
+  # is '0' here, not the workflow's '1'): a unit case is killed and named at
+  # 600 s (120 s times the sanitizer scale 5, tests/time_scale.h; MSVC's
+  # /fsanitize=address defines __SANITIZE_ADDRESS__), a functional case at
+  # 120 s. Both are well under the 1800 s a case on the host's other runner
+  # slot waits for the machine-wide commit lock (SUITE_COMMIT_LOCK_WAIT_SECONDS,
+  # tests/suite_runner.h), which a case holds while it runs: unbounded, the
+  # 1000-client cases of tests/test_unit_server_mass_disconnect.cpp ran about
+  # 2 hours each here and failed the other slot's waits (roadmap
+  # windows-asan-mass-disconnect-two-hours). The job's ceiling is 120 minutes.
   build-and-test-windows-asan:
     name: windows / Release ASan
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     defaults:
       run:
         shell: pwsh
-    timeout-minutes: 7200
+    timeout-minutes: 120
+    env:
+      ROCKETNET_NIGHTLY_NO_TIMEOUT: '0'
     strategy:
       fail-fast: false
       matrix:

@@ -66,7 +66,14 @@ jobs:
   sanitizers-windows:
     name: windows ${{ matrix.leg }}
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 7200
+    # A ceiling, not a case bound: the msvc-asan leg took 34 minutes on
+    # 2026-11-14 (run 43570225437; the unit suite with both 1000-client cases
+    # of tests/test_unit_server_mass_disconnect.cpp 6 minutes). The suites
+    # keep the workflow's no-timeout opt-in here: with the per-case watchdog,
+    # test_unit_case_memory (the whole unit suite, run where
+    # ROCKETNET_TEST_MAX_CASE_RSS_MB is set, as it is here) would be held to
+    # its 99 s. Roadmap windows-asan-mass-disconnect-two-hours.
+    timeout-minutes: 240
     strategy:
       fail-fast: false
       matrix:
