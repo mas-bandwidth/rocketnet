@@ -161,7 +161,7 @@ static void test_max_clients_derived_limits()
         check( rocketnet_server_receive_packets_per_update( 1000 ) == 16000 );
         check( rocketnet_server_send_batch_packets( 1000 ) == 1000 );
         check( rocketnet_server_send_staging_packets( 1000 ) == 2048 );
-        check( rocketnet_server_iocp_send_lanes( 1000 ) == 8 && rocketnet_server_iocp_send_queue_size( 1000 ) == 4096 );
+        check( rocketnet_server_iocp_send_lanes( 1000 ) == 16 && rocketnet_server_iocp_send_queue_size( 1000 ) == 4096 );
         check( rocketnet_server_iocp_receive_queue_size( 1000, 1 ) == 16000 && rocketnet_server_iocp_receive_queue_size( 1000, 4 ) == 4000 );
         check( rocketnet_server_rio_send_queue_size( 1000 ) == 16384 );
         check( rocketnet_server_rio_send_queue_size( 1000 ) >= 15 * 1000 );

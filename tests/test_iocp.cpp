@@ -3139,13 +3139,13 @@ static void test_windows_transports_sized_by_max_clients()
     CHECK( rocketnet_server_iocp_allocation_bytes( 1, 0 ) == 0 && rocketnet_server_iocp_allocation_bytes( 1, ROCKETNET_MAX_CLIENTS + 1 ) == 0 );
     CHECK( rocketnet_server_rio_allocation_bytes( 0 ) == 0 && rocketnet_server_rio_allocation_bytes( ROCKETNET_MAX_CLIENTS + 1 ) == 0 );
     // the send lanes, sized by rate from the configured count: 4 clients is
-    // one lane of 2048 (every client slot and the 1024 headroom), 512 is four
+    // one lane of 2048 (every client slot and the 1024 headroom), 512 is eight
     // lanes of 4096, and a lane stages at most 4096, or the smallest power of
     // two holding every client slot and the headroom when that is more (above
     // 3072 clients); the total stays within the 65536 operations the packet
     // handle's index bits name
     CHECK( rocketnet_server_iocp_send_lanes( 4 ) == 1 && rocketnet_server_iocp_send_queue_size( 4 ) == 2048 );
-    CHECK( rocketnet_server_iocp_send_lanes( 512 ) == 4 && rocketnet_server_iocp_send_queue_size( 512 ) == ROCKETNET_IOCP_LANE_PACKETS );
+    CHECK( rocketnet_server_iocp_send_lanes( 512 ) == 8 && rocketnet_server_iocp_send_queue_size( 512 ) == ROCKETNET_IOCP_LANE_PACKETS );
     {
         const int sized = rocketnet_server_sized_clients( large_clients );
         const int floor_packets = rocketnet_power_of_two_at_least( sized + ROCKETNET_IOCP_LANE_HEADROOM );
@@ -3161,7 +3161,7 @@ static void test_windows_transports_sized_by_max_clients()
     CHECK( rocketnet_server_rio_receives( large_clients ) == 2 * rocketnet_server_send_staging_packets( large_clients ) );
 #if ROCKETNET_MAX_CLIENTS >= 1000
     // large_clients is 1000
-    CHECK( rocketnet_server_iocp_send_lanes( 1000 ) == 8 && rocketnet_server_iocp_send_queue_size( 1000 ) == 4096 );
+    CHECK( rocketnet_server_iocp_send_lanes( 1000 ) == 16 && rocketnet_server_iocp_send_queue_size( 1000 ) == 4096 );
     CHECK( rocketnet_server_rio_receives( 1000 ) == 4096 );
 #endif // #if ROCKETNET_MAX_CLIENTS >= 1000
 

@@ -65,7 +65,7 @@ a slower tier, not a refusal: the line it logs when the server starts says
 which it got,
 
 ```text
-iocp transport: 1 completion workers, 2 send threads and 8 send lanes of 4096 on port 40000, USO yes, URO yes
+iocp transport: 1 completion workers, 2 send threads and 16 send lanes of 4096 on port 40000, USO yes, URO yes
 ```
 
 with `no (WSASendTo per datagram)` or `no (WSARecvFrom per datagram)` in
@@ -199,6 +199,16 @@ workers' processors. Those rows placed the workers with a development layout
 (RSS on processors 2 and 4, workers on 3 and 5) rather than the built-in
 placement, so the built-in form, `-BaseProcessorNumber 0 -MaxProcessorNumber 2`,
 follows from the placement rather than from a measured row.
+
+With this form the adapter's receive DPC work runs on the completion workers'
+processors, 0 and 2. Measured on 2026-11-14 (AWS m7i.16xlarge, 1000 players
+at 60 Hz, 900k packets a second), the defaults passed with it, but with 3 and
+with 4 send threads one row each collapsed: the worker on processor 2 reached
+83% and 100% busy, 18-21% of it DPC, and the server sent 803k and 575k packets
+a second. To move the receive work off the workers, point RSS at processors
+no network thread uses, for example past the main thread with 2 workers and 2
+send threads, `-BaseProcessorNumber 10 -MaxProcessorNumber 12 -MaxProcessors 2
+-NumberOfReceiveQueues 2`; that form was not measured.
 
 Without a bind address, every Windows server transport binds the wildcard
 address on the server's port with `SO_EXCLUSIVEADDRUSE`, so a second process

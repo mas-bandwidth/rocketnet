@@ -63,10 +63,15 @@
 #define ROCKETNET_IOCP_SEND_THREADS ROCKETNET_IOCP_DEFAULT_SEND_THREADS
 
 // The send staging is sized by rate. The lanes together stage
-// ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT for every sized client: 32 at 1000
-// clients is 8 lanes of 4096, twice the 17 a client's share of 10 Gb/s of
-// 1200-byte packets is per 60 Hz update, so the frames a flush posts while the
-// last flush's sends complete fit too. Lanes are of ROCKETNET_IOCP_LANE_PACKETS
+// ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT for every sized client: 64 at 1000
+// clients is 16 lanes of 4096, the 65536 the handle allows. An operation holds
+// its slot from its start through its post to its completion, so the pool
+// holds an update's sends while the sends of the updates before are still in
+// flight. 32, twice the 17 a client's share of 10 Gb/s of 1200-byte packets
+// per 60 Hz update, refused thousands of starts a minute at the peak row (1000
+// players, 900k packets a second, no network thread above 76% busy); 64
+// refused none (AWS m7i.16xlarge, 2026-11-14, tests/test_unit_iocp_send_pool.cpp
+// pins the sizes). Lanes are of ROCKETNET_IOCP_LANE_PACKETS
 // unless a lane must be larger: the protocol's send reserve
 // (rocketnet_server_transport_send_reserves) holds every client slot not
 // connected in every lane, so a lane holds every sized client plus
@@ -80,7 +85,7 @@
 #define ROCKETNET_IOCP_LANE_HEADROOM 1024
 #define ROCKETNET_IOCP_MAX_LANES 16
 #define ROCKETNET_IOCP_MAX_OPERATIONS 65536
-#define ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT 32
+#define ROCKETNET_IOCP_SEND_PACKETS_PER_CLIENT 64
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_IOCP_MAX_LANES * ROCKETNET_IOCP_LANE_PACKETS <= ROCKETNET_IOCP_MAX_OPERATIONS &&
                              ROCKETNET_IOCP_MAX_OPERATIONS == UINT16_MAX + 1,

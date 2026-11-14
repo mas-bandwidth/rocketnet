@@ -92,7 +92,7 @@ local address in `bind_ipv4_address` or `bind_ipv6_address`: asked for on the
 wildcard, start refuses. Each completion worker owns its socket's receive
 completions. At the default
 `max_clients` of 1000 there are 128 posted receives a worker, 16000 receive
-staging slots across the workers, and 8 send lanes of 4096 frames. Each lane's
+staging slots across the workers, and 16 send lanes of 4096 frames. Each lane's
 three command banks hold references to that lane's frame pool; they do not
 multiply it. Staging and send capacities scale with
 the server's configured `max_clients`; see [Maximum clients](MEMORY.md#maximum-clients). These are resource bounds,
