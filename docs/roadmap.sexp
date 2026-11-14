@@ -958,11 +958,6 @@
    :text "tools/check_memory.py:24 fixes the one-queue worker count per transport ('iocp': 3) and asserts it at :55, :87 and :112. The library's count moves with the plan: at a15a98cf1 the plan had 3 against a table of 2; 5677b4bf set 3; v1.1.61's sizing commits (81352192, 65e48f4f) made it 2, so the Windows Debug job fails with AssertionError ('iocp', 2). Smallest fix: take the expected count from the plan the server prints (its 'N workers'), and keep only the invariants that do not depend on sizing."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly windows / Debug at a1a426851 and a15a98cf1")
 
-  (item "windows-commit-lock-machine-wide" :group "review-v1-2" :area "tests"
-   :title "The Windows test commit lock is machine-wide, so two runner slots wait on each other"
-   :text "tests/suite_runner.h:1725 takes the mutex Global\\rocketnet-test-commit-bound and waits up to SUITE_COMMIT_LOCK_WAIT_SECONDS (1800, :1720). Both runner slots on an aws-win host share it, so a long holder on one slot fails the other: test_secrets_wiped_destroy_writes_only_keys 'waited 1800 s for the machine-wide commit lock' in nightly-soak windows (a1a426851) and Nightly CI windows unit 1/2 (21543f689). GUESS on the holder: a long ASan unit run on the sibling slot. Smallest fix: name the mutex per runner work directory (a hash of the working directory), and print the holder's pid when a wait passes 60 s. About 5 to 10 lines in one file."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14")
-
   (item "s390x-real-time-bounds" :group "review-v1-2" :area "tests"
    :title "The s390x guest trips wall-clock bounds under emulation"
    :text "nightly-bigendian-system runs the suite in an emulated s390x guest on a loaded host (load1 23.7). On a1a426851 test_gso_transport_posix_destroy_under_traffic_100 aborted on the fixed 10 s shutdown bound (examples/shutdown.h:30-37) and then passed alone 3 of 3 (346 to 445 s each). On ef00a6d10 (11-13) other bounds tripped: tests/functional/live_matrix.cpp:1606 and posix_hard_killed_client.cpp:631. Class TEST, GUESS against a rare shutdown stall; a dump of the shutdown state at the timeout settles it. Smallest fix: scale the real-time bounds by a guest factor in that workflow, or run there only cases that use no real time."
