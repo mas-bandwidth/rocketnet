@@ -744,7 +744,7 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
     // A resend needs the kernel to have counted the loss (tests/kernel_drops.h):
     // every datagram sent again, storm or valid, is one the loss gate admits
     // against the receive drops the kernel counted on this process since the
-    // chunk began. A deficit the kernel did not count is the library losing a
+    // round began, less those earlier resends used. A deficit the kernel did not count is the library losing a
     // datagram or a count, and the case fails there, naming the deficit.
 
     struct rocketnet_loss_gate_t gate;
@@ -883,9 +883,21 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
 
                 if ( posix_expect_equal( &now, &expect ) && ( !all_valid || valid_seen == valid_sent ) )
                 {
-                    // the chunk is counted: the next one asks the gate about its own losses
+                    // the chunk is counted. The round's valid payload left
+                    // before its first chunk, so the gate's window starts
+                    // over only when the round is judged (all_valid): a drop
+                    // of that payload during a storm chunk stays counted for
+                    // the round's own resend. A storm chunk only renews the
+                    // resend budget; the drops it used stay used.
                     chunk_count = 0;
-                    rocketnet_loss_gate_begin( &gate, at_server ? "posix_weather_cell server" : "posix_weather_cell client" );
+                    if ( all_valid )
+                    {
+                        rocketnet_loss_gate_begin( &gate, at_server ? "posix_weather_cell server" : "posix_weather_cell client" );
+                    }
+                    else
+                    {
+                        gate.resends = 0;
+                    }
                     return;
                 }
 
