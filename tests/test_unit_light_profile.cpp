@@ -453,9 +453,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // rounded once) and nothing to the client (its one region's 64-byte rounding
 // holds it): actual=2147391602 and 15195026 (integration/v1.1.56, aws-mut-3,
 // gcc, Debug and Release, DEV ON), measured; arm64 the same 16000, computed.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146343034ULL )
+// The appended counter XDP_KERNEL_DROPPED_NO_SESSION adds 64 to the server
+// (one more 64-byte rounding of its counter blocks): actual=2147391666
+// (integration/v1.1.58, aws-mut-3, gcc, Debug and Release, DEV ON), measured;
+// arm64 the same 64, computed.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146343098ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146343026ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146343090ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
@@ -469,7 +473,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Together (integration/v1.1.55-hot: the send store's free stack, the
 // refused-token table and PORTABLE_PIN_REFUSALS): actual=15195090 (aws-mut-3,
 // gcc, Debug and Release, DEV ON); the server reads its pin unchanged.
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146514 )
+// The appended counter XDP_KERNEL_DROPPED_NO_SESSION adds 64 more to the
+// client: actual=15195154 (integration/v1.1.58, aws-mut-3, gcc, Debug and
+// Release, DEV ON), measured.
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146578 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

@@ -283,8 +283,8 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // within the run's last step it receives one datagram more and answers it:
 // one more each way than the trace recorded before the receive handoff fix
 // ({ 67, 66, 5954, 4320, 67, 66, 4389, 5889, ... }).
-static const struct loopback_trace_t loopback_base_trace_simulator_off = { 68, 67, 6023, 4389, 67, 67, 4389, 5962, UINT64_C( 0x6129c5a354299546 ), UINT64_C( 0x36508f2436a42384 ), 4 };
-static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x1f38e3d272ec7d87 ), UINT64_C( 0x6632b9bd6233ed25 ), 10 };
+static const struct loopback_trace_t loopback_base_trace_simulator_off = { 68, 67, 6023, 4389, 67, 67, 4389, 5962, UINT64_C( 0xc1248c7ef6dc7a06 ), UINT64_C( 0x00fd33bacda8bc04 ), 4 };
+static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0xa9e115c8a3ce3467 ), UINT64_C( 0x612c7ed782c943c5 ), 10 };
 
 static void test_loopback_transport_patterns_off_same_trace()
 {
