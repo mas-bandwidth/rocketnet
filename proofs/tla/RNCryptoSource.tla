@@ -14,12 +14,24 @@
    closing), opens the source when open is clear (sodium_init, which stirs
    only the first time it runs, then randombytes_stir), counts itself a
    holder and lets the mutex go. It draws, then takes the mutex to uncount
-   itself. rocketnet_init opens the source the same way without holding it.
+   itself. rocketnet_init opens the source the same way without holding it
+   (rocketnet_crypto_open_source: the mutex, rocketnet_crypto_open_locked,
+   unlock): it is the actor I == Threads + 1, which takes the same Acquire,
+   Recheck, StirCheck, StirOpen and Publish steps, counts itself no holder,
+   and goes back to idle where a generator would draw.
    Term (rocketnet_term on macOS) takes the mutex, marks itself closing, waits
    for zero holders, closes the source and clears open, at any time.
 
-   Each thread makes MaxCalls calls; terms happen at most MaxTerms times. The
-   mutex is excl; the holder count is the set holders.
+   Each actor makes MaxCalls calls (init's calls are rocketnet_init again
+   after a term); terms happen at most MaxTerms times. The mutex is excl; the
+   holder count is the set holders.
+
+   rocketnet_random_uint64 and rocketnet_random_bytes hold the source as a
+   generator does (rocketnet_random_draw), so they are generator calls here.
+   The other draws (every draw the transports, protocols and token tables
+   make) take no hold: they are assumed to run between rocketnet_init and
+   rocketnet_term, when the source is open and no term can close it. They
+   are not actors here.
 
    Defect selects the reversed witness:
      "nolock"     a call draws with no lock and no open (the code before the
@@ -28,13 +40,17 @@
                   so a term closes the source under its draw: AtMostOneSource
      "noclear"    term closes the source but leaves open set: AtMostOneSource
      "nostir"     the open runs sodium_init alone, which opens nothing once
-                  sodium is initialized: AtMostOneSource *)
+                  sodium is initialized: AtMostOneSource
+     "initnolock" rocketnet_init opens the source without the mutex:
+                  AtMostOneSource *)
 EXTENDS Integers, FiniteSets
 CONSTANTS Threads, MaxCalls, MaxTerms, Defect
 ASSUME Threads \in Nat \ {0} /\ MaxCalls \in Nat \ {0} /\ MaxTerms \in Nat
-ASSUME Defect \subseteq {"nolock", "nohold", "noclear", "nostir"}
+ASSUME Defect \subseteq {"nolock", "nohold", "noclear", "nostir", "initnolock"}
 
 T == 1..Threads
+I == Threads + 1          \* rocketnet_init
+Actors == T \cup {I}
 Free == 0
 
 VARIABLES open,     \* rocketnet_crypto_open, read and written under the mutex
@@ -51,30 +67,45 @@ vars == <<open, src, fds, sodium, holders, excl, pc, calls, terms>>
 Init ==
     /\ open = FALSE /\ src = FALSE /\ fds = 0 /\ sodium = FALSE
     /\ holders = {} /\ excl = Free
-    /\ pc = [t \in T |-> "idle"]
-    /\ calls = [t \in T |-> 0]
+    /\ pc = [t \in Actors |-> "idle"]
+    /\ calls = [t \in Actors |-> 0]
     /\ terms = 0
 
 (* rocketnet_crypto_acquire: lock the mutex once no term is closing (Term
-   is one step, so a closing term never leaves the mutex free) *)
+   is one step, so a closing term never leaves the mutex free); for init,
+   rocketnet_crypto_open_source's lock *)
 Acquire(t) ==
     /\ pc[t] = "idle" /\ calls[t] < MaxCalls
-    /\ IF "nolock" \in Defect
+    /\ IF t # I /\ "nolock" \in Defect
        THEN /\ pc' = [pc EXCEPT ![t] = "draw"] /\ UNCHANGED excl
+       ELSE IF t = I /\ "initnolock" \in Defect
+       THEN /\ pc' = [pc EXCEPT ![t] = "locked"] /\ UNCHANGED excl
        ELSE /\ excl = Free
             /\ excl' = t /\ pc' = [pc EXCEPT ![t] = "locked"]
     /\ UNCHANGED <<open, src, fds, sodium, holders, calls, terms>>
 
-Hold(t) == IF "nohold" \in Defect THEN holders ELSE holders \cup {t}
+\* a generator counts itself a holder; init does not
+Hold(t) == IF t = I \/ "nohold" \in Defect THEN holders ELSE holders \cup {t}
+
+\* unlock: the mutex is let go only by the actor that holds it
+Unlock(t) == excl' = IF excl = t THEN Free ELSE excl
+
+\* after the open: a generator draws; init returns, its call finished
+AfterOpen(t) ==
+    IF t = I
+    THEN /\ pc' = [pc EXCEPT ![t] = "idle"]
+         /\ calls' = [calls EXCEPT ![t] = calls[t] + 1]
+    ELSE /\ pc' = [pc EXCEPT ![t] = "draw"]
+         /\ UNCHANGED calls
 
 (* rocketnet_crypto_open_locked: read open; when set, count the holder and
    unlock *)
 Recheck(t) ==
     /\ pc[t] = "locked"
     /\ IF open
-       THEN /\ holders' = Hold(t) /\ excl' = Free /\ pc' = [pc EXCEPT ![t] = "draw"]
-       ELSE /\ UNCHANGED <<holders, excl>> /\ pc' = [pc EXCEPT ![t] = "stir"]
-    /\ UNCHANGED <<open, src, fds, sodium, calls, terms>>
+       THEN /\ holders' = Hold(t) /\ Unlock(t) /\ AfterOpen(t)
+       ELSE /\ UNCHANGED <<holders, excl, calls>> /\ pc' = [pc EXCEPT ![t] = "stir"]
+    /\ UNCHANGED <<open, src, fds, sodium, terms>>
 
 (* sodium_init then randombytes_stir: the stir reads the flag first *)
 StirCheck(t) ==
@@ -93,9 +124,9 @@ StirOpen(t) ==
 (* set open, count the holder, unlock *)
 Publish(t) ==
     /\ pc[t] = "publish"
-    /\ open' = TRUE /\ holders' = Hold(t) /\ excl' = Free
-    /\ pc' = [pc EXCEPT ![t] = "draw"]
-    /\ UNCHANGED <<src, fds, sodium, calls, terms>>
+    /\ open' = TRUE /\ holders' = Hold(t) /\ Unlock(t)
+    /\ AfterOpen(t)
+    /\ UNCHANGED <<src, fds, sodium, terms>>
 
 (* randombytes_buf: sodium's own unlocked open when the flag is clear *)
 DrawCheck(t) ==
@@ -129,12 +160,12 @@ Term ==
     /\ UNCHANGED <<sodium, holders, excl, pc, calls>>
 
 Done ==
-    /\ \A t \in T : pc[t] = "idle" /\ calls[t] = MaxCalls
+    /\ \A t \in Actors : pc[t] = "idle" /\ calls[t] = MaxCalls
     /\ UNCHANGED vars
 
 Next ==
-    \/ \E t \in T : Acquire(t) \/ Recheck(t) \/ StirCheck(t)
-                    \/ StirOpen(t) \/ Publish(t) \/ DrawCheck(t) \/ DrawOpen(t) \/ Release(t)
+    \/ \E t \in Actors : Acquire(t) \/ Recheck(t) \/ StirCheck(t) \/ StirOpen(t) \/ Publish(t)
+    \/ \E t \in T : DrawCheck(t) \/ DrawOpen(t) \/ Release(t)
     \/ Term
     \/ Done
 
@@ -144,9 +175,9 @@ TypeOK ==
     /\ open \in BOOLEAN /\ src \in BOOLEAN /\ sodium \in BOOLEAN
     /\ fds \in Nat
     /\ holders \subseteq T
-    /\ excl \in 0..Threads
-    /\ pc \in [T -> {"idle", "locked", "stir", "stiropen", "publish", "draw", "drawopen", "drawn"}]
-    /\ calls \in [T -> 0..MaxCalls]
+    /\ excl \in 0..(Threads + 1)
+    /\ pc \in [Actors -> {"idle", "locked", "stir", "stiropen", "publish", "draw", "drawopen", "drawn"}]
+    /\ calls \in [Actors -> 0..MaxCalls]
     /\ terms \in 0..MaxTerms
 
 (* the source holds at most one descriptor: no open is lost *)

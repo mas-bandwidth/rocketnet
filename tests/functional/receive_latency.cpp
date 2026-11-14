@@ -35,7 +35,9 @@
     It also requires every message to arrive. A client row in a DEV build also
     requires that the clients' update opened no session packet on its own
     thread (rocketnet_crypto_tally): once connected, the I/O thread opens
-    every payload (proofs/tla/RNClientIoDecrypt.tla OpenPayloads). To add a
+    every payload (proofs/tla/RNClientIoDecrypt.tla OpenPayloads).
+    ROCKETNET_RECEIVE_LATENCY_REPORT names a file each run appends its counts
+    to, for a repeated run (a passing case's output is not shown). To add a
     transport, add a row to receive_latency_rows and register its case in
     rocketnet_functional_tests.cpp.
 
@@ -627,14 +629,29 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
 
     // wait is in updates; reported in milliseconds at the rate run, updates after
     const double mean = total > lost ? sum / ( total - lost ) : 0.0;
-    printf( "receive latency %s: %d messages, %d late, %d lost, wait mean %.1f ms max %.1f ms at %.0f Hz (mean %.3f max %.3f updates)\n", name,
-            total, late, lost, mean * 1000.0 / rate, worst * 1000.0 / rate, rate, mean, worst );
+    char line[256];
+    snprintf( line, sizeof( line ), "receive latency %s: %d messages, %d late, %d lost, wait mean %.1f ms max %.1f ms at %.0f Hz (mean %.3f max %.3f updates)\n",
+              name, total, late, lost, mean * 1000.0 / rate, worst * 1000.0 / rate, rate, mean, worst );
+    printf( "%s", line );
     if ( row->direction == RECEIVE_LATENCY_CLIENT )
     {
         printf( "receive latency %s: update opened %llu raw-fallback payloads, %llu after the I/O thread opened one\n", name,
                 (unsigned long long) client_window_opens, (unsigned long long) client_steady_opens );
     }
     fflush( stdout );
+
+    // a passing case's output is not shown (tests/suite_runner.h): a repeated
+    // run that wants the counts names a file to append them to
+    char report[512];
+    if ( rocketnet_test_getenv( "ROCKETNET_RECEIVE_LATENCY_REPORT", report, sizeof( report ) ) && report[0] != '\0' )
+    {
+        FILE * file = rocketnet_test_fopen( report, "a" );
+        if ( file )
+        {
+            fputs( line, file );
+            fclose( file );
+        }
+    }
 
     for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
     {

@@ -54,11 +54,6 @@ revision under review.
 | protocol tables' free stacks | `RNOpenAddress`, `RNFreeStackLayout` | each stack holds exactly the slots not live, each once; a map generation never reissued and never 0 |
 | wire sequence reconstruction | `AckBlockWrap`, `RNReconstructLayout` | the three-candidate arithmetic chooses the nearest candidate, the larger on a tie |
 | transport bank queues | `RNPortableRx`, `RNPortableTx`, `RNGsoHandoff`, `RNReceiveHandoff`, `RNGsoRecvFill`, `RNGsoRecvWalk`, `RNBufferHandoff`, `RNRioWorker`, `RNClientIocp`, `RNBankFifoLayout`, `RNMsgxPause` | every bank in exactly one place read through the free and ready arrays, the ready ring in publish order, no position outside an array, for FIFO and stack free queues, both initializers and the iocp client's ring of num_receives, and no GSO receive queue starved by the queues before it |
-`RNRioDriver` describes the earlier caller-driven two-phase RIO design; its
-recorded results are historical, and the shipped worker is modeled by
-`RNRioWorker`. `RNBufferHandoffBase` describes the earlier batched receive of
-the client's legacy path; its recorded results are historical, and the shipped
-client receive is modeled by `RNReceiveHandoff`.
 | RIO send slots | `RNRioWorker`, `RNRioSendSlotLayout` | a reservation returns only a free slot at the counter's own width, the send_ready ring the handed phases in order |
 | IOCP server queues and send leases | `RNIocpRefQueue`, `RNIocpRetryStop`, `RNIocpRunRing`, `RNIocpSendLease` | bounded MPMC reference queue with a push a stalled pop refuses kept and retried, stop-ticketed receive retry queue, USO run-ticket ring and generation-tagged send operation leases whose release push a stalled pop refuses is retried |
 | client I/O compaction | `RNClientIoDecrypt`, `RNClientIoCompactLayout` | every record names the slot holding its datagram after the in-place compaction, records dense from slot 0 |
@@ -89,6 +84,12 @@ client receive is modeled by `RNReceiveHandoff`.
 | RIO lanes | `RNRioLaneLayout` | a packet id decodes back to the lane and slot it was staged in, and an id at or past the lanes' total slots is refused |
 | msgx server transport | `RNMsgxReceiveFill`, `RNMsgxSendRuns`, `RNMsgxSocketTable`, `RNMsgxAddressIndex` | a datagram read only into room in the receive worker's three banks; the send path's counting sort, runs, partial sends and resends at the code's layout; the per-client socket table's slot words, retire and sweep, free stack and cooldown table; the address index's open addressing with backward-shift delete (no tombstones), for every assignment of homes |
 
+`RNRioDriver` describes the earlier caller-driven two-phase RIO design; its
+recorded results are historical, and the shipped worker is modeled by
+`RNRioWorker`. `RNBufferHandoffBase` describes the earlier batched receive of
+the client's legacy path; its recorded results are historical, and the shipped
+client receive is modeled by `RNReceiveHandoff`.
+
 ReplayWindow's two gate invariants (`NoAdvanceBeforeConnect` and
 `NoOpenBeforeConnect`), RNWrittenRing's `NoUnwrittenRead`, and RNOpenAddress's
 clear-first `EraseEnds` hold by construction. The gated receive never opens or
@@ -101,10 +102,6 @@ the production relationship being proved. A model-check result is evidence for
 its stated abstraction; unit and functional gates still verify the C++ seam.
 Deliberately broken configurations remain negative controls and are named as
 such in the run inventory.
-
-`RNRioDriver` describes the earlier caller-driven two-phase RIO design; its
-recorded results are historical, and the shipped worker is modeled by
-`RNRioWorker`.
 
 Each `Trace<Module>` module (for example `TraceRNSendReserveCalls`) binds the
 code's recorded calls to its module through the trace check
