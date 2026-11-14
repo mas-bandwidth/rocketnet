@@ -10,7 +10,9 @@ not establish throughput or latency qualification; see [Testing](TESTING.md).
 
 Transport selection is runtime: one build carries every transport its
 platform has. Linux production servers have xdp (privileged), gso (SO_REUSEPORT +
-sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and io_uring; macOS production
+sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and io_uring (non-root), tried in
+the order xdp, io_uring, gso, so a Linux server without root runs io_uring
+where the build and the kernel have it and gso otherwise; macOS production
 servers have msgx; Windows production servers have iocp and rio. Portable
 servers and clients are also available on every platform; the portable server
 is a fallback, not a production server transport. Production server
@@ -22,7 +24,7 @@ per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 environment variables (precedence: default < struct < env):
 
     ./bin/functional                                # auto: the platform's recommended transport order
-                                                #   (production linux: xdp,gso,io_uring,portable — falls on refusal)
+                                                #   (production linux: xdp,io_uring,gso,portable — falls on refusal)
     ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
                                                 #   portable server is available in both build modes
                                                 # a one-element list is a pin: that transport
@@ -159,7 +161,7 @@ server's thread count before the server starts. In order:
    xdp pre-flight: eth0 has 4 combined queues and the server runs 2 XDP threads (num_xdp_threads; R7): provision the NIC with `sudo scripts/rocketnet-provision eth0 2`, or set num_xdp_threads (ROCKETNET_SERVER_NUM_XDP_THREADS) to 4
    ```
 
-   `auto` then falls to `gso`; with `xdp` alone start returns
+   `auto` then falls to `io_uring` (or `gso` where io_uring refuses); with `xdp` alone start returns
    `NO_TRANSPORT_FOUND`.
 5. Read the NIC's current count with `ethtool -l eth0` (the `Combined` line
    under "Current hardware settings").
@@ -217,7 +219,8 @@ after the interface name for more):
     scripts/rocketnet-provision eth0 verify
 
     # 4. Run the server: the xdp rung grants only on a verified machine, and the
-    #    automatic transport order falls to gso with the reason named where it is not.
+    #    automatic transport order falls to io_uring (gso where io_uring refuses)
+    #    with the reason named where it is not.
 
     # 4a. ON IXGBE (and any NIC whose XDP attach resets the port): the attach
     #    rebuilds the interrupt vectors after the pre-flight has passed, and
@@ -245,7 +248,7 @@ after the interface name for more):
     #    repin. A RESTART needs provision first again: the old server's
     #    detach rebuilds the vectors once more, and they come back on cpu 0.
     #    Skip it and the new server's pre-flight refuses R4, one line a
-    #    vector, then the summary, and `auto` falls to gso:
+    #    vector, then the summary, and `auto` falls to io_uring (or gso):
     #
     #      xdp pre-flight: irq 120 (queue 0 of eth0) affinity is '0', want cpu 1, the cpu xdp thread 0 pins to (R4): run sudo scripts/rocketnet-provision eth0 1
     #      xdp pre-flight failed: this machine is not provisioned ...
@@ -263,7 +266,7 @@ after the interface name for more):
     # 5. AFTER A CRASH (a server that died without destroy): its XDP program
     #    stays ATTACHED to the interface, and it is NOT inert: it drops every
     #    datagram to the server's address and port, so a restart on that port
-    #    with any transport (auto falls to gso) receives nothing. The library
+    #    with any transport (auto falls to io_uring or gso) receives nothing. The library
     #    never unloads anyone; unload it with step 2 (provision mode runs
     #    xdp-loader unload -a on the interface, removing every XDP program
     #    attached to it), or by hand with xdp-loader unload -a eth0.

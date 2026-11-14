@@ -16,8 +16,8 @@ does not have the transport.
 | Transport | Platform | Server rank | Client rank | What it needs from the host |
 | --- | --- | --- | --- | --- |
 | `xdp` | Linux | 10 | - | effective UID 0, permission to raise `RLIMIT_MEMLOCK` for the 4096-byte UMEM frames, a NIC driver with AF_XDP, a real port (not 0), and a build with XDP compiled in; see [docs/LINUX.md](LINUX.md), section 6 |
+| `io_uring` | Linux | 15 | - | nothing privileged; a build configured with liburing, and a kernel that allows io_uring (Linux 6.0 or later, not disabled by `kernel.io_uring_disabled` or a seccomp profile); `num_io_uring_workers` at most 32 |
 | `gso` | Linux | 20 | 10 | nothing privileged; uses UDP GSO and GRO where the kernel has them, plain `sendmmsg`/`recvmmsg` where it does not; `num_gso_workers` at most 32 |
-| `io_uring` | Linux | 25 | - | a build configured with liburing, and a kernel that allows io_uring; `num_io_uring_workers` at most 32 |
 | `msgx` | macOS | 10 | 10 | the Darwin `sendmsg_x`/`recvmsg_x` batch calls; see [docs/MACOS.md](MACOS.md) |
 | `portable` | every platform | development 30, production 50 | 30 | UDP sockets only |
 | `iocp` | Windows | 40 | 10 | Winsock overlapped I/O; uses UDP send and receive offload where the stack has them; see [docs/WINDOWS.md](WINDOWS.md) |
@@ -28,11 +28,17 @@ So `auto` resolves to:
 
 | Platform | Server, development build | Server, production build | Client |
 | --- | --- | --- | --- |
-| Linux | `xdp`, `gso`, `io_uring`, `portable` | `xdp`, `gso`, `io_uring`, `portable` | `gso`, `portable` |
+| Linux | `xdp`, `io_uring`, `gso`, `portable` | `xdp`, `io_uring`, `gso`, `portable` | `gso`, `portable` |
 | macOS | `msgx`, `portable` | `msgx`, `portable` | `msgx`, `portable` |
 | Windows | `portable`, `iocp`, `rio` | `iocp`, `rio`, `portable` | `iocp`, `portable` |
 
-A Linux build without liburing has no `io_uring` row. `rio` ranks after
+On Linux the order runs from the most direct transport to the weakest, with
+`portable` last. `xdp` needs root, so without root (a GameLift or other
+managed fleet, a container) a Linux server runs `io_uring` where the build and
+the kernel have it, and `gso` where they do not. A Linux build without liburing
+has no `io_uring` row, and a kernel or seccomp profile that refuses io_uring
+makes `io_uring` refuse at create (`io_uring transport refused: this kernel
+does not accept the io_uring ring ...`), so `auto` goes on to `gso`. `rio` ranks after
 `iocp`, so `auto` reaches it only when `iocp` refuses; pin it to run it.
 
 **Pinning.** Set `transport` in `rocketnet_server_config_t` or
@@ -156,7 +162,7 @@ as an argument, as below, or set the variable on the `sudo` line.
    xdp pre-flight: eth0 has 4 combined queues and the server runs 2 XDP threads (num_xdp_threads; R7): provision the NIC with `sudo scripts/rocketnet-provision eth0 2`, or set num_xdp_threads (ROCKETNET_SERVER_NUM_XDP_THREADS) to 4
    ```
 
-   and `auto` falls to `gso` (with `xdp` alone, start returns
+   and `auto` falls to `io_uring`, or to `gso` where io_uring refuses (with `xdp` alone, start returns
    `NO_TRANSPORT_FOUND`).
 5. Read the NIC's current count with `ethtool -l eth0`: the `Combined` line
    under "Current hardware settings".

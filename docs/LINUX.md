@@ -115,13 +115,13 @@ comes first in `auto`, zero means the endpoint does not have that transport
 | transport | server rank | client rank | row |
 | --- | ---: | ---: | --- |
 | `xdp` | 10 | 0 | `sdk/rocketnet_drivers.inc` |
+| `io_uring` | 15 | 0 | `sdk/rocketnet_drivers.inc` |
 | `gso` | 20 | 10 | `sdk/rocketnet_drivers.inc` |
-| `io_uring` | 25 | 0 | `sdk/rocketnet_drivers.inc` |
 | `portable` | development: 30; production: 50 | 30 | `sdk/rocketnet_drivers.inc` |
 | `loopback` | pin only | pin only | `sdk/rocketnet_drivers.inc` |
 
-The Linux server `auto` order in both builds is **xdp → gso → io_uring → portable**. A build without liburing omits
-`io_uring` from the list. The portable client side remains available.
+The Linux server `auto` order in both builds is **xdp → io_uring → gso → portable**: the most direct transport first and
+`portable` last. A build without liburing omits `io_uring` from the list. The portable client side remains available.
 `loopback` is in-process, never chosen by `auto`, and selected only by name
 (`TRANSPORTS.md`, `sdk/rocketnet_driver.h`). The Linux client `auto` order is
 **gso → portable** (`sdk/rocketnet_drivers.inc`). The Linux portable transport
@@ -137,8 +137,15 @@ ask for no `SCHED_RR`. `msgx` is a macOS transport (`sdk/rocketnet_drivers.inc`)
 on Linux a pin naming it is skipped with an info line, as any name this
 platform does not have is ([TRANSPORTS.md](TRANSPORTS.md)).
 
-Because `gso` ranks ahead of `io_uring`, `auto` grants `io_uring` only on a
-host where `gso` refuses. To run `io_uring`, pin it (section 3).
+`xdp` needs root (section 6), so without root, for example on a GameLift or
+other managed fleet or in a container, `auto` grants `io_uring` where the build
+has liburing and the kernel accepts io_uring, and `gso` where it does not. A
+kernel or seccomp profile that refuses io_uring (many container runtimes'
+default profiles, or `kernel.io_uring_disabled`) makes the create log
+`io_uring transport refused: this kernel does not accept the io_uring ring,
+opcodes, provided buffer ring or multishot receive (Linux 6.0) the transport
+needs` and `auto` goes on to `gso`. To run `gso` where io_uring would start,
+pin it (section 3).
 
 **How start walks it.** Public create parses the list; server start tries
 candidates left to right and the first grant wins (`sdk/rocketnet_server_transport.cpp`). Each refusal logs a warning,
@@ -413,7 +420,7 @@ pre-flight logs
 xdp pre-flight: eth0 has 4 combined queues and the server runs 2 XDP threads (num_xdp_threads; R7): provision the NIC with `sudo scripts/rocketnet-provision eth0 2`, or set num_xdp_threads (ROCKETNET_SERVER_NUM_XDP_THREADS) to 4
 ```
 
-then `xdp pre-flight failed`, and `auto` falls to `gso`; with `xdp` alone
+then `xdp pre-flight failed`, and `auto` falls to `io_uring` (or `gso` where io_uring refuses); with `xdp` alone
 start returns `NO_TRANSPORT_FOUND`.
 
 **The interface MTU.** The wire assumes a 1500-byte link
@@ -690,13 +697,14 @@ startup and an `xdp` transport label alone do not establish zero-copy.
   (`sdk/rocketnet_server_socket_linux.cpp`), and any unmet condition
   ends in `xdp pre-flight failed: this machine is not provisioned for the XDP data plane`
   (`sdk/rocketnet_server_socket_linux.cpp`). On an unprivileged host
-  `auto` therefore falls to `gso` (`.github/workflows/ci.yml`).
+  `auto` therefore falls to `io_uring`, or to `gso` where io_uring refuses
+  (`.github/workflows/ci.yml`).
 - A real port and a global address: port 0 refuses `xdp` (section 2), and a
   link-local address (IPv4 169.254.0.0/16, IPv6 fe80::/10) is refused by name
   (`sdk/rocketnet_server_socket_linux.cpp`).
 - The gateway's neighbour entry: create refuses `xdp` with `no neighbor entry
   with a link-layer address` when the host has not yet talked to its gateway
-  (`auto` then falls to `gso`); ping the gateway before create, or set
+  (`auto` then falls to `io_uring`, or `gso`); ping the gateway before create, or set
   `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` ([Environment](ENVIRONMENT.md)).
 - Queues: `num_xdp_threads`, default 1, equal to the NIC's combined queue
   count (R7); worker CPUs start at `num_os_cpus`, default 1
@@ -965,11 +973,12 @@ What each transport needs, from the requirements above:
 
 - **portable** and **gso**: nothing beyond a UDP socket; no capability
   (`sdk/rocketnet_server_gso.h`). An unprivileged container's `auto`
-  grants `gso`, since `xdp` refuses for want of root (section 6).
+  grants `io_uring` where its seccomp profile allows io_uring, and `gso`
+  where it does not, since `xdp` refuses for want of root (section 6).
 - **io_uring**: kernel policy that permits the process to create rings
   (section 5), and a seccomp profile that allows the `io_uring_setup`, `io_uring_enter` and `io_uring_register`
-  calls liburing makes. A refusing profile makes the probe fail and the
-  the next transport is tried (section 5). Pin it, since `auto` grants `gso` first.
+  calls liburing makes. A refusing profile makes the probe fail and
+  the next transport, `gso`, is tried (section 5).
 - **xdp**: euid 0 in the container (R1), the kernel's grant of an AF_XDP
   socket and a BPF program load (K1), permission to raise `RLIMIT_MEMLOCK`
   to unlimited (section 8), the NIC itself in the container's network

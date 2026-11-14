@@ -1,9 +1,13 @@
 # RocketNet transports on Amazon GameLift Servers
 
-Use `gso` as the starting Linux transport for managed fleets. Evaluate
-`io_uring` only after verifying its build and kernel requirements. RocketNet's
-`xdp` transport requires effective UID 0 and host provisioning that a managed
-fleet or container image alone does not establish. This is a deployment
+A managed fleet's game server runs without root, so RocketNet's `xdp`
+transport, which requires effective UID 0 and host provisioning that a managed
+fleet or container image alone does not establish, refuses, and `auto` runs
+`io_uring` where the build has liburing and the instance's kernel accepts
+io_uring, and `gso` where it does not
+([TRANSPORTS.md](TRANSPORTS.md)). Read the granted transport from the
+`server transport <name> granted after refusals` log line or
+`rocketnet_server_transport_name`; pin `gso` to run it instead. This is a deployment
 assessment, not a recorded GameLift qualification run.
 
 AWS and ENA references below were checked on 2026-10-31. Fleet images and
@@ -84,12 +88,14 @@ actually checks.
 
 ## Transport choice
 
-For an ordinary managed Linux deployment, pin `gso` or use `gso,portable` if
-an explicit fallback is acceptable. Read `rocketnet_server_transport_name`
-after start and retain startup refusals and socket-buffer grants. A server
-pin does not select the clients' transport.
+For an ordinary managed Linux deployment, leave `transport` on `auto`: without
+root it grants `io_uring` where the build and the kernel have it and `gso`
+otherwise. Pin `gso`, or use `gso,portable`, to run gso where io_uring would
+start. Read `rocketnet_server_transport_name` after start and retain startup
+refusals and socket-buffer grants. A server pin does not select the clients'
+transport.
 
-Pin `io_uring` only in a build that includes it and on a runtime where its
+A pin of `io_uring` needs a build that includes it and a runtime where its
 probe succeeds. An unavailable io_uring name is skipped, and a list containing
 only skipped names reverts to auto with a warning; the name query is essential.
 See [Transport selection](TRANSPORTS.md) and [Linux io_uring requirements](LINUX.md#5-io_uring).

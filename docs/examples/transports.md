@@ -7,7 +7,7 @@ a client exchange over the loopback interface, `127.0.0.1`.
 
 Three kinds of `transport` setting, each created in turn on a server:
 - **auto** (`NULL`): the platform's recommended transport order from `sdk/rocketnet_drivers.inc`. A Linux server tries
-  `xdp`, then `gso`, then `io_uring`, then `portable`; macOS tries `msgx`, then `portable`;
+  `xdp`, then `io_uring`, then `gso`, then `portable`; macOS tries `msgx`, then `portable`;
   Windows tries `iocp`, then `rio`, then `portable` in production builds (`portable`, then `iocp`, then `rio` in development builds). Clients on `auto` try `gso`, then `portable` on Linux; `msgx`, then `portable` on macOS; and `iocp`, then `portable` on Windows. The first transport that starts wins.
 - **a pin**: one name available for this endpoint and platform. The server
   gets that transport or start fails. A known name unavailable for this
@@ -44,8 +44,8 @@ failure prints one `FAIL: ...` line and exits 1.
 ```
 warning: server transport xdp refused: a port-zero public address ...
 warning: server transport xdp refused. trying the next candidate
-info: server transport gso granted after refusals: xdp
-auto chose gso
+info: server transport io_uring granted after refusals: xdp
+auto chose io_uring
 pin chose portable
 list chose gso
 error: unknown transport "not-a-transport" in transport list ... (valid names: ...)

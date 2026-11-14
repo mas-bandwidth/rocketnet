@@ -294,8 +294,8 @@ BPF/libxdp development headers or libraries, BPF clang, or `xxd`:
     cmake --build build-no-xdp --parallel 4
 
 The `xdp` rung reports that it was disabled at build time. A server start
-with only that candidate is refused with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`. A pin of `xdp` fails; automatic selection continues with `gso`, `io_uring`
-(when built), then `portable` in either build. The installed CMake package also omits the
+with only that candidate is refused with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT`. A pin of `xdp` fails; automatic selection continues with `io_uring`
+(when built), `gso`, then `portable` in either build. The installed CMake package also omits the
 BPF/libxdp dependencies. Native `test_xdp` and `test_xdp_filter` targets are
 not built; the host-C filter and portable frame-codec unit tests still run.
 Configure with `-DROCKETNET_XDP=ON` (the default) to restore the native

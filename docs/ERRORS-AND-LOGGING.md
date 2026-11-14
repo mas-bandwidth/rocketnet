@@ -124,7 +124,7 @@ status code and the accompanying `ERROR` log line:
      effective UID 0; Linux capabilities alone do not satisfy that preflight.
      Then verify provisioning (`CAP_NET_ADMIN`, `CAP_BPF`, `RLIMIT_MEMLOCK`),
      NIC queue count, and memory budget, or include
-     `"gso,io_uring,portable"` / `"auto"` so the server can fall back cleanly.
+     `"io_uring,gso,portable"` / `"auto"` so the server can fall back cleanly.
 4. **Handshake stage timeouts, denials, and protocol/config mismatches**:
    - Observe `rocketnet_client_state(client)` on each frame after
      `rocketnet_client_update(client, time)` and compare with
