@@ -21,7 +21,8 @@
 // Address already in use" on the second bind.
 //
 // So the port comes from below the kernel's ephemeral range
-// (/proc/sys/net/ipv4/ip_local_port_range), where no bind of port 0 is ever
+// (/proc/sys/net/ipv4/ip_local_port_range on Linux, the sysctl
+// net.inet.ip.portrange.first on macOS), where no bind of port 0 is ever
 // given a port. Only a socket that names the port can take it. Each caller
 // names its own slot, and each slot is a separate part of the band, so two
 // cases never scan the same ports. In a slot the scan starts at an offset
@@ -35,7 +36,7 @@
 // The result is 0 when the host leaves no band below its ephemeral range, or
 // when no port in the slot can be bound. The caller checks for 0.
 
-#if defined( __linux__ )
+#if defined( __linux__ ) || defined( __APPLE__ )
 
 #include <errno.h>
 #include <stdint.h>
@@ -44,6 +45,9 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#if defined( __APPLE__ )
+#include <sys/sysctl.h>
+#endif // #if defined( __APPLE__ )
 
 enum rocketnet_test_reserved_port_slot_t
 {
@@ -61,6 +65,18 @@ static inline uint16_t rocketnet_test_reserved_port( int slot )
 {
     const unsigned first_port = 30000;
 
+    unsigned ephemeral_first = 0;
+#if defined( __APPLE__ )
+    int portrange_first = 0;
+    size_t portrange_first_bytes = sizeof( portrange_first );
+    if ( sysctlbyname( "net.inet.ip.portrange.first", &portrange_first, &portrange_first_bytes, NULL, 0 ) != 0 || portrange_first <= 0 )
+    {
+        printf( "  reserved port: net.inet.ip.portrange.first is not readable\n" );
+        return 0;
+    }
+    ephemeral_first = (unsigned) portrange_first;
+    const int range_read = 2;
+#else // #if defined( __APPLE__ )
     FILE * port_range = fopen( "/proc/sys/net/ipv4/ip_local_port_range", "r" );
     if ( !port_range )
     {
@@ -68,10 +84,10 @@ static inline uint16_t rocketnet_test_reserved_port( int slot )
         return 0;
     }
 
-    unsigned ephemeral_first = 0;
     unsigned ephemeral_last = 0;
     const int range_read = fscanf( port_range, "%u %u", &ephemeral_first, &ephemeral_last );
     fclose( port_range );
+#endif // #if defined( __APPLE__ )
     if ( range_read != 2 || ephemeral_first <= first_port + ROCKETNET_TEST_PORT_SLOTS )
     {
         printf( "  reserved port: no band between %u and the ephemeral range (starts at %u)\n", first_port, ephemeral_first );
@@ -117,6 +133,6 @@ static inline uint16_t rocketnet_test_reserved_port( int slot )
     return 0;
 }
 
-#endif // #if defined( __linux__ )
+#endif // #if defined( __linux__ ) || defined( __APPLE__ )
 
 #endif // ROCKETNET_TESTS_FUNCTIONAL_RESERVED_PORT_H
