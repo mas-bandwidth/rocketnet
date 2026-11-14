@@ -84,6 +84,18 @@ handshake that follows or the family race that runs after an IPv6 grant
   transport order loop's `budget_refused[candidate]` check `continue`s
   before any socket is opened; without it the candidate's allocations
   would run past the budget the plan loop refused.
+- `proofs/tla/MCRNClientTransportOrderBrokenBudgetIgnoresCustom.cfg` violates
+  `NoBudgetOnlyWhenNoneTryable`. `Broken = {"budgetignorescustom"}` is the
+  v1.1.58 rule: only a fitting plan counts against the refusal. TLC's trace
+  is the initial state: candidate 1 refused, candidate 2 custom, result
+  `"nobudget"`. In the v1.1.58 code the custom row's plan lookup returned
+  false, so it was counted neither refused nor allowed, and
+  `budget_refused_total > 0 && budget_allowed == 0` refused the create
+  before the transport order reached it; the walk itself skips only
+  `budget_refused` candidates and would have opened it. The unit cases are
+  in `tests/test_unit_transport_budget.cpp`; the driver extension's
+  `external_transport_budget_fallback` runs it end to end with a real
+  custom row on both endpoints.
 - `proofs/tla/MCRNClientTransportOrderBrokenNoFallback.cfg` violates
   `NoExhaustWhileReachable`. `Broken = {"nofallback"}` falls to the next
   candidate on an IPv6 refusal. TLC's trace: a token naming both families,
