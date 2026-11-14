@@ -4686,11 +4686,14 @@ void rocketnet_platform_count_receive_reset()
 
 uint64_t rocketnet_platform_receive_resets()
 {
-#if defined( _M_X64 ) || defined( _M_ARM64 )
+#if ( defined( _M_X64 ) || defined( _M_ARM64 ) ) && _MSC_VER >= 1920
     return (uint64_t) __iso_volatile_load64( &rocketnet_platform_receive_reset_count );
+#elif defined( _M_X64 ) || defined( _M_ARM64 )
+    // VS 2017 (v141) declares no __iso_volatile_load64 for x64: an aligned 64-bit volatile read is the same single load
+    return (uint64_t) rocketnet_platform_receive_reset_count;
 #else
     return (uint64_t) InterlockedCompareExchange64( &rocketnet_platform_receive_reset_count, 0, 0 );
-#endif // #if defined( _M_X64 ) || defined( _M_ARM64 )
+#endif // #if ( defined( _M_X64 ) || defined( _M_ARM64 ) ) && _MSC_VER >= 1920
 }
 
 int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t * socket )

@@ -77,7 +77,8 @@ static void test_platform_spin_lock_backoff_source()
 REGISTER_UNIT_TEST( test_platform_spin_lock_backoff_source );
 
 // A relaxed 64-bit load must not be a locked read-modify-write. On 64-bit MSVC
-// the word is readable with the volatile load intrinsic, so the load path and
+// the word is readable with the volatile load intrinsic (a plain volatile read
+// before VS 2019, which does not declare it for x64), so the load path and
 // the receive-reset read take the guarded branch instead of the compare-exchange
 // fallback the 32-bit targets still need.
 
@@ -94,11 +95,13 @@ static void platform_text_check_relaxed_u64_load( const std::string & source, co
         return;
     }
 
-    // the 64-bit MSVC branch is the #if of the guard and ends at its #else;
-    // the fallback runs from the #else to the #endif, with no directive
-    // between, and nothing outside them loads the word
+    // the 64-bit MSVC branch is the #if of the guard and ends at its #elif;
+    // the #elif (64-bit MSVC older than VS 2019, which has no intrinsic) runs
+    // to the #else; the fallback runs from the #else to the #endif, with no
+    // directive between, and nothing outside them loads the word
     const std::string body = text.substr( start, end - start );
-    const std::string guard = "#if defined( _M_X64 ) || defined( _M_ARM64 )";
+    const std::string guard = "#if ( defined( _M_X64 ) || defined( _M_ARM64 ) ) && _MSC_VER >= 1920";
+    const std::string older_guard = "#elif defined( _M_X64 ) || defined( _M_ARM64 )";
     const size_t if_at = body.find( guard );
     check( if_at != std::string::npos );
     if ( if_at == std::string::npos )
@@ -106,19 +109,27 @@ static void platform_text_check_relaxed_u64_load( const std::string & source, co
         return;
     }
     const size_t taken_at = if_at + guard.size();
+    const size_t elif_at = body.find( older_guard, taken_at );
     const size_t else_at = body.find( "#else", taken_at );
     const size_t endif_at = body.find( "#endif", taken_at );
-    check( else_at != std::string::npos && endif_at != std::string::npos && else_at < endif_at );
-    if ( else_at == std::string::npos || endif_at == std::string::npos || else_at >= endif_at )
+    check( elif_at != std::string::npos && else_at != std::string::npos && endif_at != std::string::npos && elif_at < else_at && else_at < endif_at );
+    if ( elif_at == std::string::npos || else_at == std::string::npos || endif_at == std::string::npos || elif_at >= else_at || else_at >= endif_at )
     {
         return;
     }
-    check( body.find( "#", taken_at ) == else_at );
+    check( body.find( "#", taken_at ) == elif_at );
+    check( body.find( "#", elif_at + 1 ) == else_at );
     check( body.find( "#", else_at + 1 ) == endif_at );
+
+    // the older 64-bit branch is a plain volatile read: no intrinsic, no compare-exchange
+    const std::string older = body.substr( elif_at + older_guard.size(), else_at - elif_at - older_guard.size() );
+    check( older.find( "return" ) != std::string::npos );
+    check( older.find( "__iso_volatile_load64" ) == std::string::npos );
+    check( older.find( "InterlockedCompareExchange64" ) == std::string::npos );
 
     // the taken branch returns the volatile load and holds no compare-exchange
     // (either spelling: InterlockedCompareExchange64 or the underscore intrinsic)
-    const std::string taken = body.substr( taken_at, else_at - taken_at );
+    const std::string taken = body.substr( taken_at, elif_at - taken_at );
     const size_t returned = taken.find( "return" );
     const size_t plain = taken.find( "__iso_volatile_load64" );
     check( returned != std::string::npos && plain != std::string::npos && returned < plain );
