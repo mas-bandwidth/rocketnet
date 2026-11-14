@@ -74,6 +74,7 @@
 #define DST_OUTAGE_EXPECT_RELIABLE_TIMEOUT 2    // opted in: RELIABLE_TIMED_OUT at the configured value
 #define DST_OUTAGE_EXPECT_RESPONSE_TIMEOUT 3    // the attempt fails in state 3 with CONNECTION_RESPONSE_TIMED_OUT at T
 #define DST_OUTAGE_EXPECT_CONNECT_OR_RETRY 4    // states 1-2: the attempt survives, or fails as the handshake allows (C)
+#define DST_OUTAGE_EXPECT_REQUEST_ESCAPED  5    // state 2, client dark: the request escapes, the attempt fails in state 3 at T
 
 #define DST_OUTAGE_DT                      0.01
 #define DST_OUTAGE_KEEPALIVE_SECONDS       0.1
@@ -1115,6 +1116,29 @@ static inline int dst_outage_run( const dst_outage_options_t * o, dst_outage_res
             else if ( state != ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED && result->client_end_after < T - DST_OUTAGE_KEEPALIVE_SECONDS - rtt - 2.0 * DST_OUTAGE_DT )
             {
                 dst_outage_fail( w, "per-state silence ended the attempt before T" );
+            }
+        }
+        else if ( o->expect == DST_OUTAGE_EXPECT_REQUEST_ESCAPED )
+        {
+            // state 2 with the client's direction dark: the client sends its
+            // first connection request in the update that enters state 2
+            // (W2-51), before the harness can see the state and go dark. The
+            // challenge comes back on the bright direction a round trip
+            // later and the client moves to state 3, where its responses
+            // meet the dark link; the server forgets the half-open handshake
+            // after its deadline, so the attempt fails with
+            // CONNECTION_RESPONSE_TIMED_OUT at T after the challenge
+            // (USAGE.md: the handshake is not covered). The server never
+            // held the client and the application saw nothing.
+            if ( !result->client_ended || result->client_state != ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT || result->connected ||
+                 result->server_ended || result->early > 0 )
+            {
+                dst_outage_fail( w, "state 2, client dark: the attempt did not fail in state 3 with CONNECTION_RESPONSE_TIMED_OUT" );
+            }
+            else if ( result->client_end_after < T - DST_OUTAGE_KEEPALIVE_SECONDS - 2.0 * DST_OUTAGE_DT ||
+                      result->client_end_after > T + rtt + DST_OUTAGE_KEEPALIVE_SECONDS + 2.0 * DST_OUTAGE_DT )
+            {
+                dst_outage_fail( w, "state 2, client dark: the attempt did not fail T after the challenge" );
             }
         }
     }

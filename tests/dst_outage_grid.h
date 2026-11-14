@@ -41,6 +41,16 @@ static inline void dst_outage_row( dst_outage_tally_t * tally, const char * labe
         result.passed = 0;
         snprintf( result.failure, sizeof( result.failure ), "the world could not be built" );
     }
+    // state 3 with the client's direction dark: the first response escapes
+    // in the update that enters state 3 (W2-51) and both ends survive. A
+    // library that held the response to its send step would end the attempt
+    // with CONNECTION_RESPONSE_TIMED_OUT, which this row no longer accepts
+    if ( result.passed && o->expect == DST_OUTAGE_EXPECT_RESPONSE_TIMEOUT &&
+         ( !result.response_escaped || !result.connected || result.client_ended || result.server_ended ) )
+    {
+        result.passed = 0;
+        snprintf( result.failure, sizeof( result.failure ), "state 3, client dark: the first response did not escape, or an end followed" );
+    }
     char text[64];
     snprintf( text, sizeof( text ), "%s seed=%llu", label, (unsigned long long) seed );
     dst_outage_print( text, o, &result );
@@ -110,9 +120,18 @@ static inline void dst_outage_set_complement( dst_outage_tally_t * tally, struct
 
 // An outage of T - 1 starting at each stage of the handshake, a 30 s token,
 // T = 10, 30 and 60, round trips 150, 600 and 900 ms. State 3 with the
-// client's direction dark fails the attempt with CONNECTION_RESPONSE_TIMED_OUT
-// at T (the server's 5 s handshake window closes first: USAGE.md and the
-// design's establishment table); every other row survives.
+// client's direction dark: the client sends its first response in the update
+// that enters state 3 (W2-51), before the harness can see the state and go
+// dark, so that one response escapes, the server holds the client and both
+// ends survive. Those rows are judged as RESPONSE_TIMEOUT so the harness
+// measures the escape, and dst_outage_row requires it. The state 3 timeout
+// end itself is reached in test_unit_handshake_witness.cpp and
+// test_unit_status_codes_reached.cpp. State 2 with only the client's
+// direction dark: the first request escapes the same way, the challenge comes
+// back, and the attempt fails in state 3 with CONNECTION_RESPONSE_TIMED_OUT T
+// after it (USAGE.md: the handshake is not covered). Every other row
+// survives, or for states 1 and 2 at long T or round trips, may fail as
+// those states allow.
 
 static inline void dst_outage_set_handshake( dst_outage_tally_t * tally, struct rocketnet_loopback_hub_t * hub, uint64_t seed )
 {
@@ -153,6 +172,13 @@ static inline void dst_outage_set_handshake( dst_outage_tally_t * tally, struct 
                     if ( early && timeouts[t] >= 30 )
                     {
                         o.expect = DST_OUTAGE_EXPECT_CONNECT_OR_RETRY;
+                    }
+                    // state 2 with only the client's direction dark: the
+                    // request escapes and the challenge returns (W2-51), so
+                    // the attempt reaches state 3 and fails there at T
+                    if ( starts[s] == DST_OUTAGE_START_STATE_2 && o.dark == DST_OUTAGE_C2S )
+                    {
+                        o.expect = DST_OUTAGE_EXPECT_REQUEST_ESCAPED;
                     }
                     dst_outage_row( tally, "handshake", &o, seed );
                 }
