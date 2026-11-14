@@ -282,6 +282,68 @@ void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac()
 
 #endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
 
+#if !defined( _WIN32 ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM ) && !defined( ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE )
+
+// The bundled sodium's POSIX critical section (sodium/README.md, "POSIX
+// lock"). sodium_misuse leaves it before taking it again to read the misuse
+// handler, so a fatal failure inside sodium_init (which holds it) does not
+// deadlock. A fatal random draw on another thread holds nothing: its leave
+// must not unlock the mutex that a thread inside sodium_init or
+// sodium_set_misuse_handler holds. The draw's whole fatal path (handler, then
+// abort) is test_sodium_misuse_logs_before_abort. sodium/sodium.h names these
+// with the bundled copy's prefix; this file does not include it
+
+extern "C" int rocketnet_sodium_sodium_crit_enter( void );
+extern "C" int rocketnet_sodium_sodium_crit_leave( void );
+
+void rocketnet_test_sodium_crit_leave_unlocks_only_on_the_owner()
+{
+    std::atomic<int> step( 0 );
+    int owner_enter = -1;
+    int owner_leave = -1;
+
+    // the owner enters, as sodium_init and sodium_set_misuse_handler do, and
+    // holds the lock while this thread leaves
+
+    std::thread owner( [&step, &owner_enter, &owner_leave]()
+                       {
+        owner_enter = rocketnet_sodium_sodium_crit_enter();
+        step.store( 1, std::memory_order_release );
+        while ( step.load( std::memory_order_acquire ) != 2 )
+        {
+        }
+        owner_leave = rocketnet_sodium_sodium_crit_leave(); } );
+
+    while ( step.load( std::memory_order_acquire ) != 1 )
+    {
+    }
+
+    // this thread holds nothing, as a fatal draw's sodium_misuse does: its
+    // leave is refused, and the owner still holds the lock and leaves it
+
+    const int foreign_leave = rocketnet_sodium_sodium_crit_leave();
+    step.store( 2, std::memory_order_release );
+    owner.join();
+
+    if ( owner_enter != 0 || foreign_leave != -1 || owner_leave != 0 )
+    {
+        printf( "sodium crit: owner enter %d, foreign leave %d, owner leave %d\n", owner_enter, foreign_leave, owner_leave );
+        fflush( stdout );
+    }
+    rocketnet_check( owner_enter == 0 );
+    rocketnet_check( foreign_leave == -1 );
+    rocketnet_check( owner_leave == 0 );
+
+    // the owner's own leave, as sodium_misuse inside sodium_init does: it
+    // unlocks, and a second leave holds nothing
+
+    rocketnet_check( rocketnet_sodium_sodium_crit_enter() == 0 );
+    rocketnet_check( rocketnet_sodium_sodium_crit_leave() == 0 );
+    rocketnet_check( rocketnet_sodium_sodium_crit_leave() == -1 );
+}
+
+#endif // #if !defined( _WIN32 ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM ) && !defined( ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE )
+
 static void rocketnet_test_fill_vector_fields( struct rocketnet_signed_connect_data_t * signed_fields,
                                                struct rocketnet_connect_token_private_t * private_fields )
 {

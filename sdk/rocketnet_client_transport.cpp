@@ -55,10 +55,12 @@ static std::atomic<unsigned long long> g_client_link_simulator_ordinal{ 0 };
 // The update clock the three owners share: the caller's raw time beside the
 // clamped time they hand out. proofs/tla/RNUpdateClock.tla models it: ForwardStep, a
 // forward raw step, BackwardStep, a backwards raw step, and NonFiniteStep, a
-// non-finite sample. A forward step of d advances the clamped time by exactly
-// d while the caller's clock is still behind, so a clock whose caller
-// stepped backwards resumes with the caller instead of standing still until
-// the caller's clock passes the last good time again (BASE's rule, which
+// non-finite or negative sample, refused before the clock reads it, so it
+// changes neither the raw time nor the offset (a negative is never a raw time
+// the next sample steps forward from). A forward step of d advances the
+// clamped time by exactly d while the caller's clock is still behind, so a
+// clock whose caller stepped backwards resumes with the caller instead of
+// standing still until the caller's clock passes the last good time again (BASE's rule, which
 // proofs/tla/MCRNUpdateClockBrokenStall.cfg reverses). Once the caller's clock has
 // caught up, the clock is the caller's clock again. While no backwards step
 // has happened the offset is exactly 0.0 and the returned time is the
@@ -84,6 +86,25 @@ double rocketnet_update_clock_advance( double last_good, double * raw_time, doub
         rocketnet_api_misuse_record();
 
         rocketnet_error( "update refused its time %f: it is not finite; the last good time %f is kept", time, last_good );
+
+        return last_good;
+    }
+
+    if ( time < 0.0 )
+    {
+        // a negative sample is refused like a non-finite one, before the
+        // clock reads it: it changes neither the raw time nor the offset, so
+        // a later negative is never a forward step from an earlier one, and
+        // every negative is counted
+
+        if ( clamped )
+        {
+            *clamped = true;
+        }
+
+        rocketnet_api_misuse_record();
+
+        rocketnet_error( "update refused its time %f: it is negative; the last good time %f is kept", time, last_good );
 
         return last_good;
     }
@@ -3427,8 +3448,8 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     }
 
     // the caller's clock is clamped once, before anything reads it: a NaN,
-    // an infinity or a step backwards becomes the last good time, counted and
-    // loud in a debug build.
+    // an infinity, a negative time or a step backwards becomes the last good
+    // time, counted and loud in a debug build.
 
     bool time_clamped = false;
     time = rocketnet_update_clock_advance( client_transport->time, &client_transport->raw_time, &client_transport->time_offset, time, &time_clamped );

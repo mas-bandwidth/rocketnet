@@ -28,8 +28,10 @@ it, so it is reviewed). Within 1.x the baseline only grows.
 
 Macros not recorded, with the reason: ROCKETNET_H (the include guard),
 ROCKETNET_VERSION, ROCKETNET_VERSION_FULL, _MAJOR, _MINOR, _PATCH (change at
-every release by design; tools/release_version.py and release-check.yml hold
-them), ROCKETNET_EXPORT (the platform's visibility attribute, not a value),
+every release by design; release-check.yml's version consistency job holds
+them, and tools/release_gates.py refuses a minor or patch of 100 or more, where
+ROCKETNET_VERSION would collide), ROCKETNET_EXPORT (the platform's visibility
+attribute, not a value),
 ROCKETNET_DEV (the build mode a consumer selects).
 
   python3 tools/check_abi.py                 check the current header

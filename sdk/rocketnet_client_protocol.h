@@ -87,6 +87,7 @@ typedef void ( *rocketnet_client_retire_keys_t )( void * context );
     X( replay_session, struct rocketnet_replay_protection_t replay_session ) \
     X( accepted_session, struct rocketnet_replay_protection_t accepted_session ) \
     X( defer_payload_acks, int defer_payload_acks ) \
+    X( handshake_early_send, int handshake_early_send ) \
     X( integrity_failures, uint64_t integrity_failures ) \
     X( attempt_start_time, double attempt_start_time ) \
     X( last_send_time, double last_send_time ) \
