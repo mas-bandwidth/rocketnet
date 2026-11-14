@@ -339,18 +339,20 @@ fi
 # the real run: step 12 of section 12, in order
 # ------------------------------------------------------------------------
 
+# -n: ssh would otherwise read its stdin, and inside a loop fed from
+# sorted.tsv the first call would take the rest of the client list
 ssh_run()
 {
     local host=$1
     shift
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$@"
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$host" "$@"
 }
 
 scp_run()
 {
     local host=$1
-    ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" mkdir -p "rocketnet-live/results/$run_id" || return 1
-    scp -q -o BatchMode=yes -o ConnectTimeout=10 "$remote" "$host:rocketnet-live/live-xdp-fleet-remote"
+    ssh -n -o BatchMode=yes -o ConnectTimeout=10 "$host" mkdir -p "rocketnet-live/results/$run_id" || return 1
+    scp -q -o BatchMode=yes -o ConnectTimeout=10 "$remote" "$host:rocketnet-live/live-xdp-fleet-remote" < /dev/null
 }
 
 fail()
