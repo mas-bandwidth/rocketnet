@@ -159,14 +159,14 @@ struct rocketnet_unit_file_registrar_t
 do                                                                                                                \
 {                                                                                                                 \
     ROCKETNET_TEST_COUNT_CHECK();                                                                                 \
-    bool rocketnet_unit_check_passed = !!(condition); /* not const: MSVC 14.29 and older flag a constant (C4127) */ \
+    bool rocketnet_unit_check_passed = !!(condition); /* not const: MSVC up to 14.29 flags a constant (C4127) */  \
     if ( !rocketnet_unit_check_passed )                                                                           \
     {                                                                                                             \
-        if ( *rocketnet_unit_expected_fail_active() )                                                           \
+        if ( *rocketnet_unit_expected_fail_active() )                                                             \
         {                                                                                                         \
             throw rocketnet_unit_expected_failure_t{ __LINE__ };                                                  \
         }                                                                                                         \
-        printf( "check failed: ( %s ), function %s, file %s, line %d\n", #condition,                             \
+        printf( "check failed: ( %s ), function %s, file %s, line %d\n", #condition,                              \
                 (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );                                   \
         fflush( stdout );                                                                                         \
         exit( 1 );                                                                                                \
