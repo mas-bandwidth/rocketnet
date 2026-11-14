@@ -802,7 +802,7 @@ def tlc_failure(kind, exit_code):
 
 
 def check_seed(args, name, layer, plant_binary, seed, facts):
-    """(name, seed, log, failures, clean report, plant reruns)"""
+    """(name, seed, log, failures, clean report, plant reruns, whether the plant fired and met every check)"""
     log, failures = [], []
     base = args.dir / f"{name}-{seed}"
     if base.exists():
@@ -817,10 +817,10 @@ def check_seed(args, name, layer, plant_binary, seed, facts):
             said = [line for chunk in log for line in chunk.splitlines() if line.startswith("tla_trace: ")]
             failures.append(f"{kind} harness failed, timed out or printed no CONFIG, TRACE, ACTS, PLANT-FIRED and PLANT-AT lines"
                             + (" (it said: " + "; ".join(line[len("tla_trace: "):] for line in said[:3]) + ")" if said else ""))
-            return name, seed, log, failures, None, 0
+            return name, seed, log, failures, None, 0, False
         if not same_walk(first, second, base / kind / "walk", base / kind / "again"):
             failures.append(f"{kind} walk is nondeterministic: two runs of one seed differ")
-            return name, seed, log, failures, None, 0
+            return name, seed, log, failures, None, 0, False
         if first["records"] != steps + 1 or len(first["lines"]) != steps + 1:
             failures.append(f"{kind} trace has {first['records']} records, not steps + 1 = {steps + 1}")
         if first["acts"] != first["logged"]:
@@ -925,7 +925,7 @@ def check_seed(args, name, layer, plant_binary, seed, facts):
 def chain_ti(text):
     """The last matched record of a plant run whose behaviour TLC did not print, from TLC's own counts, or None.
     TraceStep moves ti one record on and TraceReject keeps it, so when TLC reports TraceConsistent violated and its
-    whole state graph is one chain (every count equal, outdegree at most 1, nothing left on the queue), the states
+    whole state graph is one chain (every count equal, outdegree exactly 1, nothing left on the queue), the states
     are ti = 1 .. k and the rejecting state: k is the distinct count less one"""
     if "Error: Invariant TraceConsistent is violated." not in text:
         return None

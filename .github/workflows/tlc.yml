@@ -29,7 +29,9 @@
 # the CI runner's size), held to the completed result and counts its row
 # records. Measured 2026-11-14 for v1.1.58's models, alone / in the slice:
 # ReplayWindowMid 335 / 400 s (budget 900), RNClientIoDecrypt 484 / 553 s
-# (1260), ClientConnectionLCrash 1093 / 1156 s (2320; its state space grew
+# (1260; the slice time on the model before its already-received guard,
+# whose counts differ by under 0.1%), ClientConnectionLCrash 1093 / 1156 s (2320; its
+# measured_s column is the alone time, as for the others; its state space grew
 # fivefold with W2-51 and W2-113, past the old 900). The slowest night on the
 # runner so far (run 43542939752, deep CI beside it) ran ReplayWindowMid in
 # 678 s, 1.7 times its slice time; each budget keeps that factor. That adds

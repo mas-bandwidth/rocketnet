@@ -276,7 +276,7 @@ hand-written traces:
   printing a behaviour is run again, up to five times; each seed's log says
   `PLANT-ATTEMPTS` when it was). When all five print none, the last matched record
   is read from TLC's own counts, only when its state graph is one chain (states
-  generated, distinct states and depth equal, outdegree at most 1, nothing left on
+  generated, distinct states and depth equal, outdegree exactly 1, nothing left on
   the queue): the states are `ti` = 1 .. k and the rejecting state, so k is the
   distinct count less one; the log says `PLANT-TI-FROM-COUNTS`. Early rejections miss
   the behaviour most: msgxsendruns seeds 21360 and 21377 (rejected at records 5 and

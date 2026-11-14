@@ -91,7 +91,8 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   zero-sequence or wrong-size record is refused and counted; a forged record
   whose type the state accepts gets `update`'s own replay check on `mainWin`
   first (`rocketnet_client_open_session` checks a record the I/O thread did
-  not open for zero sequence and already received before anything else): a
+  not open for zero sequence and already received after the state check and
+  before the verdict switch): a
   sequence `mainWin` holds is counted as already received and nothing more,
   and any other runs `rocketnet_client_integrity_failure` in its position,
   which at the limit retires the keys and ends the session; a
