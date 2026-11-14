@@ -549,6 +549,37 @@ REGISTER_UNIT_TEST( test_platform_socket_hygiene_wake_is_close_on_exec );
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
 
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
+
+// EMSGSIZE on a POSIX receive is weather: a connected client socket gets it
+// from an ICMP fragmentation-needed or packet-too-big naming its 4-tuple,
+// returned before any datagram is dequeued, never from a long datagram (the
+// receive reports the true size). The drain skips it and reads on, spending
+// its whole budget of ROCKETNET_PLATFORM_RECEIVE_READS (64) on a repeat; the
+// socket has no descriptor and nothing is opened.
+
+static void test_platform_receive_emsgsize_is_weather()
+{
+    struct rocketnet_platform_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    socket.handle = -1;
+
+    struct rocketnet_address_t from;
+    uint8_t packet_data[64];
+    rocketnet_platform_inject_receive_errno_repeat_for_testing( EMSGSIZE, 1000 );
+
+    const int received = rocketnet_platform_socket_receive_packet( &socket, &from, packet_data, (int) sizeof( packet_data ) );
+    const int remaining = rocketnet_platform_receive_errno_remaining_for_testing();
+    rocketnet_platform_inject_receive_errno_for_testing( 0 );
+
+    rocketnet_unit_check( received == 0 );
+    rocketnet_unit_check( remaining == 1000 - 64 );
+}
+
+REGISTER_UNIT_TEST( test_platform_receive_emsgsize_is_weather );
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
+
 #if defined( __APPLE__ )
 static void test_platform_socket_hygiene_msgx_chaff_drain_is_bounded()
 {
@@ -676,10 +707,10 @@ static void test_platform_socket_hygiene_dual_stack_sets_both_dont_fragment()
     rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_DONTFRAGMENT && ipv6_options.values[1] == 1 );
 #elif defined( __linux__ )
     rocketnet_unit_check( ipv4_options.count == 1 );
-    rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_MTU_DISCOVER && ipv4_options.values[0] == IP_PMTUDISC_DO );
+    rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_MTU_DISCOVER && ipv4_options.values[0] == IP_PMTUDISC_PROBE );
     rocketnet_unit_check( ipv6_options.count == 2 );
-    rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == IPV6_MTU_DISCOVER && ipv6_options.values[0] == IPV6_PMTUDISC_DO );
-    rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_MTU_DISCOVER && ipv6_options.values[1] == IP_PMTUDISC_DO );
+    rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == IPV6_MTU_DISCOVER && ipv6_options.values[0] == IPV6_PMTUDISC_PROBE );
+    rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_MTU_DISCOVER && ipv6_options.values[1] == IP_PMTUDISC_PROBE );
 #elif defined( __APPLE__ )
     // darwin refuses IP_DONTFRAG on an AF_INET6 socket (EINVAL), and
     // IPV6_DONTFRAG keeps its v4-mapped datagrams whole, so it is asked alone

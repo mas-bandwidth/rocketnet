@@ -12,9 +12,10 @@
 // abort does nothing, in every build, each counts one api_misuse and logs, and
 // neither asserts. Every other transport finish or abort misuse asserts in a
 // debug build and, in every build, returns 0 (abort does nothing) and counts
-// one api_misuse. Out-of-range byte counts on a live reservation still abort
-// the reservation and return 0 without firing the missing-start assertion, and
-// a subsequent valid start and finish succeeds.
+// one api_misuse. Out-of-range byte counts on a live message reservation
+// abort the reservation and return 0 without firing the missing-start
+// assertion, and a subsequent valid start and finish succeeds; on an
+// in-place reservation they return 0 and keep the reservation open.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"

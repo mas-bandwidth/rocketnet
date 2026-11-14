@@ -89,6 +89,9 @@ OWED = {
     "ROCKETNET_COUNTER_GSO_RECEIVE_DROPPED_SOURCE": (("linux",), "a source family the boundary cannot convert"),
     "ROCKETNET_COUNTER_IOCP_URO_BATCHES": (("windows",), "a receive completion split into more than one segment; checked only == 0"),
     "ROCKETNET_COUNTER_IOCP_USO_FALLBACKS": (("windows",), "a USO send refused and resent frame by frame; checked only == 0"),
+    "ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL": (("linux", "macos", "windows"),
+                                                  "the client's delivery batch filling within one update; checked only == 0 "
+                                                  "(roadmap client-acked-batch-full-test)"),
 }
 
 # The rows a builtin transport's receive_drop_totals (sdk/rocketnet_driver_builtin.cpp)
@@ -423,28 +426,105 @@ def functions(code):
     return found
 
 
-def moves(span, word):
-    """Whether a check span reads the counter other than as `counter == 0` (which says it never moved)."""
-    for clause in re.split(r"&&|\|\||,", span):
-        if not word.search(clause):
-            continue
-        if re.search(r"==\s*0\s*\)*\s*$", clause) or re.match(r"^\s*\(*\s*0\s*==", clause):
-            continue
-        return True
+# a zero in any spelling a test writes it: 0, 0u, 0ull, (uint64_t) 0
+ZERO = r"(?:\(\s*[A-Za-z_][A-Za-z0-9_ ]*\)\s*)?0[uUlL]*"
+
+
+def moving_clause(clause):
+    """Whether one clause of a check can say a value moved. A clause that holds
+    whatever the value is, or only when it never moved, says nothing about a
+    count: `x == 0` (any spelling of zero, either side), `!x`, `x >= 0` (always
+    true of a count), and `x == x` (a value compared with itself)."""
+    if re.search(r"==\s*" + ZERO + r"\s*\)*\s*$", clause) or re.match(r"^\s*\(*\s*" + ZERO + r"\s*==", clause):
+        return False
+    if re.search(r">=\s*" + ZERO + r"\s*\)*\s*$", clause) or re.match(r"^\s*\(*\s*" + ZERO + r"\s*<=", clause):
+        return False
+    if re.match(r"^\s*\(*\s*!(?!=)", clause):
+        return False
+    sides = re.split(r"==|>=|<=|!=|<(?!<)|(?<![->])>(?!>)", clause)
+    if len(sides) == 2 and re.sub(r"[\s()]", "", sides[0]) == re.sub(r"[\s()]", "", sides[1]):
+        return False
+    return True
+
+
+def wrapped(text):
+    """Whether text is one parenthesis: its first ( closes at its last character
+    (`( a ) && ( b )` starts and ends with one, but is not wrapped)."""
+    if not (text.startswith("(") and text.endswith(")")):
+        return False
+    depth = 0
+    for i, c in enumerate(text):
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0:
+                return i == len(text) - 1
     return False
+
+
+def clauses(span):
+    """A check's clauses: its text split at &&, || and commas outside any inner
+    parenthesis or bracket, so `value( c, X ) == 1` is one clause. A clause
+    that is one parenthesis is split again inside it, so
+    `( X == 0 ) && ( other == 2 )` is the clauses `X == 0` and `other == 2`."""
+    text = span.strip()
+    while wrapped(text):
+        text = text[1:-1].strip()
+    parts, depth, start, i = [], 0, 0, 0
+    while i < len(text):
+        c = text[i]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif depth == 0 and (text.startswith("&&", i) or text.startswith("||", i)):
+            parts.append(text[start:i])
+            start = i + 2
+            i += 2
+            continue
+        elif depth == 0 and c == ",":
+            parts.append(text[start:i])
+            start = i + 1
+        i += 1
+    parts.append(text[start:])
+    if len(parts) == 1:
+        return parts
+    return [clause for part in parts for clause in clauses(part)]
+
+
+def moving_words(spans):
+    """The names read by a clause of a check that can say a value moved."""
+    words = set()
+    for span in spans:
+        for clause in clauses(span):
+            if moving_clause(clause):
+                words.update(IDENT.findall(clause))
+    return words
+
+
+def moves(span, word):
+    """Whether a check span reads the counter in a clause that can say it moved (never as
+    `counter == 0`, which says it never moved, nor in a clause that holds whatever it is)."""
+    return any(word.search(clause) and moving_clause(clause) for clause in clauses(span))
 
 
 def observed_in(code, names, helpers=frozenset(), fields=None, called=frozenset()):
     fields = fields or {}
     spans = check_spans(code, helpers)
     checked = " ".join(spans)
-    checked_words = set(IDENT.findall(checked))
+    # only a name a check reads in a clause that can say a value moved: a
+    # name read by `x == 0`, `x >= 0` or `!x` alone observes nothing. The
+    # clauses are split once per file, joined by newlines (a name never spans one)
+    moving = "\n".join(c for span in spans for c in clauses(span) if moving_clause(c))
+    checked_words = set(IDENT.findall(moving))
+    statics = set(re.findall(r"\bstatic\b[^;{}()=]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", code))
     seen = set()
     for name in names:
         if name not in code:
             continue
         word = re.compile(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_])" % re.escape(name))
-        if any(moves(span, word) for span in spans):
+        if word.search(moving):
             seen.add(name)
             continue
         # a row of a table whose field (or element) a check reads
@@ -479,7 +559,9 @@ def observed_in(code, names, helpers=frozenset(), fields=None, called=frozenset(
         # into a name it returns (`valid &= counter == 1; ... return valid;`), or read into a
         # name a check in this file reads
         for fname, body in functions(code).items():
-            if fname in checked_words or fname in called:
+            # a static function is called only from its own file: a check in
+            # another file that calls a function of the same name calls another
+            if fname in checked_words or (fname in called and fname not in statics):
                 returned = set()
                 for ret in re.findall(r"\breturn\b([^;]*);", body):
                     if word.search(ret):
@@ -509,7 +591,7 @@ def observed(root, counters, tests, dev):
     fields = struct_fields(codes.values())
     called = set()
     for code in codes.values():
-        called.update(IDENT.findall(" ".join(check_spans(code, helpers))))
+        called.update(moving_words(check_spans(code, helpers)))
     called = frozenset(called)
     for rel, code in codes.items():
         for name in observed_in(code, names, helpers, fields, called):
@@ -648,6 +730,37 @@ def self_test():
                                     "check( seam_ok( c ) );")
              + "bool seam_ok( const c_t * c ) { bool valid = true; valid &= c->values[ROCKETNET_COUNTER_BETA] == 1; return valid; }\n"),
         {}, False)
+    # the forms that hold whatever the counter is, or only when it never
+    # moved: none observes it (FG-G5)
+    beta_read = "uint64_t beta = c->values[ROCKETNET_COUNTER_BETA];\n    check( beta == 2 );"
+    for form in ("check( c->values[ROCKETNET_COUNTER_BETA] >= 0 );",
+                 "check( c->values[ROCKETNET_COUNTER_BETA] == 0u );",
+                 "check( c->values[ROCKETNET_COUNTER_BETA] == 0ull );",
+                 "check( c->values[ROCKETNET_COUNTER_BETA] == (uint64_t) 0 );",
+                 "check( 0u == c->values[ROCKETNET_COUNTER_BETA] );",
+                 "check( !c->values[ROCKETNET_COUNTER_BETA] );",
+                 "check( c->values[ROCKETNET_COUNTER_BETA] == c->values[ROCKETNET_COUNTER_BETA] );",
+                 "check( value( c, ROCKETNET_COUNTER_BETA ) == value( c, ROCKETNET_COUNTER_BETA ) );"):
+        run("checked by a form that holds whatever it is: " + form, tree(test_text=both.replace(beta_read, form)), {}, True)
+    run("read into a name a check reads only as never moved",
+        tree(test_text=both.replace("check( beta == 2 );", "check( beta == 0 );")), {}, True)
+    run("read into a name a check reads only as >= 0",
+        tree(test_text=both.replace("check( beta == 2 );", "check( beta >= 0 );")), {}, True)
+    run("checked only as never moved, in parentheses beside another clause",
+        tree(test_text=both.replace(beta_read, "check( ( c->values[ROCKETNET_COUNTER_BETA] == 0 ) && ( other == 2 ) );")),
+        {}, True)
+    run("still observed: a move checked beside a zero",
+        tree(test_text=both.replace("check( beta == 2 );", "check( beta == 2 && other == 0 );")), {}, False)
+    run("still observed: a move in parentheses beside a zero",
+        tree(test_text=both.replace("check( beta == 2 );", "check( ( beta == 2 ) && ( other == 0 ) );")), {}, False)
+    run("still observed: nonzero by truth value", tree(test_text=both.replace("check( beta == 2 );", "check( beta );")), {}, False)
+    run("still observed: compared with a value before", tree(test_text=both.replace("check( beta == 2 );",
+                                                                                     "check( beta == before + 1 );")), {}, False)
+    support = "static uint64_t read_beta( const c_t * c ) { return c->values[ROCKETNET_COUNTER_BETA]; }\n"
+    run("returned by a static function of another file that a check calls by the same name",
+        tree(test_text=both.replace(beta_read, "} static uint64_t read_beta( void ) { return 2; }\n"
+                                               "static void v() { check( read_beta() == 2 );")), {}, True)
+    support = ""
     if failures:
         for f in failures:
             print("FAIL self-test:", f)

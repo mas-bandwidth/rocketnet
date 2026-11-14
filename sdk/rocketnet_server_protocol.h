@@ -90,6 +90,15 @@ static inline int rocketnet_server_cookie_reply_source_words( int max_clients )
     return (int) ( bits / 64 );
 }
 
+// the repeat rung's table: one entry for each verify of one update at the
+// largest handshake work budget (ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE,
+// checked equal in sdk/rocketnet_server_protocol.cpp), and the two reasons
+// an entry records
+
+#define ROCKETNET_SERVER_REPEAT_TOKENS_MAX              1024
+#define ROCKETNET_SERVER_REPEAT_CLIENT_ID_CONNECTED     0
+#define ROCKETNET_SERVER_REPEAT_NO_SLOTS                1
+
 struct rocketnet_server_protocol_t
 {
     uint64_t protocol_id;
@@ -130,6 +139,19 @@ struct rocketnet_server_protocol_t
     struct rocketnet_server_acks_t * acks;
     struct rocketnet_counters_t * counters;
     struct rocketnet_signature_verify_budget_t signature_verify_budget;   // per-source failed-verify budget, before the verify
+
+    // the repeat rung (standard/TRANSPORT.md t12 rule 9 item 6;
+    // proofs/tla/ReceiveOrder.tla, the repeat rung): the token identifiers
+    // this update refused past the verify because their client id already
+    // held a slot or the server had no free slot, with that reason. A
+    // request for one of them later in the same update is refused before
+    // the work budget, so one valid token costs at most one verify an
+    // update. An entry is written only after a verify, so the table holds
+    // at most handshakes_per_update entries (the array is sized at the
+    // largest budget); update empties it.
+    uint8_t repeat_tokens[ROCKETNET_SERVER_REPEAT_TOKENS_MAX][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    uint8_t repeat_reasons[ROCKETNET_SERVER_REPEAT_TOKENS_MAX];    // ROCKETNET_SERVER_REPEAT_*
+    int num_repeat_tokens;
 
     // the connection ids (standard/MESSAGES.md m1.4 rule 5). connection_ids holds one
     // per client slot: nonzero and unique over the server's life while the

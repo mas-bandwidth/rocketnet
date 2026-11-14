@@ -203,7 +203,10 @@ static void max_clients_server_config( rocketnet_server_config_t * config )
 // 10.07 GB in a 10000 build, the same 1.02 GB as in the default build), and
 // the check allows a quarter more. Sizing even the receive and send buffers
 // alone from the build ceiling plans 1.69 GB, two thirds more than its share.
-// In the default build the two plans are the same server.
+// In the default build the 1000-client plan is the full one, so that check
+// cannot tell the two apart there: a server of half the build's slots holds
+// the default build to it too (0.47 GB against 0.92 GB at 1000), planning at
+// most five eighths of a full server.
 
 static void test_server_plan_follows_configured_max_clients()
 {
@@ -221,10 +224,13 @@ static void test_server_plan_follows_configured_max_clients()
     const uint64_t at_1000 = (uint64_t) rocketnet_server_required_memory( &config );
     config.max_clients = 999;
     const uint64_t at_999 = (uint64_t) rocketnet_server_required_memory( &config );
+    config.max_clients = ROCKETNET_MAX_CLIENTS / 2;
+    const uint64_t at_half = (uint64_t) rocketnet_server_required_memory( &config );
 
-    check( at_max > 0 && at_1000 > 0 && at_999 > 0 );
+    check( at_max > 0 && at_1000 > 0 && at_999 > 0 && at_half > 0 );
     check( at_999 <= at_1000 && at_1000 <= at_max );
     check( 4 * at_1000 * (uint64_t) ROCKETNET_MAX_CLIENTS <= 5 * 1000 * at_max );
+    check( 8 * at_half <= 5 * at_max );
 }
 
 REGISTER_UNIT_TEST( test_server_plan_follows_configured_max_clients );

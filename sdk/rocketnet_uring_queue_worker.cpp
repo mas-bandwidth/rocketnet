@@ -375,7 +375,7 @@ int rocketnet_uring_queue_worker_step( struct rocketnet_uring_queue_worker_t * w
     }
 #endif // #if defined( ROCKETNET_URING_QUEUE_WORKER_PLANT )
 
-    // RNUringQueueWorker.tla ReapOk, ReapAgain, ReapRefused, ReapPoll,
+    // RNUringQueueWorker.tla ReapOk, ReapAgain, ReapRefused, ReapTimer,
     // ReapRecvEnd, ReapWake: the oldest ready completion
 
     struct rocketnet_uring_queue_worker_completion_t completion;

@@ -184,6 +184,7 @@ int main( void )
     uint8_t chat_sent = 0, chat_received = 0;
     uint32_t position_sent = 0, last_position = 0;
     int positions_received = 0, stall_shown = 0, in_order = 1;
+    int malformed = 0;          // received messages of the wrong size or channel, dropped and counted
     const double start = rocketnet_time();
 
     while ( chat_received < NUM_CHAT && rocketnet_time() - start < 10.0 )
@@ -192,7 +193,10 @@ int main( void )
         rocketnet_server_update( server, 1000.0 + elapsed );
         rocketnet_client_update( client, 1000.0 + elapsed );
 
-        // the server's one queue names each message's channel; order holds within a channel
+        // the server's one queue names each message's channel; order holds within a
+        // channel. The sender's bytes are checked before they are read: a message of
+        // the wrong size, or on a channel this example does not use, is dropped and
+        // counted
 
         int chat_this_frame = 0, positions_this_frame = 0;
         const struct rocketnet_message_batch_t * batch;
@@ -204,6 +208,14 @@ int main( void )
         {
             for ( int i = 0; i < batch->num_messages; i++ )
             {
+                const int expected_bytes = batch->channel[i] == CHAT_CHANNEL ? 1 : batch->channel[i] == POSITION_CHANNEL ? 4
+                                                                                                                         : -1;
+                if ( batch->bytes[i] != expected_bytes )
+                {
+                    malformed++;
+                    continue;
+                }
+
                 if ( batch->channel[i] == CHAT_CHANNEL )
                 {
                     in_order &= batch->data[i][0] == chat_received + 1;
@@ -283,7 +295,12 @@ int main( void )
         rocketnet_sleep( 0.005 );
     }
 
-    const int result = chat_received == NUM_CHAT && in_order ? 0 : 1;
+    if ( malformed != 0 )
+    {
+        printf( "malformed messages dropped: %d\n", malformed );
+    }
+
+    const int result = chat_received == NUM_CHAT && in_order && malformed == 0 ? 0 : 1;
 
     rn_cli_client_stop_and_destroy( client, 1000.0 + rocketnet_time() - start );
     rn_cli_server_stop_and_destroy( server );

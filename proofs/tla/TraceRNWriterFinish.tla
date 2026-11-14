@@ -46,16 +46,23 @@ VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
 
 \* every model variable by the field name the harness writes
-VarsRec == [phase |-> phase, owner |-> owner, touched |-> touched, open |-> open, build |-> build, queued |-> queued, cap |-> cap, starts |-> starts, sent |-> sent, refused |-> refused, walked |-> walked]
+VarsRec == [phase |-> phase, owner |-> owner, touched |-> touched, open |-> open, build |-> build, queued |-> queued, held |-> held, cap |-> cap, starts |-> starts, sent |-> sent, refused |-> refused, cancelled |-> cancelled, lost |-> lost, walked |-> walked]
 
 \* the actions each operation of the code can be
-OpActs == [update |-> {"BeginFill"}, start |-> {"Start"}, finish |-> {"Finish"}, send_packets |-> {"SendPackets"}]
+OpActs == [update |-> {"BeginFill"}, start |-> {"StartSmall", "StartLarge", "StartReliable"}, finish |-> {"Finish", "FinishOver", "FinishRestart", "FinishBadBytes", "FinishLost"}, abort |-> {"Abort"}, send_packets |-> {"SendPackets"}]
 
 \* the action a record names, with the record's arguments; a name this CASE
 \* lacks stops TLC with an error
 Act(a, x) == CASE a = "BeginFill" -> BeginFill
-               [] a = "Start" -> Start(x[1], x[2])
+               [] a = "StartSmall" -> StartSmall(x[1], x[2])
+               [] a = "StartLarge" -> StartLarge(x[1], x[2])
+               [] a = "StartReliable" -> StartReliable(x[1], x[2])
                [] a = "Finish" -> Finish(x[1], x[2])
+               [] a = "FinishOver" -> FinishOver(x[1], x[2])
+               [] a = "FinishRestart" -> FinishRestart(x[1], x[2])
+               [] a = "FinishBadBytes" -> FinishBadBytes(x[1], x[2])
+               [] a = "FinishLost" -> FinishLost(x[1], x[2])
+               [] a = "Abort" -> Abort(x[1], x[2])
                [] a = "SendPackets" -> SendPackets
 
 TraceInit ==
@@ -92,19 +99,27 @@ TraceSpec == TraceInit /\ [][TraceStep \/ TraceReject \/ TraceDone]_<<vars, ti, 
 \* every record of the trace is the model step it names, from the one before
 TraceConsistent == ~rejected
 
-\* the row's reach predicates: some clean trace must see a writer's finish
-\* seal and hand off its packet and another refused (a start that found the
-\* update's capacity out), and stand after a send_packets that found nothing
-\* of either to finish
+\* the row's reach predicates. On a staged transport (the walk's odd
+\* seeds): a writer's finish that seals and hands off its packet and one
+\* refused for want of capacity; a large start and a reliable one held open,
+\* and messages they left on the reliable path; a send_packets that took
+\* those with no unreliable message queued; and, with a send budget (seed 3
+\* modulo 4), a start the bucket paid only a frame of its own for
 SealedAtFinish == sent > 0
 RefusedAtFinish == refused > 0
-NothingForWalk == phase = "main" /\ sent > 0 /\ refused > 0 /\ walked = 0
+LargeOpen == \E c \in Clients : open[c] = "large"
+ReliableOpen == \E c \in Clients : open[c] = "reliable"
+HeldForWalk == \E c \in Clients : held[c] > 0
+WalkTookHeld == phase = "main" /\ sent > 0 /\ refused > 0 /\ walked > 0 /\ cancelled > 0
+WholeOpen == \E c \in Clients : open[c] = "whole"
 
 \* and, on a buffered transport (the walk's even seeds): a start the ring had
-\* no slot for held open, its message queued by the writer's finish, and a
-\* send_packets that carried such messages with none refused
+\* no slot for held open, its message queued by the writer's finish, a start
+\* held behind it, and a send_packets that carried such messages with none
+\* refused
 RingOpen == \E c \in Clients : open[c] = "ring"
 RingQueued == \E c \in Clients : queued[c] > 0
+BehindOpen == \E c \in Clients : open[c] = "behind"
 WalkCarried == phase = "main" /\ sent > 0 /\ walked > 0 /\ refused = 0
 
 =============================================================================
