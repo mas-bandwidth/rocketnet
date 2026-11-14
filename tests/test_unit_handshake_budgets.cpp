@@ -710,13 +710,22 @@ REGISTER_UNIT_TEST( test_handshake_sealed_mismatch_charges_failure_budget );
 
 // The refusals past the verify that the sender does not choose charge
 // nothing: a client id already connected, and a full server's denial. Sent
-// 100 times in one window from one source, neither is ever limited.
+// 100 times in one update from one source, the first is verified and refused
+// (a full server sends its denial) and the 99 repeats are refused at the
+// repeat rung, before the work budget, counted by the same reason and
+// unanswered: one token takes one verify an update (standard/TRANSPORT.md
+// t12 rule 9 item 6; proofs/tla/ReceiveOrder.tla RepeatSpendsNoVerify). An
+// honest request in that update is still verified. Across updates the
+// source is never limited: each update's first request is verified again,
+// and the failed-signature budget is never charged.
 
 static void budgets_uncharged_refusal_never_limits( int full_server )
 {
     struct budgets_server_t test;
     budgets_server_setup( &test );
-    test.server.handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
+    // the default work budget, which 100 verifies of one token would spend
+    // six times over, leaving the honest request below BUDGET_EXCEEDED
+    test.server.handshakes_per_update = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = { 0 };
     if ( full_server )
@@ -736,18 +745,55 @@ static void budgets_uncharged_refusal_never_limits( int full_server )
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     budgets_build_request( request, 1, &source, test.server.cookie_key );
 
+    const int first_result = full_server ? ROCKETNET_SERVER_PROCESS_SEND_DENIED : ROCKETNET_SERVER_PROCESS_IGNORED;
+    const int first_bytes = full_server ? ROCKETNET_CONNECTION_DENIED_WIRE_BYTES : 0;
+
     const int sent = 100;
     for ( int i = 0; i < sent; i++ )
     {
         int response_bytes = 0;
         const int result = budgets_send( &test, &source, request, ROCKETNET_TEST_CREATE_TS, 1000.0, &response_bytes );
-        check( result == ( full_server ? ROCKETNET_SERVER_PROCESS_SEND_DENIED : ROCKETNET_SERVER_PROCESS_IGNORED ) );
-        check( response_bytes == ( full_server ? ROCKETNET_CONNECTION_DENIED_WIRE_BYTES : 0 ) );
+        check( result == ( i == 0 ? first_result : ROCKETNET_SERVER_PROCESS_IGNORED ) );
+        check( response_bytes == ( i == 0 ? first_bytes : 0 ) );
+        check( test.server.counters->handshakes_processed_this_update == 1 );
     }
 
     const int reason = full_server ? ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS
                                    : ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED;
     check( test.counters.values[reason] == (uint64_t) sent );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 0 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT] == 0 );
+    check( test.server.signature_verify_budget.failure_count == 0 );
+
+    // an honest request for another token in the same update is verified
+    {
+        uint8_t honest[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        budgets_build_request( honest, 2, &test.client_address, test.server.cookie_key );
+        int response_bytes = 0;
+        check( budgets_send( &test, &test.client_address, honest, ROCKETNET_TEST_CREATE_TS, 1000.0, &response_bytes ) ==
+               ( full_server ? ROCKETNET_SERVER_PROCESS_SEND_DENIED : ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE ) );
+        check( test.server.counters->handshakes_processed_this_update == 2 );
+    }
+
+    // across updates the retry is never limited: each update's first
+    // request is verified and refused as before, and its repeats are not
+    const int updates = 20;
+    for ( int u = 1; u <= updates; u++ )
+    {
+        rocketnet_server_protocol_update( &test.server, 1000.0 + 0.01 * u );
+        check( test.server.num_repeat_tokens == 0 );
+        for ( int i = 0; i < 3; i++ )
+        {
+            int response_bytes = 0;
+            check( budgets_send( &test, &source, request, ROCKETNET_TEST_CREATE_TS, 1000.0 + 0.01 * u, &response_bytes ) ==
+                   ( i == 0 ? first_result : ROCKETNET_SERVER_PROCESS_IGNORED ) );
+            check( response_bytes == ( i == 0 ? first_bytes : 0 ) );
+        }
+        check( test.server.counters->handshakes_processed_this_update == 1 );
+    }
+
+    // the honest request's denial counts once more on a full server
+    check( test.counters.values[reason] == (uint64_t) ( sent + 3 * updates + ( full_server ? 1 : 0 ) ) );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT] == 0 );
     check( test.server.signature_verify_budget.failure_count == 0 );
 

@@ -112,8 +112,45 @@ the lock outside `rocketnet_init`..`rocketnet_term` (the key generators), so no
 term can delete it safely. The generator's `LIFECYCLE_ADAPTATIONS` make it a
 statically initialised `SRWLOCK` (`SRWLOCK_INIT`): no init, nothing to delete,
 and safe on first use from any thread. sodium never takes the lock
-recursively (enter asserts it is not held), which an `SRWLOCK` requires. The
-POSIX and other branches are unchanged.
+recursively (enter asserts it is not held), which an `SRWLOCK` requires.
+
+## POSIX lock
+
+Upstream's configure defines `HAVE_PTHREAD`, which selects the pthread mutex
+for `sodium_crit_enter` and `sodium_crit_leave`. The vendor has no configure
+step, so off Windows the lock fell to the branch whose enter and leave do
+nothing: `sodium_init`, its `initialized` flag and the misuse handler were
+unlocked, and two threads could initialise at once (a ThreadSanitizer data
+race). Every POSIX platform the SDK supports has pthreads, and the SDK's own
+threads are pthreads, so the `LIFECYCLE_ADAPTATIONS` make the source select the
+pthread branch itself, on every build path (CMake or a game's own build), and
+declare the `locked` flag that branch asserts on (the baseline declared it for
+Windows only). The lock covers sodium's own initialisation; a draw before
+`sodium_init` still opens the random source unlocked, as upstream, so the SDK
+never draws without holding the source (`sdk/rocketnet.cpp`,
+`proofs/tla/RNCryptoSource.tla`).
+
+`sodium_misuse` leaves the critical section and takes it again before calling
+the handler, so a misuse inside `sodium_init`, which holds it, can reach the
+handler. Upstream's leave decides from `locked`, which says that some thread
+holds the lock, not that this one does: a fatal misuse on a thread outside the
+section while another thread holds it would clear that thread's flag and
+unlock a mutex it does not own. The adaptations make enter record the holder,
+`_sodium_lock_owner` (`pthread_self()`), and set `_sodium_lock_owned`, which
+leave clears; leave refuses (EPERM, as for an unlocked lock) unless the lock
+is owned and `pthread_equal` says this thread owns it, and reads `locked` only
+when it does, so a thread outside the section never touches `locked`. No
+thread-local storage: a production build carries none
+(`tools/check_no_thread_local.py`). A thread outside the section reads the
+owner while the holder may be writing it, so both are GCC/Clang `__atomic`
+accesses (`pthread_t` is an integer or a pointer on every POSIX platform the
+SDK supports): `_sodium_lock_owned` is stored with release after the owner
+and loaded with acquire before it, so a thread that sees the flag set reads
+that holder's id, and only the holder passes the test. The functional case
+`test_sodium_crit_leave_unlocks_only_on_the_owner`
+(`tests/functional/platform_primitives.cpp`) holds the lock on one thread and
+leaves on another. The Windows branch keeps upstream's check (roadmap
+`sodium-windows-lock-owner`).
 
 ## Reproduce
 

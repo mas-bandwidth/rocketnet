@@ -36,8 +36,9 @@ Also in this release, shipped in v1.1.50 but missing from its notes file
   names renamed. Released notes, the preview qualification records and the
   dated audits are left as written.
 - `ROADMAP.md` is back at the repository root, generated from
-  `docs/roadmap.sexp`, and linked from the README, with new entries for what
-  is not done and what the review before v1.2.0 found.
+  `docs/roadmap.sexp`, with new entries for what is not done and what the
+  review before v1.2.0 found. (Correction: these notes first said the README
+  links it; it does not.)
 - Tests and tools: the per-commit trace check runs in nine shards; it refuses
   a shard that holds no layer, and its summary line counts plant reruns
   (`reruns=N`).

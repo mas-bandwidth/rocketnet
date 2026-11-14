@@ -739,7 +739,7 @@ static void test_send_budget_no_allocation_after_create()
                 check( rocketnet_send_budget_set_kbps( b, 1 + ( lcg_next() % 20000 ), now ) );
             }
 
-            check( rocketnet_send_budget_can_send( b, 1 ) || b->tokens < 1.0 );
+            check( b->tokens >= 0.0 && b->tokens <= b->depth );
         }
     }
 
@@ -780,11 +780,11 @@ static void test_wire_bytes_boundaries()
 {
     const int min_block = ROCKETNET_ACK_BLOCK_MIN_BYTES;
     const int fit = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - min_block;
-    check( rocketnet_send_budget_wire_bytes( min_block, fit ) == ROCKETNET_PACKET_OVERHEAD_BYTES + min_block + fit );
+    check( rocketnet_send_budget_wire_bytes( min_block, fit ) == ROCKETNET_SEND_BUDGET );
     check( rocketnet_send_budget_wire_bytes( min_block, fit + 1 ) == 0 );
     check( rocketnet_send_budget_wire_bytes( min_block, 0 ) == 0 );
     check( rocketnet_send_budget_wire_bytes( min_block, -1 ) == 0 );
-    check( rocketnet_send_budget_max_wire_bytes( fit ) == ROCKETNET_PACKET_OVERHEAD_BYTES + min_block + fit );
+    check( rocketnet_send_budget_max_wire_bytes( fit ) == ROCKETNET_SEND_BUDGET );
     check( rocketnet_send_budget_max_wire_bytes( fit + 1 ) == 0 );
     check( rocketnet_send_budget_max_wire_bytes( 0 ) == 0 );
     check( rocketnet_send_budget_max_wire_bytes( -1 ) == 0 );

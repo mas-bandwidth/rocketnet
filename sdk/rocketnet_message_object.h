@@ -234,8 +234,8 @@ static_assert( sizeof( rn_message_connection_hot_t ) <= 32, "message hot slot mu
 // message finishes; its bytes already occupy their final position in the frame.
 #define RN_MESSAGE_RECEIPT_SERIALS_MAX 16 // same bound as the endpoint's receipt_serials
 
-// the message open on one connection (proofs/tla/RNMessageOpen.tla): at most
-// one per connection, so N fill threads may each hold one open on a
+// the message open on one connection (no model yet: roadmap
+// message-open-model): at most one per connection, so N fill threads may each hold one open on a
 // different connection. Written only by that connection's one filler in a
 // fill phase (sdk/rocketnet_fill_phase.h) and by main-thread operations.
 // rn_message_open_t pending: nonzero while a start is open. NO_CAPACITY is a
@@ -442,9 +442,9 @@ int rn_message_open_last( const struct rn_message_object_t * object );
 
 // the room query: true when rn_message_object_start with these arguments, now,
 // would be given its room; false when it would be dropped or refused, or would
-// find no room and end the connection (R5). Pure and allocation-free; the
-// store lookup scans the chosen class's chunks from its cursor
-// (rn_send_store_find).
+// find no room and end the connection (R5). Pure, allocation-free and O(1);
+// the store lookup reads the free stack top of the chosen class or its next
+// fresh chunk (rn_send_store_find).
 bool rn_message_object_send_room( const struct rn_message_object_t * object, int index, int channel, int reliability, int bytes );
 void rn_message_object_abort( struct rn_message_object_t * object, int index );
 uint32_t rn_message_object_send( struct rn_message_object_t * object, int index, int channel, int reliability, const uint8_t * data, int bytes );

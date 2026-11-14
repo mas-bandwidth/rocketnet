@@ -352,9 +352,9 @@ static void test_message_boundary_sizes_every_mode_every_channel()
     for ( int reliability = 0; reliability < ROCKETNET_CHANNEL_NUM_TYPES; ++reliability )
     {
         // only channel-bearing wire codes route across the configured channel set
-        const int channels = reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED ||
-                                     reliability == ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED || reliability == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED ||
-                                     reliability == ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT
+        const int channels = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
+                                     reliability == ROCKETNET_RELIABILITY_RELIABLE_ORDERED || reliability == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED ||
+                                     reliability == ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT
                                  ? 4
                                  : 1;
         for ( int channel = 0; channel < channels; ++channel )
@@ -417,8 +417,8 @@ static void test_message_boundary_sizes_every_mode_every_channel()
 
             check( got.size() == expected.size() );
 
-            const bool ordered = reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED || reliability == ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ||
-                                 reliability == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED || reliability == ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT;
+            const bool ordered = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED || reliability == ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
+                                 reliability == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED || reliability == ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
             bool matched[6] = { false, false, false, false, false, false };
 
             for ( size_t i = 0; i < got.size(); ++i )
@@ -479,7 +479,7 @@ static void test_message_boundary_sizes_every_mode_every_channel()
         // Code 1 promotes 1406, the first size past one packet's record.
 
             const uint32_t promoted = (uint32_t) rocketnet_counter_value( cc, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED );
-            check( promoted == ( reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED ? 1u : 0u ) );
+            check( promoted == ( reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? 1u : 0u ) );
             check( rocketnet_counter_value( cc, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == 0 );
             check( rocketnet_counter_value( cc, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT ) == 0 );
             boundary_teardown( &pair );
@@ -511,8 +511,8 @@ static void test_message_boundary_code1_full_record_beside_other_traffic()
         const std::vector<uint8_t> after = boundary_data( 3, 16 );
 
         check( rocketnet_message_client_send( pair.client, 0, companion, beside.data(), (int) beside.size() ) != 0 );
-        check( rocketnet_message_client_send( pair.client, 0, ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED, full.data(), (int) full.size() ) != 0 );
-        check( rocketnet_message_client_send( pair.client, 0, ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED, after.data(), (int) after.size() ) != 0 );
+        check( rocketnet_message_client_send( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, full.data(), (int) full.size() ) != 0 );
+        check( rocketnet_message_client_send( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, after.data(), (int) after.size() ) != 0 );
 
         for ( int step = 0; step < 64; ++step )
         {
@@ -554,7 +554,7 @@ static void test_message_boundary_oversize_unreliable_counts_failed_not_refused(
     const uint64_t failed_before = rocketnet_counter_value( cc, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
     const uint64_t refused_before = rocketnet_counter_value( cc, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
     const int oversize = 16384 + 1;
-    const uint32_t serial = rocketnet_message_client_send( pair.client, 0, ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED,
+    const uint32_t serial = rocketnet_message_client_send( pair.client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
                                                            boundary_data( 1, oversize ).data(), oversize );
     check( serial == 0 );
     check( rocketnet_counter_value( cc, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) == failed_before + 1 );
