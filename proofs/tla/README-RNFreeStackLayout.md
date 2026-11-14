@@ -6,6 +6,14 @@ first pops return 0, 1, 2, popped at `free[count - 1]` and pushed at
 `free[count]`. The open-addressed indexes beside them are `RNOpenAddress.tla`'s.
 The three take shapes run on one stack here, a superset of each table's.
 
+The client-slots stack fits this layout only for its take's guard order. Its
+release holds the index above the top, at `free_stack[free_stack_count +
+free_stack_held++]`, until `rocketnet_client_slots_publish` makes it
+poppable, and its pop moves the last held entry down into the popped place.
+That stack is modelled by `RNClientSlotsLayout.tla` (`Assign`,
+`ReleaseHandle`, `Release`, `Publish`); `StackIsFree` as stated here does not
+hold for it between a release and the publish.
+
 ## The instance
 
 `MCRNFreeStackLayout.tla`: capacity 3, map generations to 4, owner
@@ -16,10 +24,10 @@ generations 1 and 2.
 | Action | Code |
 |---|---|
 | `TakeMap` | `rocketnet_encryption_map_add` (`sdk/rocketnet_encryption_map.cpp`): refused when full (`num_free == 0` or the next generation 0), pops `free_indices[--num_free]`, tags the generation, which steps from its maximum to the exhausted 0 |
-| `TakeSlots(g)` | `rocketnet_client_slots_assign` (`sdk/rocketnet_client_slots.cpp`): peeks the top, refuses a slot whose generation is already `g`, then pops |
+| `TakeSlots(g)` | the guard order of `rocketnet_client_slots_assign` (`sdk/rocketnet_client_slots.cpp`): peeks the top, refuses a slot whose generation is already `g`, then pops (the held entries are `RNClientSlotsLayout.tla`'s) |
 | `PeekClaim` | `rocketnet_used_token_history_claim_record` (`sdk/rocketnet_token_tables.cpp`): `rn_token_claim_select_slot` selects the top while `free_count > 0`, else the oldest claim whose deadline has passed (a live slot; any live slot here, since the model keeps no deadlines or order) |
 | `PopClaim` | the rest of the same call: `--free_count` only when `free_count > 0` and the slot is the top; else `rn_token_slot_retire` and the insert, so the slot stays live and the stack is untouched |
-| `Release(i)` | `rocketnet_encryption_map_remove_generation`, `rocketnet_client_slots_release`, `rn_token_free_push`: only a live slot is pushed |
+| `Release(i)` | `rocketnet_encryption_map_remove_generation`, `rn_token_free_push`: only a live slot is pushed (not `rocketnet_client_slots_release`, which holds the index until publish: `RNClientSlotsLayout.tla`) |
 
 ## Invariants
 

@@ -327,9 +327,11 @@ int rocketnet_client_slots_find( const struct rocketnet_client_slots_t * slots, 
 
 // proofs/tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
 // empty one, wrapping at the end of the index
-// proofs/tla/RNFreeStackLayout.tla TakeSlots: the free stack peeked, refused on the owner generation before the pop
 // proofs/tla/RNClientSlotsLayout.tla AssignFresh and AssignStale: the top of the
-// free stack, refused when it last held this owner generation, then popped.
+// free stack, refused when it last held this owner generation, then popped, the
+// last held entry moving down into the popped place. This stack, with its held
+// releases and the publish, is that model's; proofs/tla/RNFreeStackLayout.tla
+// TakeSlots keeps only the guard order (peek, refuse, pop) and has no held entries.
 int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
                                    uint64_t client_id,
                                    int mapping_index,

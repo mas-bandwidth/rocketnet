@@ -2,7 +2,7 @@ config	budget_s	measured_s	slowest_s	slowest_host
 MCRNSecurityTables.cfg	360	75.824	154.2	bench-nyc-3
 MCRNChannel.cfg	480	109.799	209.2	bench-nyc-3
 MCRNChannelSafety.cfg	540	104.885	237.3	bench-nyc-3
-MCServerConnectionTwoSlots.cfg	200	91.002	91.002	record
+MCServerConnectionTwoSlots.cfg	200	79.028	91.002	record
 MCClientConnectionReachSFirstkind.cfg	240	74.909	75.7	bench-xdp-9
 MCServerStopSpreadBrokenNoAbandon.cfg	150	69.749	72.586	bench-xdp-9
 MCRNUringQueueSendLive.cfg	200	81.711	84.272	bench-xdp-8

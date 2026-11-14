@@ -42,6 +42,14 @@ MCServeFirstOnly == TRUE
 
 MCRefreshConnectedOnResponse == TRUE
 
+\* the stored-challenge witness (MCServerConnectionBrokenResendFromRequest.cfg):
+\* the resend answers under the request's salt
+MCResendFromRequest == TRUE
+
+\* the bound-token witness (MCServerConnectionBrokenBoundReplaces.cfg): a
+\* bound token's request replaces a half-open mapping
+MCBoundReplaceSilent == FALSE
+
 \* the family race (MCServerConnectionRace.cfg, MCServerConnectionRaceIpv6.cfg
 \* and the reversed witness MCServerConnectionBrokenCommitEarly.cfg): a token
 \* naming both families on a host with both; the server serves one family,

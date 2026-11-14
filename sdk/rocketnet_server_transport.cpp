@@ -411,9 +411,12 @@ struct rocketnet_server_transport_t
     // disconnect), its first sequence, salt and session key wait here in a
     // ring, and each update seals at most disconnect_packets_per_update of
     // them within the transport's room, one packet per waiting burst per
-    // pass. Each burst waiting when a pass starts is sealed once before
-    // that pass ends (proofs/tla/RNDisconnectBurstRing.tla PassFair). A new
-    // burst joining during a pass can follow redundant copies already due.
+    // pass. With one send queue each burst waiting when a pass starts is
+    // sealed once before that pass ends (proofs/tla/RNDisconnectBurstRing.tla
+    // PassFair); with several, a burst whose queue is full is passed over and
+    // waits, so a pass seals it only if its queue has room (PassFull,
+    // PassFairUnlessFull). A new burst joining during a pass can follow
+    // redundant copies already due.
     // Stop appends every connected client's burst
     // and each stop step seals what the room takes. The keys are wiped as
     // each burst completes and at destroy.
@@ -4043,7 +4046,8 @@ static void rocketnet_server_transport_stop_step( struct rocketnet_server_transp
     // counted, complete, and leaves once it reaches the head; the bursts for
     // queues with room stay and are sealed by the drains. send_idle is asked
     // only once a waiting burst's queue has no room (the first read), as with
-    // one queue.
+    // one queue. proofs/tla/RNDisconnectBurstRing.tla AbandonQueue is this
+    // branch at the ring's layout (DropForRoom is the one-queue branch).
     if ( server_transport->send_queues > 1 )
     {
         bool waits_on_full_queue = false;
@@ -5873,7 +5877,8 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
 // abandons that burst the same way and the drain continues. Any other
 // refusal ends the drain; what is left waits for the next update or stop step.
 // proofs/tla/RNDisconnectBurstRing.tla SealStep: the cursor restarts at count
-// (SealOnlyLive) and falls with each pop at the head (SealedFallFromHead).
+// (SealOnlyLive) and falls with each pop at the head (SealedFallFromHead with
+// one queue, HeadNotComplete with several).
 // proofs/tla/RNDisconnectBurstRing.tla Abandon marks the burst complete when
 // this destination is refused with room left, and PassOver steps the cursor
 // past a complete entry without sealing it.
@@ -5903,6 +5908,7 @@ static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet
             continue;
         }
 
+        // proofs/tla/RNDisconnectBurstRing.tla PassFull, at the ring's layout.
         // proofs/tla/ServerStopSpread.tla SealOne, its full-queue pass: with several send queues
         // a burst whose own queue is full while another queue has room is
         // stepped past, so the bursts behind it for queues with room are

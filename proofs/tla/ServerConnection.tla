@@ -38,7 +38,12 @@
 (* the lowest free slot; rocketnet_client_slots_assign pops the top of a   *)
 (* LIFO free stack (the slot released last), whose layout                  *)
 (* RNClientSlotsLayout.tla checks.  Which free slot is taken changes no    *)
-(* predicate here.                                                         *)
+(* predicate here.  Not modelled: the code holds a slot released in this  *)
+(* update until rocketnet_client_slots_publish at its end, and a response  *)
+(* that finds only held slots free is ignored (not denied) and takes a     *)
+(* slot from a later update; here Release frees the slot at once and the   *)
+(* next response may take it.  The hold is RNClientSlotsLayout.tla's       *)
+(* (ReleaseHandle, Publish, NoTakeBeforePublish) and RNSlots.tla's.        *)
 (*                                                                         *)
 (* Tokens.  A token is a number; its client id is IdOf(t).  A client       *)
 (* presents its own token (TokenChoice = "own") or any token the           *)
@@ -542,24 +547,43 @@ serverRecvUnchanged == <<clientVars, sDiscPending, sDiscPkt>>
 \* through and replaces that mapping if the check sequence accepts it, reusing the
 \* map entry; no cookie (or a cookie issued to another address) -> a cookie;
 \* an expired token is refused before cookie/decrypt; a token bound
-\* elsewhere or a connected client id is silent; history binds only when a
+\* elsewhere, a bound token (to any address, this one included) that would
+\* replace a half-open mapping, or a connected client id is silent; history
+\* binds only when a
 \* response opens; a full map is silent before any slot denial; else
 \* map+challenge
+\* Reversed witness only: the implementation keeps this FALSE.
+ResendFromRequest == FALSE
+\* Reversed witness only (FALSE): the implementation keeps this TRUE.
+BoundReplaceSilent == TRUE
+
 ServerRecvRequest(p) ==
     /\ p.type = "request"
     /\ C2S!Deliver(p)
     /\ LET m == smap[p.from]
            boundElsewhere == History = "kept" /\ bound[p.tok] \notin {0, p.from}
+           \* a request that would replace a half-open mapping (salt and token
+           \* both differ: the resend arm above did not take it) must carry a
+           \* token bound to no address, its own included
+           \* (sdk/rocketnet_server_protocol.cpp, the history check against the
+           \* zero address before the signature)
+           \* (BoundTokenNeverReplaces; reversed witness
+           \* MCServerConnectionBrokenBoundReplaces.cfg turns it off)
+           boundReplace == BoundReplaceSilent /\ m.live /\ History = "kept" /\ bound[p.tok] # 0
            heldFull == HoldUntilExpire /\ bound[p.tok] = 0
                        /\ Cardinality({t \in Tokens : bound[t] # 0}) >= HeldCapacity
            fresh == Fresh(p.tok)
        IN CASE m.live /\ m.slot # 0 ->
                  ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
-            [] m.live /\ (p.salt = m.salt \/ p.tok = m.tok) ->
-                 \* salt or token: the stored challenge. The idle deadline
-                 \* moves only when the salt matches
-                 \* (sdk/rocketnet_server_protocol.cpp).
-                 /\ ServerSendPacket([type |-> "challenge", to |-> p.from, salt |-> m.csalt, nonce |-> m.cnonce])
+            [] m.live /\ m.slot = 0 /\ (p.salt = m.salt \/ p.tok = m.tok) ->
+                 \* salt or token: the stored challenge (the code copies
+                 \* mapping->challenge_packet). The idle deadline moves only
+                 \* when the salt matches (sdk/rocketnet_server_protocol.cpp).
+                 \* ResendFromRequest is the reversed witness that answers
+                 \* under the request's salt instead (StoredChallengeResent).
+                 /\ ServerSendPacket([type |-> "challenge", to |-> p.from,
+                                      salt |-> IF ResendFromRequest THEN p.salt ELSE m.csalt,
+                                      nonce |-> m.cnonce])
                  /\ IF p.salt = m.salt
                       THEN smap' = [smap EXCEPT ![p.from].sinceRecv = 0]
                       ELSE UNCHANGED smap
@@ -571,7 +595,7 @@ ServerRecvRequest(p) ==
             [] ~p.cookie ->
                  ServerSendPacket([type |-> "cookie", to |-> p.from, salt |-> p.salt])
                  /\ UNCHANGED <<smap, bound, churnDenied>>
-            [] (boundElsewhere \/ ClientIdConnectedAtRequest(p.tok)
+            [] (boundElsewhere \/ boundReplace \/ ClientIdConnectedAtRequest(p.tok)
                  \/ (HoldUntilExpire /\ bound[p.tok] # 0) \/ heldFull) ->
                  ServerSilent /\ UNCHANGED <<smap, bound>>
                  /\ churnDenied' = (churnDenied \/ (fresh /\ (FreeSlots > 0)))
@@ -863,12 +887,48 @@ ExpiredTokenNeverMapped ==
 \* no two live mappings share keys: the nonce is fresh per mapping
 NonceFresh == \A a, b \in LiveAddrs : a # b => KeysOf(smap[a]) # KeysOf(smap[b])
 
-\* Each live mapping retains the challenge chosen at its creation.
+\* Each live mapping retains the challenge chosen at its creation: csalt and
+\* cnonce, the per-mapping ghost of the stored challenge packet, written only
+\* by OpenMapping. On its own this holds by construction; the check on the
+\* challenge put on the wire is StoredChallengeResent below.
 StoredChallengeNeverReplaced ==
     \A a \in LiveAddrs :
         /\ smap[a].csalt = smap[a].salt
         /\ smap[a].cnonce = smap[a].nonce
         /\ smap[a].csalt # NoSalt
+
+\* the challenge a half-open mapping actually resends to a request carrying
+\* its salt or its token carries the salt and nonce the mapping opens the
+\* response under (salt, nonce), so the client derives those keys: the
+\* packet the step put on the wire (none when the send was lost). In the
+\* passing cases the resend arm sends csalt and cnonce, so this holds with
+\* StoredChallengeNeverReplaced; binding it to the code's copy of
+\* mapping->challenge_packet would need a trace check. Reversed witness
+\* MCServerConnectionBrokenResendFromRequest.cfg (ResendFromRequest: the
+\* request's salt).
+StoredChallengeResent ==
+    [][\A p \in ClientPackets :
+         (/\ p.type = "request" /\ C2S!Deliver(p)
+          /\ smap[p.from].live /\ smap[p.from].slot = 0
+          /\ (p.salt = smap[p.from].salt \/ p.tok = smap[p.from].tok)
+          /\ s2cWire' # s2cWire)
+           => LET q == s2cWire'[Len(s2cWire')].pkt
+              IN /\ q.type = "challenge"
+                 /\ q.salt = smap[p.from].salt
+                 /\ q.nonce = smap[p.from].nonce]_vars
+
+\* a request whose token is bound in the kept history never replaces a
+\* half-open mapping (salt and token both differ): the code checks the
+\* history against the zero address before the signature and is silent
+\* (TOKEN_ALREADY_USED). Reversed witness
+\* MCServerConnectionBrokenBoundReplaces.cfg (BoundReplaceSilent FALSE).
+BoundTokenNeverReplaces ==
+    [][\A p \in ClientPackets :
+         (/\ p.type = "request" /\ C2S!Deliver(p)
+          /\ History = "kept" /\ bound[p.tok] # 0
+          /\ smap[p.from].live /\ smap[p.from].slot = 0
+          /\ p.salt # smap[p.from].salt /\ p.tok # smap[p.from].tok)
+           => smap'[p.from] = smap[p.from]]_vars
 
 \* the timeouts fire when they are due
 TimeoutHonoured  == \A a \in Addrs : (smap[a].est /\ Timeout > 0) => smap[a].sinceRecv < Timeout

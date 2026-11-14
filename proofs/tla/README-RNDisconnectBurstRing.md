@@ -67,7 +67,8 @@ packets sealed for it (`seals`), collect the bursts that left the ring
   cursor moves on and the entry is not sealed. An abandoned burst away from
   the head leaves only once the pop reaches it.
 - **`DropForRoom`**: `rocketnet_server_transport_stop_step` (which returns
-  unless the transport is `STOPPING`, so only after `Stop`) when the
+  unless the transport is `STOPPING`, so only after `Stop`) with one send
+  queue (`Queues = 1`), when the
   transport reports no send room and is idle, and still no room when read
   again (`ServerStopSpread`'s `AbandonNoRoom`): every waiting burst is popped
   from the head with its key wiped, so `head` moves on by `count` modulo `C`
@@ -76,13 +77,30 @@ packets sealed for it (`seals`), collect the bursts that left the ring
   slot writes `sealed = 0`. Each burst not yet complete is dropped; one
   already complete (abandoned behind the head) leaves as it would have.
 
+With several send queues (`Queues > 1`, `send_queues > 1` in the code) two
+more steps are the code's:
+
+- **`PassFull`**: the drain's iteration when the incomplete burst at the
+  cursor has a full queue while another queue has room
+  (`rocketnet_server_transport_queue_room` of its queue is 0, the total room
+  is not): the cursor moves on, nothing is sealed and the pop does not run.
+  The room itself is `ServerStopSpread`'s; here either outcome may happen.
+  It can be the first iteration of a pass (the head's queue full), so it
+  starts the new pass as a seal does.
+- **`AbandonQueue`**: `rocketnet_server_transport_stop_step`'s several-queue
+  branch, the transport idle: each incomplete waiting burst whose own queue
+  is full (any nonempty set of them here) is marked complete where it sits
+  and counted, then the complete bursts at the head leave, the cursor
+  dropping with each. `DropForRoom` is not enabled with several queues, as
+  the code takes this branch instead.
+
 A drain ends when its allowance is spent or a send frame is refused for a
 reason other than the destination. Either leaves the ring and the cursor as
 they are, and the next update's drain continues the pass, so any interleaving
-of `Connect`, `Defer`, `SealStep`, `Abandon` and `PassOver` before `Stop`,
-and of `SealStep`, `Abandon`, `PassOver` and `DropForRoom` after it, is a run
-of updates and then of stop steps. The stop path's drain is the same loop
-with a larger allowance.
+of `Connect`, `Defer`, `SealStep`, `Abandon`, `PassOver` and `PassFull`
+before `Stop`, and of those seal steps with `DropForRoom` or `AbandonQueue`
+after it, is a run of updates and then of stop steps. The stop path's drain
+is the same loop with a larger allowance.
 
 ## Invariants
 
@@ -91,16 +109,26 @@ with a larger allowance.
   waiting.
 - **`SealOnlyLive`**: a seal is made only for a waiting burst, never for the
   slot past the tail.
-- **`PassFair`**: no burst is sealed twice in a pass, and a pass ends only
-  when every burst still waiting was sealed in it. An abandoned burst is
-  complete, so the pass does not owe it a seal, and passing over it is not a
-  second seal.
-- **`SealedFallFromHead`**: among bursts still waiting, sealed counts never
-  rise from the head to the tail. A live entry already at `K` was abandoned
-  and sits behind the head; the head itself is never left complete.
+- **`PassFair`** (one queue): no burst is sealed twice in a pass, and a pass
+  ends only when every burst still waiting was sealed in it. An abandoned
+  burst is complete, so the pass does not owe it a seal, and passing over it
+  is not a second seal.
+- **`PassFairUnlessFull`** (any number of queues): no burst is sealed twice
+  in a pass, and a pass ends owing a seal only to bursts it passed over for
+  their full queue (the ghost set `passedFull`), never to a burst whose
+  queue had room.
+- **`HeadNotComplete`** (any number of queues): the head is never left
+  complete; every step that completes a burst pops the complete head.
+- **`SealedFallFromHead`** (one queue): among bursts still waiting, sealed
+  counts never rise from the head to the tail. A live entry already at `K`
+  was abandoned and sits behind the head; the head itself is never left
+  complete (`HeadNotComplete`).
 - **`CursorInRange`**: the cursor is at most `count`.
 - **`ExactSeals`**: a waiting burst that was not abandoned holds its own
-  seals, fewer than `K`. An abandoned one is marked complete and was sent
+  seals, fewer than `K` with one send queue. With several, a burst sealed
+  whole can wait behind a head passed over for its full queue, since only
+  the head pops, and then holds exactly `K` (its key stays until it reaches
+  the head; the drain passes it over). An abandoned one is marked complete and was sent
   fewer than `K`. A burst that left ended exactly one way: sealed whole
   (exactly `K` sent), abandoned for its destination, or dropped for room
   (each fewer than `K` sent).
@@ -108,9 +136,13 @@ with a larger allowance.
 A burst deferred during a pass joins that pass at the tail, so the bursts ahead
 of it in the pass may have a redundant packet sealed before its first. The
 bursts waiting when a pass starts (a disconnect of every client in one update)
-all have their first packet sealed before any has its second. The comment on
-the ring in `rocketnet_server_transport_t` states the stronger form for every
-burst; `PassFair` is the rule the code keeps.
+all have their first packet sealed before any has its second, with one send
+queue. `PassFair` is the rule the code keeps with one queue. With several, a
+burst whose queue is full is passed over while the bursts behind it are
+sealed, so it can end a pass unsealed and fall behind them: `PassFair` and
+`SealedFallFromHead` do not hold there (the two scope witnesses below), and
+`PassFairUnlessFull` and `HeadNotComplete` are what the code keeps. The
+comment on the ring in `rocketnet_server_transport_t` says the same.
 
 ## The instance
 
@@ -118,7 +150,10 @@ burst; `PassFair` is the rule the code keeps.
 two packets, eight disconnects, so a running server reaches its cap and
 drops a burst, the ring wraps, and the stop fills it to four.
 `MCRNDisconnectBurstRingK3.cfg`: a steady cap of two, bursts of three, seven
-disconnects, so waiting bursts are two seals apart. Both run without deadlock
+disconnects, so waiting bursts are two seals apart. Both have one send queue.
+`MCRNDisconnectBurstRingQueues.cfg`: a steady cap of two, bursts of two, six
+disconnects and two send queues, with the invariants the code keeps there.
+All three run without deadlock
 checking (`ignore-terminal`): once every disconnect is made and every burst
 has left, nothing is enabled. `SealStep` is enabled whenever a burst waits, so
 no other state is terminal.
@@ -165,6 +200,27 @@ counterexample below was checked against the C by hand.
    In the code the next drain's wrap test would hide it, but the stop step
    ends the stop there, and the drop is the one pop that does not lower the
    cursor with each burst it removes.
+5. **`MCRNDisconnectBurstRingBrokenQueueAbandonNoPop.cfg`** (two queues,
+   `AbandonQueuePops = FALSE`): the several-queue stop step without its pop
+   loop. Violates `HeadNotComplete` (4 states, checked by hand): one client
+   connects, the stop appends its burst at slot 0, and the stop step marks
+   it complete for its full queue and leaves it at the head. The code's
+   several-queue branch of `rocketnet_server_transport_stop_step` runs the
+   head pop right after the marking loop.
+
+Two scope witnesses show the one-queue rules do not hold with several
+queues; each must fail, and neither is a code change:
+
+- **`MCRNDisconnectBurstRingQueuesPassFair.cfg`** (`PassFair`, 5 states,
+  checked by hand): one burst is deferred, its queue is full so the drain
+  steps past it (cursor 1, count 1), and the next drain wraps the cursor to
+  0 and seals it: the pass ended with that burst owed a seal. The drain's
+  full-queue step in `rocketnet_server_transport_drain_disconnect_bursts`
+  is this.
+- **`MCRNDisconnectBurstRingQueuesSealedFall.cfg`** (`SealedFallFromHead`,
+  6 states, checked by hand): the stop appends bursts 1 and 2, burst 1's
+  queue is full and is stepped past, burst 2 is sealed, so the burst behind
+  the head holds more seals than the head.
 
 Not advancing the head on a drop is not a witness here: with `count` 0 every
 head is a valid empty ring (`Defer` writes slot `head`, the pass starts
@@ -177,12 +233,16 @@ Bench runs of this version (two workers, `distinct` states and seconds):
 
 | Case | Result | Distinct | Seconds |
 |---|---|---|---|
-| `MCRNDisconnectBurstRing.cfg` | pass | 435,502 | 4.5 |
-| `MCRNDisconnectBurstRingK3.cfg` | pass | 670,782 | 6.4 |
-| `MCRNDisconnectBurstRingBrokenSteadyCapOffByOne.cfg` | `NoOverwrite`, exit 12 | 158 | 0.8 |
-| `MCRNDisconnectBurstRingBrokenCursorWrapLate.cfg` | `SealOnlyLive`, exit 12 | 21 | 0.8 |
-| `MCRNDisconnectBurstRingBrokenCursorKept.cfg` | `SealedFallFromHead`, exit 12 | 81 | 0.8 |
-| `MCRNDisconnectBurstRingBrokenDropKeepsCursor.cfg` | `CursorInRange`, exit 12 | 25 | 0.8 |
+| `MCRNDisconnectBurstRing.cfg` | pass | 435,502 | 5.8 |
+| `MCRNDisconnectBurstRingK3.cfg` | pass | 670,782 | 8.5 |
+| `MCRNDisconnectBurstRingBrokenSteadyCapOffByOne.cfg` | `NoOverwrite`, exit 12 | 158 | 0.7 |
+| `MCRNDisconnectBurstRingBrokenCursorWrapLate.cfg` | `SealOnlyLive`, exit 12 | 21 | 0.7 |
+| `MCRNDisconnectBurstRingBrokenCursorKept.cfg` | `SealedFallFromHead`, exit 12 | 81 | 0.7 |
+| `MCRNDisconnectBurstRingBrokenDropKeepsCursor.cfg` | `CursorInRange`, exit 12 | 25 | 0.7 |
+| `MCRNDisconnectBurstRingQueues.cfg` | pass | 579,397 | 15.6 |
+| `MCRNDisconnectBurstRingQueuesPassFair.cfg` | `PassFair`, exit 12 | 28 | 0.7 |
+| `MCRNDisconnectBurstRingQueuesSealedFall.cfg` | `SealedFallFromHead`, exit 12 | 61 | 0.8 |
+| `MCRNDisconnectBurstRingBrokenQueueAbandonNoPop.cfg` | `HeadNotComplete`, exit 12 | 15 | 0.7 |
 
 The records are in `RUNS.tsv` (group `rndisconnectburstring`), made with the
 pinned runner as `proofs/tla/README.md` describes.
