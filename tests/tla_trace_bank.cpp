@@ -234,6 +234,10 @@ static const char * bank_finish( bank_walk_t & walk, int t, int k, bool abort, i
     uint8_t * pointer = queues->queue[0].bank[0].data + c.ptr + k;
     walk.lw_q = -1;
     bool ok = false;
+    // the abort's claim slot record and its packet_bytes before the
+    // scaffolding's finish, put back once the abort has been observed
+    size_t held_index = 0;
+    int prior = 0;
     if ( abort )
     {
         // an abort of a finished packet writes 0 over packet_bytes: make the
@@ -243,18 +247,10 @@ static const char * bank_finish( bank_walk_t & walk, int t, int k, bool abort, i
         {
             return NULL;
         }
-        const size_t held_index = (size_t) ( ( c.q * ROCKETNET_URING_SEND_BANKS + c.b ) * BANK_SLOTS + c.slot );
-        const int prior = before[held_index].packet_bytes;
+        held_index = (size_t) ( ( c.q * ROCKETNET_URING_SEND_BANKS + c.b ) * BANK_SLOTS + c.slot );
+        prior = before[held_index].packet_bytes;
         before[held_index].packet_bytes = packet_bytes;
         ok = rocketnet_uring_send_queues_abort( queues, c.pid, pointer );
-        if ( !ok )
-        {
-            // a refused abort writes nothing: the scaffolding's finish is
-            // undone, so the slot is as the start left it (the model's
-            // FinishRefused changes no slot)
-            queues->queue[c.q].bank[c.b].slot[c.slot].packet_bytes = prior;
-            before[held_index].packet_bytes = prior;
-        }
     }
     else
     {
@@ -283,6 +279,16 @@ static const char * bank_finish( bank_walk_t & walk, int t, int k, bool abort, i
                 index++;
             }
         }
+    }
+
+    if ( abort && !ok )
+    {
+        // a refused abort writes nothing (the model's FinishRefused changes
+        // no slot and leaves lw 0): the slots above were compared with what
+        // the scaffolding's finish left, so a refused abort that wrote the
+        // claim's own slot shows as a write. Only now is that finish undone,
+        // so the slot is as the start left it
+        queues->queue[c.q].bank[c.b].slot[c.slot].packet_bytes = prior;
     }
 
     if ( (int) ( c.pid % BANK_QUEUES ) != c.q )

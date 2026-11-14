@@ -140,7 +140,7 @@ struct gso_walk_t
     int steps_return;
     int max_records;        // the trace length: a contested claim adds three records and must fit
     int steps_lost;         // claims whose library compare-and-swap lost to a second claimer the walk ran inside start_packet
-    int own_missed;         // exact finishes that did not write their own slot
+    int own_missed;         // exact finishes and aborts that did not write their own slot
     std::vector<tla_record_t> * records;    // the walk's records, so a contested claim can add the steps inside its call
     tla_report_t * report;
     tla_random_t * random;
@@ -596,12 +596,15 @@ static int gso_finish( gso_walk_t & walk, int t, int k, bool abort )
         walk.route_bad = true;
     }
 
-    // a finish through the exact pointer writes its own slot: the claim's slot
-    // changed from what it held before the call
-    if ( k == 0 && !abort && c.slot >= 0 && c.slot < GSO_SLOTS && c.q >= 0 && c.b >= 0 )
+    // a finish or abort through the exact pointer writes its own slot: for a
+    // finish the claim's slot changed from what it held before the call;
+    // for an abort the scaffolding's finish left it non-zero and the abort
+    // cleared it to 0 (the model's Finish with k = 0 writes the claim's slot)
+    if ( k == 0 && c.slot >= 0 && c.slot < GSO_SLOTS && c.q >= 0 && c.b >= 0 )
     {
         const size_t own = (size_t) ( ( c.q * GSO_BANKS + c.b ) * GSO_SLOTS + c.slot );
-        if ( after[own] == before[own] )
+        const bool missed = abort ? ( before[own] == 0 || after[own] != 0 ) : after[own] == before[own];
+        if ( missed )
         {
             walk.own_missed++;
         }
@@ -860,7 +863,7 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
     printf( "WALK records=%d loads=%d claims=%d reloads=%d refused=%d finishes=%d aborts=%d flushes=%d turns=%d kept=%d returns=%d\n",
             (int) records.size(), walk.steps_load, walk.steps_claim, walk.steps_reload, walk.steps_refused, walk.steps_finish,
             walk.steps_abort, walk.steps_flush, walk.steps_turn, walk.steps_kept, walk.steps_return );
-    fprintf( stderr, "tla_trace: gso: %d claims lost their compare-and-swap inside start_packet to a second claimer (library loop), %d exact finishes missed their own slot\n", walk.steps_lost, walk.own_missed );
+    fprintf( stderr, "tla_trace: gso: %d claims lost their compare-and-swap inside start_packet to a second claimer (library loop), %d exact finishes or aborts missed their own slot\n", walk.steps_lost, walk.own_missed );
     report.print();
 
     std::string threads = "{";
@@ -891,7 +894,7 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
 
     if ( walk.own_missed > 0 )
     {
-        fprintf( stderr, "tla_trace: gso: a finish through the exact pointer did not write its own slot\n" );
+        fprintf( stderr, "tla_trace: gso: a finish or abort through the exact pointer did not write its own slot\n" );
         return 1;
     }
 

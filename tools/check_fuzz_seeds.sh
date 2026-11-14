@@ -43,6 +43,8 @@ rocketnet_fuzz_session:ROCKETNET_FUZZ_WITHHOLD:silence
 rocketnet_fuzz_xdp_frame:ROCKETNET_FUZZ_WITHHOLD:ipv6_extension_fragment
 rocketnet_fuzz_uring_recvmsg:ROCKETNET_FUZZ_WITHHOLD:gro_fault_cmsg_past_control
 rocketnet_fuzz_gateway_netlink:ROCKETNET_FUZZ_WITHHOLD:neighbor_enoent
+rocketnet_fuzz_endpoint:ROCKETNET_FUZZ_WITHHOLD:ep_cfg3_rel7_size41
+rocketnet_fuzz_xdp_filter:ROCKETNET_FUZZ_WITHHOLD:w_ack_v6_64
 "
 
 # harness:seed: the transports a server can name differ by platform

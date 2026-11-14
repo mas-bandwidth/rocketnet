@@ -81,22 +81,56 @@ REGISTER_UNIT_TEST( test_platform_spin_lock_backoff_source );
 // the receive-reset read take the guarded branch instead of the compare-exchange
 // fallback the 32-bit targets still need.
 
-static void platform_text_check_relaxed_u64_load( const std::string & text, const char * start_name, const char * end_name )
+static void platform_text_check_relaxed_u64_load( const std::string & source, const char * start_name, const char * end_name )
 {
+    // code only: a name in a comment is not the operation the branch takes
+    const std::string text = source_audit_code_only( source );
     const size_t start = text.find( start_name );
     const size_t end = text.find( end_name, start );
     check( start != std::string::npos );
     check( end != std::string::npos && end > start );
+    if ( start == std::string::npos || end == std::string::npos || end <= start )
+    {
+        return;
+    }
 
+    // the 64-bit MSVC branch is the #if of the guard and ends at its #else;
+    // the fallback runs from the #else to the #endif, with no directive
+    // between, and nothing outside them loads the word
     const std::string body = text.substr( start, end - start );
-    check( body.find( "_M_X64" ) != std::string::npos );
-    check( body.find( "_M_ARM64" ) != std::string::npos );
+    const std::string guard = "#if defined( _M_X64 ) || defined( _M_ARM64 )";
+    const size_t if_at = body.find( guard );
+    check( if_at != std::string::npos );
+    if ( if_at == std::string::npos )
+    {
+        return;
+    }
+    const size_t taken_at = if_at + guard.size();
+    const size_t else_at = body.find( "#else", taken_at );
+    const size_t endif_at = body.find( "#endif", taken_at );
+    check( else_at != std::string::npos && endif_at != std::string::npos && else_at < endif_at );
+    if ( else_at == std::string::npos || endif_at == std::string::npos || else_at >= endif_at )
+    {
+        return;
+    }
+    check( body.find( "#", taken_at ) == else_at );
+    check( body.find( "#", else_at + 1 ) == endif_at );
 
-    const size_t plain = body.find( "__iso_volatile_load64" );
-    check( plain != std::string::npos );
+    // the taken branch returns the volatile load and holds no compare-exchange
+    // (either spelling: InterlockedCompareExchange64 or the underscore intrinsic)
+    const std::string taken = body.substr( taken_at, else_at - taken_at );
+    const size_t returned = taken.find( "return" );
+    const size_t plain = taken.find( "__iso_volatile_load64" );
+    check( returned != std::string::npos && plain != std::string::npos && returned < plain );
+    check( returned == std::string::npos || taken.find( ";", returned ) > plain );
+    check( taken.find( "InterlockedCompareExchange64" ) == std::string::npos );
 
-    const size_t locked = body.find( "_InterlockedCompareExchange64" );
-    check( locked == std::string::npos || plain < locked );
+    const std::string fallback = body.substr( else_at, endif_at - else_at );
+    check( fallback.find( "InterlockedCompareExchange64" ) != std::string::npos );
+
+    const std::string outside = body.substr( 0, if_at ) + body.substr( endif_at );
+    check( outside.find( "InterlockedCompareExchange64" ) == std::string::npos );
+    check( outside.find( "__iso_volatile_load64" ) == std::string::npos );
 }
 
 static void test_platform_relaxed_u64_load_is_not_locked_on_64_bit_msvc()
