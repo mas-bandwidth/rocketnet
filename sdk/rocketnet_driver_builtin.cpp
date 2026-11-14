@@ -33,8 +33,8 @@ static void * portable_socket_create( void * context, const char * name, rocketn
 // the buffered interface borrows caller packets for the duration of send_batch.
 // This adapter copies them into one of three owned banks before returning. The
 // TX and RX workers own only their respective banks; main never calls socket
-// I/O. The portable server uses this ownership. Off macOS the msgx name runs
-// this same code. The macOS msgx server does not: it is its own staged
+// I/O. The portable server uses this ownership. The msgx server does not
+// (msgx is registered on macOS only, sdk/rocketnet_drivers.inc): it is its own staged
 // transport (rocketnet_server_msgx_apple.cpp, below); the msgx client is the
 // portable client, with the msgx pump selected at create.
 static const int PORTABLE_TX_BANKS = 3;
@@ -3468,7 +3468,7 @@ bool rocketnet_server_transport_io_transport_counters( const rocketnet_server_tr
     }
     if ( operations == &portable_server_operations )
     {
-        // the portable server (also the msgx name on Linux): its workers' refused pins
+        // the portable server: its workers' refused pins
         values[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS] = ( (portable_server_t *) transport )->pin_refusals.load( std::memory_order_relaxed );
         return true;
     }

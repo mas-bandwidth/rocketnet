@@ -9592,7 +9592,7 @@ static void rocketnet_test_portable_placement_cell( const struct rocketnet_test_
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS );
 }
 
-// the portable server's two workers on Linux (also the msgx name there): the
+// the portable server's two workers on Linux: the
 // send worker on cpu num_os_cpus, the receive worker on num_os_cpus + 1, each
 // alone on its cpu, whatever mask the creating thread had; not reserved, on
 // cpus 0 and 1; where the host does not allow a worker's cpu, that worker is

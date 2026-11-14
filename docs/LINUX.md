@@ -133,7 +133,9 @@ batches with `sendmmsg`/`recvmmsg` and waits on an eventfd beside its socket
 `portable_reserve_cpu_0` set to `ROCKETNET_CPU_0_NOT_RESERVED`). A refused pin
 is warned, counted in `PORTABLE_PIN_REFUSALS`, and the worker is confined to
 the cpus from `num_os_cpus` up when cpu 0 is reserved; the portable workers
-ask for no `SCHED_RR`. The `msgx` name on Linux is this server.
+ask for no `SCHED_RR`. `msgx` is a macOS transport (`sdk/rocketnet_drivers.inc`):
+on Linux a pin naming it is skipped with an info line, as any name this
+platform does not have is ([TRANSPORTS.md](TRANSPORTS.md)).
 
 Because `gso` ranks ahead of `io_uring`, `auto` grants `io_uring` only on a
 host where `gso` refuses. To run `io_uring`, pin it (section 3).
