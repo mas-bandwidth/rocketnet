@@ -33,9 +33,22 @@
 #define ROCKETNET_XDP_DEFAULT_THREADS                                    1
 #define ROCKETNET_XDP_MAX_THREADS                                     1024
 
-// gso queue workers, one reuseport socket each. 1: rows G1-G4, X710 pair,
-// main 3218cf5f6; and AWS c8gn.8xlarge (GOAL-gso) at 1.
-#define ROCKETNET_GSO_DEFAULT_WORKERS                                    1
+// gso queue workers, one reuseport socket each. 2, from these rows (1000
+// players at 60 Hz; peak 900k and average 480k packets/s; game threads idle
+// or half busy):
+//   AWS, c8gn.8xlarge server, c7gn.16xlarge clients (review v1.2 AWS rows):
+//     1 worker: peak idle 3/3, average idle 3/3, average half 2/3, peak half
+//     0/6 (842k-872k packets/s, 56.7-58.6 frames/s).
+//     2 workers: peak half 3/3 (v1.1.54); and as auto's grant in a build
+//     without liburing, 11 of 12 with 0 refused (2026-11-14); the twelfth,
+//     an average half run, refused 701 starts in one second during a 70-107
+//     ms gap in a network thread on the cloud VM.
+//   X710 pair, bare metal: 1 worker all four workloads 3/3 each, 12/12
+//     (GSO-RH); 2 workers peak half 2/2 (M54 control), the only workload
+//     run there at 2.
+// 1 fails the AWS loaded peak; 2 passed every row it ran on both machines
+// but that one cloud gap.
+#define ROCKETNET_GSO_DEFAULT_WORKERS                                    2
 #define ROCKETNET_GSO_MAX_WORKERS                                       32
 
 // io_uring workers, one ring and socket each. 2: AWS c6in.8xlarge rows u03,

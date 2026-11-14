@@ -2013,9 +2013,10 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_NUM_GSO_WORKERS sets the gso transport's network
     /// threads: queue workers, each with its own socket on the port. Default
-    /// is 1 (zero selects it). At that count the server held 1000 players at
+    /// is 2 (zero selects it). At that count the server held 1000 players at
     /// 60 Hz, about 900,000 messages a second at peak (an estimated 9.39
-    /// Gb/s), on the machine PERFORMANCE.md records.
+    /// Gb/s), with the game threads half busy, on the machine PERFORMANCE.md
+    /// records; 1 worker held it only with the game threads idle.
     /// Range is 1 .. 32. Worker q runs on cpu num_os_cpus +
     /// q, so not on cpu 0 by default (gso_reserve_cpu_0). No machine setting
     /// has to match it.

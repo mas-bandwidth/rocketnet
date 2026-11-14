@@ -456,7 +456,7 @@ server topology, with nothing set, is:
 | transport | sockets | I/O threads (total stacks) | set by |
 | --- | --- | --- | --- |
 | portable server | 1 | 2 | fixed |
-| gso (Linux) | 1 | 1, one per socket | `num_gso_workers` |
+| gso (Linux) | 2 | 2, one per socket | `num_gso_workers` |
 | io_uring (Linux) | 2 | 2, one per socket, each owning its ring | `num_io_uring_workers` |
 | xdp (Linux) | 1 | 1, one per NIC queue | `num_xdp_threads` |
 | iocp (Windows), specific bind address | 2 | 4: 2 completion workers (one socket each) and 2 send threads | `num_iocp_completion_workers`, `num_iocp_send_threads` |

@@ -546,7 +546,7 @@ requirements to each configuration group:
     (`0` selects the transport default, `1 .. 256`) selects the first worker
     CPU: worker `q` runs on `num_os_cpus + q`. Total planned AF_XDP memory is
     checked against compile-time `-DROCKETNET_XDP_MEMORY_MIB` (default `8192` MiB).
-  - GSO and io_uring have their own counts, `num_gso_workers` (default 1)
+  - GSO and io_uring have their own counts, `num_gso_workers` (default 2)
     and `num_io_uring_workers` (default 2), each at most 32, and stage sends
     per queue in three banks. A GSO bank has 16384 slots, so more GSO workers
     add send room. An io_uring bank has
@@ -870,7 +870,7 @@ configuration for your own figures.
 | Server transport | `allocator_bytes` | `umem_bytes` (page-aligned) | `os_bytes` (UMEM + stacks + mapped rings) | Worker threads (`stack_bytes`) | Sockets (`SO_SNDBUF` + `SO_RCVBUF` request) |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `portable` | `530,923,668` (506.33 MiB) | `0` | `16,777,216` (16.00 MiB) | `2` (`16,777,216`) | `1` (`1,000,000` + `25,000,000`) |
-| `gso` (1 worker) | `616,295,328` (587.75 MiB) | `0` | `8,388,608` (8.00 MiB) | `1` (`8,388,608`) | `1` (`1,000,000` + `25,000,000`) |
+| `gso` (2 workers) | `844,024,703` (804.92 MiB) | `0` | `16,777,216` (16.00 MiB) | `2` (`16,777,216`) | `2` (`2,000,000` + `50,000,000`) |
 | `io_uring` (2 workers) | `1,169,738,203` (1.09 GiB) | `0` | `17,768,448` (16.95 MiB) | `2` (`16,777,216`) | `2` (`2,000,000` + `50,000,000`) |
 | `xdp` (1 queue) | `1,002,003,254` (955.58 MiB) | `402,653,184` (384.00 MiB) | `411,041,792` (392.00 MiB) | `1` (`8,388,608`) | `1` (`786,432` XDP rings) |
 | `xdp` (7 queues) | `4,671,870,704` (4.35 GiB) | `2,818,572,288` (2.63 GiB) | `2,877,292,544` (2.68 GiB) | `7` (`58,720,256`) | `7` (`5,505,024` XDP rings) |

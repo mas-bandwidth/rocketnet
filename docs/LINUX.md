@@ -154,12 +154,23 @@ at the probe's first `io_uring_setup`, before `gso` is tried: where the
 filter does that, set `ROCKETNET_SERVER_TRANSPORT=gso`. And `io_uring`'s
 memory plan is larger than `gso`'s: at 1000 players and 1416 byte payloads
 `transport_memory 1000 1416 <name> 0 --plan-only` reads 1,169,755,611
-allocator bytes for `io_uring` and 616,314,336 for `gso`.
+allocator bytes for `io_uring` and 844,024,703 for `gso`, both at their
+default 2 workers.
 `rocketnet_server_required_memory` already reports the largest candidate's plan
 ([MEMORY.md](MEMORY.md)), so an allocator sized by it is unchanged, but a
 failed allocation inside a candidate's create is not a refusal: start ends
 with `ROCKETNET_STATUS_OUT_OF_MEMORY` and does not fall to `gso`
 (`sdk/rocketnet_server_transport.cpp`).
+
+On cloud VMs a network thread can go without its processor for tens of
+milliseconds, with its pinning correct: on an AWS c8gn.8xlarge at 1000 players
+(2026-11-14), `gso` and `io_uring` rows showed receive gaps of 50 ms and more,
+seen as a burst of late input, and one run refused 701 sends in the second
+of a 70-107 ms gap; the other gaps refused none. Granting `CAP_SYS_NICE` lets
+the library run its pinned network workers at `SCHED_RR`; the two granted
+rows there had a worst receive wait of 33.7-35.8 ms, too few rows to say the
+grant removes the gaps, and the cpu steal time read 0 on every cpu in the one
+window sampled, which held no gap.
 
 **How start walks it.** Public create parses the list; server start tries
 candidates left to right and the first grant wins (`sdk/rocketnet_server_transport.cpp`). Each refusal logs a warning,
@@ -237,8 +248,12 @@ skipped unavailable name must not count as a successful pin.
 `gso` (`sdk/rocketnet_server_gso.h`, `sdk/rocketnet_server_gso_linux.cpp`)
 needs no capability or privilege (`sdk/rocketnet_server_gso.h`). It
 binds an `SO_REUSEPORT` group of `num_gso_workers` sockets
-(`ROCKETNET_SERVER_NUM_GSO_WORKERS`), default 1, at most 32: a larger count
-is refused at create, never clamped (`sdk/rocketnet_network_threads.h`).
+(`ROCKETNET_SERVER_NUM_GSO_WORKERS`), default 2, at most 32: a larger count
+is refused at create, never clamped (`sdk/rocketnet_network_threads.h`). The
+default is the count that held 1000 players at 60 Hz and about 900,000
+packets a second at peak with the game threads half busy on the AWS record;
+1 worker held it there only with the game threads idle
+([PERFORMANCE.md](PERFORMANCE.md)).
 **Threads:** one worker thread per socket, and nothing else. Each worker
 does all of its queue's kernel-facing work: it drains its socket's receives
 and sends its queue's staged packets. Worker `q` pins itself to cpu
