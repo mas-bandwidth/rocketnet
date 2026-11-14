@@ -4,8 +4,9 @@
 */
 
 // The public light-client profile, pinned. A 1000-slot server and a client
-// report lifecycle peaks within the figures USAGE.md records, and both
-// endpoints create and destroy on the profile without opening a socket.
+// report lifecycle peaks within the bounds pinned below, this test's own
+// readings for each platform, and both endpoints create and destroy on the
+// profile without opening a socket.
 
 #include "test_unit_registry.h"
 #include "msan_scale_allocator.h"
@@ -49,8 +50,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
     memcpy( config->packet_filter, light_packet_filter, sizeof( config->packet_filter ) );
 }
 
-// USAGE.md "Server memory footprint" and docs/LOAD.md record these figures.
-// required_memory is the lifecycle peak the caller's allocator sees (create,
+// The bounds below are the source for these figures. docs/MEMORY.md "Server
+// memory footprint" (where USAGE.md points) quotes one v1.1.0 query of a Linux
+// development build, not these pins, and docs/LOAD.md says how sizing figures
+// are regenerated. required_memory is the lifecycle peak the caller's allocator sees (create,
 // connect or start, stop or disconnect, again, destroy) for the largest
 // transport the default transport order can grant, so it differs by platform and by
 // ROCKETNET_DEV (a development endpoint also owns its link simulator). Each
@@ -175,16 +178,25 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The send store's free stack (one u32 a chunk: finding W2-86) adds 4632
 // bytes a light connection, 4632000 at 1000 clients, and 4608 to the client:
 // computed from the Linux reading, not measured on Windows.
+// The receive handoff (sdk/rocketnet_receive_handoff.h) gives the IOCP
+// completion workers three receive banks where they had four, one bank of
+// the server's receive queue size a worker fewer: actual=1504678759, 23936056
+// below (aws-win-ci-2, MSVC, Release, DEV=ON), measured.
 // Together (integration/v1.1.55: the refused-token table and the send
 // store's free stack): actual=1533264287 and 15398892 (aws-win-ci-2, MSVC,
 // Debug, DEV=ON), measured.
-// The receive handoff (sdk/rocketnet_receive_handoff.h) gives the IOCP
-// completion workers three receive banks where they had four, one bank of
-// the server's receive queue size a worker fewer: 23936056 below, measured
-// alone on aws-win-ci-2 (MSVC, Release, DEV=ON: actual=1504678759 against
-// 1528614815). On the tree above it is computed, not measured on Windows:
-// 1533264287 - 23936056 = 1509328231; the client is unchanged by it.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1508279655 )
+// With the receive handoff's three IOCP banks as well
+// (integration/v1.1.55-hot): actual=1509328231 and 15398892 (aws-win-ci-2,
+// MSVC, Debug, DEV=ON), measured.
+// The held index's per-connection home key (rn_region_t held_key_a and
+// held_key_b, 16 bytes; the struct is fixed-width fields and pointers, so the
+// same 16 on every 64-bit target) adds 16000 to the server (the regions are
+// one array, rounded once) and nothing to the client (its one region's 64-byte
+// rounding holds it, as on Linux): 1533280287 and 15398892 on
+// integration/v1.1.56 (MSVC, Debug, DEV=ON), measured. Both together
+// (integration/v1.1.55-hot with v1.1.56 merged): actual=1509344231, derived
+// from the two measured figures, until a Windows build reads the merged tree.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1508295655 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350316 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -279,7 +291,17 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Together (integration/v1.1.55: the refused-token table and the send
 // store's free stack): actual=1665268659 and 15046410 (studio, Apple clang,
 // Debug, DEV=ON), measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664220083 )
+// With the placement branch's three *_reserve_cpu_0 config fields, the
+// send_capacity_to pointer and counter 291 (integration/v1.1.55-hot): 64
+// more to the server, the client unchanged: actual=1665268723 and 15046410
+// (studio, Apple clang, Debug, DEV=ON), measured.
+// The held index's per-connection home key (rn_region_t held_key_a and
+// held_key_b, 16 bytes, the same on every 64-bit target) adds 16000 to the
+// server and nothing to the client (the Windows note has the account). Both
+// together (integration/v1.1.55-hot with v1.1.56 merged): actual=1665284723,
+// derived from the measured figure above and the 16000 that Linux and
+// Windows both measured, until a macOS build reads the merged tree.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664236147 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997834 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
@@ -380,8 +402,6 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // room_refusals, the per-thread send lines, the per-client wire totals on a
 // line each) reads actual=5610697459 and 15190226 (vision, gcc, Debug and
 // Release, DEV ON).
-// The appended counter MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY adds 64 to each
-// (8 bytes a counter block across a 64-byte rounding).
 // The appended counter MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY adds 128 to the
 // server (8 bytes in each of its counter blocks, across two 64-byte
 // roundings) and 64 to the client (hulk, gcc, Debug and Release, DEV ON).
@@ -419,16 +439,28 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Together (integration/v1.1.55: the refused-token table and the send
 // store's free stack on v1.1.54): actual=2147375602 and 15195026
 // (aws-mut-3, gcc, Debug and Release, DEV ON); arm64 8 more, computed.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146327034ULL )
+// The held index's per-connection home key (rn_region_t held_key_a and
+// held_key_b, 16 bytes) adds 16000 to the server (the regions are one array,
+// rounded once) and nothing to the client (its one region's 64-byte rounding
+// holds it): actual=2147391602 and 15195026 (integration/v1.1.56, aws-mut-3,
+// gcc, Debug and Release, DEV ON), measured; arm64 the same 16000, computed.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146343034ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146327026ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146343026ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
 // nothing to the server: actual=15190354 (hetzner1, gcc, Debug, DEV ON).
 // The appended counter IOCP_PIN_REFUSALS adds 64 more to the client (one more
 // 64-byte rounding): actual=15190418 (hetzner1, gcc, Debug, DEV ON).
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146450 )
+// The appended counter PORTABLE_PIN_REFUSALS adds 64 more to the client (one
+// more 64-byte rounding) and nothing to the server, with the three
+// *_reserve_cpu_0 fields appended to the transport config: actual=15190482
+// (amd-3, gcc, Debug, DEV ON).
+// Together (integration/v1.1.55-hot: the send store's free stack, the
+// refused-token table and PORTABLE_PIN_REFUSALS): actual=15195090 (aws-mut-3,
+// gcc, Debug and Release, DEV ON); the server reads its pin unchanged.
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146514 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the
@@ -511,11 +543,6 @@ static void test_light_profile_server_1000_required_memory()
     check( config.max_clients == ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 ) );
     light_message_fields_server( &config );
 
-    if ( ROCKETNET_MAX_CLIENTS < 1000 )
-    {
-        return;
-    }
-
     config.max_clients = 1000;
     light_server_keys( &config );
 
@@ -528,8 +555,10 @@ REGISTER_UNIT_TEST( test_light_profile_server_1000_required_memory );
 
 // the pins are read at the default history (ROCKETNET_HISTORY_PACKETS 4096): a
 // longer history sizes every connection's records above them, and no figure
-// is read there to check against, so that build skips and reports the case
-UNIT_TEST_SKIPPED_UNLESS( test_light_profile_server_1000_required_memory, ROCKETNET_HISTORY_PACKETS == 4096 );
+// is read there to check against, so that build skips and reports the case.
+// The pin is for 1000 slots, so a build whose ROCKETNET_MAX_CLIENTS is below
+// 1000 skips and reports it the same way, never passing it unchecked.
+UNIT_TEST_SKIPPED_UNLESS( test_light_profile_server_1000_required_memory, ROCKETNET_HISTORY_PACKETS == 4096 && ROCKETNET_MAX_CLIENTS >= 1000 );
 
 static void test_light_profile_client_required_memory()
 {

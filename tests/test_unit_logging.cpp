@@ -10,13 +10,16 @@
 // of two callbacks the last registration wins, with NULL restoring the
 // default sink.
 //
-// Every case runs in memory, with no clock, sockets or network.
+// Every case runs in memory, with no clock, sockets or network: the default
+// sink, which stamps its lines with the platform clock, is driven only where
+// that clock is the unit binary's synthetic one.
 
 #include "test_unit_registry.h"
 
 #include "rocketnet_internal.h"
 
 #include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -35,11 +38,16 @@ static char g_buf[4096];
 static void * g_ctx = NULL;
 static int g_level = -1;
 static size_t g_len = 0;
+static bool g_terminated = false;
 
+// the copy below writes its own NUL, so the library's terminator is read in
+// the callback, from the message as passed: message[length] == '\0', and no
+// NUL before it
 static void capture_callback( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
 {
     g_ctx = context;
     g_level = level;
+    g_terminated = message[length] == '\0' && memchr( message, '\0', length ) == NULL;
     g_len = length < sizeof( g_buf ) ? length : sizeof( g_buf ) - 1;
     memcpy( g_buf, message, g_len );
     g_buf[g_len] = '\0';
@@ -65,33 +73,45 @@ static void test_log_callback_preformatted_contract()
 
     char empty[1];
     empty[0] = '\0';
+    g_terminated = false;
     rocketnet_error( "%s", empty );
     check( g_ctx == ctx );
     check( g_level == ROCKETNET_LOG_LEVEL_ERROR );
     check( g_len == 0 );
-    check( g_buf[0] == '\0' );
+    check( g_terminated );
 
     char str1023[1024];
     fill_string( str1023, 1023 );
+    g_terminated = false;
     rocketnet_error( "%s", str1023 );
     check( g_ctx == ctx );
     check( g_len == 1023 );
-    check( g_buf[1023] == '\0' );
+    check( g_terminated );
     check( memcmp( g_buf, str1023, 1023 ) == 0 );
 
     char str1024[1025];
     fill_string( str1024, 1024 );
+    g_terminated = false;
     rocketnet_error( "%s", str1024 );
     check( g_len == 1023 );
-    check( g_buf[1023] == '\0' );
+    check( g_terminated );
     check( memcmp( g_buf, str1024, 1023 ) == 0 );
 
     char str2048[2049];
     fill_string( str2048, 2048 );
+    g_terminated = false;
     rocketnet_error( "%s", str2048 );
     check( g_len == 1023 );
-    check( g_buf[1023] == '\0' );
+    check( g_terminated );
     check( memcmp( g_buf, str2048, 1023 ) == 0 );
+
+    // a short line too: the terminator sits at message[length], not only at
+    // the clamp
+    g_terminated = false;
+    rocketnet_error( "seven %d", 7 );
+    check( g_len == 7 );
+    check( g_terminated );
+    check( strcmp( g_buf, "seven 7" ) == 0 );
 
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( saved );
@@ -114,6 +134,16 @@ static void counting_callback( void * context, enum rocketnet_log_level_t level,
     g_msg[g_msglen] = '\0';
 }
 
+// A string argument that cannot be formatted: a pointer into the unmapped
+// first page of every supported OS (Linux mmap_min_addr, the Windows null
+// region, the macOS page zero). A call filtered before formatting never reads
+// it; a call that formatted it first, then dropped the line, dies on the
+// read, and the runner fails the case.
+static const char * log_unformattable()
+{
+    return (const char *) (uintptr_t) 16;
+}
+
 static void test_log_callback_filters_before_formatting()
 {
     enum rocketnet_log_level_t saved = rocketnet_log_level_current();
@@ -121,15 +151,16 @@ static void test_log_callback_filters_before_formatting()
     rocketnet_log_function( counting_callback, NULL );
     g_count = 0;
 
-    rocketnet_debug( "hidden debug %d", 42 );
+    // below the level: neither formatted nor dispatched
+
+    rocketnet_debug( "hidden debug %s", log_unformattable() );
     check( g_count == 0 );
-    rocketnet_info( "hidden info" );
+    rocketnet_info( "hidden info %s", log_unformattable() );
     check( g_count == 0 );
-    rocketnet_warn( "hidden warn" );
+    rocketnet_warn( "hidden warn %s", log_unformattable() );
     check( g_count == 0 );
 
-    // a format argument whose evaluation is visible: the token survives only
-    // when the call is not filtered before formatting and dispatch
+    // at the level: formatted once and dispatched
 
     const char * visible = "visible-token";
     rocketnet_error( "shows %s", visible );
@@ -137,8 +168,10 @@ static void test_log_callback_filters_before_formatting()
     check( g_last_level == ROCKETNET_LOG_LEVEL_ERROR );
     check( strcmp( g_msg, "shows visible-token" ) == 0 );
 
+    // quiet: neither formatted nor dispatched, at any level
+
     rocketnet_quiet( true );
-    rocketnet_error( "quiet-hidden %s", visible );
+    rocketnet_error( "quiet-hidden %s", log_unformattable() );
     check( g_count == 1 );
     rocketnet_quiet( false );
     rocketnet_error( "after-quiet %s", visible );
@@ -256,9 +289,16 @@ static void test_log_unknown_level_reaches_the_sink_and_reads_unknown()
     rocketnet_log_function( NULL, NULL );
 
     // Exercise the default sink's enum load as well as the installed callback.
+    // The default sink stamps a line of any level but NONE with
+    // rocketnet_platform_time, so it runs only where the unit binary wraps that
+    // clock with a synthetic tick (Linux, ROCKETNET_DEV: -Wl,--wrap in
+    // CMakeLists.txt, test_unit_endpoint.cpp); in every development build the
+    // word it prints is checked below without the sink.
 
+#if defined( __linux__ ) && ROCKETNET_DEV
     rocketnet_printf( -1, "default sink below error" );
     rocketnet_printf( INT_MIN, "default sink minimum int level" );
+#endif // #if defined( __linux__ ) && ROCKETNET_DEV
     rocketnet_log_level( saved );
 
 #if ROCKETNET_DEV

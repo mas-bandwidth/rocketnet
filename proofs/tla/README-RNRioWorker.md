@@ -27,7 +27,10 @@ every RIO call after create.
   worker's bank when the worker has left main's and the tail is done),
   then returns the tail's unread datagrams and its own bank's up to the
   committed count, within the process view. A datagram committed before a
-  call is returned by that call (`DeliveredByNextCall`). The views stay
+  call is returned by that call when the call's try of the mutex succeeds,
+  it began with no backlog left by a cut call, and the view has room
+  (`DeliveredByNextCall` exempts exactly a failed try, a backlog and a
+  full view). The views stay
   valid until the next call. With the worker's bank full and main not
   started on it, the worker dequeues nothing: completions wait in the
   queue and their slices stay unposted, and main wakes the worker when it

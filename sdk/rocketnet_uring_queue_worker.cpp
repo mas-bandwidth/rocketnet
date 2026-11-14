@@ -57,6 +57,9 @@ bool rocketnet_uring_queue_worker_init( struct rocketnet_uring_queue_worker_t * 
     worker->blocked = false;
     worker->starved = false;
     worker->timer_armed = false;
+    worker->recv_timer_armed = false;
+    worker->recv_waiting = false;
+    worker->recv_refused = 0;
     worker->wake_armed = false;
     worker->cancelled_recv = false;
     worker->cancelled_wake = false;
@@ -165,9 +168,10 @@ static void rocketnet_uring_queue_worker_send_cqe( struct rocketnet_uring_queue_
     worker->in_kernel--;
     worker->last_send_class = rocketnet_uring_queue_send_class( res, packets );
 
-    if ( result == ROCKETNET_URING_QUEUE_SEND_OK && packets > 1 )
+    if ( result == ROCKETNET_URING_QUEUE_SEND_OK && packets > 1 && !worker->refused.accepted )
     {
         worker->refused.accepted = true;
+        send->segment_accepted.store( true, std::memory_order_relaxed );
     }
 
     // ReapOk: complete has made a refused one-packet run failed, so a run
@@ -183,6 +187,12 @@ static void rocketnet_uring_queue_worker_send_cqe( struct rocketnet_uring_queue_
         const int b = (int) ( tag / (uint32_t) slots );
         const int slot = (int) ( tag % (uint32_t) slots );
         const struct rocketnet_address_t * to = &send->queues->queue[q].bank[b].slot[slot].to;
+        // another queue's accepted segmented send counts as this queue's:
+        // the transport can segment
+        if ( send->segment_accepted.load( std::memory_order_relaxed ) )
+        {
+            worker->refused.accepted = true;
+        }
         if ( rocketnet_segment_refused_add( &worker->refused, to ) && worker->config.segment )
         {
             worker->config.segment = false;
@@ -204,6 +214,36 @@ static void rocketnet_uring_queue_worker_send_cqe( struct rocketnet_uring_queue_
     }
 }
 
+// RNUringQueueWorker.tla ReapRecvData, ReapRecvEnd: a datagram starts the
+// count of refused ends again; a multishot that ends refused (a result
+// other than -ECANCELED with no IORING_CQE_F_MORE and no datagram: no buffer
+// free, a kernel that refuses the receive, or an end with nothing, 0, since
+// a multishot RECVMSG result holds at least its header) counts one, and
+// from the second in a row its next arm waits for the receive's retry timer
+// (ArmRecvTimer). The first is armed again at once: a burst that took every
+// buffer gives them back as its completions are reaped. The receive module
+// counts the refusal itself.
+
+static void rocketnet_uring_queue_worker_recv_cqe( struct rocketnet_uring_queue_worker_t * worker, int32_t res, uint32_t flags )
+{
+    if ( res > 0 )
+    {
+        worker->recv_refused = 0;
+    }
+    else if ( res != -ECANCELED && ( flags & IORING_CQE_F_MORE ) == 0 )
+    {
+        if ( worker->recv_refused < 2 )
+        {
+            worker->recv_refused++;
+        }
+        if ( worker->recv_refused >= 2 )
+        {
+            worker->recv_waiting = true;
+        }
+    }
+    worker->config.receive.cqe( worker->config.receive.context, res, flags );
+}
+
 static void rocketnet_uring_queue_worker_reap_one( struct rocketnet_uring_queue_worker_t * worker, const struct rocketnet_uring_queue_worker_completion_t * cqe )
 {
     const int q = worker->config.queue_index;
@@ -220,10 +260,11 @@ static void rocketnet_uring_queue_worker_reap_one( struct rocketnet_uring_queue_
             break;
 
         case ROCKETNET_URING_TAG_RECV:
-            // RNUringQueueWorker.tla ReapRecvEnd, when this is the multishot's last
+            // RNUringQueueWorker.tla ReapRecvEnd, when this is the multishot's
+            // last, else ReapRecvData
             if ( rocketnet_uring_queue_worker_has_receive( worker ) )
             {
-                worker->config.receive.cqe( worker->config.receive.context, cqe->res, cqe->flags );
+                rocketnet_uring_queue_worker_recv_cqe( worker, cqe->res, cqe->flags );
             }
             else
             {
@@ -255,11 +296,17 @@ static void rocketnet_uring_queue_worker_reap_one( struct rocketnet_uring_queue_
             break;
 
         case ROCKETNET_URING_TAG_TIMER:
-            // RNUringQueueWorker.tla ReapTimer: the wait is over (-ETIME)
-            if ( worker->timer_armed )
+            // RNUringQueueWorker.tla ReapTimer, ReapRecvTimer: the wait is
+            // over (-ETIME), the send's or the receive's by the tag's index
+            if ( rocketnet_uring_tag_index( cqe->user_data ) == ROCKETNET_URING_TIMER_SEND && worker->timer_armed )
             {
                 worker->timer_armed = false;
                 worker->blocked = false;
+            }
+            else if ( rocketnet_uring_tag_index( cqe->user_data ) == ROCKETNET_URING_TIMER_RECV && worker->recv_timer_armed )
+            {
+                worker->recv_timer_armed = false;
+                worker->recv_waiting = false;
             }
             else
             {
@@ -286,8 +333,9 @@ static void rocketnet_uring_queue_worker_reap_one( struct rocketnet_uring_queue_
     }
 }
 
-// abandon (RNUringQueueWorker.tla Abandoning): shutdown begun and the socket
-// full past the bound
+// abandon (RNUringQueueWorker.tla Abandoning): shutdown begun and max_retry
+// waits begun with no run done; the last is abandoned at its start, not
+// after its timer (the bound counts waits begun, not waits completed)
 
 static bool rocketnet_uring_queue_worker_abandoning( const struct rocketnet_uring_queue_worker_t * worker )
 {
@@ -299,7 +347,7 @@ static bool rocketnet_uring_queue_worker_abandoning( const struct rocketnet_urin
 
 static bool rocketnet_uring_queue_worker_drained( const struct rocketnet_uring_queue_worker_t * worker )
 {
-    return worker->in_kernel == 0 && !worker->wake_armed && !worker->timer_armed &&
+    return worker->in_kernel == 0 && !worker->wake_armed && !worker->timer_armed && !worker->recv_timer_armed &&
            !rocketnet_uring_queue_worker_receive_armed( worker ) && rocketnet_uring_queue_send_held( worker->config.send, worker->config.queue_index ) < 0;
 }
 
@@ -434,7 +482,7 @@ int rocketnet_uring_queue_worker_step( struct rocketnet_uring_queue_worker_t * w
         if ( sqe )
         {
             io_uring_prep_timeout( sqe, &rocketnet_uring_queue_worker_retry_timeout, 0, 0 );
-            io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_TIMER, q, 0 ) );
+            io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_TIMER, q, ROCKETNET_URING_TIMER_SEND ) );
             worker->timer_armed = true;
             return ROCKETNET_URING_WORKER_STEP_ARM_TIMER;
         }
@@ -442,11 +490,27 @@ int rocketnet_uring_queue_worker_step( struct rocketnet_uring_queue_worker_t * w
 
     if ( !worker->seen )
     {
-        // RNUringQueueWorker.tla ArmRecv: a multishot that ended before the stop
-        // is armed again. With no submission entry the receive module is
-        // handed NULL, counts the failed re-arm and still needs one.
+        // RNUringQueueWorker.tla ArmRecvTimer: a receive refused again waits
+        // a retry period before its arm (the same timeout as the send's)
 
-        if ( rocketnet_uring_queue_worker_has_receive( worker ) && worker->config.receive.needs_arm( worker->config.receive.context ) )
+        if ( rocketnet_uring_queue_worker_has_receive( worker ) && worker->recv_waiting && !worker->recv_timer_armed )
+        {
+            struct io_uring_sqe * sqe = rocketnet_uring_queue_worker_sqe( worker );
+            if ( sqe )
+            {
+                io_uring_prep_timeout( sqe, &rocketnet_uring_queue_worker_retry_timeout, 0, 0 );
+                io_uring_sqe_set_data64( sqe, rocketnet_uring_tag( ROCKETNET_URING_TAG_TIMER, q, ROCKETNET_URING_TIMER_RECV ) );
+                worker->recv_timer_armed = true;
+                return ROCKETNET_URING_WORKER_STEP_ARM_RECV_TIMER;
+            }
+        }
+
+        // RNUringQueueWorker.tla ArmRecv: a multishot that ended before the stop
+        // is armed again, unless it waits for its timer. With no submission
+        // entry the receive module is handed NULL, counts the failed re-arm
+        // and still needs one.
+
+        if ( rocketnet_uring_queue_worker_has_receive( worker ) && !worker->recv_waiting && worker->config.receive.needs_arm( worker->config.receive.context ) )
         {
             struct io_uring_sqe * sqe = rocketnet_uring_queue_worker_sqe( worker );
             if ( worker->config.receive.arm( worker->config.receive.context, sqe ) )

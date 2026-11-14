@@ -9,7 +9,7 @@ over the in-memory `loopback` transport, which needs no socket and no network.
 2. Fill a server config with `rocketnet_server_default_config`, copy
    `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` into `backend_public_key`, create a shared loopback hub, select a virtual ephemeral port, and pin the `loopback` transport. Server create generates
    the server object's sealing keypair, retained until destroy.
-3. After start, read the bound address with `rocketnet_server_ipv4_address`
+3. After start, read the served address and bound port with `rocketnet_server_ipv4_address`
    and the generated public key with `rocketnet_server_public_key`. Pass both
    to `rocketnet_create_dev_connect_token`, which writes an opaque,
    NUL-terminated base64 token string.
@@ -17,7 +17,7 @@ over the in-memory `loopback` transport, which needs no socket and no network.
    client reports `ROCKETNET_CLIENT_STATE_CONNECTED`.
 5. Send one `ROCKETNET_RELIABILITY_RELIABLE_ORDERED` message from the client to the
    server with `rocketnet_client_can_send_message`, `rocketnet_client_start_message`, checking that the returned pointer is
-   non-`NULL` (`if ( out )`) before writing the text straight into the returned buffer
+   non-`NULL` (`if ( p )`) before writing the text straight into the returned buffer
    and calling `rocketnet_client_finish_message` with the bytes written inside that
    branch (calling `finish_message` without a live start asserts in debug builds
    and returns `0` in release builds).

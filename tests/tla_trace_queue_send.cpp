@@ -19,7 +19,11 @@
 // is WorkerSubmit(d, k, R) with the run next handed out (its destination,
 // count and slots); a reap is WorkerReap(n) with the count complete
 // returned; a retire is WorkerRetire when it returned true,
-// WorkerRetireRefused when false.
+// WorkerRetireRefused when false. The walk, as the worker inside its claim
+// or retire, takes the handoff mutex itself (WorkerLocks) and lets it go
+// (WorkerUnlocks); a publish in between must come back false at once
+// (PublishKept): main only tries the mutex. The worker claims and retires
+// only with the mutex free (the one thread would block on itself).
 //
 // The kernel is a fake completion source: each run the worker hands out is
 // in it until the walk posts the run's completion, as its own step
@@ -99,6 +103,7 @@ struct qsend_walk_t
     int demand;
     int flushes;
     bool kernel_write;
+    bool locked;                                                // the walk holds the handoff mutex as the worker
 };
 
 static int qsend_dest_index( const qsend_walk_t & walk, const struct rocketnet_address_t * to )
@@ -329,6 +334,8 @@ static tla_record_t qsend_record( qsend_walk_t & walk )
     record.add( "flushes", tla_int( walk.flushes ) );
     record.add( "kernelWrite", tla_bool( walk.kernel_write ) );
     record.add( "pids", tla_int( (int64_t) walk.banks->packet_id.load() ) );
+    record.add( "locked", tla_bool( walk.locked ) );
+    record.add( "mainWaits", tla_bool( false ) );
     return record;
 }
 
@@ -498,6 +505,7 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
     walk.demand = 0;
     walk.flushes = 0;
     walk.kernel_write = false;
+    walk.locked = false;
 
     for ( int d = 1; d <= QSEND_DESTS; d++ )
     {
@@ -527,7 +535,9 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
             SUBMIT,
             POST,
             REAP,
-            RETIRE
+            RETIRE,
+            LOCK,
+            UNLOCK
         };
         std::vector<int> can;
         if ( walk.demand < QSEND_DEMAND )
@@ -539,7 +549,7 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
         {
             can.push_back( PUBLISH );
         }
-        if ( queue->held < 0 && queue->handoff.ready_count > 0 )
+        if ( queue->held < 0 && queue->handoff.ready_count > 0 && !walk.locked )
         {
             can.push_back( CLAIM );
         }
@@ -555,9 +565,22 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
         {
             can.push_back( REAP );
         }
-        if ( queue->held >= 0 && queue->unsubmitted == 0 )
+        if ( queue->held >= 0 && queue->unsubmitted == 0 && !walk.locked )
         {
             can.push_back( RETIRE );
+        }
+        // the worker inside its claim or retire: the mutex held; held, a
+        // publish is tried at once more often, so the kept publish is reached
+        if ( walk.locked )
+        {
+            can.push_back( UNLOCK );
+            can.push_back( PUBLISH );
+            can.push_back( PUBLISH );
+        }
+        else if ( ( queue->held < 0 || ( queue->unsubmitted == 0 && queue->pending[queue->held] == 0 ) ) && random.below( 4 ) == 0 )
+        {
+            // as the claim takes it (no bank held) or a retire that goes
+            can.push_back( LOCK );
         }
         if ( can.empty() )
         {
@@ -611,6 +634,18 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
                 act = "WorkerReap";
                 args = tla_sequence( { tla_int( qsend_reap( walk ) ) } );
                 break;
+            case LOCK:
+                op = "lock";
+                act = "WorkerLocks";
+                rocketnet_platform_mutex_acquire( &queue->mutex );
+                walk.locked = true;
+                break;
+            case UNLOCK:
+                op = "unlock";
+                act = "WorkerUnlocks";
+                rocketnet_platform_mutex_release( &queue->mutex );
+                walk.locked = false;
+                break;
             default:
             {
                 const int held = queue->held;
@@ -638,6 +673,10 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
         }
     }
 
+    if ( walk.locked )
+    {
+        rocketnet_platform_mutex_release( &walk.send->queue[0].mutex );
+    }
     rocketnet_uring_queue_send_destroy( walk.send );
     rocketnet_uring_send_queues_destroy( walk.banks );
 
@@ -646,7 +685,7 @@ static int trace_queue_send( uint64_t seed, int steps, const char * out )
     char constants[512];
     snprintf( constants, sizeof( constants ),
               "    NB = %d\n    S = %d\n    Dests = {1, 2}\n    MaxSeg = %d\n    Demand = %d\n    MaxFlush = %d\n    MaxEagain = %d\n"
-              "    RetireRule = \"cqe\"\n    EagainRule = \"retry\"\n",
+              "    RetireRule = \"cqe\"\n    EagainRule = \"retry\"\n    LockRule = \"try\"\n",
               QSEND_NB, QSEND_SLOTS, QSEND_MAX_SEG, QSEND_DEMAND, steps, QSEND_MAX_EAGAIN );
 
     return tla_write_trace( out, "MCTraceQueueSend", seed, "TraceRNUringQueueSend", "", constants, records ) ? 0 : 1;

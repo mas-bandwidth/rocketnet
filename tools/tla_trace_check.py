@@ -159,20 +159,40 @@ LAYERS = {
                           "keeps no such word"},
         "reach": ["MainOnWorkerBuffer", "WorkerAhead", "TailPending", "WorkerFull"],
     },
+    "client-receive-handoff": {
+        "modules": ["RNReceiveHandoff.tla", "TraceRNReceiveHandoff.tla"],
+        "untraced": {},
+        "ghost": {"late": "history for DeliveredByNextCall: a call that returned less than was committed before it; the code "
+                          "keeps no such word"},
+        "reach": ["MainOnWorkerBuffer", "WorkerAhead", "TailPending", "WorkerFull"],
+        "header_only": True,
+    },
     "fillphase": {
         "modules": ["RNFillPhase.tla", "TraceRNFillPhase.tla"],
         "untraced": {
             "MainScan": "a reversed witness's step (LookFirst: main_begin looks before it announces); the code announces first",
             "FillLoad": "a reversed witness's step (LoadStore: the lock as a load then a store); the code locks by one CAS",
             "FillStore": "a reversed witness's step (LoadStore); the code locks by one CAS",
+            "FillUnwind1": "a reversed witness's step (OwnerAtDecide: a refused look puts the owner back); the code "
+                           "never writes the owner before its look lets it in",
+            "FillUnwind2": "a reversed witness's step (OwnerAtDecide: the refused look's last store); the code's "
+                           "refused look is one store, in FillLook",
+            "PlainScan": "a reversed witness's step (ScanFirst: the plain finish and abort scan before any check); "
+                         "the code makes them main operations of kind other (MainAnnounce .. MainDrop)",
             "Done": "the model's stutter once every call is made; the walk gives each actor as many calls as it has steps, "
                     "so it never gets there",
         },
         "ghost": {"refusal": "history for the reach predicates: the last refusal step taken; the code keeps no such word, "
-                             "and the counts it does keep (overlaps, twoFillers) are compared"},
+                             "and the counts it does keep (overlaps, twoFillers) are compared",
+                  "kicked": "history for NoKickOnOpenUpdate: an update call that began the next update on an open one "
+                            "(KickAll); the walk drives a bare check with no message server, and the rule is bound by "
+                            "tests/wide_fill_cases.cpp test_wide_fill_split_update_open_update_call",
+                  "unchecked": "history for PlainChecked: a plain finish or abort that ran unchecked (ScanFirst); only "
+                               "PlainScan sets it, and the rule is bound by tests/wide_fill_cases.cpp "
+                               "test_wide_fill_plain_finish_checked"},
         "reach": ["RefusedMainLook", "RefusedMainIn", "RefusedFillLock", "RefusedFillDecide", "RefusedFillLookByMain",
                   "RefusedFillLookInWindow", "RefusedTakeLook", "TakeInWindow", "TwoTakesInWindow",
-                  "RefusedMainBesideTake", "WindowOpened"],
+                  "RefusedMainBesideTake", "WindowOpened", "RefusedFillNest", "NestedCall"],
         # each record carries the 64 fills_in lines, and a TLC run's time is the size of the log it reads: 400 steps
         # ran 35 to 53 s a run on a shared bench slot (vision, 2026-11-13) against the 100 s budget; a main call is 66
         # steps (one look a line), so a walk much shorter than this finishes none
@@ -181,8 +201,11 @@ LAYERS = {
     "sendreserve": {
         "modules": ["RNSendReserveCalls.tla", "TraceRNSendReserveCalls.tla"],
         "untraced": {},
-        "ghost": {"starved": "history for NeverStarved: a refusal with a frame above the reserve; the code keeps no such word"},
-        "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed", "ChunkTail", "SingleInBigRoom"],
+        "ghost": {"starved": "history for NeverStarved: a refusal with a frame above the reserve; the code keeps no such word",
+                  "hidden": "history for NoHiddenRoom: a client's capacity answered 0 while a start to it would stage; "
+                            "the code keeps no such word"},
+        # seeds 3 and 4 walk two send queues (QueueStall: one queue's room run out while the other has room)
+        "reach": ["AtReserve", "Counted", "RoomOut", "OwnAllUsed", "ChunkTail", "SingleInBigRoom", "QueueStall"],
     },
     "writerfinish": {
         "modules": ["RNWriterFinish.tla", "TraceRNWriterFinish.tla"],
@@ -252,8 +275,10 @@ LAYERS = {
     "queue-send": {
         "modules": ["RNUringQueueSend.tla", "TraceRNUringQueueSend.tla"],
         "untraced": {"Done": "the model's end once MaxFlush flushes are spent, a stutter; MaxFlush is the walk's "
-                             "length, so it never gets there"},
-        "reach": ["Full", "AgainPosted"],
+                             "length, so it never gets there",
+                     "PublishWaits": "LockRule \"wait\" only, the reversed witness: the code only tries the mutex",
+                     "PublishResumes": "LockRule \"wait\" only, the reversed witness: the code only tries the mutex"},
+        "reach": ["Full", "AgainPosted", "KeptLocked"],
         # the model's Ids grow with MaxFlush, the walk's length: each record
         # carries (steps + 1) * 4 statuses
         "steps": 200,
@@ -264,6 +289,7 @@ LAYERS = {
                                    "READ before the worker can see quit, and the worker arms no READ after it: "
                                    "a READ to cancel is left only when the write and the arm race on two threads",
                      "KernelWakeEnd": "the cancelled READ's completion: no READ is cancelled (CancelWake)"},
+        "reach": ["RecvWaits", "BoundBeforeQuit"],
     },
     "receive": {
         "modules": ["RNUringQueueReceiveLayout.tla", "TraceRNUringQueueReceiveLayout.tla"],
@@ -301,7 +327,7 @@ SHARDS = [
     ["xdp-reply-macs:1", "example", "queue-worker"],
     ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring", "fillphase"],
     ["xdp-reply-macs:4", "xdp-gateway-refresh"],
-    ["ackapply", "bank", "receive", "receive-handoff-xdp", "msgxreceivefill"],
+    ["ackapply", "bank", "receive", "receive-handoff-xdp", "msgxreceivefill", "client-receive-handoff"],
     ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks", "receive-handoff"],
 ]
 

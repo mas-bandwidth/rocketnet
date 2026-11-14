@@ -309,6 +309,13 @@ rn_block_cost_t rn_channels_block_cost_read();
 // (rn_held_find calls, not the probe steps inside each), counted as work done.
 void rn_channels_held_finds_reset();
 uint64_t rn_channels_held_finds_read();
+
+// Present only in the unit-test library: the most cells one held-index find,
+// insert or erase scan stepped through on this thread, and the home cell of
+// (channel, ordering) under the region's key.
+void rn_channels_held_probe_worst_reset();
+uint32_t rn_channels_held_probe_worst_read();
+uint32_t rn_channels_held_home( const struct rn_region_t * region, uint32_t channel, uint32_t ordering );
 #endif // #if ROCKETNET_DEV
 
 // Codes 1 and 4's case (sdk/rocketnet_channel_sequenced.cpp).

@@ -660,7 +660,10 @@ bool rocketnet_platform_send_errnos_count( rocketnet_platform_send_errnos_t * er
     const bool first = rocketnet_platform_atomic_add_u64( &errnos->counts[call][kind], 1 ) == 0;
     if ( first && kind == ROCKETNET_PLATFORM_SEND_ERRNO_OTHER )
     {
-        rocketnet_platform_atomic_add_u64( &errnos->other_error, (uint64_t) (unsigned int) error );
+        // the first OTHER errno recorded across every call is kept: stored
+        // only while the field is still 0, so a later call's first OTHER
+        // failure leaves it (two at once: whichever stores first)
+        (void) rocketnet_platform_atomic_cas_u64( &errnos->other_error, 0, (uint64_t) (unsigned int) error );
     }
     return first;
 }
@@ -2194,8 +2197,8 @@ static int rocketnet_platform_socket_receive_packet_into( rocketnet_platform_soc
 
         if ( !rocketnet_platform_mmsg_read_sockaddr( socket, &sockaddr_from, from ) )
         {
-            rocketnet_assert( sockaddr_from.ss_family == AF_INET6 );
-            if ( sockaddr_from.ss_family != AF_INET6 )
+            rocketnet_assert( sockaddr_from.ss_family == AF_INET6 || sockaddr_from.ss_family == AF_INET );
+            if ( sockaddr_from.ss_family != AF_INET6 && sockaddr_from.ss_family != AF_INET )
             {
                 return 0;
             }
@@ -3631,7 +3634,8 @@ void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
 // set SCHED_RR at rocketnet_platform_network_thread_rr_priority() and nothing
 // else. On macOS it requests 32 clamped to the SCHED_RR range; elsewhere
 // it retains the minimum raised to the default thread's priority (1 on Linux).
-// No macOS server transport calls the server hook.
+// On macOS the msgx server's transmit and receive workers call the server
+// hook; the portable server's workers do not.
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
 {
@@ -5555,7 +5559,7 @@ bool rocketnet_platform_sockaddr_to_address( const struct sockaddr_storage * sto
     if ( storage->ss_family == AF_INET )
     {
         rocketnet_platform_sockaddr_in_to_address( (const sockaddr_in *) storage, address );
-        return true;
+        return rocketnet_address_accept_received_source( address, dual_stack );
     }
 
     return false;

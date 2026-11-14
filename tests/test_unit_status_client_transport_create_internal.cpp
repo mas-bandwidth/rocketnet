@@ -5,8 +5,8 @@
 
 // The _ex client transport create (docs/ERRORS-AND-LOGGING.md 2.3, Layer 4):
 // every failure exit reachable without a socket or real time writes its
-// section-2.1 code to the status out-parameter, and the non-_ex form is a thin
-// wrapper passing NULL.
+// section-2.1 code to the status out-parameter. (The non-_ex form, a wrapper
+// passing NULL for the status, is not called here.)
 //
 // Reachable in the unit tier:
 //   * C1 (NULL connect_token) -> INVALID_ARGUMENT
@@ -98,11 +98,18 @@ static void check_create_status( int expected, const uint8_t * token, const stru
 }
 
 // the default config with a packet filter of the caller's own: a production
-// build refuses the published test filter the default config carries
+// build refuses the published test filter the default config carries. Its
+// token epoch is fixed, so the token checks read epoch plus the argument
+// time: an epoch of zero reads the wall clock, which the unit runner fakes
+// only in a development build (tests/test.cpp), so a production suite run
+// would read the real one.
+#define CLIENT_CREATE_TOKEN_EPOCH 1700000000ULL
+
 static void own_filter_config( struct rocketnet_client_transport_config_t * config )
 {
     rocketnet_client_transport_default_config( config );
     memset( config->packet_filter, 0x5A, sizeof( config->packet_filter ) );
+    config->token_epoch_unix_seconds = CLIENT_CREATE_TOKEN_EPOCH;
 }
 
 #if ROCKETNET_ASSERTS

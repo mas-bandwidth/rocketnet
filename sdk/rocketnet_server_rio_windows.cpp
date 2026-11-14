@@ -435,7 +435,7 @@ static bool rocketnet_rio_address_read( const SOCKADDR_INET * in, bool dual_stac
     if ( in->si_family == AF_INET )
     {
         rocketnet_platform_sockaddr_in_to_address( &in->Ipv4, address );
-        return true;
+        return rocketnet_address_accept_received_source( address, dual_stack );
     }
 
     if ( in->si_family == AF_INET6 )
@@ -2042,7 +2042,7 @@ static void rocketnet_rio_retry_receives( rocketnet_rio_lane_t * rio )
 }
 
 // proofs/tla/RNRioWorker.tla WDequeue, second half: every available receive completion up
-// to the fill bank's room, and at most one bank's worth of completions a pass
+// to the worker bank's room, and at most one bank's worth of completions a pass
 // (receives), so a flood the prefilter refuses cannot hold the worker from its
 // sends. A full bank leaves the rest in the queue with their slices unposted
 // (backpressure), never dropped. Returns the count.
@@ -2559,6 +2559,42 @@ bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * pack
     rocketnet_rio_overflow_test_state = NULL;
     rocketnet_rio_test_fixture_free( rio );
 
+    return true;
+}
+
+// One receive completion of a valid-size datagram from 127.0.0.1:port on an
+// IPv4 lane through the production completion step (rocketnet_rio_complete_receive):
+// banked is what reached the worker's bank of the receive handoff, failed the
+// lane's RIO_RECEIVE_FAILED.
+// The lane is stopping, so the slice is not re-posted and no kernel is asked.
+bool rocketnet_server_rio_test_receive_source( uint16_t port, int * banked, uint64_t * failed )
+{
+    if ( !banked || !failed )
+    {
+        return false;
+    }
+    rocketnet_rio_lane_t * rio = rocketnet_rio_test_fixture();
+    if ( !rio )
+    {
+        return false;
+    }
+
+    SOCKADDR_INET * address = (SOCKADDR_INET *) ( rio->region + rocketnet_rio_receive_address_offset( &rio->layout, 0 ) );
+    address->Ipv4.sin_port = htons( port );
+    rio->ipv6 = false;
+    rio->stopping.store( true, std::memory_order_release );
+
+    RIORESULT result;
+    memset( &result, 0, sizeof( result ) );
+    result.Status = 0;
+    result.BytesTransferred = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
+    result.RequestContext = (ULONGLONG) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, 0 );
+    rocketnet_rio_complete_receive( rio, &result );
+
+    *banked = rocketnet_rio_worker_bank( rio )->num_packets;
+    *failed = rio->counters[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED - ROCKETNET_SERVER_RIO_FIRST_COUNTER].load( std::memory_order_relaxed );
+
+    rocketnet_rio_test_fixture_free( rio );
     return true;
 }
 

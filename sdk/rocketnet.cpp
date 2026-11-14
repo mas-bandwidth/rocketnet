@@ -9,6 +9,7 @@
 #include "rocketnet_config.h"
 #include "rocketnet_hash.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_test_seams.h"
 
 #include <sodium.h>
 
@@ -808,11 +809,28 @@ static bool rocketnet_crypto_open = false;
 static bool rocketnet_crypto_closing = false;
 static int rocketnet_crypto_holders = 0;
 
+#if ROCKETNET_DEV
+static std::atomic<bool> rocketnet_crypto_source_failure( false );
+
+void rocketnet_dev_set_crypto_source_failure( bool fail )
+{
+    rocketnet_crypto_source_failure.store( fail, std::memory_order_seq_cst );
+}
+#endif // #if ROCKETNET_DEV
+
 // proofs/tla/RNCryptoSource.tla StirCheck, StirOpen: sodium_init opens the
 // source only the first time it runs, so the stir reopens it after a term
-// closed it. Called with the mutex held.
+// closed it. Called with the mutex held. In a development build the crypto
+// source failure seam (sdk/rocketnet_test_seams.h) makes the open fail.
 static bool rocketnet_crypto_open_locked()
 {
+#if ROCKETNET_DEV
+    if ( rocketnet_crypto_source_failure.load( std::memory_order_seq_cst ) )
+    {
+        return false;
+    }
+#endif // #if ROCKETNET_DEV
+
     if ( rocketnet_crypto_open )
     {
         return true;

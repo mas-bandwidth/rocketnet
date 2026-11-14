@@ -116,7 +116,7 @@ struct rn_receive_descriptor_t          // 32 bytes: the receiver's descriptors,
 
 struct rn_held_entry_t                  // 16 bytes: the held-ordered index, 2W open-addressed entries (6.1)
 {
-    uint64_t key;                       // channel << 32 | ordering
+    uint64_t key;                       // ( channel & 0x1FFFF ) << 24 | ordering, 41 bits (rn_held_key)
     uint32_t number;                    // the low 32 bits of the held descriptor's number: its slot (number % W) and its identity
     uint32_t used;
 };
@@ -461,6 +461,9 @@ struct rn_region_t
     int32_t exhausted_reason;           // ROCKETNET_DISCONNECT_REASON_*: NONE, or MESSAGE_MEMORY_EXHAUSTED
 
     uint32_t send_room_armed;           // 1 until the send room watch reports a crossing, 1 again below half (rn_region_send_room_watch)
+
+    uint64_t held_key_a;                // the held index's home key (rn_held_home): drawn at every carve, never logged or sent
+    uint64_t held_key_b;
 };
 
 // The next enqueue ticket on this connection. 0 is never issued.
@@ -514,7 +517,9 @@ rn_span_cost_t rn_span_cost_read();
 // emptied (the descriptor pool and the store's classes are lazy,
 // proofs/tla/RNLazyPool.tla) and the exhausted state cleared, in the region's own
 // memory. Allocates nothing. The ring's, the store's and the pools' bytes
-// are not cleared: nothing reads them before writing them.
+// are not cleared: nothing reads them before writing them. The held index's
+// home key is drawn fresh (randombytes_buf), so no connection's key tells a
+// sender the next one's.
 void rn_region_carve( rn_region_t * region );
 
 // the slot's region when its connection ends and before the slot is reused

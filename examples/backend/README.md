@@ -1,8 +1,8 @@
 # RocketNet backend examples
 
 A client never connects to a RocketNet server by passing a raw IP address to the
-client API. Every client connects with a 768-byte connect token
-(`ROCKETNET_CONNECT_TOKEN_BYTES`, encoded as 1024 characters of base64 in a
+client API. Every client connects with a 768-byte connect token (encoded as
+exactly 1024 characters of base64 in a
 `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES` = 1025-byte buffer), and the game's
 backend mints that token.
 
@@ -15,9 +15,11 @@ PUT /servers/{serverID}
 GET /match/{clientID}
 ```
 
-- `PUT /servers/{serverID}` registers or updates a live game server's bound UDP
-  addresses (`a.b.c.d:port`, `[ipv6]:port`, or one of each) and 32-byte X25519
-  public key (`rocketnet_server_public_key`).
+- `PUT /servers/{serverID}` registers or updates a live game server's served UDP
+  addresses (`a.b.c.d:port`, `[ipv6]:port`, or one of each: the addresses its
+  clients connect to, with the port the server bound, as
+  `rocketnet_server_ipv4_address` and `rocketnet_server_ipv6_address` write
+  them) and 32-byte X25519 public key (`rocketnet_server_public_key`).
 - `GET /match/{clientID}` selects a registered server, mints a fresh connect
   token bound to that server and `clientID`, and returns it as base64 text
   (`Content-Type: text/plain; charset=utf-8`, `Cache-Control: no-store`). The C
@@ -92,10 +94,9 @@ check in one update, as its defence against handshake CPU floods, and a refused
 request is sent again with a return cookie that lives about 3 seconds, inside
 the token's 10-second default timeout. Keep the issue rate to one server below
 `handshakes_per_update` times its update rate each second (16 x 60 = 960 a
-second at 60 updates a second), spread evenly. Measured at the defaults with a
-100 Hz server update: 1000 clients with spread requests connected in about 1.6
-seconds; 1000 sending in the same instant did not all connect inside 10
-seconds. See [Production integration](../../docs/PRODUCTION.md#spread-joins-over-time).
+second at 60 updates a second), spread evenly. How long a mass join takes
+depends on your update rate, round trip and loss: measure yours. See
+[Production integration](../../docs/PRODUCTION.md#spread-joins-over-time).
 
 ---
 
@@ -194,7 +195,7 @@ from network loss.
 | --- | --- | --- |
 | `GET /match/{clientID}` when no servers have registered | `503 Service Unavailable` | Register at least one live server via `PUT /servers/{serverID}` (or wait for fleet registration) before matching players. |
 | `GET /match/{clientID}` with a non-decimal or out-of-range `uint64` `clientID` | `400 Bad Request` | Pass a valid unsigned 64-bit integer derived by the backend's player authentication layer. |
-| `PUT /servers/{serverID}` with empty `serverID` or one over the limit (Go: `> 128` bytes; C#: `> 128` characters), malformed JSON, `0` or `> 2` addresses, two addresses of the same IP family, port `0`, a hostname (`localhost:40000`) instead of a literal IP, an IPv6 zone (`%en0`), or a `public_key` that is not 32-byte base64 | `400 Bad Request` | Export literal bound IP addresses (`rocketnet_server_ipv4_address`, `rocketnet_server_ipv6_address`) with nonzero ports and the 32-byte `rocketnet_server_public_key` in base64. |
+| `PUT /servers/{serverID}` with empty `serverID` or one over the limit (Go: `> 128` bytes; C#: `> 128` characters), malformed JSON, `0` or `> 2` addresses, two addresses of the same IP family, port `0`, a hostname (`localhost:40000`) instead of a literal IP, an IPv6 zone (`%en0`), or a `public_key` that is not 32-byte base64 | `400 Bad Request` | Export the served literal IP addresses (`rocketnet_server_ipv4_address`, `rocketnet_server_ipv6_address`) with nonzero ports and the 32-byte `rocketnet_server_public_key` in base64. |
 | `PUT /servers/{serverID}` contains an unknown JSON field | `400 Bad Request` (Go); accepted and ignored (C#) | Send only the documented `addresses` and `public_key` fields. Do not rely on the C# backend ignoring additional fields. |
 | `PUT /servers/{serverID}` body exceeds 4096 bytes | `400 Bad Request` (Go) / `413 Payload Too Large` (C#) | Keep registration payload within the 4096-byte bound (1–2 literal address strings and one base64 public key). |
 
@@ -223,9 +224,9 @@ mismatched requests and sends an explicit denial only when all slots are full:
 
 | Server-side condition | When checked on server | Client state transition (`rocketnet_client_state_t`) | Safe client & operator action |
 | --- | --- | --- | --- |
-| **Wrong `protocol_id`** (`ROCKETNET_BACKEND_PROTOCOL_ID` != server `config.protocol_id`), **wrong or stale `server_public_key`** (server object was recreated with a new keypair without re-registering via `PUT /servers/{serverID}`), **unadvertised server address**, or **token expired / >30s future skew on arrival** | Before the cookie gate (`ROCKETNET_SERVER_PROCESS_IGNORED`) | `REQUESTING_COOKIE` (`1`) -> `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`) (or `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` `-7` if token expiry arrives first) | Ensure server re-registers its current `public_key` and bound `addresses` on every start, align `protocol_id`, and mint a fresh token. |
-| **Wrong backend signing key** (`ROCKETNET_BACKEND_PRIVATE_KEY` does not match server's `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`, failing Ed25519 signature verification), **corrupted sealed private block** (`crypto_box_seal_open` fails), **token already used/claimed by another client address**, or **`client_id` already connected** on the server | After the cookie gate (`ROCKETNET_SERVER_PROCESS_IGNORED`) | `SENDING_CONNECTION_REQUEST` (`2`) -> `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`) (or `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` `-7`) | Verify the server's `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` matches the backend's keypair; always mint a fresh, single-use token per connection attempt. |
-| **Server is full** (all `config.max_clients` slots are occupied) | After signature and sealed-block verification (`ROCKETNET_SERVER_PROCESS_SEND_DENIED`) | `SENDING_CONNECTION_REQUEST` (`2`) -> `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`) | Select another server with free capacity in the backend matcher, mint a fresh token for that server, and reconnect. |
+| **Wrong `protocol_id`** (`ROCKETNET_BACKEND_PROTOCOL_ID` != server `config.protocol_id`), **wrong or stale `server_public_key`** (server object was recreated with a new keypair without re-registering via `PUT /servers/{serverID}`), **unadvertised server address**, or **token expired / >30s future skew on arrival** | Before the cookie gate (dropped unanswered) | `REQUESTING_COOKIE` (`1`) -> `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`) (or `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` `-7` if token expiry arrives first) | Ensure server re-registers its current `public_key` and served `addresses` on every start, align `protocol_id`, and mint a fresh token. |
+| **Wrong backend signing key** (`ROCKETNET_BACKEND_PRIVATE_KEY` does not match server's `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`, failing Ed25519 signature verification), **corrupted sealed private block** (`crypto_box_seal_open` fails), **token already used/claimed by another client address**, or **`client_id` already connected** on the server | After the cookie gate (dropped unanswered) | `SENDING_CONNECTION_REQUEST` (`2`) -> `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`) (or `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` `-7`) | Verify the server's `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` matches the backend's keypair; always mint a fresh, single-use token per connection attempt. |
+| **Server is full** (all `config.max_clients` slots are occupied) | After signature and sealed-block verification (answered with a denial) | `SENDING_CONNECTION_REQUEST` (`2`) -> `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`) | Select another server with free capacity in the backend matcher, mint a fresh token for that server, and reconnect. |
 
 **Safe recovery pattern whenever `rocketnet_client_state(client) < 0`:**
 

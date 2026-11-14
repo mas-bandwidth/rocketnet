@@ -325,6 +325,7 @@ static void test_io_uring_transport_codec_sockaddr_normalizes_v4_mapped()
 
     memset( &ss, 0, sizeof( ss ) );
     ( (struct sockaddr_in *) &ss )->sin_family = AF_INET;
+    ( (struct sockaddr_in *) &ss )->sin_port = htons( 40000 );
     rocketnet_unit_check( !rocketnet_uring_sockaddr_to_address(
         &ss, (int) sizeof( struct sockaddr_in ) - 1, false, &out ) );
     rocketnet_unit_check( rocketnet_uring_sockaddr_to_address(
@@ -334,6 +335,23 @@ static void test_io_uring_transport_codec_sockaddr_normalizes_v4_mapped()
     ( (struct sockaddr_in6 *) &ss )->sin6_family = AF_INET6;
     rocketnet_unit_check( !rocketnet_uring_sockaddr_to_address(
         &ss, (int) sizeof( struct sockaddr_in6 ) - 1, true, &out ) );
+
+    // a full name from source port 0 is refused by the receive rule
+    // (rocketnet_address_accept_received_source) in both families, beside
+    // the port 40000 names accepted above
+
+    memset( &ss, 0, sizeof( ss ) );
+    ( (struct sockaddr_in *) &ss )->sin_family = AF_INET;
+    ( (struct sockaddr_in *) &ss )->sin_addr.s_addr = htonl( 0x7f000001u );
+    rocketnet_unit_check( !rocketnet_uring_sockaddr_to_address(
+        &ss, (int) sizeof( struct sockaddr_in ), false, &out ) );
+
+    memset( &ss, 0, sizeof( ss ) );
+    in6 = (struct sockaddr_in6 *) &ss;
+    in6->sin6_family = AF_INET6;
+    in6->sin6_addr.s6_addr[15] = 1;
+    rocketnet_unit_check( !rocketnet_uring_sockaddr_to_address(
+        &ss, (int) sizeof( struct sockaddr_in6 ), true, &out ) );
 }
 
 // the segmented send's msghdr (rocketnet_uring_gso_message): one iovec per

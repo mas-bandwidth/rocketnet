@@ -8,7 +8,13 @@
 // can tell, and a production build (ROCKETNET_DEV=0) must refuse them on the server. This case
 // captures the log through the preformatted callback (as test_unit_logging.cpp
 // does), with no socket, and asserts the warning level, the line, and that a
-// non-development key logs no such line.
+// non-development key logs no such line, at the server and at the client.
+//
+// The case is built into both unit suites. In the production suite
+// (ROCKETNET_DEV=0) the server create warns and then refuses the keys with
+// DEV_KEYS_IN_PRODUCTION; the server control and the client checks use
+// development-only scaffolding and run in the development suite. The
+// refusal's other paths are test_unit_dev_keys_refused_in_production.cpp.
 //
 // Every case runs in memory, with no clock, sockets or network.
 
@@ -134,9 +140,23 @@ static void client_create_and_expect_warn( const uint8_t * server_key, int expec
 }
 #endif // #if ROCKETNET_DEV
 
+// the published development keys: the development config in a development
+// build; in a production build, which has no development config and no
+// development secret key, the default config with both published public
+// keys, a server secret key, a protocol id and a packet filter of its own,
+// so the development-key check is the refusal the create reaches
 static void dev_warning_server_config( rocketnet_server_transport_config_t * config )
 {
+#if ROCKETNET_DEV
     rocketnet_server_transport_dev_config( config );
+#else
+    rocketnet_server_transport_default_config_current( config );
+    memset( config->packet_filter, 0x5A, sizeof( config->packet_filter ) );
+    memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, sizeof( config->backend_public_key ) );
+    memcpy( config->server_public_key, rocketnet_dev_server_public_key, sizeof( config->server_public_key ) );
+    memset( config->server_secret_key, 0x44, sizeof( config->server_secret_key ) );
+    config->protocol_id = 1;
+#endif // #if ROCKETNET_DEV
     config->max_clients = ROCKETNET_MAX_CLIENTS;
     snprintf( config->transport, sizeof( config->transport ), "%s", "loopback" );
 }
@@ -147,7 +167,8 @@ static void dev_warning_server_config( rocketnet_server_transport_config_t * con
 // hub; the portable I/O-storage term is a small conservative allowance
 // because loopback has no built-in plan row.
 // Allow 32 MiB for the process and native runtime, as the other full-capacity
-// loopback case does. Release refuses the dev key before creating a server.
+// loopback case does. A production build refuses the dev keys before
+// creating a server and keeps the suite-wide bound.
 
 static long dev_warning_rss_bound_mb()
 {
@@ -169,7 +190,7 @@ static long dev_warning_rss_bound_mb()
     }
     return suite_rss_bound_mb( planned, 32 );
 #else
-    return 0; // keep the suite-wide bound when create refuses before allocation
+    return 0;
 #endif // #if ROCKETNET_DEV
 }
 
@@ -177,8 +198,9 @@ SUITE_CASE_RSS_BOUND( test_dev_keys_warn_on_every_start, dev_warning_rss_bound_m
 
 static void test_dev_keys_warn_on_every_start()
 {
-    // the server, development keys: a warning on create, and in a production
-    // build (the unit suite's build) the published keys are refused.
+    // the server, development keys: a warning on create, and the create
+    // succeeds in a development build (a production build refuses the
+    // published keys).
     // The create pins the loopback transport on port 0: the development-keys
     // warn is raised before the transport list
     // (sdk/rocketnet_server_transport.cpp), so the WARN line, level and
@@ -197,23 +219,51 @@ static void test_dev_keys_warn_on_every_start()
         check( g_dev_warn_level == ROCKETNET_LOG_LEVEL_WARN );
         check( strstr( g_dev_warn_buf, DEV_KEY_WARN_PHRASE ) != NULL );
         stop_capture();
-#if !ROCKETNET_DEV
+#if ROCKETNET_DEV
+        check( srv != NULL );
+        check( status == ROCKETNET_STATUS_OK );
+#else
         check( srv == NULL );
         check( status == ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION );
-#else
+#endif // #if ROCKETNET_DEV
         if ( srv )
         {
             rn_test_server_transport_stop_and_destroy( (struct rocketnet_server_transport_t *) srv );
         }
-#endif // #if !ROCKETNET_DEV
     }
 
-    // The remaining checks use development-only caller-step scaffolding; the
-    // production build retains the refusal above.
+#if ROCKETNET_DEV
+    // the server, keys of its own: the create succeeds and logs no
+    // development-key line (the control for the warning above)
+    {
+        struct rocketnet_server_transport_config_t config;
+        dev_warning_server_config( &config );
+        config.max_clients = 1;
+        config.loopback_hub = rocketnet_test_loopback_hub();
+        memset( config.backend_public_key, 0x42, sizeof( config.backend_public_key ) );
+        memset( config.server_public_key, 0x43, sizeof( config.server_public_key ) );
+        memset( config.server_secret_key, 0x44, sizeof( config.server_secret_key ) );
+
+        int status = -1;
+        start_capture();
+
+        struct rocketnet_server_transport_t * srv = rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:0", &config, 1000.0, &status );
+        const int dev_warn_lines = g_dev_warn_lines;
+        const int total_lines = g_total_lines;
+        stop_capture();
+        check( srv != NULL );
+        check( status == ROCKETNET_STATUS_OK );
+        check( total_lines > 0 );
+        check( dev_warn_lines == 0 );
+        if ( srv )
+        {
+            rn_test_server_transport_stop_and_destroy( srv );
+        }
+    }
+
     // The real environment budget/no-warning scenario runs in
     // test_platform_primitives against the selected normal library.
 
-#if ROCKETNET_DEV
     // the client can tell from its token's server key: a development key warns
     {
         uint8_t dev_key[ROCKETNET_KEY_BYTES];

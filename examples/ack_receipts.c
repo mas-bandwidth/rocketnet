@@ -6,8 +6,10 @@
     ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT over loopback while the
     development network simulator loses 30% of its packets. It keeps the
     serial each finish returns and reads rocketnet_client_receipts every frame,
-    so it learns which updates the server got (ACKED) and which it did not
-    (LOSS). It sends NUM_UPDATES updates; when they have all resolved without
+    so it learns which updates the server's connection layer acknowledged
+    (ACKED) and which got no acknowledgement (LOSS). ACKED does not prove the
+    server's message layer delivered the update, and LOSS can be a lost
+    acknowledgement of an update that arrived. It sends NUM_UPDATES updates; when they have all resolved without
     both outcomes it sends one more at a time, up to MAX_UPDATES. Run: ./bin/example_ack_receipts
 */
 

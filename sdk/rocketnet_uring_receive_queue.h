@@ -80,8 +80,8 @@ struct io_uring_buf_ring;
 #define ROCKETNET_URING_RECEIVE_MAX_SLOTS                          ( 1 << 20 )
 
 // the most datagrams taken from one coalesced receive; each one past them is
-// counted in DROPPED_OVERFLOW (the gso transport's bound, the kernel's
-// UDP_MAX_SEGMENTS)
+// counted in DROPPED_OVERFLOW (the library's own cap, the gso transport's
+// bound; the kernel's UDP_MAX_SEGMENTS is larger, 128 in Linux 6.12)
 #define ROCKETNET_URING_RECEIVE_MAX_SEGMENTS                                64
 
 // the control area the multishot reserves in each buffer: one UDP_GRO cmsg

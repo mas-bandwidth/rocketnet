@@ -8,6 +8,12 @@
 // game's four load rows pass at 3 send threads and one receive thread, and
 // the peak row with a game load fails at 2. The constant is msgx's own; no
 // other transport reads it. No socket, no clock, no thread.
+//
+// The expected 3 is copied from the code on purpose: it is a change detector
+// for a measured setting, not a derivation. Moving the default means moving
+// this line, with the load rows that justify the new value. The bounds below
+// it (at least one, within the limit, room for the receive worker) are the
+// checks that hold for any value.
 
 #include "test_unit_registry.h"
 

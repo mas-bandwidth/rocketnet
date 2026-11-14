@@ -236,8 +236,16 @@ bool rocketnet_uring_queue_send_publish( struct rocketnet_uring_queue_send_t * s
         return false;
     }
 
+    // main never waits on the worker: a mutex the worker holds (its claim or
+    // retire) keeps the producer, with its slots, for the next update
+    // (proofs/tla/RNUringQueueSend.tla PublishKept, LockRule "try"), as the
+    // gso transport's publish does; PublishWaits and PublishResumes are
+    // LockRule "wait", the blocking acquire this replaced
     struct rocketnet_uring_queue_send_queue_t * queue = &send->queue[queue_index];
-    rocketnet_platform_mutex_acquire( &queue->mutex );
+    if ( !rocketnet_platform_mutex_try_acquire( &queue->mutex ) )
+    {
+        return false;
+    }
     const int next = rocketnet_buffer_handoff_publish( &queue->handoff, banks->producer, ROCKETNET_URING_SEND_BANKS - 1 );
     rocketnet_platform_mutex_release( &queue->mutex );
 
@@ -261,8 +269,13 @@ bool rocketnet_uring_queue_send_idle( struct rocketnet_uring_queue_send_t * send
         return false;
     }
 
+    // main never waits on the worker: a mutex the worker holds says not idle
+    // yet, and the driver asks again on its next update
     struct rocketnet_uring_queue_send_queue_t * queue = &send->queue[queue_index];
-    rocketnet_platform_mutex_acquire( &queue->mutex );
+    if ( !rocketnet_platform_mutex_try_acquire( &queue->mutex ) )
+    {
+        return false;
+    }
     const bool idle = queue->handoff.ready_count == 0 && queue->held < 0;
     rocketnet_platform_mutex_release( &queue->mutex );
     return idle;
@@ -285,6 +298,9 @@ int rocketnet_uring_queue_send_claim( struct rocketnet_uring_queue_send_t * send
         return -1;
     }
 
+    // proofs/tla/RNUringQueueSend.tla WorkerLocks, WorkerUnlocks: the worker
+    // holds the mutex for the take (and the retire's release), where main's
+    // try may find it held
     rocketnet_platform_mutex_acquire( &queue->mutex );
     const int b = rocketnet_buffer_handoff_take( &queue->handoff );
     queue->held = b;

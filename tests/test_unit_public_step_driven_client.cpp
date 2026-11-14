@@ -261,9 +261,19 @@ static void test_public_step_driven_client_env_selects_the_mode()
 
 REGISTER_UNIT_TEST( test_public_step_driven_client_env_selects_the_mode );
 
-static void test_public_step_driven_client_loss_100_drops_everything()
+// one hand-built pair stepped 50 times with the client's simulated loss at
+// loss_percent: what the client sent and received, what the server received,
+// and whether the client connected
+struct public_step_loss_run_t
 {
+    uint64_t client_sent;
+    uint64_t client_received;
+    uint64_t server_received;
+    bool connected;
+};
 
+static void public_step_loss_run( int loss_percent, public_step_loss_run_t * run )
+{
     public_step_identity_t identity;
     public_step_identity( &identity );
 
@@ -285,7 +295,7 @@ static void test_public_step_driven_client_loss_100_drops_everything()
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
     check( client != NULL );
 
-    rocketnet_client_network_simulator( client, 0, 0, 100, 0 );
+    rocketnet_client_network_simulator( client, 0, 0, loss_percent, 0 );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
 
     double now = 1000.0;
@@ -299,11 +309,37 @@ static void test_public_step_driven_client_loss_100_drops_everything()
         now += 0.01;
     }
 
-    const uint64_t packets_received = rn_client_stats_of( client ).packets_received;
-    check( packets_received == 0 );
+    run->client_sent = rn_client_stats_of( client ).packets_sent;
+    run->client_received = rn_client_stats_of( client ).packets_received;
+    struct rocketnet_server_stats_t server_stats;
+    rocketnet_server_stats( server, &server_stats );
+    run->server_received = server_stats.packets_received;
+    run->connected = rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED;
 
     rn_test_client_stop_and_destroy( client );
     rn_test_server_stop_and_destroy( server );
+}
+
+static void test_public_step_driven_client_loss_100_drops_everything()
+{
+    // the control: the same pair with no loss connects, both ways
+
+    public_step_loss_run_t control = {};
+    public_step_loss_run( 0, &control );
+    check( control.connected );
+    check( control.client_sent > 0 );
+    check( control.server_received > 0 );
+    check( control.client_received > 0 );
+
+    // total loss: the client sends, and nothing it sends arrives, so the
+    // server never answers and the client receives nothing
+
+    public_step_loss_run_t lossy = {};
+    public_step_loss_run( 100, &lossy );
+    check( !lossy.connected );
+    check( lossy.client_sent > 0 );
+    check( lossy.server_received == 0 );
+    check( lossy.client_received == 0 );
 }
 
 REGISTER_UNIT_TEST( test_public_step_driven_client_loss_100_drops_everything );

@@ -189,29 +189,6 @@ static void test_create_reports_status_not_initialized()
 }
 REGISTER_UNIT_TEST( test_create_reports_status_not_initialized );
 
-// ---- bad arguments ----------------------------------------------------------
-
-static void test_create_reports_status_invalid_argument()
-{
-    struct rocketnet_client_config_t client_config;
-    create_status_client_config( &client_config );
-
-    struct rocketnet_server_config_t server_config;
-    create_status_dev_server_config( &server_config );
-    server_config.max_clients = 4;
-
-    // a NULL server address (the null guard asserts in Debug: quieted here)
-
-    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
-    rocketnet_assert_function( create_status_quiet_assert );
-
-    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
-    check( rocketnet_server_create( NULL, NULL, NULL, &server_config, &status ) == NULL );
-    rocketnet_assert_function( saved_assert );
-    check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
-}
-REGISTER_UNIT_TEST( test_create_reports_status_invalid_argument );
-
 // ---- a config never filled: config_bytes below its own field ----------------
 
 // A memset-zero config (config_bytes 0), and every config_bytes too small to
@@ -308,7 +285,10 @@ REGISTER_UNIT_TEST( test_create_reports_status_invalid_address );
 
 // No address at all (both NULL, and no ROCKETNET_SERVER_IPV4_ADDRESS or
 // ROCKETNET_SERVER_IPV6_ADDRESS to supply one): refused with
-// INVALID_ARGUMENT and counted once as API misuse.
+// INVALID_ARGUMENT and counted once as API misuse. This is the file's one
+// NULL-address case: it clears the two address variables first, so a value
+// set in the environment cannot supply the address and turn it into a false
+// red.
 
 static void test_create_reports_status_no_address()
 {

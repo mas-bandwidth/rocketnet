@@ -14,6 +14,7 @@
 // id, "opens" each received packet once (replay suppression), and acks the
 // opened ids after the update's deliveries are drained (R1, P2, P6).
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,9 +38,14 @@
 #define check rocketnet_unit_check
 
 // ---------------------------------------------------------------------------
-// messages: an id in the first 8 bytes, the rest a function of (id, length), so
-// every delivery is verified byte for byte without keeping the sent bytes
+// messages: an 8-byte header holding the id (low 40 bits) and the length the
+// sender wrote (high 24 bits), the rest a function of (id, offset), so every
+// delivery is verified whole, byte for byte and at its sent length, without
+// keeping the sent bytes: a delivery cut short keeps a correct prefix but
+// not the length its header names
 // ---------------------------------------------------------------------------
+
+#define PATTERN_ID_BITS 40
 
 static uint8_t pattern_byte( uint64_t id, uint32_t i )
 {
@@ -54,7 +60,9 @@ static void pattern_fill( uint8_t * data, uint64_t id, uint32_t bytes )
     }
     if ( bytes >= 8 )
     {
-        memcpy( data, &id, 8 );
+        check( id < ( 1ULL << PATTERN_ID_BITS ) && bytes < ( 1U << ( 64 - PATTERN_ID_BITS ) ) );
+        const uint64_t header = id | ( (uint64_t) bytes << PATTERN_ID_BITS );
+        memcpy( data, &header, 8 );
     }
 }
 
@@ -65,8 +73,13 @@ static bool pattern_verify( const uint8_t * data, uint32_t bytes, uint64_t * out
         return false;
     }
 
-    uint64_t id;
-    memcpy( &id, data, 8 );
+    uint64_t header;
+    memcpy( &header, data, 8 );
+    const uint64_t id = header & ( ( 1ULL << PATTERN_ID_BITS ) - 1 );
+    if ( ( header >> PATTERN_ID_BITS ) != bytes )
+    {
+        return false;                                   // not the length the sender wrote
+    }
     for ( uint32_t i = 8; i < bytes; i++ )
     {
         if ( data[i] != pattern_byte( id, i ) )
@@ -833,7 +846,9 @@ static void test_small_packed_and_resent_until_packet_acked()
         wire_packet_t sent[4];
         check( write_packets( c, 1.0, sent, 4 ) == 1 );
         check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
-        check( write_packets( c, 1.6, sent, 4 ) >= 0 );                  // resent, still inside the timeout
+        const uint64_t resent = counter( c, ROCKETNET_COUNTER_MESSAGE_RESENT );
+        check( write_packets( c, 1.6, sent, 4 ) == 1 );                  // resent, still inside the timeout
+        check( counter( c, ROCKETNET_COUNTER_MESSAGE_RESENT ) == resent + 1 );
         check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_NONE );
         check( write_packets( c, 2.5, sent, 4 ) == 0 );                  // past it: nothing more is sent
         check( rn_ordered_decide( &c->ordered ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
@@ -1552,6 +1567,251 @@ static void test_fragments_at_the_read_index_never_scan_the_held_run()
 {
     fragments_at_the_read_index_leg( 1024 );
     fragments_at_the_read_index_leg( 65536 );
+}
+
+// The held index's home before it was keyed: fixed and public, so a sender
+// could choose keys that share one run of cells. Copied here only to choose
+// those keys; the library's home is keyed per connection (rn_held_home).
+
+static uint32_t unkeyed_held_home( uint64_t key, uint32_t entries )
+{
+    uint64_t h = key * 0x9E3779B97F4A7C15ULL;
+    h ^= h >> 29;
+    return (uint32_t) ( h & ( entries - 1 ) );
+}
+
+struct chosen_key_t
+{
+    uint32_t home;
+    uint32_t channel;
+    uint32_t index;
+};
+
+static bool chosen_key_before( const chosen_key_t & a, const chosen_key_t & b )
+{
+    return a.home < b.home;
+}
+
+// A sender holds the keys whose homes are lowest, all through
+// rn_ordered_receive and none refused: B code-2 blocks collecting (one
+// fragment of two each, keyed by their first number) and code-3 records ahead
+// of their turn on channels 1 .. C - 1, nearly W entries in all. The homes are
+// the unkeyed ones when `against` is NULL, else the library's home under the
+// key `against` (a, b). Under the home they were chosen against they share one
+// run from cell 0 and the last insert walks the whole run (984 cells at
+// W = 1024 under the unkeyed home); under another key they land as any keys
+// do. Returns the most cells one find or insert stepped through, over
+// `connections` connections, each with the key its carve drew, or with `pin`
+// (a, b) set in its empty index when `pin` is not NULL.
+
+static uint32_t chosen_keys_leg( int window, int connections, const uint64_t * pin, const uint64_t * against )
+{
+    rocketnet_message_config_t config;
+    node_config( &config, window, 262144, 262144, 800000 );
+    if ( config.packets_in_flight < window )
+    {
+        config.packets_in_flight = window;
+    }
+
+    node_t * b = node_new( &config, 8 );
+    const uint32_t W = b->region->window;
+    const uint32_t entries = b->region->held_entries;
+    const uint32_t C = b->region->num_channels;
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t blocks = W / 16;
+    const uint32_t ordered = W - 2 * blocks - 16;
+    check( C >= 32 );
+
+    // the home a key is chosen by: unkeyed, or the library's under `against`,
+    // read on this connection's empty index and its own key put back after
+    const uint64_t own_a = b->region->held_key_a;
+    const uint64_t own_b = b->region->held_key_b;
+    if ( against )
+    {
+        b->region->held_key_a = against[0];
+        b->region->held_key_b = against[1];
+    }
+    auto chosen_home = [&]( uint32_t channel, uint32_t ordering ) -> uint32_t
+    {
+        if ( against )
+        {
+            return rn_channels_held_home( b->region, channel, ordering );
+        }
+        return unkeyed_held_home( ( (uint64_t) channel << 32 ) | ordering, entries );
+    };
+
+    // code 2: the even first numbers with the lowest homes; each block sends
+    // its fragment 1 as number first + 1, and numbers first and first + 1 are
+    // no other record's
+
+    std::vector<chosen_key_t> block_keys;
+    for ( uint32_t first = 0; first + 1 < W; first += 2 )
+    {
+        block_keys.push_back( { chosen_home( RN_HELD_RELIABLE_BLOCK, first ), 0, first } );
+    }
+    std::sort( block_keys.begin(), block_keys.end(), chosen_key_before );
+    block_keys.resize( blocks );
+
+    std::vector<bool> taken( W, false );
+    for ( const chosen_key_t & key : block_keys )
+    {
+        taken[key.index] = true;
+        taken[key.index + 1] = true;
+    }
+
+    // code 3: every (channel, ordering) a record ahead of its turn may take, the lowest homes first
+
+    std::vector<chosen_key_t> ordered_keys;
+    for ( uint32_t channel = 1; channel < C; channel++ )
+    {
+        for ( uint32_t ordering = 1; ordering < W; ordering++ )
+        {
+            ordered_keys.push_back( { chosen_home( channel, ordering ), channel, ordering } );
+        }
+    }
+    std::sort( ordered_keys.begin(), ordered_keys.end(), chosen_key_before );
+    ordered_keys.resize( ordered );
+    b->region->held_key_a = own_a;
+    b->region->held_key_b = own_b;
+
+    std::vector<rocketnet_message_record_t> records;
+    static uint8_t fragment_data[ROCKETNET_MESSAGE_FRAGMENT_BYTES];
+    const uint8_t byte = 0x5A;
+    for ( const chosen_key_t & key : block_keys )
+    {
+        rocketnet_message_record_t record;
+        memset( &record, 0, sizeof( record ) );
+        record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
+        record.block = 1;
+        record.number = key.index + 1;
+        record.fragment = 1;
+        record.fragments = 1;
+        record.ring = F / 16;
+        record.data = fragment_data;
+        record.bytes = 1;
+        records.push_back( record );
+    }
+
+    uint32_t number = 0;
+    for ( const chosen_key_t & key : ordered_keys )
+    {
+        while ( taken[number] )
+        {
+            number++;
+        }
+        rocketnet_message_record_t record = raw_ordered_record( number++, key.index, &byte );
+        record.channel = key.channel;
+        records.push_back( record );
+    }
+    check( number <= W );
+
+    alignas( 16 ) uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint32_t most = 0;
+    for ( int connection = 0; connection < connections; connection++ )
+    {
+        if ( connection > 0 )
+        {
+            b = node_new( &config, 8 );
+        }
+        rn_channels_t * channels = &b->ordered.channels;
+        if ( pin )
+        {
+            check( b->region->held_count == 0 );
+            b->region->held_key_a = pin[0];
+            b->region->held_key_b = pin[1];
+        }
+        const uint64_t key_a = b->region->held_key_a;
+        const uint64_t key_b = b->region->held_key_b;
+
+        rn_channels_held_probe_worst_reset();
+        size_t next = 0;
+        while ( next < records.size() )
+        {
+            rocketnet_message_writer_t writer;
+            rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
+            while ( next < records.size() && rocketnet_message_writer_add( &writer, &records[next] ) )
+            {
+                next++;
+            }
+            const int bytes = rocketnet_message_writer_finish( &writer );
+            check( rn_ordered_receive( &b->ordered, payload, bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+        }
+        const uint32_t worst = rn_channels_held_probe_worst_read();
+        if ( worst > most )
+        {
+            most = worst;
+            if ( worst > 64 )
+            {
+                printf( "W = %u, connection %d, key a = 0x%016" PRIx64 " b = 0x%016" PRIx64 ": %u held keys chosen to collide: one held-index scan stepped %u cells\n",
+                        W, connection, key_a, key_b, b->region->held_count, worst );
+            }
+        }
+
+        check( b->region->held_count == blocks + ordered );
+        check( channels->deliveries == 0 );
+        check( channels->violations == 0 );
+        check( channels->error == ROCKETNET_DISCONNECT_REASON_NONE );
+
+        // the key is the connection's, drawn at its carve: a record never redraws it
+
+        check( b->region->held_key_a == key_a && b->region->held_key_b == key_b );
+
+        node_free( b );
+    }
+    return most;
+}
+
+#define HELD_KEY_A 0x9E3779B97F4A7C15ULL
+#define HELD_KEY_B 0x6A09E667F3BCC909ULL
+
+// The keys chosen against the unkeyed home (red on the unkeyed home: 984
+// cells at W = 1024), under one fixed key so the run is the same every time:
+// at most 64 cells.
+
+static void test_held_keys_chosen_to_collide_stay_short()
+{
+    const uint64_t pin[2] = { HELD_KEY_A, HELD_KEY_B };
+    check( chosen_keys_leg( 1024, 1, pin, NULL ) <= 64 );
+    check( chosen_keys_leg( 16384, 1, pin, NULL ) <= 64 );
+}
+
+// The keys every carve draws. Chosen against the unkeyed home, or against the
+// library's home under one known key (which walks the whole run under that
+// key: the home reads the key), they stay at most 64 cells on every
+// connection. Measured: over 3000 connections at W = 1024 the worst scan was
+// 34 cells (mean 12), over 300 at W = 16384 it was 38 (mean 20.5).
+
+static void test_held_keys_chosen_to_collide_stay_short_on_every_drawn_key()
+{
+    const uint64_t known[2] = { HELD_KEY_A, HELD_KEY_B };
+    check( chosen_keys_leg( 1024, 1, known, known ) >= 512 );
+
+    check( chosen_keys_leg( 1024, 128, NULL, NULL ) <= 64 );
+    check( chosen_keys_leg( 1024, 128, NULL, known ) <= 64 );
+    check( chosen_keys_leg( 16384, 8, NULL, NULL ) <= 64 );
+    check( chosen_keys_leg( 16384, 8, NULL, known ) <= 64 );
+}
+
+// The home key is drawn at every carve: two connections differ, and a slot's
+// reset draws again, so a sender that reconnects cannot carry what it learned
+// of one key to the next. Not drawn per record (chosen_keys_leg).
+
+static void test_held_home_key_is_drawn_at_every_carve()
+{
+    rocketnet_message_config_t config;
+    node_config( &config, 1024, 262144, 262144, 800000 );
+    node_t * one = node_new( &config, 8 );
+    node_t * two = node_new( &config, 8 );
+
+    const uint64_t a = one->region->held_key_a;
+    const uint64_t b = one->region->held_key_b;
+    check( a != two->region->held_key_a || b != two->region->held_key_b );
+
+    rn_region_reset( one->region );
+    check( a != one->region->held_key_a || b != one->region->held_key_b );
+
+    node_free( two );
+    node_free( one );
 }
 
 static void test_large_between_small_keeps_order()
@@ -2900,12 +3160,15 @@ static void test_rnchannel_witness_replays_ordered()
         const int count = write_packets( m.a, m.now, again, 4 );       // nothing was acked: every number resends
         check( count >= 1 );
 
+        // every packet of the resend opens at the receiver (write_packets gives
+        // each a packet id past model_setup's 1 .. 5, so none is a replay)
+
         const uint64_t duplicates = counter( m.b, ROCKETNET_COUNTER_MESSAGE_DUPLICATE );
         for ( int p = 0; p < count; p++ )
         {
-            if ( again[p].bytes > 0 && again[p].id >= 6 )
+            if ( again[p].bytes > 0 )
             {
-                open_packet( m.b, &again[p] );
+                check( open_packet( m.b, &again[p] ) );
             }
         }
         check( counter( m.b, ROCKETNET_COUNTER_MESSAGE_DUPLICATE ) > duplicates );
@@ -3128,10 +3391,23 @@ static void test_ordered_record_sent_at_zero_waits_for_its_resend()
 
     check( write_packets( a, delay + 1.0 / 60.0, first, 4 ) == 0 );
 
-    // the first send is recorded once, at 0.0, and no reliable timeout
+    // the first send is recorded once, at 0.0, and the reliable timeout runs
+    // from it: it fires exactly one timeout after 0.0, not after the resend.
+    // Opted in (test_channel_ordered_cases_opted_in) the timeout is the
+    // config's; at the default there is none, so this run sets one second on
+    // the window, past the resend, to check the same boundary
 
-    check( rn_window_ack_check_timeout( &a->ordered.ack, delay ) == 0 );
     check( a->ordered.ack.oldest_first_send == 0.0 );
+    double timeout = (double) g_node_reliable_timeout_ms / 1000.0;
+    if ( g_node_reliable_timeout_ms <= 0 )
+    {
+        check( a->ordered.ack.reliable_timeout == 0.0 );
+        timeout = 1.0;
+        a->ordered.ack.reliable_timeout = timeout;
+    }
+    check( timeout > delay + 1.0 / 60.0 );
+    check( rn_window_ack_check_timeout( &a->ordered.ack, timeout - 1.0 / 60.0 ) == 0 );
+    check( rn_window_ack_check_timeout( &a->ordered.ack, timeout ) == 1 );
 
     node_free( a );
 }
@@ -4004,6 +4280,11 @@ REGISTER_UNIT_TEST( test_reservation_takes_a_packet_that_fits_exactly );
 REGISTER_UNIT_TEST( test_reservation_of_control_and_unordered_records );
 REGISTER_UNIT_TEST( test_duplicates_at_the_read_index_never_scan_the_held_run );
 REGISTER_UNIT_TEST( test_fragments_at_the_read_index_never_scan_the_held_run );
+REGISTER_UNIT_TEST( test_held_keys_chosen_to_collide_stay_short );
+UNIT_TEST_SKIPPED_UNLESS( test_held_keys_chosen_to_collide_stay_short, ROCKETNET_MAX_CHANNELS >= 32 ); // the chosen keys span 31 channels
+REGISTER_UNIT_TEST( test_held_keys_chosen_to_collide_stay_short_on_every_drawn_key );
+UNIT_TEST_SKIPPED_UNLESS( test_held_keys_chosen_to_collide_stay_short_on_every_drawn_key, ROCKETNET_MAX_CHANNELS >= 32 ); // the chosen keys span 31 channels
+REGISTER_UNIT_TEST( test_held_home_key_is_drawn_at_every_carve );
 REGISTER_UNIT_TEST( test_chunks_placed_by_index_not_arrival );
 UNIT_TEST_SKIPPED_UNLESS( test_chunks_placed_by_index_not_arrival, ROCKETNET_MAX_CHANNELS >= 4 ); // runs at 4 channels, not at 2
 REGISTER_UNIT_TEST( test_no_partial_delivery );
@@ -4052,6 +4333,9 @@ static void test_channel_ordered_cases_opted_in()
         test_large_between_small_keeps_order_one_payload_per_write,
         test_large_between_small_keeps_order_with_refused_packets,
         test_reservation_counts_the_held_run_past_2_to_the_24,
+        test_reservation_takes_a_packet_that_fits_exactly,
+        test_reservation_of_control_and_unordered_records,
+        test_duplicates_at_the_read_index_never_scan_the_held_run,
         test_chunks_placed_by_index_not_arrival,
         test_no_partial_delivery,
         test_hostile_chunk_count_or_index_kicks,

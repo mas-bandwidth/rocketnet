@@ -7,9 +7,9 @@
     receive, simulate, queue, then send last.
 
     The server's frame runs one of two ways. By default (--game-threads 1)
-    every server call is made on the main thread, one thread at a time: take
-    in what arrived, queue every client's state update, send_packets, then
-    update. With --game-threads N the server's frame runs the way a game
+    every server call is made on the main thread, one thread at a time:
+    update, receive what arrived, queue every client's state update, then
+    send_packets last. With --game-threads N the server's frame runs the way a game
     server runs it: the main thread joins last frame's network half, reads
     the messages the last update left, does the world update, then splits off
     the second half of the network update to run in parallel with the main

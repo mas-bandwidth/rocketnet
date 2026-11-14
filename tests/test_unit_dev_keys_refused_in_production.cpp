@@ -13,12 +13,14 @@
 // registered in the production unit suite only.
 
 #include "test_unit_registry.h"
+#include "unit_shutdown.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_config.h"
 #include "rocketnet_connect_token.h"
 #include "loopback_hub.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -27,7 +29,10 @@
 #define check rocketnet_unit_check
 
 // production keys, a protocol id and a packet filter of the caller's own, so
-// the development-key check is the only refusal the config can reach
+// the development-key check is the only refusal the config can reach. The
+// transport is the in-memory loopback (with the test hub), so a refusal that
+// regressed would create a server here and fail the check, never bind a
+// real socket.
 static void production_config( struct rocketnet_server_transport_config_t * config )
 {
     rocketnet_server_transport_default_config_current( config );
@@ -36,6 +41,20 @@ static void production_config( struct rocketnet_server_transport_config_t * conf
     memset( config->server_public_key, 0x43, 32 );
     memset( config->server_secret_key, 0x44, 32 );
     config->protocol_id = 1;
+    snprintf( config->transport, sizeof( config->transport ), "%s", "loopback" );
+    config->loopback_hub = rocketnet_test_loopback_hub();
+}
+
+// a create the case expected refused: NULL; one that was not is destroyed
+// before the check fails, so the case leaves nothing behind
+static bool dev_keys_refused( struct rocketnet_server_transport_t * server )
+{
+    if ( server )
+    {
+        rn_test_server_transport_stop_and_destroy( server );
+        return false;
+    }
+    return true;
 }
 
 static void test_dev_keys_refused_in_production()
@@ -47,7 +66,7 @@ static void test_dev_keys_refused_in_production()
         production_config( &config );
         memcpy( config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
         int status = -1;
-        check( rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( dev_keys_refused( rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) ) );
         check( status == ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION );
     }
 
@@ -58,7 +77,7 @@ static void test_dev_keys_refused_in_production()
         production_config( &config );
         memcpy( config.server_public_key, rocketnet_dev_server_public_key, 32 );
         int status = -1;
-        check( rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( dev_keys_refused( rocketnet_server_transport_create_current_internal( NULL, "127.0.0.1:12345", &config, 1000.0, &status ) ) );
         check( status == ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION );
     }
 }
@@ -108,6 +127,10 @@ static void test_dev_keys_refusal_leaves_nothing_live()
     check( rocketnet_init_internal( &state, dev_keys_allocate, dev_keys_release, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
+    // the loopback hub the configs name comes from the counting allocator
+    // too; it is made by the first config, before any live count is read
+    rocketnet_test_loopback_hub_context( &state );
+
     for ( int keys = 1; keys <= 3; ++keys )
     {
         for ( int with_status = 0; with_status <= 1; ++with_status )
@@ -126,7 +149,7 @@ static void test_dev_keys_refusal_leaves_nothing_live()
             const int live = state.live;
             const int calls = state.calls;
             status = -1;
-            check( rocketnet_server_transport_create_current_internal( &state, "127.0.0.1:12345", &config, 1000.0, with_status ? &status : NULL ) == NULL );
+            check( dev_keys_refused( rocketnet_server_transport_create_current_internal( &state, "127.0.0.1:12345", &config, 1000.0, with_status ? &status : NULL ) ) );
             check( status == ( with_status ? (int) ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION : -1 ) );
             check( state.calls > calls );
             check( state.live == live );
