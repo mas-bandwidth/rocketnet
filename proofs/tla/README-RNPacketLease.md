@@ -31,7 +31,9 @@ concurrently during the fill phase. Only the joined main thread calls `reset`.
   and abort) no longer holds its frame, so the same frame can be leased
   again in the same epoch, probing past the consumed entry to another slot.
 - **Resolve and take.** `StartResolve`, `RLoad` (another epoch ends the
-  chain; writing starts the spin), `RSpinWait` and `RSpinDone`, `RCmp` (read
+  chain; an entry being written is skipped and the probe continues, as in the
+  code), `RSpinWait` and `RSpinDone` (the former code's spin on an entry being
+  written, enabled only in `MCRNPacketLeaseBrokenSpinPausedWriter.cfg`), `RCmp` (read
   the fields, continue on a frame or ticket mismatch, refuse on another
   mismatch) and `RCommit` (take swaps active to consumed; resolve tests the
   loaded state). The supplied context is a copy of a published lease, exact or

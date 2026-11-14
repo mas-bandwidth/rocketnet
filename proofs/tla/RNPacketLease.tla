@@ -295,7 +295,8 @@ StartResolve(t) ==
     /\ pc' = [pc EXCEPT ![t] = IF epoch = 0 THEN "idle" ELSE "r_load"]
     /\ UNCHANGED <<entryVars, tableVars, ghostVars, seen, myT, todo, tm>>
 
-\* load the state: another epoch ends the chain; phase 1 is the spin
+\* load the state: another epoch ends the chain; phase 1 continues the probe
+\* (OnWriting = {"skip"}, the code); "spin" is the former code's wait
 RLoad(t) ==
     /\ pc[t] = "r_load"
     /\ seen' = [seen EXCEPT ![t] = st[slot[t]]]
