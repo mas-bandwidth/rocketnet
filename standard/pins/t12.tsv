@@ -3,6 +3,10 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_server_protocol.h"
+#include "rocketnet_protocol.h"
 token creation skew	(uint64_t) ROCKETNET_TOKEN_CREATION_SKEW_SECONDS	30
 failed-signature source table	ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS	64
 cookie reply source bitmap	ROCKETNET_SERVER_COOKIE_REPLY_SOURCE_FACTOR	16
+cookie MAC size	ROCKETNET_COOKIE_MAC_BYTES	16
+cookie MAC input IPv4	( ROCKETNET_ADDRESS_BYTES_IPV4 + ROCKETNET_CONNECTION_SALT_BYTES + (int) sizeof( uint64_t ) )	23
+cookie MAC input IPv6	ROCKETNET_COOKIE_MAC_INPUT_IPV6_BYTES	35

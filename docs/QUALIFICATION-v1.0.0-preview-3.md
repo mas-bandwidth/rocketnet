@@ -8,6 +8,11 @@ links; a result carried from another commit names that commit and the
 difference of its inputs. Manual results are not GitHub CI runs. The gates
 still owed when the tag is cut are listed under "Not qualified".
 
+This is a historical record. Its references to RELEASING.md (its sections and
+numbered steps) are to [that file at the v1.0.0-preview-3
+tag](https://github.com/mas-bandwidth/rocketnet/blob/v1.0.0-preview-3/docs/RELEASING.md);
+the current [RELEASING.md](RELEASING.md) has since been rewritten.
+
 ## Candidate head
 
 - Suite head: `126ef062238c8f82a14a0a3a7ed97ba818cb2269`, the whole-tree
@@ -24,7 +29,7 @@ still owed when the tag is cut are listed under "Not qualified".
 - Layout passes still landing on `main` after the candidate head change only
   whitespace and are proven by identical disassembly. The tag commit is
   reconciled against this record before the tag is cut
-  ([RELEASING.md](RELEASING.md), "Cutting the release").
+  ([RELEASING.md at the tag](https://github.com/mas-bandwidth/rocketnet/blob/v1.0.0-preview-3/docs/RELEASING.md#cutting-the-release), "Cutting the release").
 
 ## Native suites
 
@@ -74,7 +79,7 @@ time is recorded only as under the timeout.
 
 The first `v1.0.0-preview-3` tag (tag object `4ebaa060`, commit `389baeef`)
 was replaced before delivery under the recut authorization in
-[RELEASING.md](RELEASING.md#authorized-preview-3-recut). Two memory findings
+[RELEASING.md at the tag](https://github.com/mas-bandwidth/rocketnet/blob/v1.0.0-preview-3/docs/RELEASING.md#authorized-preview-3-recut). Two memory findings
 in CI led to it, and neither is in the library:
 
 - The ThreadSanitizer loopback soak growing without bound was the harness

@@ -170,7 +170,7 @@ struct rocketnet_server_msgx_receiver_t
 
     // the mutex guards ownership only: which of banks[] the worker fills, which
     // is ready, main's and the free one (sdk/rocketnet_msgx_receive_fill.h,
-    // proofs/tla/RNMsgxReceiveFill.tla Publish and Claim)
+    // proofs/tla/RNMsgxReceiveFill.tla PublishFull, RoundPublish and Claim)
     rocketnet_platform_mutex_t mutex = {};
     struct rocketnet_msgx_receive_banks_t hand;
     uint32_t main_cursor;           // main only: the retained tail of main's bank
@@ -1043,8 +1043,9 @@ static void rocketnet_server_msgx_fill_take( void * user, int i )
     memcpy( bank->packet_data[index], receiver->scratch[i], (size_t) bytes );
 }
 
-// proofs/tla/RNMsgxReceiveFill.tla Publish: the worker's bank becomes ready
-// only when none waits and a free bank exists; otherwise the worker keeps it
+// proofs/tla/RNMsgxReceiveFill.tla PublishFull and RoundPublish: the
+// worker's bank becomes ready only when none waits and a free bank exists;
+// otherwise the worker keeps it
 static bool rocketnet_server_msgx_publish_receive( struct rocketnet_server_msgx_receiver_t * receiver )
 {
     rocketnet_platform_mutex_acquire( &receiver->mutex );
@@ -1198,9 +1199,9 @@ void rocketnet_server_msgx_receive_packets( struct rocketnet_server_msgx_t * msg
     msgx->process_packets.num_packets = 0;
     struct rocketnet_server_msgx_receiver_t * receiver = msgx->receiver;
 
-    // proofs/tla/RNMsgxReceiveFill.tla Claim (RNGsoHandoff.tla RxClaim and
-    // RxConsume at 5a2dbf403): a retained tail is consumed before a newer
-    // ready bank is claimed. Only main moves hand.main
+    // proofs/tla/RNMsgxReceiveFill.tla Claim (RNGsoHandoff.tla RxCall; its
+    // RxClaim and RxConsume at 5a2dbf403): a retained tail is consumed
+    // before a newer ready bank is claimed. Only main moves hand.main
     struct rocketnet_server_msgx_recv_bank_t * held = rocketnet_server_msgx_bank( receiver, receiver->hand.main );
     if ( receiver->main_cursor >= held->num_packets )
     {

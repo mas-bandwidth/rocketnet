@@ -16,6 +16,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
 using RocketNet.Backend;
 using Sodium;
@@ -301,6 +302,53 @@ static class Tests
         }
     }
 
+    // a mint that fails, at either random fill or at the seal, leaves no key
+    // byte in the arrays it filled or in the plain private block it sealed
+
+    static void test_failed_mint_wipes_the_keys()
+    {
+        BackendConfig config = BackendConfig.Read( Environment( new Dictionary<string, string>
+        {
+            ["ROCKETNET_BACKEND_SERVER_PUBLIC_KEY"] = Convert.ToBase64String( DevServerPublicKey ),
+            ["ROCKETNET_BACKEND_SERVER_ADDRESSES"] = "127.0.0.1:40000",
+        } ) );
+        for ( int fail = 1; fail <= 3; fail++ )
+        {
+            List<byte[]> handed = new List<byte[]>();
+            byte[]? sealedPlain = null;
+            bool threw = false;
+            try
+            {
+                ConnectToken.Generate( config, 1, 1000, buffer =>
+                {
+                    handed.Add( buffer );
+                    if ( handed.Count == fail )
+                    {
+                        buffer.AsSpan( 0, buffer.Length / 2 ).Fill( 0x5a );
+                        throw new CryptographicException( "planted random failure" );
+                    }
+                    buffer.AsSpan().Fill( 0x5a );
+                }, ( block, serverPublicKey ) =>
+                {
+                    sealedPlain = block;
+                    throw new CryptographicException( "planted seal failure" );
+                } );
+            }
+            catch ( CryptographicException )
+            {
+                threw = true;
+            }
+            Check( threw, $"failure {fail}: the mint did not fail" );
+            Check( handed.Count == ( fail <= 2 ? fail : 2 ), $"failure {fail}: {handed.Count} random fills" );
+            foreach ( byte[] key in handed )
+            {
+                Check( key.AsSpan().IndexOfAnyExcept( (byte) 0 ) < 0, $"failure {fail}: a key still holds {Convert.ToHexString( key )}" );
+            }
+            Check( fail <= 2 ? sealedPlain == null : sealedPlain != null && sealedPlain.AsSpan().IndexOfAnyExcept( (byte) 0 ) < 0,
+                   $"failure {fail}: the plain private block was not wiped" );
+        }
+    }
+
     static int Main()
     {
         (string, Action)[] tests =
@@ -311,6 +359,7 @@ static class Tests
             ( nameof( test_server_addresses_match_vectors ), test_server_addresses_match_vectors ),
             ( nameof( test_server_addresses_refused ), test_server_addresses_refused ),
             ( nameof( test_generated_token_opens ), test_generated_token_opens ),
+            ( nameof( test_failed_mint_wipes_the_keys ), test_failed_mint_wipes_the_keys ),
             ( nameof( test_config_refused ), test_config_refused ),
             ( nameof( test_listen_address ), test_listen_address ),
         };

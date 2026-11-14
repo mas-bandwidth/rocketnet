@@ -13,9 +13,10 @@
 // The endpoints find each other through a caller-owned hub
 // (rocketnet_loopback_hub_create): one server and up to max_clients clients,
 // each with its full queue allocated in the hub's one block at hub create (the
-// server's sized from the hub's clients). Endpoint create and destroy only
-// register and unregister a record. Send and receive never allocate or grow
-// storage. A datagram arriving at the queue ceiling is dropped and counted;
+// server's sized from the hub's clients). Endpoint create and destroy
+// register and unregister a record; a client's create also makes the wake its
+// I/O thread sleeps on until a datagram is queued for it, and its destroy
+// frees it. Send and receive never allocate or grow storage. A datagram arriving at the queue ceiling is dropped and counted;
 // queued datagrams keep their arrival order. One hub mutex guards the records
 // and queues.
 
@@ -87,6 +88,11 @@ void rocketnet_loopback_test_send_contention( bool busy );
 // Read-only queue-index seam; test library only. Writes the endpoint's
 // free-running head and tail and its fixed capacity.
 void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, uint32_t * tail, uint32_t * capacity );
+
+// Client poll count seam; test library only. The client receives, across
+// every hub, that found the endpoint's queue empty: one per idle wake-up of a
+// client I/O thread, so an idle client's count per second is its wake-ups.
+uint64_t rocketnet_loopback_test_client_empty_receives();
 
 // Ephemeral range seam; test library only. A port 0 bind is given a port in
 // port .. 65535, so a small hub can hold the whole range. Set it before the

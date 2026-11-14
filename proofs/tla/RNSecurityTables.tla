@@ -122,13 +122,13 @@ ExpTime(tk) == IF Expire[tk] = 0 THEN MaxClock + 1 ELSE Expire[tk]
 
 VARIABLES clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
           gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied,
-          failCount, failTable, honest, floodVerifies, fclock, windowStart,
+          failCount, failTable, honest, floodVerifies, fclock, windowStart, repeatHeld,
           claimSlot, freeList, orderList, claimReplaced
 claimVars == <<claimSlot, freeList, orderList, claimReplaced>>
 tableVars == <<clock, history, admitted, insertOrder, map, mapGen, mapBorn, slots, others,
                gen, hasPrev, prevUntil, verifies, deniedPulse, admits, lateAdmit, evictedLive, churnDenied,
                claimVars>>
-floodVars == <<failCount, failTable, honest, floodVerifies, fclock, windowStart>>
+floodVars == <<failCount, failTable, honest, floodVerifies, fclock, windowStart, repeatHeld>>
 vars == <<tableVars, floodVars>>
 
 \* The failed-signature budget's small instance (sdk/rocketnet_server.h:
@@ -155,6 +155,15 @@ BackwardsRollover == TRUE
 \* 2026-11-10, which recorded nothing).
 Charger == "V"
 ChargePastVerify == TRUE
+\* RepeatSpec's sender: it holds a valid token, so its signature verifies,
+\* and it is refused past the verify for a reason it does not choose (its
+\* client id already holds a slot, or the server is full), which charges
+\* nothing.  With RepeatRung the refusal records its token for the rest of
+\* the update and a repeat is refused before the work budget
+\* (repeatHeld); a reversed witness overrides it with <- (the code before
+\* 2026-11-13, which recorded nothing).
+Repeater == "R"
+RepeatRung == TRUE
 
 \* The request-claim table's small instance (the code sizes it at
 \* ROCKETNET_USED_TOKEN_HISTORY_RATIO x max_clients).  Definitions, not
@@ -278,7 +287,7 @@ Init ==
     /\ deniedPulse = FALSE /\ admits = [t \in Tokens |-> 0]
     /\ lateAdmit = FALSE /\ evictedLive = FALSE /\ churnDenied = FALSE
     /\ failCount = 0 /\ failTable = {} /\ honest = "start" /\ floodVerifies = 0
-    /\ fclock = 0 /\ windowStart = 0
+    /\ fclock = 0 /\ windowStart = 0 /\ repeatHeld = FALSE
     /\ claimSlot = [s \in ClaimSlots |-> EmptyClaim]
     /\ freeList = [i \in 1..Cardinality(ClaimSlots) |-> i]
     /\ orderList = <<>>
@@ -360,7 +369,9 @@ Request(a, tok, g) ==
 \* (the sealed block does not open, its fields disagree with the signed
 \* ones, a small-order key) and charge the failed-signature budget; the
 \* others charge nothing.  Spec holds the budget at its initial value, so
-\* the charge is ChargedRefusal in ChargeSpec below.
+\* the charge is ChargedRefusal in ChargeSpec below, and the repeat rung
+\* that holds an uncharged refusal's token for its update is
+\* UnchargedRefusal in RepeatSpec.
 RequestRefused(a, tok, g) ==
     /\ tok \in ClaimTokens
     /\ RequestRungs(a, tok, g)
@@ -528,7 +539,7 @@ Forge(f) ==
     /\ failCount' = IF CountNow < FailBudget THEN CountNow + 1 ELSE CountNow
     /\ failTable' = IF f \notin TableNow /\ Cardinality(TableNow) < FailSlots
                      THEN TableNow \cup {f} ELSE TableNow
-    /\ UNCHANGED <<honest, fclock, tableVars>>
+    /\ UNCHANGED <<honest, fclock, repeatHeld, tableVars>>
 
 \* the honest client's request: a valid token, so the verify passes and
 \* nothing is recorded; it gets the challenge.  It retransmits at the send
@@ -544,18 +555,20 @@ HonestRequest ==
     /\ honest' = "challenged"
     \* the allow call ran the decay
     /\ windowStart' = WindowNow /\ failCount' = CountNow /\ failTable' = TableNow
-    /\ UNCHANGED <<fclock, tableVars>>
+    /\ UNCHANGED <<fclock, repeatHeld, tableVars>>
 
 \* the response opens under the handshake key: no failure budget applies
 HonestResponse ==
     /\ honest = "challenged"
     /\ honest' = "connected"
-    /\ UNCHANGED <<failCount, failTable, floodVerifies, fclock, windowStart, tableVars>>
+    /\ UNCHANGED <<failCount, failTable, floodVerifies, fclock, windowStart, repeatHeld, tableVars>>
 
-\* the top of an update resets the work budget
+\* the top of an update resets the work budget and empties the repeat
+\* rung's table (rocketnet_server_protocol_update)
 FloodUpdate ==
     /\ floodVerifies > 0
     /\ floodVerifies' = 0
+    /\ repeatHeld' = FALSE
     /\ UNCHANGED <<failCount, failTable, honest, fclock, windowStart, tableVars>>
 
 \* the token clock the window is measured on. It moves forward, or is
@@ -566,10 +579,10 @@ FloodUpdate ==
 FloodClockForward ==
     /\ fclock < FloodMaxClock
     /\ fclock' = fclock + 1
-    /\ UNCHANGED <<failCount, failTable, honest, floodVerifies, windowStart, tableVars>>
+    /\ UNCHANGED <<failCount, failTable, honest, floodVerifies, windowStart, repeatHeld, tableVars>>
 FloodClockBack ==
     /\ \E t \in 0..(fclock - 1) : fclock' = t
-    /\ UNCHANGED <<failCount, failTable, honest, floodVerifies, windowStart, tableVars>>
+    /\ UNCHANGED <<failCount, failTable, honest, floodVerifies, windowStart, repeatHeld, tableVars>>
 
 FloodNext == (\E f \in Forgers : Forge(f)) \/ HonestRequest \/ HonestResponse \/ FloodUpdate
              \/ FloodClockForward \/ FloodClockBack
@@ -600,7 +613,7 @@ ChargedRefusal ==
               /\ failTable' = IF Charger \notin TableNow /\ Cardinality(TableNow) < FailSlots
                                THEN TableNow \cup {Charger} ELSE TableNow
          ELSE /\ failCount' = CountNow /\ failTable' = TableNow
-    /\ UNCHANGED <<honest, fclock, tableVars>>
+    /\ UNCHANGED <<honest, fclock, repeatHeld, tableVars>>
 
 \* One sender with a valid token refused past the verify, the honest client,
 \* and updates, inside one window (the clock is held, so the window never
@@ -612,6 +625,33 @@ ChargedRefusal ==
 \* and HonestConnectsUnderFlood fails.
 ChargeNext == ChargedRefusal \/ HonestRequest \/ HonestResponse \/ FloodUpdate
 ChargeSpec == Init /\ [][ChargeNext]_vars
+              /\ WF_vars(HonestRequest) /\ WF_vars(HonestResponse) /\ WF_vars(FloodUpdate)
+
+\* A refusal past the verify that the sender does not choose
+\* (rocketnet_server_process_opened_request: CLIENT_ID_ALREADY_CONNECTED, and
+\* NO_SLOTS with its denial) from Repeater: it charges nothing (t17 item
+\* 12), so the failed-signature budget never refuses it.  Its first request
+\* of an update spends one unit of the work budget; with RepeatRung its
+\* token is then held for the rest of the update and a repeat is refused at
+\* the repeat rung, before the work budget, for nothing
+\* (rocketnet_server_record_repeat and the repeat rung in
+\* rocketnet_server_protocol_process_connection_request).
+UnchargedRefusal ==
+    /\ floodVerifies < VerifyBudget
+    /\ ~repeatHeld
+    /\ floodVerifies' = floodVerifies + 1
+    /\ repeatHeld' = RepeatRung
+    /\ UNCHANGED <<failCount, failTable, honest, fclock, windowStart, tableVars>>
+
+\* One sender with a valid token whose refusal charges nothing, the honest
+\* client, and updates.  The honest request has weak fairness only: with
+\* the repeat rung the sender spends at most one verify an update, so with
+\* a work budget of two or more the honest request stays enabled and runs.
+\* Without it (MCRNSecurityTablesBrokenRepeat.cfg) the sender takes the
+\* whole work budget before the honest request in every update, and
+\* HonestConnectsUnderFlood fails.
+RepeatNext == UnchargedRefusal \/ HonestRequest \/ HonestResponse \/ FloodUpdate
+RepeatSpec == Init /\ [][RepeatNext]_vars
               /\ WF_vars(HonestRequest) /\ WF_vars(HonestResponse) /\ WF_vars(FloodUpdate)
 
 \* No global lockout: an honest client with a valid token connects while
@@ -633,6 +673,7 @@ FloodInvariants == /\ floodVerifies \in 0..VerifyBudget
                    /\ failTable \subseteq Forgers \cup {Charger} /\ Cardinality(failTable) <= FailSlots
                    /\ honest \in {"start", "challenged", "connected"}
                    /\ fclock \in 0..FloodMaxClock /\ windowStart \in 0..FloodMaxClock
+                   /\ repeatHeld \in BOOLEAN
                    /\ FloodWindowBounded
 
 TypeOK ==

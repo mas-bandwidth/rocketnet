@@ -1739,18 +1739,22 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
 // Disconnect hands the ended connection's clock to it (rn_client_disconnect),
 // so the update after a disconnect is held to the times before it. A new
 // connection's clock starts at its first update.
+//
+// Update times are finite and non-negative, the first included (rocketnet.h
+// rocketnet_client_update). This clock starts at 0.0, as a connection's
+// message clock is seeded (rn_message_object_create), and takes every time
+// through the same advance: every negative time is refused before the clock
+// reads it, counted and logged, and the clock starts at the first time it
+// accepts, so both clocks agree.
 
 static void rn_client_update_time( struct rocketnet_client_t * client, double time )
 {
-    if ( !client->update_timed && isfinite( time ) )
+    bool clamped = false;
+    client->update_time = rocketnet_update_clock_advance( client->update_time, &client->update_raw_time, &client->update_time_offset, time, &clamped );
+    if ( !clamped )
     {
         client->update_timed = 1;
-        client->update_time = time;
-        client->update_raw_time = time;
-        client->update_time_offset = 0.0;
     }
-
-    client->update_time = rocketnet_update_clock_advance( client->update_time, &client->update_raw_time, &client->update_time_offset, time, NULL );
 }
 
 void rocketnet_client_update( struct rocketnet_client_t * client, double time )
@@ -2335,6 +2339,7 @@ struct rocketnet_server_t
     uint64_t block_bytes;
     struct rocketnet_message_server_t * retiring;           // retained until stop completion
     struct rocketnet_message_server_t * running;            // NULL while stopped
+    struct rocketnet_server_transport_t * failed_start;     // a failed start's transport whose worker had not exited, NULL otherwise
     uint64_t lifetime[RN_SERVER_COUNT];                     // the counts of every earlier run
     uint64_t connection_id_base;                            // the connection ids every earlier run handed out
     struct rocketnet_message_batch_t batch;                 // the one receive batch across every client (in the create-time block)
@@ -3053,7 +3058,11 @@ enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * serv
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     }
 
-    if ( server->retiring )
+    // a stopping run, or a failed start's transport whose worker had not
+    // exited (proofs/tla/ServerSession.tla StartFailsKept): refused until it
+    // has, then finished, which frees that transport
+
+    if ( server->retiring || server->failed_start )
     {
         if ( !rocketnet_server_stopped( server ) )
         {
@@ -3071,10 +3080,15 @@ enum rocketnet_status_t rocketnet_server_start( struct rocketnet_server_t * serv
         return ROCKETNET_STATUS_SERVER_NOT_STOPPED;
     }
 
+    // proofs/tla/ServerSession.tla StartFailsKept: a create that fails after
+    // its transport's worker started, and cannot wait that worker out, hands
+    // the transport to failed_start rather than free it under the worker;
+    // the server is then stopping until the worker exits
+
     int status = ROCKETNET_STATUS_OK;
     server->running = rocketnet_message_server_create_resolved( server->context, server->address, &server->transport, &server->message,
                                                                 server->block, server->block_bytes, server->kbps, &status, server->message.server_send_kbps <= 0,
-                                                                server->memory_budget_bytes );
+                                                                server->memory_budget_bytes, &server->failed_start );
     if ( server->running )
     {
         return ROCKETNET_STATUS_OK;
@@ -3191,12 +3205,29 @@ bool rocketnet_server_stopped( const struct rocketnet_server_t * server )
         return false;
     }
 
+    // a failed start's transport is stopping until its worker exits
+    // (proofs/tla/ServerSession.tla StartFailsKept, then StopCompletes)
+    if ( server->failed_start && !rocketnet_server_transport_failed_create_stopped( server->failed_start ) )
+    {
+        return false;
+    }
+
     struct rocketnet_server_transport_t * transport = server->retiring ? rocketnet_message_server_transport( server->retiring ) : NULL;
     return !transport || rocketnet_server_transport_stopped( transport );
 }
 
 static void rn_server_finish_stop( struct rocketnet_server_t * server )
 {
+    // a failed start's transport, its worker exited: freed before the next
+    // start or the destroy (it never coexists with a retiring run;
+    // proofs/tla/RNCreateUnwind.tla RetainedFrees)
+    if ( server->failed_start )
+    {
+        rocketnet_assert( rocketnet_server_stopped( server ) );
+        rocketnet_server_transport_destroy( server->failed_start );
+        server->failed_start = NULL;
+    }
+
     if ( !server->retiring )
     {
         return;
@@ -3261,6 +3292,25 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
     if ( !server )
     {
         return;                                         // as free(NULL): silent, uncounted
+    }
+
+    // a failed start left a transport whose worker had not exited: not
+    // misuse, since start's failure is all the caller saw. Destroy polls it
+    // as an early destroy polls a stop, for at most RN_DESTROY_STOP_SECONDS,
+    // and keeps the server if the worker still has not exited.
+    if ( server->failed_start )
+    {
+        const double deadline = rocketnet_platform_time() + rn_destroy_stop_seconds;
+        while ( !rocketnet_server_stopped( server ) && rocketnet_platform_time() < deadline )
+        {
+            rocketnet_platform_sleep( 0.001 );
+        }
+
+        if ( !rocketnet_server_stopped( server ) )
+        {
+            rocketnet_error( "rocketnet_server_destroy: a failed start's worker has not exited; the server is kept, not freed" );
+            return;
+        }
     }
 
     rocketnet_assert( rocketnet_server_stopped( server ) );
