@@ -365,6 +365,8 @@ struct rocketnet_server_transport_t
     // exercises fairness.
     int send_capacity;
 
+    int fill_own_frame_capacity;                        // fill_own_frame's entries (max_clients), below
+
     double time;                                        // the game's clock, last seen
     double raw_time;                                    // the caller's clock, last seen, beside the clamped one
     double time_offset;                                 // the backwards offset, exactly 0.0 until the first step
@@ -455,7 +457,6 @@ struct rocketnet_server_transport_t
     // threads that start packets to one client at once take it once.
     // fill_own_frame_capacity entries (max_clients), carved at create.
     uint64_t * fill_own_frame = NULL;
-    int fill_own_frame_capacity = 0;
     uint64_t fill_own_frames_left = 0;                      // own frames not yet taken since the budget opened (atomic)
 #if ROCKETNET_DEV
     uint64_t retest_take_back_for_test = 0;                 // claims taken back, as by another thread, between a claim's refusal and its retest
