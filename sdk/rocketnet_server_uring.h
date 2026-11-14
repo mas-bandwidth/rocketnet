@@ -309,12 +309,14 @@ bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ur
 // answer; 0 gives the kernel's answer back (and probes again too). Not for a
 // process with a transport running.
 void rocketnet_server_uring_test_probe_multishot( int res );
-// development library only: the next rings ring setups and the next buf_rings
-// buffer ring registrations of server creates answer -ENOMEM in place of the
-// kernel's answer, each a refusal the create tries again within
-// ROCKETNET_URING_SETUP_ENOMEM_RETRIES (sdk/rocketnet_uring_receive_queue.h);
-// 0, 0 ends it
+// development library only: in every queue of later server creates, the
+// first rings ring setup attempts and the first buf_rings buffer ring
+// registration attempts answer -ENOMEM in place of the kernel's answer, each
+// a refusal the create tries again while its one budget of
+// ROCKETNET_URING_SETUP_ENOMEM_RETRIES lasts (sdk/rocketnet_uring_receive_queue.h);
+// 0, 0 ends it. retries_spent is the retries the last create spent.
 void rocketnet_server_uring_test_setup_enomem( int rings, int buf_rings );
+int rocketnet_server_uring_test_setup_retries_spent();
 // Test seam: one worker's placement (pin, confine off cpu 0, SCHED_RR) as the
 // worker runs it, on queue 0 of a synthetic transport, with fake affinity and
 // priority calls: only the refusals are injected, the transport's own code

@@ -210,9 +210,11 @@ static const char * const rocketnet_server_uring_probe_steps[] = {
 // rocketnet_server_uring_test_probe_multishot: the terminating result the
 // probe's multishot receive is given in place of the kernel's, 0 for the kernel's
 static std::atomic<int> rocketnet_server_uring_test_multishot_res{ 0 };
-// rocketnet_server_uring_test_setup_enomem: the ring setups still to answer
-// -ENOMEM in place of the kernel's answer
+// rocketnet_server_uring_test_setup_enomem: the ring setup attempts of each
+// queue that answer -ENOMEM in place of the kernel's answer, and the retries
+// the last create spent
 static std::atomic<int> rocketnet_server_uring_test_ring_enomem{ 0 };
+static std::atomic<int> rocketnet_server_uring_test_retries_spent{ 0 };
 #endif // #if ROCKETNET_DEV
 
 #define ROCKETNET_URING_PROBE_RECV                                           1
@@ -943,23 +945,26 @@ static void rocketnet_server_uring_free( struct rocketnet_server_uring_t * uring
 }
 
 // one queue's ring: ROCKETNET_URING_ENTRIES submission entries, a completion
-// queue twice that. A setup refused with ENOMEM is tried again within a bound
-// (ROCKETNET_URING_SETUP_ENOMEM_RETRIES)
+// queue twice that. A setup refused with ENOMEM is tried again while the
+// create's retry budget, *retries, lasts (ROCKETNET_URING_SETUP_ENOMEM_RETRIES)
 
-static bool rocketnet_server_uring_ring_create( struct rocketnet_server_uring_queue_t * queue )
+static bool rocketnet_server_uring_ring_create( struct rocketnet_server_uring_queue_t * queue, int * retries )
 {
     struct io_uring_params params;
     int result = 0;
-    for ( int attempt = 0;; attempt++ )
+#if ROCKETNET_DEV
+    int planted = rocketnet_server_uring_test_ring_enomem.load( std::memory_order_relaxed );
+#endif // #if ROCKETNET_DEV
+    for ( ;; )
     {
         memset( &params, 0, sizeof( params ) );
         params.flags = IORING_SETUP_CQSIZE;
         params.cq_entries = ROCKETNET_URING_ENTRIES * 2;
 
 #if ROCKETNET_DEV
-        if ( rocketnet_server_uring_test_ring_enomem.load( std::memory_order_relaxed ) > 0 )
+        if ( planted > 0 )
         {
-            rocketnet_server_uring_test_ring_enomem.fetch_sub( 1, std::memory_order_relaxed );
+            planted--;
             result = -ENOMEM;
         }
         else
@@ -967,15 +972,16 @@ static bool rocketnet_server_uring_ring_create( struct rocketnet_server_uring_qu
         {
             result = io_uring_queue_init_params( ROCKETNET_URING_ENTRIES, &queue->ring, &params );
         }
-        if ( result != -ENOMEM || attempt == ROCKETNET_URING_SETUP_ENOMEM_RETRIES )
+        if ( result != -ENOMEM || *retries <= 0 )
         {
             break;
         }
-        if ( attempt == 0 )
+        if ( *retries == ROCKETNET_URING_SETUP_ENOMEM_RETRIES )
         {
-            rocketnet_warn( "io_uring transport: queue %d: io_uring_queue_init_params failed: %s; trying again up to %d times, %d ms apart", queue->index,
+            rocketnet_warn( "io_uring transport: queue %d: io_uring_queue_init_params failed: %s; trying again, up to %d retries %d ms apart for this server create", queue->index,
                             rocketnet_platform_socket_error_text( -result ).text, ROCKETNET_URING_SETUP_ENOMEM_RETRIES, (int) ( ROCKETNET_URING_SETUP_ENOMEM_WAIT_SECONDS * 1000.0 ) );
         }
+        ( *retries )--;
         rocketnet_platform_sleep( ROCKETNET_URING_SETUP_ENOMEM_WAIT_SECONDS );
     }
     if ( result < 0 )
@@ -1186,6 +1192,11 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
 
     int socket_drop_queues = 0;
 
+    // one ENOMEM retry budget for the whole create, every queue's ring setup
+    // and buffer ring registration (sdk/rocketnet_uring_receive_queue.h)
+
+    int setup_retries = ROCKETNET_URING_SETUP_ENOMEM_RETRIES;
+
     for ( int i = 0; i < num_queues; i++ )
     {
         struct rocketnet_server_uring_queue_t * queue = &uring->queues[i];
@@ -1197,7 +1208,11 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
             socket_drop_queues++;
         }
 
-        if ( !rocketnet_server_uring_ring_create( queue ) )
+        const bool ring_created = rocketnet_server_uring_ring_create( queue, &setup_retries );
+#if ROCKETNET_DEV
+        rocketnet_server_uring_test_retries_spent.store( ROCKETNET_URING_SETUP_ENOMEM_RETRIES - setup_retries, std::memory_order_relaxed );
+#endif // #if ROCKETNET_DEV
+        if ( !ring_created )
         {
             rocketnet_server_uring_free( uring );
             return NULL;
@@ -1205,8 +1220,12 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
 
         struct rocketnet_uring_receive_queue_config_t receive_config;
         rocketnet_server_uring_receive_config( &receive_config, i, queue->fd, max_clients, uring->ipv6, gro, socket_drops, packet_filter );
+        receive_config.setup_retries = &setup_retries;
         bool receive_out_of_memory = false;
         queue->receive = rocketnet_uring_receive_queue_create( context, &queue->ring, &receive_config, &receive_out_of_memory );
+#if ROCKETNET_DEV
+        rocketnet_server_uring_test_retries_spent.store( ROCKETNET_URING_SETUP_ENOMEM_RETRIES - setup_retries, std::memory_order_relaxed );
+#endif // #if ROCKETNET_DEV
         if ( !queue->receive )
         {
             if ( receive_out_of_memory )
@@ -1732,6 +1751,12 @@ void rocketnet_server_uring_test_setup_enomem( int rings, int buf_rings )
 {
     rocketnet_server_uring_test_ring_enomem.store( rings, std::memory_order_relaxed );
     rocketnet_uring_receive_queue_test_buf_ring_enomem( buf_rings );
+    rocketnet_server_uring_test_retries_spent.store( 0, std::memory_order_relaxed );
+}
+
+int rocketnet_server_uring_test_setup_retries_spent()
+{
+    return rocketnet_server_uring_test_retries_spent.load( std::memory_order_relaxed );
 }
 
 // the fakes of rocketnet_server_uring_test_place_worker
@@ -2037,6 +2062,7 @@ void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t *, 
 bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ) { return true; }
 void rocketnet_server_uring_test_probe_multishot( int ) {}
 void rocketnet_server_uring_test_setup_enomem( int, int ) {}
+int rocketnet_server_uring_test_setup_retries_spent() { return 0; }
 bool rocketnet_server_uring_test_place_worker( rocketnet_server_uring_test_transport_counters_t *, const struct rocketnet_server_transport_io_operations_t *, int, bool, int,
                                                int, bool, bool, bool, uint64_t *, bool *, int *, int * )
 {

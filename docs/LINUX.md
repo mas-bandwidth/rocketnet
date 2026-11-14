@@ -145,7 +145,10 @@ default profiles, or `kernel.io_uring_disabled`) makes the create log
 `io_uring transport refused: this kernel does not accept the io_uring ring,
 opcodes, provided buffer ring or multishot receive (Linux 6.0) the transport
 needs: <step> failed, errno <n> <NAME>` as a warning and `auto` goes on to
-`gso`. To run `gso` where io_uring would start, pin it (section 3).
+`gso`. To run `gso` where io_uring would start, pin it (section 3). When the
+kernel refuses ring memory (ENOMEM) at create, the create tries again for up
+to 100 ms longer, then fails with `NO_TRANSPORT_FOUND` when `io_uring` is
+pinned or, under `auto`, falls to `gso`.
 
 `auto` tries `io_uring` before `gso`, so two things that did not reach a
 server without root before now can. A seccomp filter that kills the process
