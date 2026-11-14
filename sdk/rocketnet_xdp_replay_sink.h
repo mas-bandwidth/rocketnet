@@ -48,6 +48,23 @@ static inline bool rocketnet_xdp_replay_sink_forget( struct rocketnet_xdp_replay
 static inline bool rocketnet_xdp_replay_sink_mark( struct rocketnet_xdp_replay_marks_t * marks, const rocketnet_address_t * address, uint32_t high_water,
                                                    bool * zero_mark_refused )
 {
+    // a new session's zero mark waits while the forget array is full, a kept
+    // mark of its key or not (proofs/tla/RNXdpReplay.tla QueueRefusable): a
+    // forget refused there leaves the walk's slot owing it, and the walk
+    // then keeps a skip mark's owner by marking nothing, so no skip mark may
+    // be taken and the greeting must wait (proofs/tla/RNServerReplaySlots.tla
+    // ZeroMarkWaitsForForgets, GreetedSlotHasEntry). A refused mark leaves
+    // the kept mark of its key as it was. The refusal holds every greeting
+    // below and counts in the commit failures, as a full mark array does;
+    // every new session waits while kernel deletes keep failing.
+
+    if ( high_water == 0 && marks->forget_count >= marks->capacity )
+    {
+        marks->refused++;
+        *zero_mark_refused = true;
+        return false;
+    }
+
     const bool queued = rocketnet_xdp_replay_marks_mark( marks, address, high_water );
 
     // a new session's zero mark the buffer refused: its key is not held

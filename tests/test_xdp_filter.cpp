@@ -1157,6 +1157,26 @@ static bool replay_write( int fd, bool ipv6, uint32_t high_water )
     return true;
 }
 
+// The frames outside the replay cases stand for a live session's traffic: the
+// filter drops a session packet whose source has no entry
+// (DROPPED_NO_SESSION), so each case starts with the client's key marked at
+// 0 in both families, the mark a new session gets before its greeting.
+
+static bool replay_mark_the_client( filter_t * filter )
+{
+    const int fd = replay_map_fd( filter );
+    if ( fd < 0 )
+    {
+        printf( "  FAIL the program has no server_xdp_replay_map\n" );
+        return false;
+    }
+
+    bool ok = replay_clear( fd );
+    ok &= replay_write( fd, false, 0 );
+    ok &= replay_write( fd, true, 0 );
+    return ok;
+}
+
 static bool replay_is_session_type( uint8_t type )
 {
     return type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET ||
@@ -1230,17 +1250,36 @@ static void replay_rows( bool ipv6, std::vector<replay_row_t> & rows )
     rows.push_back( replay_row( "connection request a window behind is not checked", ipv6, ROCKETNET_CONNECTION_REQUEST_PACKET, replay_behind( window ), high_water, false ) );
     rows.push_back( replay_row( "connection response a window behind is not checked", ipv6, ROCKETNET_CONNECTION_RESPONSE_PACKET, replay_behind( window ), high_water, false ) );
 
-    // another source port has no entry
+    // another source port has no entry: a session packet from it has no
+    // session to open, and is dropped as no-session
 
-    replay_row_t other = replay_row( "another source port has no entry", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, replay_behind( window ), high_water, false );
+    replay_row_t other = replay_row( "another source port has no entry", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, replay_behind( window ), high_water, true );
     other.spec.source_port = client_port + 1;
+    other.want_counter = ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SESSION;
     rows.push_back( other );
 
-    // no entry at all
+    // no entry at all: every session type drops as no-session, the handshake
+    // types go on
 
-    replay_row_t none = replay_row( "no replay entry", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, replay_behind( window ), high_water, false );
-    none.entry = false;
-    rows.push_back( none );
+    const uint8_t session_types[] = { ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_ACK_PACKET,
+                                      ROCKETNET_CONNECTION_DISCONNECT_PACKET };
+    for ( size_t i = 0; i < sizeof( session_types ) / sizeof( session_types[0] ); i++ )
+    {
+        char label[64];
+        snprintf( label, sizeof( label ), "type %d with no replay entry", (int) session_types[i] );
+        replay_row_t none = replay_row( label, ipv6, session_types[i], replay_behind( window ), high_water, true );
+        none.entry = false;
+        none.want_counter = ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SESSION;
+        rows.push_back( none );
+    }
+
+    replay_row_t request_none = replay_row( "connection request with no replay entry", ipv6, ROCKETNET_CONNECTION_REQUEST_PACKET, 1, high_water, false );
+    request_none.entry = false;
+    rows.push_back( request_none );
+
+    replay_row_t response_none = replay_row( "connection response with no replay entry", ipv6, ROCKETNET_CONNECTION_RESPONSE_PACKET, 1, high_water, false );
+    response_none.entry = false;
+    rows.push_back( response_none );
 
     // the wrap: the difference is modulo 2^32, read as signed
 
@@ -1316,13 +1355,22 @@ static bool replay_never_writes_the_map( filter_t * filter )
     for ( size_t i = 0; i < frames.size(); i++ )
     {
         const spec_t & spec = frames[i];
-        const bool checked = replay_is_session_type( spec.packet_type ) && spec.source_port == client_port;
-        const bool behind = checked && (int32_t) ( replay_high_water - spec.sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW;
+        const bool session_type = replay_is_session_type( spec.packet_type );
+        const bool no_session = session_type && spec.source_port != client_port;
+        const bool behind = session_type && !no_session && (int32_t) ( replay_high_water - spec.sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW;
         char label[96];
         snprintf( label, sizeof( label ), "%s frame %d, type %d, sequence 0x%08x, entry at %u",
                   spec.ipv6 ? "ipv6" : "ipv4", (int) i, spec.packet_type, spec.sequence, replay_high_water );
-        ok &= run_frame( filter, label, spec, behind ? XDP_DROP : XDP_REDIRECT,
-                         behind ? ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED : ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
+        int want_counter = ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED;
+        if ( no_session )
+        {
+            want_counter = ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SESSION;
+        }
+        else if ( behind )
+        {
+            want_counter = ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED;
+        }
+        ok &= run_frame( filter, label, spec, ( no_session || behind ) ? XDP_DROP : XDP_REDIRECT, want_counter );
     }
 
     // each entry reads back as written
@@ -2090,7 +2138,7 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
 
     if ( isolated_cpu_count() < 2 )
     {
-        case_skip_reason = "fewer than 2 isolated cpus: two queues need a guest booted with --cpus 3 --append \"irqaffinity=0 isolcpus=1-2 nohz_full=1-2\"";
+        case_skip_reason = "fewer than 2 isolated cpus: two queues need a guest booted as tools/run_xdp_filter_guest.sh boots it, --cpus 4 --append \"irqaffinity=0 isolcpus=1-3 nohz_full=1-3\"";
         return true;
     }
 
@@ -2316,7 +2364,7 @@ int main( int argc, char ** argv )
     {
         case_skip_reason = NULL;
 
-        const bool ok = cases[i].function( &filter );
+        const bool ok = replay_mark_the_client( &filter ) && cases[i].function( &filter );
         if ( ok && case_skip_reason )
         {
             printf( "%s: skipped (%s)\n", cases[i].name, case_skip_reason );

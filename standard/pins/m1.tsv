@@ -1,0 +1,4 @@
+# The rows of RN-2 m1 (standard/MESSAGES.md) added by section changes: document name, sdk expression, value.
+# Format and rules: standard/STYLE.md section 10.
+send_queue_messages	rn_pin_message_default_send_queue_messages	1024
+send_message_buffer_bytes	rn_pin_message_default_send_message_buffer_bytes	4194304

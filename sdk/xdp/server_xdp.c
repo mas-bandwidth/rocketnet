@@ -400,7 +400,8 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
         return XDP_DROP;
     }
 
-    // replay: a session packet from a source with a replay map entry is
+    // replay: a session packet from a source with no replay map entry is
+    // dropped, and one from a source with an entry is
     // dropped when its sequence is ROCKETNET_XDP_REPLAY_WINDOW or more behind
     // the entry's high-water (proofs/tla/RNXdpReplay.tla, KernelFilter). The window
     // is the userspace replay window, so nothing dropped here would have
@@ -431,23 +432,36 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
         }
 
         const struct rocketnet_server_xdp_replay_value_t * entry = (const struct rocketnet_server_xdp_replay_value_t *) bpf_map_lookup_elem( &server_xdp_replay_map, &key );
-        if ( entry )
+
+        // no entry: no session the server has greeted, so main would refuse
+        // the packet unopened (proofs/tla/RNXdpReplay.tla KernelFilter). A
+        // client sends no session packet before its first keep-alive, which
+        // is held until the entry is in the map
+        // (rocketnet_server_socket_hold_greetings); see
+        // ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SESSION in rocketnet_wire.h
+        // for the error path where a greeted session's entry is gone
+
+        if ( !entry )
         {
-            // the 32-bit sequence, little endian, right after the prefilter
-            // header: inside the ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES bound
-            // proven above
+            debug_printf( "no session for this source" );
+            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SESSION );
+            return XDP_DROP;
+        }
 
-            const __u32 sequence = ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES] ) |
-                                   ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 1] << 8 ) |
-                                   ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 2] << 16 ) |
-                                   ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 3] << 24 );
+        // the 32-bit sequence, little endian, right after the prefilter
+        // header: inside the ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES bound
+        // proven above
 
-            if ( (int32_t) ( entry->high_water - sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW )
-            {
-                debug_printf( "replayed: behind the high-water window" );
-                server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED );
-                return XDP_DROP;
-            }
+        const __u32 sequence = ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES] ) |
+                               ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 1] << 8 ) |
+                               ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 2] << 16 ) |
+                               ( (__u32) packet_data[ROCKETNET_PREFILTER_BYTES + 3] << 24 );
+
+        if ( (int32_t) ( entry->high_water - sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW )
+        {
+            debug_printf( "replayed: behind the high-water window" );
+            server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED );
+            return XDP_DROP;
         }
     }
 
@@ -482,14 +496,25 @@ int server_xdp_filter( struct xdp_md * ctx )
 
     if ( (__u8 *) eth + sizeof( struct ethhdr ) <= data_end )
     {
+        // a destination MAC starting ff:ff (broadcast, and any other address
+        // with that prefix) passes: the AF_XDP frame reader refuses it
+        // (rocketnet_xdp_frame_parse_vlan), so it must never take a ring
+        // slot; the kernel judges it, as it does for the socket transports
+
+        if ( eth->h_dest[0] == 0xff && eth->h_dest[1] == 0xff )
+        {
+            return XDP_PASS;
+        }
+
         // one 802.1Q tag: a server on a VLAN (config vlan_id, nonzero) takes
         // a frame tagged with its VLAN ID, and reads the rest of it as an
         // untagged frame 4 bytes on. A frame tagged with any other VLAN ID,
         // any tag on an untagged server, a second tag (QinQ) and a tag cut by
         // the frame end pass untouched, as any other frame for someone else.
-        // An untagged frame is read as before on either server: a NIC that
-        // strips the tag on receive (rx VLAN offload) hands this program the
-        // frame without it
+        // An untagged frame is read as before on either server. A NIC that
+        // strips the tag on receive (rx VLAN offload) hands this program
+        // every VLAN's frames without it, so the pre-flight refuses a VLAN
+        // server whose parent has that offload on (R2)
 
         __be16 h_proto = eth->h_proto;
         __u8 * l3 = data + sizeof( struct ethhdr );
@@ -521,6 +546,14 @@ int server_xdp_filter( struct xdp_md * ctx )
             {
                 debug_printf( "smaller than ipv4 header" );
                 return XDP_DROP;
+            }
+
+            // a version nibble other than 4 passes: the frame reader refuses
+            // it, and the kernel drops it
+
+            if ( ip->version != 4 )
+            {
+                return XDP_PASS;
             }
 
             // a fragment (more-fragments set or a nonzero offset): only the
@@ -602,6 +635,14 @@ int server_xdp_filter( struct xdp_md * ctx )
             {
                 debug_printf( "smaller than ipv6 header" );
                 return XDP_DROP;
+            }
+
+            // a version nibble other than 6 passes: the frame reader refuses
+            // it, and the kernel drops it
+
+            if ( ip6->version != 6 )
+            {
+                return XDP_PASS;
             }
 
             if ( ip6->nexthdr == IPPROTO_UDP ) // UDP directly after the fixed header only

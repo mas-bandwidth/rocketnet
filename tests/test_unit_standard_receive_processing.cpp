@@ -23,6 +23,7 @@
 #include "rocketnet_test_vectors.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_server_protocol.h"
+#include "rocketnet_replay.h"
 
 static const rn_standard_vector_t standard_receive_processing_table[] = {
     RN_STANDARD_VECTOR( "t10.prefilter-too-short", "0500b75901" ),
@@ -598,6 +599,33 @@ static void standard_receive_processing_counters()
         standard_client_teardown( &client );
     }
 
+    // the order itself: a packet that fails both rungs counts only the size.
+    // A short keep-alive from an address with no mapping is WRONG_SIZE, not
+    // NO_MAPPING; a short keep-alive to a client still requesting a cookie is
+    // WRONG_SIZE, not WRONG_STATE
+    {
+        static struct standard_server_t server;
+        standard_server_setup( &server, false, false );
+        int bytes = standard_receive_processing_generate( "t10.server-no-mapping", packet, (int) sizeof( packet ) );
+        standard_server_process( &server, packet, bytes - 1 );
+        rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_SIZE] == 1 );
+        rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING] == 0 );
+        rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED] == 1 );
+
+        standard_server_teardown( &server );
+    }
+    {
+        static struct standard_client_t client;
+        standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+        int bytes = standard_receive_processing_generate( "t10.client-session-wrong-size", packet, (int) sizeof( packet ) );
+        standard_client_process( &client, packet, bytes );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_SIZE] == 1 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_STATE] == 0 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED] == 1 );
+
+        standard_client_teardown( &client );
+    }
+
     // the connection-cookie state gate precedes its exact-size check
     {
         static struct standard_client_t client;
@@ -622,6 +650,19 @@ static void standard_receive_processing_counters()
 
         standard_client_teardown( &client );
     }
+    {
+        // the order itself: a zero-sequence keep-alive to a client still
+        // requesting a cookie fails both rungs and counts only the state
+        static struct standard_client_t client;
+        standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+        int bytes = standard_receive_processing_generate( "t10.zero-sequence", packet, (int) sizeof( packet ) );
+        standard_client_process( &client, packet, bytes );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_STATE] == 1 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ZERO_SEQUENCE] == 0 );
+        rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED] == 1 );
+
+        standard_client_teardown( &client );
+    }
 
     // the server slot gate, after the replay check and before the open
     {
@@ -630,6 +671,36 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.server-not-connected", packet, (int) sizeof( packet ) );
         standard_server_process( &server, packet, bytes );
         rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED] == 1 );
+        rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED] == 1 );
+
+        standard_server_teardown( &server );
+    }
+    {
+        // before the open: a keep-alive sealed under a key the mapping does
+        // not hold, to a slotless mapping, is NOT_CONNECTED, not DID_NOT_OPEN
+        static struct standard_server_t server;
+        standard_server_setup( &server, true, false );
+        const int plaintext_bytes = standard_keep_alive_plaintext( plaintext );
+        int bytes = standard_seal( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1000, plaintext, plaintext_bytes, standard_wrong_key, packet );
+        standard_server_process( &server, packet, bytes );
+        rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED] == 1 );
+        rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_DID_NOT_OPEN] == 0 );
+        rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED] == 1 );
+
+        standard_server_teardown( &server );
+    }
+    {
+        // after the replay check: a sequence the slotless mapping's window
+        // already holds is ALREADY_RECEIVED, not NOT_CONNECTED
+        static struct standard_server_t server;
+        standard_server_setup( &server, true, false );
+        struct rocketnet_encryption_mapping_t * mapping =
+            rocketnet_encryption_map_entry( server.server.encryption_map, rocketnet_encryption_map_find( server.server.encryption_map, &server.from ) );
+        rocketnet_replay_advance( &mapping->replay_session, 1000 );
+        int bytes = standard_receive_processing_generate( "t10.server-not-connected", packet, (int) sizeof( packet ) );
+        standard_server_process( &server, packet, bytes );
+        rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED] == 1 );
+        rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED] == 0 );
         rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED] == 1 );
 
         standard_server_teardown( &server );

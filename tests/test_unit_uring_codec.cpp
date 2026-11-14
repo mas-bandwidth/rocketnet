@@ -672,3 +672,18 @@ REGISTER_UNIT_TEST( test_uring_gso_message_stride_and_tail );
 REGISTER_UNIT_TEST( test_uring_recvmsg_gro_stride );
 
 #endif // #if ROCKETNET_URING_CODEC_ACTIVE
+
+// Every Linux build registers this case. With the cases above built it runs
+// and finds them registered; with uapi headers older than
+// IORING_RECV_MULTISHOT, which compile them out, it is skipped and the run
+// prints SKIPPED with the condition, rather than dropping them in silence.
+// CI installs liburing, so every Linux CI leg lists and runs it.
+#if defined( __linux__ )
+static void test_io_uring_transport_codec_cases_are_built()
+{
+    rocketnet_unit_check( rocketnet_unit_file_find( "test_io_uring_transport_codec_tag_round_trips" ) != NULL );
+    rocketnet_unit_check( rocketnet_unit_file_find( "test_uring_recvmsg_gro_stride" ) != NULL );
+}
+REGISTER_UNIT_TEST( test_io_uring_transport_codec_cases_are_built );
+UNIT_TEST_SKIPPED_UNLESS( test_io_uring_transport_codec_cases_are_built, ROCKETNET_URING_CODEC_ACTIVE );
+#endif // #if defined( __linux__ )

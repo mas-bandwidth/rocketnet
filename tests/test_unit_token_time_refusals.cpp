@@ -226,27 +226,18 @@ static void test_token_with_a_long_lifetime_is_accepted()
 REGISTER_UNIT_TEST( test_token_time_refusals_are_distinct );
 REGISTER_UNIT_TEST( test_token_with_a_long_lifetime_is_accepted );
 
-static void test_token_future_creation_without_lifetime_limit()
-{
-    struct token_time_server_t t;
-    token_time_setup( &t );
-    token_time_refuse( &t, TOKEN_TIME_NOW + 31, TOKEN_TIME_NOW + 40,
-                       ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE );
-    token_time_accept( &t, TOKEN_TIME_NOW + 30, TOKEN_TIME_NOW + 10000 );
-    token_time_teardown( &t );
-}
-
-REGISTER_UNIT_TEST( test_token_future_creation_without_lifetime_limit );
-
 static void test_token_creation_skew_is_overflow_safe()
 {
     struct token_time_server_t t;
     token_time_setup( &t );
 
     // Adding the allowance to this clock would wrap, but the ordered
-    // subtraction keeps a token 29 seconds ahead inside the allowance.
+    // subtraction keeps a token 29 seconds ahead, and one exactly 30 seconds
+    // ahead (the allowance itself, where > and >= differ), inside it; 31
+    // seconds ahead is outside.
 
     token_time_accept_at( &t, UINT64_MAX, UINT64_MAX, UINT64_MAX - 29 );
+    token_time_accept_at( &t, UINT64_MAX, UINT64_MAX, UINT64_MAX - 30 );
     token_time_refuse_at( &t, UINT64_MAX, UINT64_MAX, UINT64_MAX - 31,
                           ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE );
     token_time_teardown( &t );

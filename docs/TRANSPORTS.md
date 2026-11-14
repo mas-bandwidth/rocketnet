@@ -48,10 +48,12 @@ tried in that order with nothing appended.
 | An unknown name, an empty element, or `auto` inside a list | `rocketnet_server_create` or `rocketnet_client_create` fails with `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST`; the log lists the valid names |
 | A known name this platform or endpoint does not have (`iocp` on Linux, `gso` on macOS, any server-only transport for a client) | skipped with an info line; the rest of the list is the pin |
 | Every name in the list skipped | the endpoint uses its own `auto`, with a warning, so one setting can be deployed to mixed hosts |
-| `xdp` named in a build that compiled XDP out | `rocketnet_server_start` fails with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` |
+| Every listed transport not compiled into this build (`xdp` alone, in a build that compiled XDP out); in a longer list it refuses and the next is tried | `rocketnet_server_start` fails with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` |
 | Every listed transport refused to start (no privilege, no RIO, memory budget) | `rocketnet_server_start` or `rocketnet_client_connect` fails with `ROCKETNET_STATUS_NO_TRANSPORT_FOUND`; the log names each refusal |
 | A public address with port 0 and only transports that cannot report the port they were given (`xdp`) | `ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED` |
-| A transport that cannot serve both requested address families | `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED` |
+| Every listed transport unable to serve both requested address families | `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED` |
+| The platform refused the bind (another socket holds the address and port, the bind address is not this machine's, or permission was denied) on every socket transport listed, any `xdp` refusal aside | `rocketnet_server_start` fails with `ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED` |
+| A bind address start cannot use (for example one that does not parse, carries a port, names a family the server does not serve, is multicast or broadcast, or a `bind_*` field set on a server of both families), or every listed transport refusing a Windows lane or worker count above 1 on the wildcard | `rocketnet_server_start` fails with `ROCKETNET_STATUS_INVALID_ADDRESS` |
 
 A pin never falls back silently: a list with at least one name this endpoint
 has is tried exactly as written, or the call fails. The per-platform guides
@@ -74,7 +76,11 @@ See [the implementation reference](TRANSPORT-INTERNALS.md#server-capabilities-an
 ## Per-update send and receive budgets
 
 GSO and io_uring stage sends per queue: each worker has its own send banks,
-so more workers add send room. Under staging pressure the message-layer rotation and the
+and a destination always stages in its own queue. A GSO queue has a fixed
+size, so more GSO workers add send staging. io_uring sizes its queues at
+create from `max_clients`, so at 1000 clients its total stays about the same
+from 2 to 8 workers and each queue gets smaller; more io_uring workers add
+send work in parallel, not room. Under staging pressure the message-layer rotation and the
 disconnect bursts spread across updates as the transport's send room reports.
 Receive drains bound work spent on both kept and discarded datagrams using
 backend-specific budgets. See [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds),
@@ -100,8 +106,10 @@ Plan cores in this order: the operating system first, then the transport's
 network threads, then the main thread and the game threads. Each transport
 that has a count to choose has its own config field and environment variable
 ([ENVIRONMENT.md](ENVIRONMENT.md#network-threads-per-transport)); the default,
-with nothing set, is the count that held 1000 players at 10 Gb/s on a good
-machine.
+with nothing set, is a count that held the measured peak workload: 1000
+players at 60 Hz, about 900,000 packets a second from the server (an estimated
+9.39 Gb/s), on the machine in [PERFORMANCE.md](PERFORMANCE.md) (which has
+no `msgx` rows yet).
 
 | Transport | Network threads (default) | Where they run | Machine setting that must match |
 | --- | --- | --- | --- |
@@ -128,7 +136,8 @@ real-time priority. The priorities each thread takes are in
 equal `num_xdp_threads`; the library checks and never changes it.
 `scripts/rocketnet-provision` sets it, and given no count it takes the
 server's: `ROCKETNET_SERVER_NUM_XDP_THREADS` from its environment, or the
-default, 1.
+default, 1. `sudo` drops an exported variable by default, so give the count
+as an argument, as below, or set the variable on the `sudo` line.
 
 1. Choose the thread count, or take the default of 1:
    `ROCKETNET_SERVER_NUM_XDP_THREADS=2` (or `num_xdp_threads = 2`).

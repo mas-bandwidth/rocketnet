@@ -150,8 +150,9 @@ bool rocketnet_server_gso_buffer_note( char * line, int line_bytes, bool receive
                                        int force_error );
 
 // send batching geometry: sendmmsg messages per call, GSO segments per
-// super-datagram (the kernel's UDP_MAX_SEGMENTS is 64), and a total-bytes
-// cap keeping every super-datagram inside the 16-bit UDP payload space
+// super-datagram (64, the library's own cap; the kernel's UDP_MAX_SEGMENTS
+// is larger, 128 in Linux 6.12), and a total-bytes cap keeping every
+// super-datagram inside the 16-bit UDP payload space
 
 #define ROCKETNET_GSO_SEND_BATCH                                           128
 #define ROCKETNET_GSO_MAX_SEGMENTS                                          64
@@ -235,8 +236,12 @@ static inline bool rocketnet_segment_refused_contains( const struct rocketnet_se
 // (proofs/tla/RNSegmentRefusal.tla Counted, KernelFallback)
 static inline bool rocketnet_segment_refused_add( struct rocketnet_segment_refused_t * refused, const struct rocketnet_address_t * address )
 {
+    // one destination can have several segmented runs out before its first
+    // refusal is seen (io_uring's runs in the kernel, a gso batch built
+    // before it is sent), so a destination the table already holds can
+    // refuse again: not counted
     struct rocketnet_address_t * entry = &refused->destination[rocketnet_segment_refused_entry( address )];
-    if ( refused->destinations < ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD )
+    if ( !rocketnet_segment_refused_contains( refused, address ) && refused->destinations < ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD )
     {
         refused->destinations++;
     }

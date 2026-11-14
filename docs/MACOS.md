@@ -166,9 +166,9 @@ one transmit worker and one receive worker, and has no count to set. macOS
 gives no thread a core: neither transport pins its threads, and the scheduler
 places them. More transmit workers are not always more throughput: under a
 heavy send load a worker can spend most of its time in the kernel's send
-path, and then more workers may not send more. The performance report has no
-macOS measurement record yet ([PERFORMANCE.md](PERFORMANCE.md)); measure
-your workload.
+path, and then more workers may not send more (see "How much a msgx server
+sends" below). Consult [PERFORMANCE.md](PERFORMANCE.md) for dated
+measurement records and their scope; measure your workload.
 
 In the `portable` server the caller copies borrowed, sealed send frames
 into one of three owned TX banks outside the lock; a try-lock publishes bank
@@ -272,6 +272,28 @@ running `test_loopback_transport_udp`, `test_loopback_transport_ipv6`,
 (`.github/workflows/ci.yml`, "Transport family matrix",
 `TRANSPORT_MATRIX_MACOS`). The commands are in "Verify a Mac" below.
 
+### How much a msgx server sends
+
+Use the workloads and measurement definitions in
+[PERFORMANCE.md](PERFORMANCE.md) when comparing results. The advice here
+establishes no throughput figure for a Mac, network interface or workload.
+
+The operating system and interface driver can limit how concurrent sends
+reach the wire. A driver path with a shared output queue or transmit thread
+can serialize work from several transmit workers; contention there can make
+additional workers unhelpful. Queue layout, locking and transmit scheduling
+depend on the driver and OS version. Profile the actual path before treating
+any one queue or thread as its bottleneck.
+
+Include representative client addresses and routes in the test. Sending to
+one remote address can concentrate route or neighbor-cache work, so a
+single-address load machine may differ from a deployment with many players.
+Spreading clients across addresses is a useful comparison, not a promise of
+higher throughput: addresses routed through one gateway can still share its
+neighbor entry, and another part of the send path may set the limit. Keep
+workload and other machine activity comparable, and report both topologies
+with their delivery, refusal and timing results.
+
 ### A msgx server under load
 
 To tell whether the interface or the kernel's send path limits a `msgx`
@@ -330,11 +352,16 @@ scheduling policy.
 A `msgx` server has `num_msgx_transmit_workers` transmit workers (default 3)
 and one receive worker; a `portable` server has two, one for receive and one
 for transmit. All of them start with default `pthread_create` attributes. The
-`msgx` workers then get the same `SCHED_RR` request as the client I/O thread
+`msgx` transmit workers and its receive worker then get the same request as
+the client I/O thread, `SCHED_RR` at priority 32
 (`rocketnet_platform_server_thread_priority`, called from
-`sdk/rocketnet_server_msgx_apple.cpp`), and `rocketnet_thread_priority( false )`
-turns it off for them too. The `portable` server's workers get no priority
-request.
+`sdk/rocketnet_server_msgx_apple.cpp` right after it creates each worker), and
+`rocketnet_thread_priority( false )` turns it off for them too. If macOS
+refuses the request, the worker runs on at its default priority and the server
+keeps going: the refusal is counted, and the first refused `SCHED_RR`
+request in the process (client or server) logs a warning (`thread priority: pthread_setschedparam SCHED_RR 32 refused
+(<reason>); the thread runs at its default priority`). The `portable`
+server's workers get no priority request.
 
 The deterministic cases in `test_unit_thread_priority.cpp` verify the client
 and server priority requests, the off switch, and refusal counting and logging

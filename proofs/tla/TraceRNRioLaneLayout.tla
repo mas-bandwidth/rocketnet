@@ -5,7 +5,12 @@
 (* step, with                                                              *)
 (* the operation the walk called (op), the walk's arguments to it (args),  *)
 (* the model action the code's own result says it took (act), and every    *)
-(* model variable after it (state).  Record 1 is "init".                   *)
+(* model variable after it (state).  Record 1 is "init".  Only the header  *)
+(* arithmetic (rocketnet_rio_lane_hash, rocketnet_rio_lane_of,             *)
+(* rocketnet_rio_lane_packet_id, rocketnet_rio_lane_packet_decode) is the  *)
+(* code's; the slots, next, issued, started and posted are the walk's own  *)
+(* (tests/tla_trace_rio_lane.cpp says so), so this checks the arithmetic,  *)
+(* not the transport's reservation, finish or post.                        *)
 (*                                                                         *)
 (* TraceStep allows only the recorded action with the recorded arguments,  *)
 (* and only when the operation can be that action (OpActs): a step that    *)
@@ -45,8 +50,8 @@ VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
 
 \* every model variable by the field name the harness writes
-VarsRec == [slot |-> slot, issued |-> issued, staged |-> staged, starts |-> starts,
-            strayed |-> strayed, misrouted |-> misrouted]
+VarsRec == [slot |-> slot, next |-> next, issued |-> issued, started |-> started, posted |-> posted,
+            starts |-> starts, strayed |-> strayed, misrouted |-> misrouted]
 
 \* the actions each operation of the code can be
 OpActs == [start |-> {"Start"}, finish |-> {"Finish"}, foreign |-> {"Foreign"}, send |-> {"Send"}]
@@ -92,8 +97,8 @@ TraceSpec == TraceInit /\ [][TraceStep \/ TraceReject \/ TraceDone]_<<vars, ti, 
 \* every record of the trace is the model step it names, from the one before
 TraceConsistent == ~rejected
 
-\* the row's reach predicate: some clean trace must stage frames in lane 0 and
+\* the row's reach predicate: some clean trace must hold frames in lane 0 and
 \* lane 1 at once, not yet sent
-BothLanesStaged == \E j, k \in 1..Len(staged) : staged[j][2] = 0 /\ staged[k][2] = 1
+BothLanesStaged == \E i, j \in Slots : slot[0][i] # Empty /\ slot[1][j] # Empty
 
 =============================================================================

@@ -13,8 +13,9 @@
 //
 // The three schedules:
 //   1. long skip then stragglers  -- the replay window, skipped by exactly
-//      64, 255, 256, 4095, 4096, 4097 and 65536, then highest-k for k in
-//      1..4096 accepted or refused as the model says (the ClearedWords rule).
+//      64, 255, 256, 4095, 4096, 4097 and 65536, the whole window checked
+//      after each skip, then highest-k for k in 1..4096 accepted or refused
+//      as the model says (the ClearedWords rule).
 //   2. same-tick slot reuse       -- [A disconnect, B response, A's stale
 //      payload, A's stale ack] in one update: B never sees A's data.
 //   3. sequence wrap              -- transport sequence seeded near 2^32 - 128
@@ -175,24 +176,58 @@ static void test_sim_schedule_long_skip_stragglers()
 
     rocketnet_unit_check( sim_schedule_flush( &sched ) == 7 );
 
+    // after each skip, every sequence the window covers reads received
+    // exactly when it is one of the marks delivered so far, and the one just
+    // below the window reads too old: a skip that left a bit of an earlier
+    // lap of the ring set, or cleared a mark still in the window, fails at
+    // that skip rather than being hidden by the next long skip's clear
+
+    const uint64_t window = ROCKETNET_REPLAY_WINDOW_BITS;
+    uint64_t marks[7];
     for ( int i = 0; i < 7; i++ )
     {
         rocketnet_unit_check( sim_schedule_receive( &sched ) == 8 );
 
-        rocketnet_replay_advance( &replay, sim_read_u64_le( sched.rx ) );
+        marks[i] = sim_read_u64_le( sched.rx );
+        rocketnet_unit_check( !rocketnet_replay_already_received( &replay, marks[i] ) );
+        rocketnet_replay_advance( &replay, marks[i] );
+        rocketnet_unit_check( replay.highest_opened == marks[i] );
+
+        const uint64_t window_floor = marks[i] >= window ? marks[i] - window + 1 : 1;
+        for ( uint64_t s = window_floor; s <= marks[i]; s++ )
+        {
+            bool is_mark = false;
+            for ( int j = 0; j <= i; j++ )
+            {
+                is_mark = is_mark || marks[j] == s;
+            }
+            rocketnet_unit_check( ( rocketnet_replay_already_received( &replay, s ) != 0 ) == is_mark );
+        }
+        if ( window_floor > 1 )
+        {
+            rocketnet_unit_check( rocketnet_replay_already_received( &replay, window_floor - 1 ) != 0 );
+        }
     }
 
-    // replay accepts a sequence exactly once: a duplicated high-water mark is
-    // refused twice, and a packet removed from the scripted order (drop)
-    // never reaches the module.
+    // replay accepts a sequence exactly once: of a fresh mark and its
+    // duplicate, scripted back to back, the first is new and advances the
+    // window and the second is then refused; and a packet removed from the
+    // scripted order (drop) never reaches the module. The fresh mark goes to
+    // a copy of the window, so the stragglers below see the seven skips alone.
 
-    sim_schedule_deliver( &sched, skip_packets[6], 8 );
+    struct rocketnet_replay_protection_t duplicate_replay = replay;
+    uint8_t fresh_packet[8];
+    sim_write_u64_le( fresh_packet, highest + 1 );
+    sim_schedule_deliver( &sched, fresh_packet, 8 );
     sim_schedule_duplicate( &sched );
     rocketnet_unit_check( sim_schedule_flush( &sched ) == 2 );
     rocketnet_unit_check( sim_schedule_receive( &sched ) == 8 );
-    rocketnet_unit_check( rocketnet_replay_already_received( &replay, sim_read_u64_le( sched.rx ) ) != 0 );
+    rocketnet_unit_check( sim_read_u64_le( sched.rx ) == highest + 1 );
+    rocketnet_unit_check( rocketnet_replay_already_received( &duplicate_replay, sim_read_u64_le( sched.rx ) ) == 0 );
+    rocketnet_replay_advance( &duplicate_replay, sim_read_u64_le( sched.rx ) );
     rocketnet_unit_check( sim_schedule_receive( &sched ) == 8 );
-    rocketnet_unit_check( rocketnet_replay_already_received( &replay, sim_read_u64_le( sched.rx ) ) != 0 );
+    rocketnet_unit_check( sim_read_u64_le( sched.rx ) == highest + 1 );
+    rocketnet_unit_check( rocketnet_replay_already_received( &duplicate_replay, sim_read_u64_le( sched.rx ) ) != 0 );
 
     sim_schedule_deliver( &sched, skip_packets[6], 8 );
     sim_schedule_drop( &sched );
@@ -210,7 +245,6 @@ static void test_sim_schedule_long_skip_stragglers()
 
     sim_schedule_advance_time( &sched, 1.0 );
 
-    const uint64_t window = ROCKETNET_REPLAY_WINDOW_BITS;
     uint8_t straggler_packets[4096][8];
     for ( uint64_t first = 1; first <= window; first += 4096 )
     {

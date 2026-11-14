@@ -204,6 +204,11 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
 
 #endif // #if ROCKETNET_DEV
 
+// the server and client drivers of the zero-field cases below, also run on
+// the bad-address-flags vector's token
+static int rn_zero_client_admits( const uint8_t * token );
+static int rn_zero_server_process( const uint8_t * token, struct rocketnet_counters_t * counters, int * response_bytes );
+
 static void test_standard_connect_token_vectors()
 {
 #if ROCKETNET_DEV
@@ -251,6 +256,17 @@ static void test_standard_connect_token_vectors()
     rocketnet_read_connect_token( &parsed, token );
     rocketnet_unit_check( parsed.signed_connect_data[ROCKETNET_SIGNED_OFFSET_ADDRESS_FLAGS] == 0x05 );
     rocketnet_unit_check( ( parsed.signed_connect_data[ROCKETNET_SIGNED_OFFSET_ADDRESS_FLAGS] & ~( ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6 ) ) != 0 );
+
+    // run it: the server refuses the request at the flags rung, unanswered,
+    // and the client refuses the token before it sends anything
+    {
+        struct rocketnet_counters_t flag_counters;
+        int flag_response_bytes = -1;
+        rocketnet_unit_check( rn_zero_server_process( token, &flag_counters, &flag_response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_unit_check( flag_response_bytes == 0 );
+        rocketnet_unit_check( flag_counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS] == 1 );
+        rocketnet_unit_check( !rn_zero_client_admits( token ) );
+    }
 
     // wrong server key: the block is sealed to another server public key, so
     // the server's own key cannot open it, even though the signature verifies

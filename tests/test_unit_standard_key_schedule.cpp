@@ -5,9 +5,11 @@
 
 // test_unit_standard_key_schedule.cpp -- the vector twins of RN-1 t7
 // (standard/TRANSPORT.md, Key schedule), regenerated through the
-// implementation. The four key vectors come from the frozen token keys, salt,
-// session nonce and ephemeral keypair; the last is the one-byte result of a
-// derivation whose remote key is the small-order point, which must refuse it.
+// implementation. Six vectors: the four key vectors come from the frozen
+// token keys, salt, session nonce and ephemeral keypair; the fifth is the
+// one-byte result of a derivation whose remote key is the small-order point,
+// which must refuse it; the sixth, t7.signature-verification, is the five
+// verify results of the synthetic Ed25519 fixture below.
 
 #include "test_unit_standard.h"
 

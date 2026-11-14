@@ -74,8 +74,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // it fails; the suite captures a passing case's output.
 // The server figures include the disconnect ring of 2 * ROCKETNET_MAX_CLIENTS
 // bursts (proofs/tla/ServerStopSpread.tla RingSize, 1088 bytes an entry) and,
-// on Linux, the xdp plan's per-slot replay records
-// (rocketnet_server_replay_marks_allocation_bytes).
+// in the plan of a transport that takes replay marks (xdp on Linux, msgx on
+// macOS), the per-slot replay records
+// (rocketnet_server_replay_marks_allocation_bytes); they reach a pin only
+// where that transport's plan is the peak (msgx on macOS; the Linux x86-64
+// figure did not move when the record grew, 2026-11-13, amd-2, gcc, Release,
+// DEV ON).
 // The figures are the planned peak; required_memory adds a fixed 1 MiB of
 // slack on top for the caller's heap (sdk/rocketnet_api.cpp
 // rn_required_memory_slack_bytes), so each check adds it back.
@@ -196,8 +200,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // integration/v1.1.56 (MSVC, Debug, DEV=ON), measured. Both together
 // (integration/v1.1.55-hot with v1.1.56 merged): actual=1509344231, derived
 // from the two measured figures, until a Windows build reads the merged tree.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1508295655 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350316 )
+// With counter 291 (XDP_KERNEL_DROPPED_NO_SESSION) as well
+// (integration/v1.1.58, 902e10754): 64 more to each, actual=1509344295 and
+// 15398956 (aws-win-ci-2, MSVC, Debug, DEV=ON), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1508295719 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350380 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -300,9 +307,17 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // server and nothing to the client (the Windows note has the account). Both
 // together (integration/v1.1.55-hot with v1.1.56 merged): actual=1665284723,
 // derived from the measured figure above and the 16000 that Linux and
-// Windows both measured, until a macOS build reads the merged tree.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664236147 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997834 )
+// Windows both measured; a macOS build of that tree read exactly that.
+// The replay walk's per-slot record gains a skip mark (an int and a 20-byte
+// address: 36 to 60 bytes, sdk/rocketnet_server_replay_marks.cpp), planned
+// for msgx, which takes replay marks: 24 bytes a client, 24000 at 1000
+// clients, on the msgx plan this pin is the peak of: actual=1665308723,
+// derived, not measured.
+// With counter 291 (XDP_KERNEL_DROPPED_NO_SESSION) as well
+// (integration/v1.1.58, 902e10754): 64 more to each, actual=1665308787 and
+// 15046474 (studio, Apple clang, Debug, DEV=ON), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664260211 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997898 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -444,9 +459,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // rounded once) and nothing to the client (its one region's 64-byte rounding
 // holds it): actual=2147391602 and 15195026 (integration/v1.1.56, aws-mut-3,
 // gcc, Debug and Release, DEV ON), measured; arm64 the same 16000, computed.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146343034ULL )
+// The appended counter XDP_KERNEL_DROPPED_NO_SESSION adds 64 to the server
+// (one more 64-byte rounding of its counter blocks): actual=2147391666
+// (integration/v1.1.58, aws-mut-3, gcc, Debug and Release, DEV ON), measured;
+// arm64 the same 64, computed.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146343098ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146343026ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146343090ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
@@ -460,7 +479,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Together (integration/v1.1.55-hot: the send store's free stack, the
 // refused-token table and PORTABLE_PIN_REFUSALS): actual=15195090 (aws-mut-3,
 // gcc, Debug and Release, DEV ON); the server reads its pin unchanged.
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146514 )
+// The appended counter XDP_KERNEL_DROPPED_NO_SESSION adds 64 more to the
+// client: actual=15195154 (integration/v1.1.58, aws-mut-3, gcc, Debug and
+// Release, DEV ON), measured.
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146578 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

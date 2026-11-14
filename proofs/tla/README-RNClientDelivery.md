@@ -13,17 +13,22 @@ repeat, so a payload offered twice, or a stale slot exposed, is visible.
 | `RecvOther` | a processed packet that places no payload (an ack, a keep-alive): one packet of the budget, no slot (environment action) |
 | `EndInUpdate` | the server's disconnect opens, or `rocketnet_client_protocol_update` finds a deadline passed (environment action) |
 | `Return` | the end of update: `rocketnet_client_connection_reset` when this update took the connection from live to ended |
-| `Read` | `rocketnet_client_transport_receive_packet`: the cursor copies out the entry at `receive_index` |
+| `Read` | `rocketnet_client_transport_receive_packet`: the cursor moves past the entry at `receive_index` and copies it out, or, when the payload is larger than the caller's buffer, refuses it whole, counts `RECEIVE_CURSOR_TOO_SMALL` and never returns it (`refused`) |
 | `Disconnect` | `rocketnet_client_transport_disconnect` between updates: the burst, then the same reset |
 
 `CountedImpliesHanded`: every payload counted delivered was returned to the
-caller, is still readable, or was offered and left unread until the next
-update cleared the batch. `OfferedOnce`: the readable entries are counted and
-neither returned nor passed, and nothing is returned twice.
+caller, refused by the cursor as too large for the caller's buffer, is still
+readable, or was offered and left unread until the next update cleared the
+batch. "Counted delivered" therefore means offered to the caller, not
+returned: a caller whose buffer is smaller than a payload has it refused (a
+caller sizing by the configured maximum payload never does).
+`OfferedOnce`: the readable entries are counted and neither returned, refused
+nor passed, each payload has one fate, and nothing is returned twice.
 `SlotForNextPacket`: inside an update the batch holds no more entries than
 the packets processed, and while the budget allows another packet the batch
 has a slot for its payload. `DeliveredReachesCaller` (under fair `Read` and
-`Return`): every payload counted delivered reaches the caller.
+`Return`): every payload counted delivered reaches the caller, returned or
+refused.
 
 `Budget` is `ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET` and `Cap` the batch's
 slots. The code sizes the batch from the budget and two `static_assert`s
@@ -34,8 +39,9 @@ the `countbeforeplace` witness is checked without it.
 
 | Case | Expected |
 |---|---|
-| `MCRNClientDelivery.cfg` (Cap 3, Budget 3, 4 payloads, a caller that drains every batch) | pass, 548 distinct states |
-| `MCRNClientDeliveryLazy.cfg` (the caller may leave entries unread) | pass, 3202 distinct states |
+| `MCRNClientDelivery.cfg` (Cap 3, Budget 3, 4 payloads, a caller that drains every batch) | pass |
+| `MCRNClientDeliveryLazy.cfg` (the caller may leave entries unread) | pass |
+| `MCRNClientDeliveryBrokenRefuseVanishes.cfg` (the cursor refuses a payload without recording it) | `CountedImpliesHanded` violated |
 | `MCRNClientDeliveryBrokenEndWipes.cfg` (the reset zeroes both counts) | `CountedImpliesHanded` violated |
 | `MCRNClientDeliveryBrokenEndWipesLive.cfg` (the same, under fairness) | `DeliveredReachesCaller` violated |
 | `MCRNClientDeliveryBrokenNoBeginClear.cfg` (update does not clear the counts) | `OfferedOnce` violated |
@@ -73,6 +79,16 @@ payload` skipped it. `BrokenBudgetOverBatch` stops one step earlier, at the
 state where a fourth packet is allowed and no slot is left. In the code that
 state cannot be built: changing the budget past the batch fails the
 `static_assert`s at compile time.
+
+`BrokenRefuseVanishes`: `Begin`, `RecvPayload` (payload 1 in slot 0, counted
+{1}), `Return`, then `Read` taking its refuse branch without recording the
+payload: idx 1, nothing readable, nothing returned, refused or passed, and
+counted {1}. In the code the cursor at `receive_index` advances past a
+payload larger than `packet_capacity` and counts
+`ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL`
+(`rocketnet_client_transport_receive_packet`); the model's `refused` is that
+counter's payloads, and without it a payload counted
+`CLIENT_PAYLOAD_DELIVERED` would have no fate at all.
 
 ## Scope
 

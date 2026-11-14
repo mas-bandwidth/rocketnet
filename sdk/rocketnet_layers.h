@@ -85,6 +85,8 @@ bool rocketnet_get_thread_priority( void );
  */
 #define ROCKETNET_TRANSPORT_STRING_LENGTH                     64
 
+/** @brief The server sent what the protocol forbids: the attempt ended at a connection challenge whose server ephemeral key is a small-order point (the transport value of ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION). */
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION         (-10)
 /** @brief The connect token expired: its expire time was not after the current Unix time when the connect began, or its lifetime (expire minus create) ran out before the handshake reached CONNECTED. */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED         -7
 /** @brief The connect token failed the client's checks at connect: no or unknown address flags, a create time after its expire time, or a wrong format version. The client does not verify the token's signature; the server does. */
@@ -1284,7 +1286,7 @@ struct rocketnet_fill_phase_t * rocketnet_server_transport_fill_phase( struct ro
  * @param client_index Connected client slot index.
  * @param request_bytes Requested capacity in bytes, from 1 through ROCKETNET_MAX_PACKET_PAYLOAD_BYTES.
  * @param context Receives lease metadata, with the payload's capacity in payload_capacity; NULL is a counted no-op returning NULL.
- * @return Writable payload pointer, or NULL when the slot or the request is invalid, when the transport has no room, or, on a staged transport, when the send room is down to the reserve kept for the protocol's own frames (counted in SEND_RESERVE_REFUSED). Starts may run concurrently between update and the following flush; between two main thread calls one thread starts packets to a client, and a second thread's start for it is refused and counted (CLIENT_SEND_TWO_THREADS).
+ * @return Writable payload pointer, or NULL when the slot or the request is invalid, when the transport has no room, or, on a staged transport, when the send room is down to the reserve kept for the protocol's own frames (counted in SEND_RESERVE_REFUSED or SEND_RESERVE_REFUSED_TAILS_HELD). Starts may run concurrently between update and the following flush; between two main thread calls one thread starts packets to a client, and a second thread's start for it is refused and counted (CLIENT_SEND_TWO_THREADS).
  */
 uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_transport_t * server_transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
 

@@ -385,9 +385,11 @@ static inline int rocketnet_xdp_frame_build(
 // tag of vlan_id), or -1 when the frame is tagged for anything else: a
 // tagged frame on an untagged transport, a VLAN ID that is not the
 // transport's, or a tag cut by the frame end. An untagged frame is taken on
-// a tagged transport too: a NIC that strips the tag on receive (rx VLAN
-// offload, the ixgbe and i40e default) hands XDP the frame without it. The
-// frame holds at least ROCKETNET_ETHERNET_HEADER_BYTES.
+// a tagged transport too. A NIC that strips the tag on receive (rx VLAN
+// offload, the ixgbe and i40e default) would hand XDP every VLAN's frames
+// without it, so the pre-flight refuses a tagged transport whose parent has
+// that offload on (rocketnet_server_socket_preflight_vlan_tag). The frame
+// holds at least ROCKETNET_ETHERNET_HEADER_BYTES.
 
 static inline int rocketnet_xdp_frame_vlan_tag( const uint8_t * f, size_t frame_bytes, int vlan_id )
 {
@@ -861,6 +863,13 @@ static inline bool rocketnet_xdp_cpu_list_entry( const char ** cursor, int * fir
 
     if ( *p == ',' )
     {
+        // a comma separates two entries: one with nothing after it ("0,",
+        // "0,\n") ends the list early and is not a cpu list, as in the
+        // script's cpu_list_has
+        if ( p[1] < '0' || p[1] > '9' )
+        {
+            return false;
+        }
         *cursor = p + 1;
         return true;
     }
@@ -1002,6 +1011,334 @@ static inline bool rocketnet_xdp_pin_targets_isolated( const char * isolated_lis
     }
 
     return true;
+}
+
+// CPU LIST MEMBERSHIP: 1 when cpu is in the kernel cpu-list, 0 when it is not,
+// -1 when the list is empty or malformed (the whole list is validated first,
+// as PIN TARGETS does: a malformed list never answers).
+
+static inline int rocketnet_xdp_cpu_list_has( const char * list, int cpu )
+{
+    if ( !list )
+    {
+        return -1;
+    }
+
+    const char * cursor = list;
+    while ( *cursor == ' ' || *cursor == '\t' )
+    {
+        cursor++;
+    }
+
+    if ( *cursor == '\0' )
+    {
+        return -1;
+    }
+
+    int found = 0;
+    while ( true )
+    {
+        int first = 0;
+        int last = 0;
+        if ( !rocketnet_xdp_cpu_list_entry( &cursor, &first, &last ) )
+        {
+            return -1;
+        }
+
+        if ( cpu >= first && cpu <= last )
+        {
+            found = 1;
+        }
+
+        if ( *cursor == '\0' )
+        {
+            break;
+        }
+    }
+
+    return found;
+}
+
+// IRQAFFINITY (B1 of scripts/rocketnet-provision): the kernel command line's
+// irqaffinity=<cpu-list>, left-bounded (start, space, tab or newline before
+// it) like every other B1 token; the last one before any bare "--" when
+// there are several, as the kernel applies them in order. It keeps the machine's interrupts off the isolated cpus the
+// xdp threads spin on, so any well-formed list with no cpu in the isolated set
+// is met: irqaffinity=0 for the default num_os_cpus of 1, irqaffinity=0-1 for
+// num_os_cpus 2. An isolated list that is NULL or empty judges the form only
+// (B2 names the missing set). The script's B1 check is the same rule.
+
+#define ROCKETNET_XDP_IRQAFFINITY_MET         1
+#define ROCKETNET_XDP_IRQAFFINITY_ABSENT      0
+#define ROCKETNET_XDP_IRQAFFINITY_MALFORMED  (-1)
+#define ROCKETNET_XDP_IRQAFFINITY_ISOLATED   (-2)
+
+static inline int rocketnet_xdp_cmdline_irqaffinity( const char * cmdline, const char * isolated_list, int * isolated_cpu )
+{
+    static const char token[] = "irqaffinity=";
+    const size_t token_length = sizeof( token ) - 1;
+
+    if ( isolated_cpu )
+    {
+        *isolated_cpu = -1;
+    }
+
+    if ( !cmdline )
+    {
+        return ROCKETNET_XDP_IRQAFFINITY_ABSENT;
+    }
+
+    // left-bounded by the line start or a blank (a space or a tab, the
+    // script's word split). The last such token: the kernel runs the
+    // irqaffinity= handler for each one in order, so a later one wins. A
+    // bare "--" ends the kernel's parameters (the rest go to init)
+    const char * limit = NULL;
+    for ( const char * dash = strstr( cmdline, "--" ); dash && !limit; dash = strstr( dash + 1, "--" ) )
+    {
+        const bool left = dash == cmdline || dash[-1] == ' ' || dash[-1] == '\t' || dash[-1] == '\n';
+        const bool right = dash[2] == '\0' || dash[2] == ' ' || dash[2] == '\t' || dash[2] == '\n';
+        if ( left && right )
+        {
+            limit = dash;
+        }
+    }
+
+    const char * match = NULL;
+    for ( const char * found = strstr( cmdline, token ); found && ( !limit || found < limit ); found = strstr( found + 1, token ) )
+    {
+        if ( found == cmdline || found[-1] == ' ' || found[-1] == '\t' || found[-1] == '\n' )
+        {
+            match = found;
+        }
+    }
+
+    if ( !match )
+    {
+        return ROCKETNET_XDP_IRQAFFINITY_ABSENT;
+    }
+
+    // the value, up to the next blank, copied so the list parser sees its end
+
+    char value[256];
+    size_t length = 0;
+    const char * cursor = match + token_length;
+    while ( cursor[length] != '\0' && cursor[length] != ' ' && cursor[length] != '\n' && cursor[length] != '\t' )
+    {
+        if ( length + 1 >= sizeof( value ) )
+        {
+            return ROCKETNET_XDP_IRQAFFINITY_MALFORMED;
+        }
+        value[length] = cursor[length];
+        length++;
+    }
+    value[length] = '\0';
+
+    if ( length == 0 || rocketnet_xdp_cpu_list_has( value, 0 ) < 0 )
+    {
+        return ROCKETNET_XDP_IRQAFFINITY_MALFORMED;
+    }
+
+    if ( !isolated_list || rocketnet_xdp_cpu_list_has( isolated_list, 0 ) < 0 )
+    {
+        return ROCKETNET_XDP_IRQAFFINITY_MET;
+    }
+
+    // every entry of the value against every entry of the isolated set,
+    // range against range (a value of 0-2147483647 is one comparison per
+    // isolated entry, never a walk over its cpus): the first overlap names
+    // the lowest cpu the two share
+
+    const char * scan = value;
+    while ( true )
+    {
+        int first = 0;
+        int last = 0;
+        if ( !rocketnet_xdp_cpu_list_entry( &scan, &first, &last ) )
+        {
+            return ROCKETNET_XDP_IRQAFFINITY_MALFORMED;      // validated above
+        }
+
+        const char * isolated_scan = isolated_list;
+        while ( *isolated_scan == ' ' || *isolated_scan == '\t' )
+        {
+            isolated_scan++;
+        }
+        while ( true )
+        {
+            int isolated_first = 0;
+            int isolated_last = 0;
+            if ( !rocketnet_xdp_cpu_list_entry( &isolated_scan, &isolated_first, &isolated_last ) )
+            {
+                return ROCKETNET_XDP_IRQAFFINITY_MET;        // validated above
+            }
+
+            const int low = first > isolated_first ? first : isolated_first;
+            const int high = last < isolated_last ? last : isolated_last;
+            if ( low <= high )
+            {
+                if ( isolated_cpu )
+                {
+                    *isolated_cpu = low;
+                }
+                return ROCKETNET_XDP_IRQAFFINITY_ISOLATED;
+            }
+
+            if ( *isolated_scan == '\0' )
+            {
+                break;
+            }
+        }
+
+        if ( *scan == '\0' )
+        {
+            break;
+        }
+    }
+
+    return ROCKETNET_XDP_IRQAFFINITY_MET;
+}
+
+// QUEUE VECTOR (R4): the queue k of an interrupts line that names the interface
+// as <interface>-TxRx-<k> (ixgbe "eth0-TxRx-3", i40e "i40e-eth0-TxRx-3", ice
+// "ice-eth0-TxRx-3"): the name bounded before by the line start, a blank or
+// '-', exactly -TxRx- and digits after it, then nothing but trailing blanks.
+// -1 for any other line: XDP's tx-only vectors ("eth0-tx-9"), the misc vector
+// ("eth0"), other drivers' names. scripts/rocketnet-provision's
+// queue_irq_lines_for_interface is the same rule.
+
+static inline int rocketnet_xdp_queue_vector( const char * line, const char * interface_name )
+{
+    if ( !line || !interface_name || interface_name[0] == '\0' )
+    {
+        return -1;
+    }
+
+    const size_t name_length = strlen( interface_name );
+    size_t line_length = strlen( line );
+    while ( line_length > 0 && ( line[line_length - 1] == ' ' || line[line_length - 1] == '\t' ||
+                                 line[line_length - 1] == '\n' || line[line_length - 1] == '\r' ) )
+    {
+        line_length--;
+    }
+
+    static const char suffix[] = "-TxRx-";
+    const size_t suffix_length = sizeof( suffix ) - 1;
+
+    for ( size_t start = 0; start + name_length <= line_length; start++ )
+    {
+        if ( memcmp( line + start, interface_name, name_length ) != 0 )
+        {
+            continue;
+        }
+
+        const char before = start == 0 ? ' ' : line[start - 1];
+        if ( before != ' ' && before != '\t' && before != '-' )
+        {
+            continue;
+        }
+
+        size_t at = start + name_length;
+        if ( line_length - at <= suffix_length || memcmp( line + at, suffix, suffix_length ) != 0 )
+        {
+            continue;
+        }
+        at += suffix_length;
+
+        int queue = 0;
+        bool digits = at < line_length;
+        for ( size_t i = at; i < line_length; i++ )
+        {
+            if ( line[i] < '0' || line[i] > '9' || queue > ( 0x7FFFFFFF - ( line[i] - '0' ) ) / 10 )
+            {
+                digits = false;
+                break;
+            }
+            queue = queue * 10 + ( line[i] - '0' );
+        }
+
+        if ( digits )
+        {
+            return queue;
+        }
+    }
+
+    return -1;
+}
+
+// R8, THE REAL-TIME THROTTLE, by kernel release (scripts/rocketnet-provision
+// r8_throttles, the same rule): every kernel before 6.12 stops a real-time
+// thread that never sleeps for sched_rt_period_us - sched_rt_runtime_us in
+// every period, and so does a later one built with CONFIG_RT_GROUP_SCHED. A
+// release that does not parse as <major>.<minor> is taken as throttling
+// (fails closed).
+
+#define ROCKETNET_XDP_RT_THROTTLES            0     // before 6.12, or unparseable
+#define ROCKETNET_XDP_RT_READ_CONFIG          1     // 6.12 or later: the build config decides
+
+static inline int rocketnet_xdp_rt_release( const char * release )
+{
+    if ( !release )
+    {
+        return ROCKETNET_XDP_RT_THROTTLES;
+    }
+
+    int major = 0;
+    int minor = 0;
+    const char * p = release;
+
+    if ( *p < '0' || *p > '9' )
+    {
+        return ROCKETNET_XDP_RT_THROTTLES;
+    }
+    while ( *p >= '0' && *p <= '9' )
+    {
+        if ( major < 100000 )      // a longer number is as large: it never wraps
+        {
+            major = major * 10 + ( *p - '0' );
+        }
+        p++;
+    }
+
+    if ( *p != '.' )
+    {
+        return ROCKETNET_XDP_RT_THROTTLES;
+    }
+    p++;
+
+    if ( *p < '0' || *p > '9' )
+    {
+        return ROCKETNET_XDP_RT_THROTTLES;
+    }
+    while ( *p >= '0' && *p <= '9' )
+    {
+        if ( minor < 100000 )
+        {
+            minor = minor * 10 + ( *p - '0' );
+        }
+        p++;
+    }
+
+    if ( major < 6 || ( major == 6 && minor < 12 ) )
+    {
+        return ROCKETNET_XDP_RT_THROTTLES;
+    }
+
+    return ROCKETNET_XDP_RT_READ_CONFIG;
+}
+
+// one line of a kernel build config: is it exactly CONFIG_RT_GROUP_SCHED=y
+// (the script's grep -qx)? a trailing newline is not part of the line
+
+static inline bool rocketnet_xdp_rt_config_line( const char * line )
+{
+    static const char wanted[] = "CONFIG_RT_GROUP_SCHED=y";
+    const size_t wanted_length = sizeof( wanted ) - 1;
+    if ( !line || strncmp( line, wanted, wanted_length ) != 0 )
+    {
+        return false;
+    }
+    const char after = line[wanted_length];
+    return after == '\0' || after == '\n';
 }
 
 // STATS READ: the per-cpu stats map is read into a buffer of

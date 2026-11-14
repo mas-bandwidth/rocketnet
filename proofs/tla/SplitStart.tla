@@ -2,31 +2,58 @@
 (***************************************************************************)
 (* The load_split start barrier (load_split.c, tools/load_split_barrier.h) *)
 (* with discrete time.  Shards connect at any time; each shard stands for  *)
-(* all of its clients.  The server waits ConnectWindow from its first      *)
-(* connection for every shard, then sends ARM and waits PhaseWindow for    *)
-(* every ACK, sends GO and waits PhaseWindow for every GO ACK, then sends  *)
-(* RUN.  Every start message is reliable ordered: a loss is the SDK's      *)
-(* resend, so each message arrives 1..Delay ticks after it is sent, and   *)
-(* Delay <= RunTimeout, the reliable message timeout after which the SDK   *)
-(* gives up on a connection.  A server that fails ends every connection;  *)
-(* the end reaches each shard 1..Delay ticks later.                        *)
+(* all of its clients.  Time 0 is the server's split_ready line.  The      *)
+(* server waits ConnectWindow from its first connection for every shard,   *)
+(* and never past ReadyLease from time 0 (the launcher's 60 s readiness    *)
+(* lease, load_split.c ready_time), then sends ARM and waits PhaseWindow   *)
+(* for every ACK, sends GO and waits PhaseWindow for every GO ACK, then    *)
+(* sends RUN.  Every start message is reliable ordered: a loss is the      *)
+(* SDK's resend, so each message arrives 1..Delay ticks after it is sent.  *)
+(* A server that fails ends every connection; the end reaches each shard   *)
+(* 1..Delay ticks later.                                                   *)
+(*                                                                         *)
+(* RunTimeout is the shard's allowance for RUN in flight (load_split.c     *)
+(* start_allowance_s): the reliable message timeout when one is set, else  *)
+(* the connection timeout the tokens carry (SPLIT_TOKEN_TIMEOUT_SECONDS).  *)
+(* load_split keeps reliable_message_timeout_ms at its default 0 (off), so *)
+(* it is the token timeout, which ends only a silent connection.           *)
+(*                                                                         *)
+(* Assumption, not enforced by the harness: ASSUME Delay <= RunTimeout,    *)
+(* every start message, with its resends, arrives within RunTimeout.  A    *)
+(* path that carries keepalives but keeps losing RUN's resends keeps the   *)
+(* connection up past it; the server has set startup_complete right after  *)
+(* sending RUN, so a shard that then gives up on its own clock breaks      *)
+(* ServerIsTheAuthority.  The properties hold under this assumption only.  *)
 (*                                                                         *)
 (* Rule "one" is the shard rule: one deadline from the shard's own         *)
 (* connection, ConnectWindow + 2 * PhaseWindow + RunTimeout.  Rule         *)
 (* "per_phase" is the rule it replaced: PhaseWindow from the shard's own   *)
-(* connection for ARM, then PhaseWindow from each local step for GO and   *)
+(* connection for ARM, then PhaseWindow from each local step for GO and    *)
 (* RUN.  Rule "no_run" is the one rule without the RunTimeout term.        *)
 (*                                                                         *)
 (* ServerIsTheAuthority: a shard gives up on its own clock only after the  *)
 (* server has failed the start.  BoundedWait: no shard waits past its      *)
 (* deadline.  RunOnlyAfterGo: a running shard was released by the server.  *)
+(*                                                                         *)
+(* Limit: a shard enters the model at Connect, when all of its clients     *)
+(* are connected, and Connect takes no time.  Before that the shard runs   *)
+(* its own connect wait, LOAD_CONNECT_DEADLINE_S from its connect_start    *)
+(* (load_split.c), and gives up on its own clock when it ends with a       *)
+(* client still unconnected, whatever the server has decided.  That wait   *)
+(* is not modelled, so ServerIsTheAuthority, BoundedWait and the shard     *)
+(* deadline hold from each shard's start wait on, not for its connect      *)
+(* phase.                                                                  *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
-CONSTANTS Shards, ConnectWindow, PhaseWindow, RunTimeout, Delay, MaxTime, Rule
+CONSTANTS Shards, ConnectWindow, PhaseWindow, RunTimeout, Delay, MaxTime, Rule,
+          ReadyLease
 
+\* Delay <= RunTimeout is the path assumption stated in the header; the
+\* harness does not enforce it (reliable_message_timeout_ms is 0)
 ASSUME Delay >= 1 /\ Delay <= RunTimeout
 ASSUME Rule \in {"one", "per_phase", "no_run"}
+ASSUME ReadyLease >= ConnectWindow
 
 Kinds == {"arm", "ack", "go", "go_ack", "run", "end"}
 None == -1
@@ -114,8 +141,13 @@ ServerRun ==
     /\ SendAll("run")
     /\ UNCHANGED <<now, firstConnect, connectedAt, phaseStart, shard, step, deadline, reason, acked, goAcked>>
 
+\* The population wait ends at the readiness lease or ConnectWindow after
+\* the first connection, whichever comes first (load_split.c:
+\* now - ready_time >= 60.0 || now - first_connected >= LOAD_CONNECT_DEADLINE_S).
 ServerExpired ==
-    \/ server = "connect" /\ firstConnect # None /\ ~AllConnected /\ now - firstConnect >= ConnectWindow
+    \/ /\ server = "connect" /\ ~AllConnected
+       /\ \/ now >= ReadyLease
+          \/ firstConnect # None /\ now - firstConnect >= ConnectWindow
     \/ server = "arm" /\ ~(\A s \in Shards : acked[s]) /\ now - phaseStart >= PhaseWindow
     \/ server = "go" /\ ~(\A s \in Shards : goAcked[s]) /\ now - phaseStart >= PhaseWindow
 
@@ -234,6 +266,13 @@ BoundedWait ==
 
 RunOnlyAfterGo ==
     \A s \in Shards : shard[s] = "running" => server = "released"
+
+\* Reversed witness: the population wait fails only ConnectWindow after a
+\* first connection.  The readiness lease ends it earlier when no shard
+\* connects in time, so MCSplitStartReadyLease.cfg must fail it.
+PopulationWindowDecides ==
+    (server = "failed" /\ phaseStart = None) =>
+        (firstConnect # None /\ now - firstConnect >= ConnectWindow)
 
 \* Reversed witness: a start does complete for every shard.
 NotAllRunning ==

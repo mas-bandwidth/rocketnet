@@ -434,7 +434,8 @@ struct rocketnet_server_transport_t
     // staging. At the end of update and of send_packets main gives each queue a
     // budget: its room less the reserve the next update's protocol frames may
     // need there. A game packet start claims one unit of its queue's budget with one
-    // atomic add and is refused (SEND_RESERVE_REFUSED) past it; protocol
+    // atomic add and is refused (SEND_RESERVE_REFUSED or
+    // SEND_RESERVE_REFUSED_TAILS_HELD) past it; protocol
     // frames never claim. Written by main only while no game packet is being started; the
     // claims are atomic adds.
     int send_queues;                                    // the transport's send_queues, or 1
@@ -1327,7 +1328,10 @@ static uint64_t rocketnet_server_transport_tails_held( const struct rocketnet_se
 // back whole and claimed again as one frame (witness NoFallback). Below the
 // guard, one frame. A single claim refused is counted
 // SEND_RESERVE_REFUSED_TAILS_HELD while any line holds a tail or a chunk
-// claim (TailsNamed), else SEND_RESERVE_REFUSED. Returns the queue (with
+// claim when it reads the lines after its retest (TailsNamed), else
+// SEND_RESERVE_REFUSED; a frame taken, staged or given back before that read
+// is not seen and one claimed after the refusal's test is, so the split is as
+// of that read. Returns the queue (with
 // *own set for an own frame), or -1 refused.
 static int rocketnet_server_transport_fill_claim( struct rocketnet_server_transport_t * server_transport, struct rocketnet_server_fill_line_t * line,
                                                   int client_index, const rocketnet_address_t * to, bool * own )
@@ -4637,9 +4641,10 @@ static void rocketnet_server_transport_update_receive_body( struct rocketnet_ser
     // the caller's clock is clamped once, before anything reads it: a NaN,
     // an infinity, a negative time, a caller's time above
     // ROCKETNET_UPDATE_TIME_MAX_SECONDS or a step backwards becomes the last good
-    // time, counted and loud in a debug build. The message server's clock is
-    // not held to the ceiling: its raw samples were. the last good time
-    // starts at zero, the value a value-initialized transport carries.
+    // time, counted as API misuse and logged as an error once per clamped
+    // update, in every build. The message server's clock is not held to the
+    // ceiling: its raw samples were. the last good time starts at zero, the
+    // value a value-initialized transport carries.
 
     bool time_clamped = false;
     if ( from_layer )
@@ -5148,11 +5153,16 @@ uint8_t * rocketnet_server_transport_payload( struct rocketnet_server_transport_
 // is this one and the rest, clipped at send_capacity, the line's chunk. A
 // line another thread on it refilled first keeps that one: this whole chunk
 // is marked empty here and the slot is taken from the line's chunk instead,
-// so the slots a thread takes only rise, and the flush, which walks the ring
-// in slot order, sends one client's packets in the order they were started
-// (a slot of this chunk used beside the other thread's lower chunk would
-// leave before the packets this thread starts next). Below the guard one
-// fetch-add of one slot. A slot at or past send_capacity is refused, though
+// so a lost install never makes a thread's slots fall, and the flush, which
+// walks the ring in slot order, sends one client's packets in the order they
+// were started (a slot of this chunk used beside the other thread's lower
+// chunk would leave before the packets this thread starts next). Below the
+// guard one fetch-add of one slot. The one exception: a thread whose take
+// crosses the guard while another thread on its line has claimed a chunk and
+// not yet installed it takes single slots above that chunk, and its next take
+// after the install comes from the chunk, below them; one client's packets can
+// then leave reordered within one flush. Nothing is lost or duplicated
+// (docs/roadmap.sexp ring-take-order-across-guard). A slot at or past send_capacity is refused, though
 // the counter has moved past it. Main marks each line's unused slots empty
 // before the flush reads the ring
 // (rocketnet_server_payload_ring_return_chunks), so every slot below the

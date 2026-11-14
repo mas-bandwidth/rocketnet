@@ -10,14 +10,20 @@
 // block of 2404 bytes: 1152 + 1152 + 100. The ring-wrap vector is two RECORDS
 // payloads back to back for a two-fragment block of 1153 bytes whose span is
 // padded from 1152 to the ring size 1168 before placement. The test also
-// reassembles both blocks from their fragments in index order and checks that
+// reassembles both blocks by feeding their payloads, in index order, to a real
+// receiving endpoint (rn_ordered_receive over a unit arena, which runs the
+// reader and the channel's block assembly, sdk/rocketnet_channel.cpp), and
+// checks the one delivery each block makes, byte for byte; and it checks that
 // the wrapped placement passes the receiver's ring check while the same
 // placement without the wrap is refused.
 
 #include "test_unit_standard.h"
+#include "unit_arena.h"
 
 #include "rocketnet.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_allocator.h"
+#include "rocketnet_channel.h"
 #include "rocketnet_message.h"
 #include "rocketnet_window_send.h"
 
@@ -78,12 +84,13 @@ static void standard_blocks_fill( int bytes )
 }
 
 static int standard_blocks_encode( uint32_t number, uint32_t ring, uint32_t ordering, uint32_t channel,
-                                   uint32_t fragment, uint32_t fragments, int bytes, uint8_t * out, int capacity )
+                                   uint32_t fragment, uint32_t fragments, int bytes, uint8_t * out, int capacity,
+                                   int block = 1 )
 {
     struct rocketnet_message_record_t record;
     memset( &record, 0, sizeof( record ) );
     record.code = ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
-    record.block = 1;
+    record.block = block;
     record.number = number;
     record.ring = ring;
     record.ordering = ordering;
@@ -112,7 +119,9 @@ static void standard_blocks_region( rn_region_t * region, rn_send_number_t * num
     region->send_numbers = numbers;
 }
 
-static int standard_blocks_split( const char * id, uint8_t * out, int capacity )
+// fragment index of the three-fragment block, placed by the sender's window
+// exactly as the vectors are, on the given ordering and channel
+static int standard_blocks_split_fragment( uint32_t index, uint32_t ordering, uint32_t channel, uint8_t * out, int capacity )
 {
     rn_region_t region;
     static rn_send_number_t numbers[16];
@@ -128,6 +137,16 @@ static int standard_blocks_split( const char * id, uint8_t * out, int capacity )
         return -1;
     }
 
+    const int bytes = index == 2 ? 100 : (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    standard_blocks_fill( bytes );
+
+    const rn_send_number_t * slot = &numbers[( first + index ) % region.window];
+    const uint32_t ring = (uint32_t) ( ( slot->ring_start % region.ring_bytes ) / 16 );
+    return standard_blocks_encode( (uint32_t) ( first + index ), ring, ordering, channel, index, 2, bytes, out, capacity );
+}
+
+static int standard_blocks_split( const char * id, uint8_t * out, int capacity )
+{
     uint32_t index = 0;
     if ( strcmp( id, "m8.split-nonfinal" ) == 0 )
     {
@@ -142,12 +161,7 @@ static int standard_blocks_split( const char * id, uint8_t * out, int capacity )
         return -1;
     }
 
-    const int bytes = index == 2 ? 100 : (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES;
-    standard_blocks_fill( bytes );
-
-    const rn_send_number_t * slot = &numbers[( first + index ) % region.window];
-    const uint32_t ring = (uint32_t) ( ( slot->ring_start % region.ring_bytes ) / 16 );
-    return standard_blocks_encode( (uint32_t) ( first + index ), ring, 7, 3, index, 2, bytes, out, capacity );
+    return standard_blocks_split_fragment( index, 7, 3, out, capacity );
 }
 
 static int standard_blocks_ring_wrap( const char * id, uint8_t * out, int capacity )
@@ -206,42 +220,155 @@ static int standard_blocks_generate( const char * id, uint8_t * out, int capacit
     return standard_blocks_ring_wrap( id, out, capacity );
 }
 
+// A real receiving endpoint: the reader and the channels of an rn_ordered_t
+// over a one-region unit arena. The vectors' rings (1168 bytes for the wrap)
+// are below the config floor of 4096, so the arena is carved at 4096 and the
+// region and the reader are then held to the vector's ring: a smaller ring
+// inside the carved one.
+
+struct standard_blocks_receiver_t
+{
+    rocketnet_counters_t counters;
+    rn_arena_t * arena;
+    rn_region_t * region;
+    rn_ordered_t ordered;
+};
+
+static void standard_blocks_receiver_init( standard_blocks_receiver_t * receiver, uint32_t ring_bytes )
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.num_channels = 4;
+    config.reliable_messages_in_flight = 64;
+    config.receive_message_buffer_bytes = 4096;
+    config.max_message_bytes = 4096;
+    config.send_message_buffer_bytes = 65536;
+
+    memset( receiver, 0, sizeof( *receiver ) );
+    receiver->arena = rn_unit_arena_create( &config, 1, &receiver->counters );
+    rocketnet_unit_check( receiver->arena != NULL );
+    receiver->region = rn_arena_region( receiver->arena, 0 );
+    rocketnet_unit_check( rn_ordered_init( &receiver->ordered, receiver->region, &config, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
+
+    rocketnet_unit_check( ring_bytes <= receiver->region->ring_bytes );
+    receiver->region->ring_bytes = ring_bytes;
+    receiver->ordered.limits.receive_message_buffer_bytes = (int) ring_bytes;
+
+    // the ring starts poisoned, so a delivered byte the reader never placed
+    // (a fragment skipped or written elsewhere) reads 0xEE, never a zero
+    // that matches the vector's data by chance
+    memset( receiver->region->receive_ring, 0xEE, ring_bytes );
+}
+
+// one payload received: copied to a 16-aligned packet the caller keeps (a
+// delivery may point into it), the reader's verdict checked, the deliveries
+// it made returned
+static uint32_t standard_blocks_receive( standard_blocks_receiver_t * receiver, uint8_t * packet, const uint8_t * payload, int bytes )
+{
+    rocketnet_unit_check( bytes > 0 && bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+    memcpy( packet, payload, (size_t) bytes );
+    rocketnet_unit_check( rn_ordered_receive( &receiver->ordered, packet, bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    return rn_ordered_deliveries( &receiver->ordered );
+}
+
+static void standard_blocks_receiver_destroy( standard_blocks_receiver_t * receiver )
+{
+    rocketnet_unit_check( receiver->ordered.channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
+    rocketnet_unit_check( receiver->counters.values[ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK] == 0 );
+    rocketnet_unit_check( receiver->counters.values[ROCKETNET_COUNTER_MESSAGE_BAD_RING] == 0 );
+    rn_ordered_end_update( &receiver->ordered );
+    rn_unit_arena_destroy( receiver->arena );
+}
+
 static void test_standard_blocks_vectors()
 {
     const int count = (int) ( sizeof( standard_blocks_table ) / sizeof( standard_blocks_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_blocks_table, count, standard_blocks_generate ) == count );
 
-    // split and reassemble: the fragments in index order are the message
+    // split and reassemble: the three fragments, placed by the sender's window
+    // as the split vectors are (channel 3, on ordering 0 so the block is the
+    // channel's next), go to the receiver in index order. Nothing is delivered
+    // until the last is in; then the one delivery is the 2404-byte message.
 
-    static uint8_t fragments[2404];
-    int at = 0;
-    for ( uint32_t index = 0; index < 3; index++ )
     {
-        const int bytes = index == 2 ? 100 : (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES;
-        standard_blocks_fill( bytes );
-        memcpy( fragments + at, standard_blocks_data, (size_t) bytes );
-        at += bytes;
+        static uint8_t expected[2404];
+        int at = 0;
+        for ( uint32_t index = 0; index < 3; index++ )
+        {
+            const int bytes = index == 2 ? 100 : (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+            for ( int i = 0; i < bytes; i++ )
+            {
+                expected[at + i] = (uint8_t) ( i & 0xFF );
+            }
+            at += bytes;
+        }
+
+        standard_blocks_receiver_t receiver;
+        standard_blocks_receiver_init( &receiver, 4096 );
+
+        alignas( 16 ) static uint8_t packets[3][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+        for ( uint32_t index = 0; index < 3; index++ )
+        {
+            uint8_t payload[RN_STANDARD_VECTOR_MAX_BYTES];
+            const int bytes = standard_blocks_split_fragment( index, 0, 3, payload, (int) sizeof( payload ) );
+            const uint32_t deliveries = standard_blocks_receive( &receiver, packets[index], payload, bytes );
+            rocketnet_unit_check( deliveries == ( index == 2 ? 1u : 0u ) );
+        }
+
+        const rn_delivery_t & delivery = receiver.region->deliveries[0];
+        rocketnet_unit_check( delivery.channel == 3 );
+        rocketnet_unit_check( delivery.bytes == 2404 );
+        rocketnet_unit_check( memcmp( delivery.data, expected, sizeof( expected ) ) == 0 );
+
+        standard_blocks_receiver_destroy( &receiver );
     }
 
-    at = 0;
+    // ring wrap and reassemble: the 1152-byte message the vector's block
+    // follows is received and released first (ordering 0, ring 0), then the
+    // vector's two payloads. The one delivery is the 1153-byte block, placed
+    // at the wrapped base 0 of the 1168-byte ring: fragment 0's bytes, then
+    // fragment 1's one byte.
 
-    for ( uint32_t index = 0; index < 3; index++ )
     {
-        const int bytes = index == 2 ? 100 : (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES;
-        for ( int i = 0; i < bytes; i++ )
+        standard_blocks_receiver_t receiver;
+        standard_blocks_receiver_init( &receiver, 1168 );
+
+        alignas( 16 ) static uint8_t packets[3][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+        uint8_t payload[RN_STANDARD_VECTOR_MAX_BYTES];
+
+        const int single_bytes = (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+        standard_blocks_fill( single_bytes );
+        const int first = standard_blocks_encode( 0, 0, 0, 0, 0, 0, single_bytes, payload, (int) sizeof( payload ), 0 );
+        rocketnet_unit_check( standard_blocks_receive( &receiver, packets[0], payload, first ) == 1 );
+        rocketnet_unit_check( receiver.region->deliveries[0].bytes == single_bytes );
+        rocketnet_unit_check( memcmp( receiver.region->deliveries[0].data, standard_blocks_data, (size_t) single_bytes ) == 0 );
+        rn_ordered_end_update( &receiver.ordered );
+
+        // the vector is the block's two payloads back to back, one per
+        // fragment: each goes to the receiver as its own packet
+
+        const int wrapped = standard_blocks_ring_wrap( "m8.ring-wrap", payload, (int) sizeof( payload ) );
+        const int fragment_0_bytes = 16 + (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES + 1;
+        rocketnet_unit_check( wrapped > fragment_0_bytes );
+        rocketnet_unit_check( standard_blocks_receive( &receiver, packets[1], payload, fragment_0_bytes ) == 0 );
+        rocketnet_unit_check( standard_blocks_receive( &receiver, packets[2], payload + fragment_0_bytes, wrapped - fragment_0_bytes ) == 1 );
+
+        const rn_delivery_t & delivery = receiver.region->deliveries[0];
+        rocketnet_unit_check( delivery.channel == 0 );
+        rocketnet_unit_check( delivery.bytes == (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES + 1 );
+        rocketnet_unit_check( delivery.data == receiver.region->receive_ring );
+        for ( int i = 0; i < (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES; i++ )
         {
-            rocketnet_unit_check( fragments[at + i] == (uint8_t) ( i & 0xFF ) );
+            rocketnet_unit_check( delivery.data[i] == (uint8_t) ( i & 0xFF ) );
         }
-        at += bytes;
+        rocketnet_unit_check( delivery.data[ROCKETNET_MESSAGE_FRAGMENT_BYTES] == 0 );
+
+        standard_blocks_receiver_destroy( &receiver );
     }
 
     // The ring-wrap payload passes the ring check at base 0; the same block
     // without the boundary padding would place fragment 0 at 1152 and be
     // refused outside the 1168-byte ring.
-
-    uint8_t payload[RN_STANDARD_VECTOR_MAX_BYTES];
-    const int wrapped = standard_blocks_ring_wrap( "m8.ring-wrap", payload, (int) sizeof( payload ) );
-    rocketnet_unit_check( wrapped > 0 );
 
     struct rocketnet_message_limits_t limits;
     memset( &limits, 0, sizeof( limits ) );

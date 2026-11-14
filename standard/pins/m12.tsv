@@ -1,0 +1,3 @@
+# The rows of RN-2 m12 (standard/MESSAGES.md, Receipts): document name, sdk expression, value.
+# Format and rules: standard/STYLE.md section 10.
+max_message_receipts	rn_pin_message_default_max_message_receipts	256

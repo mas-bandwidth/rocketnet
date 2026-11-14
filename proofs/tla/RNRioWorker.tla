@@ -36,6 +36,12 @@
 (* returned (StopCount).  When idle it arms RIONotify on the queues it     *)
 (* can serve and waits on the notification event and the wake.  RIONotify *)
 (* on a non-empty queue sets the event at once (the documented rule).      *)
+(* The code's wait also times out (50 ms, 1 ms after a refused commit or   *)
+(* re-post); the model keeps only the timeouts that matter while sends are *)
+(* outstanding or a re-post waits (WWait), so a missing wake shows here as *)
+(* a worker that never wakes; in the code it leaves the worker idle until  *)
+(* its 50 ms timeout, plus scheduling and the passes after it, which is    *)
+(* not a bound on how late main receives a datagram.                       *)
 (*                                                                         *)
 (* Stop sets stopping and the wake.  Each stop pass                        *)
 (* (rocketnet_rio_stop_pass) posts ready phases, commits any deferred      *)
@@ -51,15 +57,30 @@
 (* StopDrainWaits+1 failed passes that dequeued no receive completion,     *)
 (* and then leaks the region rather than freeing memory the kernel         *)
 (* may still write; that can follow a closesocket that succeeded when the  *)
-(* cancellations are late (LeakOnlyAfterStalls).  Destroy frees the        *)
-(* registered region only after                                            *)
+(* cancellations are late (LeakOnlyAfterStalls).  When the bound is spent  *)
+(* with closesocket refused and nothing posted or outstanding (create      *)
+(* failed before it posted a receive), the kernel owns no request on the   *)
+(* region: the drain abandons the socket open, runs one more pass and      *)
+(* frees the rest of the lane (WLeak's abandon branch, AbandonUnposted).   *)
+(* Destroy frees the registered region only after                          *)
 (* stopped.  No fairness says a refused commit or close later succeeds.    *)
+(* A completion queue the kernel reports corrupt (RIO_CORRUPT_CQ) is       *)
+(* outside the model: the worker's lane then never reports stopped and     *)
+(* never frees the region (rocketnet_rio_corrupt_queue), so                *)
+(* StopCompletesUnlessRefused assumes no corrupt queue; create's inline    *)
+(* drain then leaks the lane, possibly with nothing kernel owned, which    *)
+(* LeakOnlyAfterStalls does not allow (the safe direction).                *)
 (*                                                                         *)
 (* Rule switches, each FALSE in one reversed witness:                      *)
 (*   SwitchOnIdle   main opens the next phase only when it is idle         *)
 (*   BoundedDequeue the worker dequeues at most its bank's free room       *)
 (*   DrainBeforeExit the worker exits only when nothing is kernel owned    *)
 (*   WakeOnReturn   main wakes the worker when it starts on a full bank    *)
+(*                  (FALSE: the model's idle wait has no timeout, so the   *)
+(*                  worker never wakes; the code's wait times out after    *)
+(*                  50 ms, so without the wake the worker idles until that *)
+(*                  timeout (nominally three updates at 60 Hz), plus       *)
+(*                  scheduling, not forever; not a bound on receive delay) *)
 (*   ReadOnlyLeft   (TRUE in its witness) main reads only a bank the       *)
 (*                  worker has left, as the old ready FIFO did: a          *)
 (*                  datagram committed before a call waits for the next    *)
@@ -77,9 +98,13 @@
 (*   CountRefusedPost a send post the kernel refuses (RIOSendEx false) is  *)
 (*                  counted SEND_FAILED, its slot free again (an operator; *)
 (*                  FALSE: lost uncounted)                                 *)
-(* Either of the last two keeps a draining region from leaking: with      *)
-(* both FALSE, passes that each dequeue a batch use up the bound and the   *)
-(* region leaks while completions still arrive                             *)
+(*   AbandonUnposted create's inline drain, its bound spent with nothing   *)
+(*                  posted or outstanding, abandons the socket and frees   *)
+(*                  the rest of the lane (an operator; FALSE: it leaks the *)
+(*                  whole lane with nothing kernel owned)                  *)
+(* Either DrainLoop or CountStalledOnly keeps a draining region from       *)
+(* leaking: with both FALSE, passes that each dequeue a batch use up the   *)
+(* bound and the region leaks while completions still arrive               *)
 (* (MCRNRioWorkerBrokenOneBatchPerPass.cfg); with CountStalledOnly alone   *)
 (* the same passes drain it (MCRNRioWorkerInlineStopBatchPerPass.cfg).     *)
 (***************************************************************************)
@@ -96,7 +121,10 @@ CONSTANTS Slices,          \* receives: rocketnet_server_rio_receives( max_clien
           SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn, DropHanded,
           DrainSendsBeforeClose, BoundedStopDrain, DrainLoop, CountStalledOnly
 
-ASSUME Slices >= 1 /\ Cap >= 1 /\ View >= Cap
+\* Slices is the receives posted when stop begins: every one on the worker's
+\* path, and on create's failure path the ones posted before create failed,
+\* which may be none (a failure before or at the first post).
+ASSUME Slices >= (IF InlineStop THEN 0 ELSE 1) /\ Cap >= 1 /\ View >= Cap
 ASSUME MaxDatagrams \in Nat /\ MaxSends \in Nat
 ASSUME DrainBatch >= 1 /\ StopDrainWaits >= 1
 ASSUME {InlineStop, SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn, DropHanded,
@@ -105,6 +133,13 @@ ASSUME {InlineStop, SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn,
 \* Rule switch (an operator, overridden in a cfg with <-): a refused send
 \* post is counted SEND_FAILED.  FALSE in MCRNRioWorkerBrokenUncountedPost.cfg.
 CountRefusedPost == TRUE
+
+\* Rule switch (an operator, overridden in a cfg with <-): create's inline
+\* drain, its bound spent with closesocket refused and nothing posted or
+\* outstanding, abandons the socket and frees the rest of the lane.  FALSE
+\* in MCRNRioWorkerBrokenLeakUnposted.cfg: it leaks the whole lane with
+\* nothing kernel owned; must fail LeakOnlyAfterStalls.
+AbandonUnposted == TRUE
 
 \* Rule switch (an operator, overridden in a cfg with <-): each pass retires
 \* the send completions and returns the drained phases idle before it takes
@@ -186,13 +221,14 @@ VARIABLES
     stopwaits,    \* failed stop passes of create's inline drain (its loop index)
     countedbusy,  \* ghost: a counted failed pass had dequeued a receive completion
     stoprefused,  \* the last stop-pass commit or closesocket was refused
-    waited        \* ghost: the posted phases every send of which the kernel had finished when this pass began
+    waited,       \* ghost: the posted phases every send of which the kernel had finished when this pass began
+    abandoned     \* create's inline drain abandoned the socket open (closesocket refused, nothing posted)
 
 mainvars == <<wbank, mbank, tbank, fbank, committed, mcur, mlim, tcur, tend, view, consumed, stopdrops, stopcounted, late>>
 hvars == <<mainvars, drained>>
 rvars == <<arrived, accepted, posted, retry, retired, rcq, data, hvars>>
 svars == <<sent, staged, state, phase, sready, inhand, pend, infl, scq, done, dropped, cancelled, failed>>
-cvars == <<wake, evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
+cvars == <<wake, evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 vars == <<rvars, svars, cvars>>
 
 Range(s) == {s[i] : i \in 1..Len(s)}
@@ -232,6 +268,7 @@ Init ==
     /\ stopping = InlineStop /\ closed = FALSE /\ exited = FALSE /\ freed = FALSE
     /\ wpc = (IF InlineStop THEN "stop" ELSE "top") /\ progress = FALSE
     /\ stopwaits = 0 /\ countedbusy = FALSE /\ stoprefused = FALSE /\ waited = {}
+    /\ abandoned = FALSE
 
 \* ------------------------------------------------------------------------
 \* The kernel and the network.
@@ -249,7 +286,7 @@ Arrive ==
     /\ armed' = FALSE
     /\ UNCHANGED <<retry, retired, data, hvars>>
     /\ UNCHANGED svars
-    /\ UNCHANGED <<wake, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<wake, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* no slice is posted: the kernel drops the datagram (an OS count, not ours)
 ArriveDropped ==
@@ -259,9 +296,19 @@ ArriveDropped ==
     /\ UNCHANGED <<accepted, posted, retry, retired, rcq, data, hvars>>
     /\ UNCHANGED svars /\ UNCHANGED cvars
 
-\* a committed send completes.  Send completions do not arm the event in
-\* this model: the worker waits only when no send is outstanding.  Once the
-\* socket is closed, a send still in flight completes cancelled (failed).
+\* a committed send completes.  The code's idle wait arms RIONotify on the
+\* send queue while sends are outstanding (rocketnet_rio_idle_wait), so a
+\* send completion sets the notification event; the model leaves evt alone
+\* here and instead lets WWait end whenever a send is kernel owned or its
+\* completion queued, which covers that notification.  Once the socket is
+\* closed, a send still in flight completes cancelled (failed).
+\* The completion carries no status: on an open socket the kernel may also
+\* complete a send failed (a non-zero Status, or a BytesTransferred other
+\* than the slot's length),
+\* which rocketnet_rio_retire_send counts SEND_FAILED instead of
+\* PACKETS_SENT and otherwise retires exactly as a good one (the slot and
+\* the phase's outstanding count are freed the same way).  So the model
+\* checks that each send is retired once, not that it was delivered.
 SendComplete(p) ==
     /\ infl[p] # <<>>
     /\ scq' = Append(scq, <<p, Head(infl[p])>>)
@@ -314,7 +361,7 @@ SendPackets ==
     /\ wake' = TRUE
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, inhand, pend, infl, scq, done, dropped, cancelled, failed>>
-    /\ UNCHANGED <<evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* rocketnet_rio_lane_receive_packets, one call (RNReceiveHandoff Call; busy:
 \* the try-acquire failed).  The last call's views have expired, so a
@@ -356,7 +403,7 @@ ReceiveCall(busy) ==
           /\ wake' = (wake \/ (WakeOnReturn /\ adv /\ ml >= Cap))
     /\ UNCHANGED <<arrived, accepted, posted, retry, retired, rcq, wbank, committed, drained, stopdrops, stopcounted>>
     /\ UNCHANGED svars
-    /\ UNCHANGED <<evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<evt, armed, stopping, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* a successful try
 ReceivePackets == ReceiveCall(FALSE)
@@ -371,7 +418,7 @@ Stop ==
     /\ stopping' = TRUE
     /\ wake' = TRUE
     /\ UNCHANGED rvars /\ UNCHANGED svars
-    /\ UNCHANGED <<evt, armed, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<evt, armed, closed, exited, freed, wpc, progress, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* rocketnet_server_rio_destroy after stopped: frees the registered region
 Destroy ==
@@ -379,7 +426,7 @@ Destroy ==
     /\ ~freed
     /\ freed' = TRUE
     /\ UNCHANGED rvars /\ UNCHANGED svars
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, wpc, progress, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, wpc, progress, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* main polls stopped(), or idles after destroy
 Poll ==
@@ -411,7 +458,7 @@ WTop ==
     /\ waited' = IF stopping THEN {} ELSE {p \in Phases : state[p] = "posted" /\ pend[p] = <<>> /\ infl[p] = <<>> /\ inhand # p}
     /\ progress' = FALSE
     /\ UNCHANGED rvars /\ UNCHANGED svars
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused, abandoned>>
 
 \* every posted phase with nothing outstanding, returned to main as idle
 DrainedIdle == [p \in Phases |-> IF state[p] = "posted" /\ ~Outstanding(p) THEN "idle" ELSE state[p]]
@@ -431,7 +478,7 @@ WTake ==
                /\ wpc' = "retire"
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, phase, pend, infl, scq, done, dropped, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* RIOSendEx with RIO_MSG_DEFER for each finished slot: the kernel owns
 \* the ones it accepted.  The kernel may refuse any of them (refused): a
@@ -448,7 +495,7 @@ WPost ==
     /\ progress' = TRUE
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, state, phase, sready, infl, scq, done, dropped, cancelled>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* RIO_MSG_COMMIT_ONLY: success moves every deferred send to the kernel's
 \* queue; a refusal keeps them deferred for the next pass
@@ -464,7 +511,7 @@ WCommit ==
     /\ wpc' = IF stopping THEN "stop" ELSE "retire"
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, scq, done, dropped, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* dequeue every send completion; a refused commit is retried here
 WRetire ==
@@ -477,7 +524,7 @@ WRetire ==
     /\ wpc' = "dequeue"
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, dropped, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* Before it takes a phase the worker retires every send completion (and
 \* retries a refused commit), so the take below returns the phases that
@@ -493,14 +540,14 @@ WRetireFirst ==
     /\ wpc' = "take"
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, dropped, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* Retry uses one stopping read before its whole loop. Each completion
 \* checks stopping separately after copying; a Stop during this aggregate
 \* pass can therefore leave a re-posted prefix and a retired suffix.
 \* stopDuring summarizes that one Stop interleaving, including its wake.
 \* It does not introduce a second worker or a new fairness assumption.
-\* proofs/tla/RNRioWorker.tla WDequeue, Refused: the prefilter's refusals take
+\* The prefilter's refusals (Refused, in rocketnet_rio_complete_receive) take
 \* no room, so the worker dequeues while its bank has room and it has
 \* taken at most one bank of completions (Slices): it stops with the queue
 \* empty, the room used up or that budget spent.
@@ -538,7 +585,7 @@ WDequeue ==
     /\ wpc' = "publish"
     /\ UNCHANGED <<arrived, accepted, hvars>>
     /\ UNCHANGED svars
-    /\ UNCHANGED <<evt, armed, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<evt, armed, closed, exited, freed, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* under the mutex: a bank holding datagrams commits its count
 \* (rocketnet_receive_handoff_commit, RNReceiveHandoff Commit) and, when
@@ -560,7 +607,7 @@ WPublish ==
     /\ UNCHANGED <<arrived, accepted, posted, retry, retired, rcq, data, drained>>
     /\ UNCHANGED <<mbank, tbank, mcur, mlim, tcur, tend, view, consumed, stopdrops, stopcounted, late>>
     /\ UNCHANGED <<sent, staged, phase, sready, inhand, pend, infl, scq, done, dropped, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* nothing progressed: arm RIONotify on the receive queue when its bank
 \* has room (a full bank waits on the wake alone).  A non-empty queue sets
@@ -573,10 +620,21 @@ WArm ==
        ELSE UNCHANGED <<evt, armed>>
     /\ wpc' = "wait"
     /\ UNCHANGED rvars /\ UNCHANGED svars
-    /\ UNCHANGED <<wake, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<wake, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
-\* WaitForMultipleObjects on the event and the wake.  Sends in flight, a
-\* refused commit or a refused re-post use a short timed wait instead.
+\* WaitForMultipleObjects on the event and the wake (rocketnet_rio_idle_wait).
+\* The third branch ends the wait with neither set while a send is kernel
+\* owned or its completion queued (the code's RIONotify on the send queue
+\* sets the event when one completes) or a re-post was refused (the code's
+\* 1 ms wait; a refused commit leaves a send pending, so it is kernel owned
+\* here).  The model's wait has no other timeout: the code waits at most
+\* 50 ms even with nothing to do, which the model leaves out, so a run
+\* where the worker waits forever is, in the code, a worker idle until its
+\* 50 ms timeout (nominally three updates at 60 Hz), plus scheduling and the
+\* passes after it, before the next pass (not a bound on how late main
+\* receives a datagram); meanwhile a full
+\* bank's queued completions hold their slices unposted, so under load the
+\* kernel can drop later arrivals (ArriveDropped), not only delay them.
 WWait ==
     /\ wpc = "wait"
     /\ \/ /\ evt
@@ -589,7 +647,7 @@ WWait ==
           /\ UNCHANGED <<evt, wake>>
     /\ wpc' = "top"
     /\ UNCHANGED rvars /\ UNCHANGED svars
-    /\ UNCHANGED <<armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* ------------------------------------------------------------------------
 \* The stop pass, rocketnet_rio_stop_pass.  The worker runs it at the top of
@@ -646,7 +704,7 @@ WStop ==
                  /\ UNCHANGED state
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, phase, pend, infl, scq, done, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* rocketnet_rio_close_socket.  A deferred send is committed first; a
 \* refused commit fails the pass with the socket open.  Under
@@ -689,7 +747,7 @@ WClose ==
     /\ exited' = (wpc' = "exited")
     /\ UNCHANGED <<arrived, accepted, retry, retired, data, hvars>>
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, dropped, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, freed, progress, waited>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, freed, progress, waited, abandoned>>
 
 \* One RIODequeueCompletion call into RIORESULT results[DEQUEUE_BATCH]:
 \* it returns at most DrainBatch completions.  The pass calls again only
@@ -707,7 +765,7 @@ WDrainSend ==
           /\ wpc' = IF DrainLoop /\ n = DrainBatch THEN "drains" ELSE "drainr"
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, pend, infl, dropped, cancelled, failed>>
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited, abandoned>>
 
 \* then the receive completion queue.  After its last call the pass returns
 \* true only when no send is outstanding (deferred, in flight or queued)
@@ -733,17 +791,39 @@ WDrainReceive ==
                        /\ UNCHANGED exited
     /\ UNCHANGED <<arrived, accepted, posted, retry, data, mainvars>>
     /\ UNCHANGED svars
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, freed, progress, stoprefused, waited>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, closed, freed, progress, stoprefused, waited, abandoned>>
 
-\* create's failure path after StopDrainWaits + 1 counted passes: it leaks
-\* the transport instead of freeing memory the kernel may still write.
+\* The socket is open (closesocket was refused) and the kernel owns no
+\* request on the region: posted_receives (posted + Len(rcq)) and the
+\* outstanding sends are zero.  On create's failure path this holds only
+\* when create failed before it posted a receive (Slices = 0): before the
+\* close nothing dequeues a receive.
+OpenWithNothingPosted == ~closed /\ posted = 0 /\ rcq = <<>> /\ scq = <<>> /\ ~KernelOwnsSend
+
+\* create's failure path after StopDrainWaits + 1 counted passes
+\* (rocketnet_rio_create_failed_drain gives up).  With the socket open and
+\* nothing posted or outstanding (AbandonUnposted) it abandons the socket
+\* (rio->socket = INVALID_SOCKET, counted
+\* rocketnet_server_rio_create_abandoned_sockets), and one more pass
+\* (rocketnet_rio_lane_stopped) finds nothing to close and drains, so the
+\* lane stops and create frees the rest of it.  The model goes straight to
+\* the drain: that pass's posting of handed phases and its close are no-ops
+\* here, since on create's failure path stopping is set before anything is
+\* staged (Stage and SendPackets need ~stopping) and the socket is now
+\* treated as closed.  Otherwise it leaks the
+\* transport instead of freeing memory the kernel may still write.
 WLeak ==
     /\ Bounded
     /\ wpc = "stop"
     /\ stopwaits = StopDrainWaits + 1
-    /\ wpc' = "leaked"
+    /\ IF AbandonUnposted /\ OpenWithNothingPosted
+       THEN /\ abandoned' = TRUE
+            /\ closed' = TRUE
+            /\ wpc' = "drains"
+       ELSE /\ wpc' = "leaked"
+            /\ UNCHANGED <<abandoned, closed>>
     /\ UNCHANGED rvars /\ UNCHANGED svars
-    /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
+    /\ UNCHANGED <<wake, evt, armed, stopping, exited, freed, progress, stopwaits, countedbusy, stoprefused, waited>>
 
 Next ==
     \/ Arrive \/ ArriveDropped \/ \E p \in Phases : SendComplete(p) \/ CancelArrives
@@ -795,6 +875,7 @@ TypeOK ==
     /\ countedbusy \in BOOLEAN
     /\ stoprefused \in BOOLEAN
     /\ waited \subseteq Phases
+    /\ abandoned \in BOOLEAN
 
 \* Every slice stays accounted through stop, close and drain. A retry
 \* entry is unposted and remains accounted even when stop skips its retry.
@@ -830,7 +911,10 @@ ExposedStable ==
 
 \* Exact delivery of every accepted datagram: returned, banked and unread
 \* (counted RECEIVE_DROP_STOPPED at the StopCount), dequeued by the stop
-\* pass, or still in the queue, each once and in order.
+\* pass (drained: the stop pass counts each RECEIVE_DROP_STOPPED, and
+\* also counts there a datagram the prefilter would refuse, which drained
+\* leaves out as ExactDelivery ranges over the datagrams that pass), or
+\* still in the queue, each once and in order, through stop.
 ExactDelivery ==
     consumed \o stopdrops \o (IF stopcounted THEN <<>> ELSE Unread) \o drained \o Pass(NonZero(rcq))
         = Pass(accepted)
@@ -869,8 +953,11 @@ FreedOnlyWhenDrained ==
     freed => posted = 0 /\ ~KernelOwnsSend /\ rcq = <<>> /\ scq = <<>>
 
 \* Every staged send is retired or counted refused at exit; stop never
-\* silently drops a phase, and the close cancels no send in flight: every
-\* send retired delivered.  A refused post is lost, counted SEND_FAILED.
+\* silently drops a phase, and the close cancels no send in flight.  This
+\* is ownership and the one count, not delivery: a retired send is counted
+\* PACKETS_SENT or, when the kernel completed it failed on the open socket,
+\* SEND_FAILED (SendComplete carries no status).  A refused post is lost,
+\* counted SEND_FAILED.
 StopSendsHanded == exited => dropped = {}
 StopSendsFinished == exited => Range(done) \cup failed = 1..sent /\ cancelled = {}
 
@@ -895,6 +982,9 @@ EveryStagedSent ==
 \* pass that dequeues a completion is never counted against the bound.
 \* The code guarantees no more: closesocket can succeed and the
 \* cancellations arrive after the last wait (NotReachedLateCancelLeak).
+\* With closesocket refused and nothing posted or outstanding the drain
+\* abandons the socket and frees the lane instead (WLeak, AbandonUnposted);
+\* MCRNRioWorkerBrokenLeakUnposted.cfg leaks there and fails this.
 LeakOnlyAfterStalls ==
     wpc = "leaked" =>
         /\ ~countedbusy
@@ -903,6 +993,10 @@ LeakOnlyAfterStalls ==
 \* Reachability target, expected to fail: create's inline drain leaks after
 \* a closesocket that succeeded, its cancellations late.
 NotReachedLateCancelLeak == ~(wpc = "leaked" /\ closed /\ ~stoprefused)
+
+\* Reachability target, expected to fail: create's inline drain abandons
+\* the socket (closesocket refused, nothing posted) and the lane is freed.
+NotReachedAbandonFreed == ~(abandoned /\ freed)
 
 \* Liveness on create's failure path (InlineStop): stop completes and
 \* destroy frees the region, or the bounded drain gives up and leaks it,
@@ -913,6 +1007,9 @@ StopCompletes == stopping ~> (freed \/ wpc = "leaked")
 \* bound: stop completes and destroy frees the region whenever the kernel
 \* does not refuse every later commit or closesocket.  No fairness assumes
 \* a refusal ends; a kernel that refuses forever falsifies the premise.
+\* It also assumes no completion queue is reported corrupt: the model has
+\* no RIO_CORRUPT_CQ, on which the code's stop pass fails every time and
+\* the lane never stops (the region is never freed, the safe direction).
 StopCompletesUnlessRefused == ([]<>~stoprefused) => (stopping ~> freed)
 
 =============================================================================

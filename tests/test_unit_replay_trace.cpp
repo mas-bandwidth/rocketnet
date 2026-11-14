@@ -3,23 +3,24 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The ReplayWindow model trace (proofs/tla/ReplayWindow.tla, proofs/tla/MCReplayWindow.tla,
-// proofs/tla/README-ReplayWindow.md) driven against the real C++: a pure C++
-// reference of the model's state -- the set of received sequences and the
-// window floor -- is stepped in lockstep with the code's
-// rocketnet_replay_already_received / rocketnet_replay_advance (and the
-// session receive gate, asserted by the dedicated witness test below) over
-// every action sequence of length up to five on a small sequence alphabet,
-// comparing after each step which sequences each side accepts as new.
+// A differential check of the code's replay window against a hand-written
+// C++ reference of the ReplayWindow model's state (proofs/tla/ReplayWindow.tla,
+// proofs/tla/MCReplayWindow.tla, proofs/tla/README-ReplayWindow.md). It is not
+// a TLC trace: no TLC behaviour is read or replayed here. The reference -- the
+// set of received sequences and the window floor -- is stepped in lockstep
+// with the code's rocketnet_replay_already_received / rocketnet_replay_advance
+// over every advance sequence of length up to five on a small sequence
+// alphabet, comparing after each step which sequences each side accepts as
+// new. The enumeration runs twice: on an alphabet near 1, and on the same
+// alphabet moved up so its largest sequence is UINT64_MAX, so the window's
+// arithmetic is compared at the top of the sequence space as well.
 //
-// The reference carries the model's two fix constants (the CONSTANTS of
-// proofs/tla/ReplayWindow.tla) at the rule values the code now implements --
-// ClearedWords = Words
-// (a long skip clears the whole ring) and GateBeforeAdvance = TRUE (the server
-// checks the slot before it advances the window). The trace drives the raw
-// advance with the reference's gate disabled; the two named witness tests
-// below assert the two rules against the code itself and are registered as
-// ordinary tests that pass.
+// The reference carries the model's ClearedWords constant (the CONSTANTS of
+// proofs/tla/ReplayWindow.tla) at the rule value the code implements,
+// ClearedWords = Words (a long skip clears the whole ring). The model's
+// other rule, GateBeforeAdvance = TRUE (the server checks the slot before it
+// advances the window), is not part of the raw advance compared here; the
+// two named witness tests below assert both rules against the code itself.
 
 #include "test_unit_registry.h"
 
@@ -51,26 +52,20 @@ static const int k_model_words = ROCKETNET_REPLAY_WINDOW_BITS / 64;
 
 struct replay_window_ref_t
 {
-    // model constants (the CONSTANTS of proofs/tla/ReplayWindow.tla)
+    // model constant (the CONSTANTS of proofs/tla/ReplayWindow.tla)
     int cleared_words;          // ClearedWords: words the long-skip branch clears
-    int gate_before_advance;    // GateBeforeAdvance: check the slot before advancing
 
     // model state (the VARIABLES of proofs/tla/ReplayWindow.tla)
     uint64_t highest;                       // highest_opened
     uint64_t window[k_model_words];         // the ring, the code's exact bit layout
     std::set<uint64_t> received;            // ghost: in-range sequences that opened
-    std::set<uint64_t> processed;           // ghost: those a slot processed
-    int connected;                          // the mapping holds a slot
 
-    void reset( int cleared_words_, int gate_before_advance_ )
+    void reset( int cleared_words_ )
     {
         cleared_words = cleared_words_;
-        gate_before_advance = gate_before_advance_;
         highest = 0;
         memset( window, 0, sizeof( window ) );
         received.clear();
-        processed.clear();
-        connected = 0;
     }
 
     // Floor (proofs/tla/ReplayWindow.tla)
@@ -84,13 +79,20 @@ struct replay_window_ref_t
         return (int) ( s % ROCKETNET_REPLAY_WINDOW_BITS );
     }
 
+    // At or below highest - W, the window's floor less one: true when s is too
+    // old. standard/TRANSPORT.md t14 states it as s + W <= highest; written
+    // here without the addition, which wraps for s within W of UINT64_MAX.
+    bool too_old( uint64_t s ) const
+    {
+        return s <= highest && highest - s >= (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS;
+    }
+
     // Refused below the window floor or already recorded. standard/TRANSPORT.md
-    // t14, on the received set: s + W <= highest, or s is in received.
+    // t14, on the received set: too old, or s is in received.
     // Not the ring's three bit-window tests.
     int already_received( uint64_t s ) const
     {
-        const uint64_t width = (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS;
-        if ( s + width <= highest )
+        if ( too_old( s ) )
         {
             return 1;
         }
@@ -112,10 +114,10 @@ struct replay_window_ref_t
     void prune( std::set<uint64_t> & set_ )
     {
         // received' = { t in received : t + W > highest } (proofs/tla/ReplayWindow.tla,
-        // Advance); ascending,
-        // so the dropped entries are the smallest.
+        // Advance), that is every t not too old; ascending, so the dropped
+        // entries are the smallest.
         std::set<uint64_t>::iterator it = set_.begin();
-        while ( it != set_.end() && *it + (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS <= highest )
+        while ( it != set_.end() && too_old( *it ) )
         {
             it = set_.erase( it );
         }
@@ -150,28 +152,6 @@ struct replay_window_ref_t
         received.insert( s );
         prune( received );
     }
-
-    // Receive (proofs/tla/ReplayWindow.tla); the session receive gate.
-    // TRANSPORT.md t10 step 12 (a slotless mapping is ignored before the
-    // mark), the rule GateBeforeAdvance = TRUE.
-    void receive( uint64_t s )
-    {
-        if ( connected || !gate_before_advance )
-        {
-            advance( s );
-            if ( connected )
-            {
-                processed.insert( s );
-                prune( processed );
-            }
-        }
-    }
-
-    // Connect (proofs/tla/ReplayWindow.tla); the server's response path.
-    void connect_()
-    {
-        connected = 1;
-    }
 };
 
 // ---------------------------------------------------------------------------
@@ -180,6 +160,10 @@ struct replay_window_ref_t
 // ---------------------------------------------------------------------------
 
 static int g_replay_trace_steps = 0;
+
+// added to every alphabet sequence and fixed probe: 0 for the run near 1,
+// UINT64_MAX - 4397 for the run whose largest sequence is UINT64_MAX
+static uint64_t g_replay_trace_base = 0;
 
 static const uint64_t k_trace_alphabet[] = { 1, 2, 3, 300, 4096, 4097, 4397 };
 static const int k_trace_alphabet_count = (int) ( sizeof( k_trace_alphabet ) / sizeof( k_trace_alphabet[0] ) );
@@ -214,7 +198,15 @@ static void replay_trace_compare( const replay_window_ref_t & model, const struc
 {
     for ( int i = 0; i < k_trace_probe_count; i++ )
     {
-        uint64_t s = k_trace_probes[i];
+        uint64_t s = g_replay_trace_base + k_trace_probes[i];
+
+        // the fixed probes past 4397 (8191 .. 8193) would wrap past
+        // UINT64_MAX in the run at the top; they exist only for the run near 1
+
+        if ( s < g_replay_trace_base )
+        {
+            continue;
+        }
         rocketnet_unit_check( model.already_received( s ) == ( rocketnet_replay_already_received( &real, s ) != 0 ) );
     }
 
@@ -223,19 +215,26 @@ static void replay_trace_compare( const replay_window_ref_t & model, const struc
     uint64_t dynamic[6];
     int dn = 0;
     dynamic[dn++] = f;
-    dynamic[dn++] = f + 1;
+    if ( f != UINT64_MAX )
+    {
+        dynamic[dn++] = f + 1;
+    }
 
     // sequence 0 is out of the ring and the real code asserts it away
     // (rocketnet_replay_already_received, sdk/rocketnet_replay.cpp);
     // the model's already_received is likewise undefined at 0, so a probe
-    // set built from highest == 0 must never emit it.
+    // set built from highest == 0, or from highest + 1 at UINT64_MAX, must
+    // never emit it.
 
     if ( h != 0 )
     {
         dynamic[dn++] = h;
     }
 
-    dynamic[dn++] = h + 1;
+    if ( h != UINT64_MAX )
+    {
+        dynamic[dn++] = h + 1;
+    }
     if ( h > 1 )
     {
         dynamic[dn++] = h - 1;
@@ -262,19 +261,9 @@ static void replay_trace_dfs( replay_window_ref_t & model, struct rocketnet_repl
         return;
     }
 
-    // Connect: once; it moves no window state on the real struct
-
-    if ( !model.connected )
-    {
-        int saved = model.connected;
-        model.connect_();
-        replay_trace_dfs( model, real, depth + 1 );
-        model.connected = saved;
-    }
-
     for ( int i = 0; i < k_trace_alphabet_count; i++ )
     {
-        uint64_t s = k_trace_alphabet[i];
+        uint64_t s = g_replay_trace_base + k_trace_alphabet[i];
         if ( model.already_received( s ) )
         {
             continue;
@@ -283,12 +272,11 @@ static void replay_trace_dfs( replay_window_ref_t & model, struct rocketnet_repl
         replay_window_ref_t saved_model = model;
         struct rocketnet_replay_protection_t saved_real = real;
 
-        // The trace drives the raw advance: the reference's gate is disabled
-        // so its Receive always advances, and rocketnet_replay_advance is the
-        // code's advance. The server's gate before the advance (the rule,
-        // GateBeforeAdvance = TRUE) is asserted by the witness below.
+        // The trace drives the raw advance on both sides. The server's gate
+        // before the advance (the rule GateBeforeAdvance = TRUE) is asserted
+        // by the witness below.
 
-        model.receive( s );
+        model.advance( s );
         rocketnet_replay_advance( &real, s );
 
         replay_trace_dfs( model, real, depth + 1 );
@@ -298,23 +286,31 @@ static void replay_trace_dfs( replay_window_ref_t & model, struct rocketnet_repl
     }
 }
 
-// The model-to-C++ trace: the code and the reference agree on the accepted
-// projection after every action sequence of length up to five.
+// The reference-to-C++ differential: the code and the reference agree on the
+// accepted projection after every advance sequence of length up to five, near
+// sequence 1 and again with the largest alphabet sequence at UINT64_MAX.
 static void test_replay_window_model_trace()
 {
-    replay_window_ref_t model;
-    model.reset( /* ClearedWords */ k_model_words, /* GateBeforeAdvance */ 0 );
+    const uint64_t bases[2] = { 0, UINT64_MAX - 4397 };
+    for ( int b = 0; b < 2; b++ )
+    {
+        replay_window_ref_t model;
+        model.reset( /* ClearedWords */ k_model_words );
 
-    struct rocketnet_replay_protection_t real;
-    memset( &real, 0, sizeof( real ) );
+        struct rocketnet_replay_protection_t real;
+        memset( &real, 0, sizeof( real ) );
 
-    g_replay_trace_steps = 0;
-    replay_trace_dfs( model, real, 0 );
+        g_replay_trace_base = bases[b];
+        g_replay_trace_steps = 0;
+        replay_trace_dfs( model, real, 0 );
 
-    // the enumeration actually drove the ring past its floor and the
-    // long-skip branch, not a degenerate prefix
+        // the enumeration actually drove the ring past its floor and the
+        // long-skip branch, not a degenerate prefix
 
-    rocketnet_unit_check( g_replay_trace_steps >= 1000 );
+        rocketnet_unit_check( g_replay_trace_steps >= 1000 );
+    }
+
+    g_replay_trace_base = 0;
 }
 
 // ---------------------------------------------------------------------------

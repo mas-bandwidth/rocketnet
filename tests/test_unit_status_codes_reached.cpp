@@ -342,6 +342,12 @@ REGISTER_UNIT_TEST( test_client_connect_thread_create_failed_reached );
 #endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_DEV
+// the stall starts within the reach loop's 50 steps of 0.01 s of the attempt's
+// start, and the client's timeout counts from its last receive, which is no
+// earlier than that start: the timeout cannot end the stalled state sooner
+// than the token's timeout less this reach after the stall began
+#define REACHED_STALL_REACH_SECONDS 0.5
+
 static double reached_now = 1000.0;
 static double reached_clock( void * ) { return reached_now; }
 
@@ -435,6 +441,7 @@ static void test_client_connection_request_timed_out_state_reached()
     const enum rocketnet_client_state_t state =
         reached_handshake_stall( ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST, &stalled_at, &ended_at );
     check( state == ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT );
+    check( ended_at - stalled_at >= REACHED_TIMEOUT_SECONDS - REACHED_STALL_REACH_SECONDS );
     check( ended_at - stalled_at < REACHED_TIMEOUT_SECONDS + 1.0 );
 }
 
@@ -446,6 +453,7 @@ static void test_client_connection_response_timed_out_state_reached()
     const enum rocketnet_client_state_t state =
         reached_handshake_stall( ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE, &stalled_at, &ended_at );
     check( state == ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT );
+    check( ended_at - stalled_at >= REACHED_TIMEOUT_SECONDS - REACHED_STALL_REACH_SECONDS );
     check( ended_at - stalled_at < REACHED_TIMEOUT_SECONDS + 1.0 );
 }
 

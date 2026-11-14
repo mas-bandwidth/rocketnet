@@ -6,17 +6,21 @@
     finite state the ESBMC harness proof_ack_apply_run.c describes, at run
     lengths 1..ACK_RUN_BOUND (8), and more:
 
-      * every ring position of the run's first slot (0..4095),
+      * every ring position of the run's first slot, 0 to
+        ROCKETNET_SENT_PACKET_BUFFER_SIZE - 1 (4095),
       * every run length 1..8,
       * every prior-ack pattern of the run (2^len),
-      * every highest-sent offset highest - low in [len - 1, 4095],
+      * every highest-sent offset highest - low from len - 1 to
+        ROCKETNET_SENT_PACKET_BUFFER_SIZE - 1 (4095),
       * two neighbourhoods: the rest of the ring empty (the harness's state),
         and every other slot of the bitmap words the run touches holding a
         live, unacknowledged record of the sequence the window gives it
         (production's state; the walk must mask these out and leave them),
-      * three sequence blocks: low in [1, 4096) (the start-up regime, where
-        the stats window is clamped at 1), low in [4096, 8192), and the last
-        block whose run and highest still fit in 64 bits.
+      * three sequence blocks of ROCKETNET_SENT_PACKET_BUFFER_SIZE (4096)
+        sequences: low from 1 up to it (the start-up regime, where the stats
+        window is clamped at 1), low from it up to
+        ROCKETNET_SENT_PACKET_BUFFER_SIZE * 2 (8192), and the last block
+        whose run and highest still fit in 64 bits.
 
     Each case runs the sdk leaf natively (sdk/rocketnet_ack.cpp is included,
     as the ESBMC harness includes it) and checks every assertion of the ESBMC
@@ -26,10 +30,13 @@
     all-zero one, so a write outside the run and its neighbours is caught.
 
     What is not enumerated is the block number between the second and the
-    last: for highest >= 4096 the leaf reads sequences only through % 4096,
-    differences and comparisons with highest - 4095 and highest - 2048, all
-    of which a shift by a multiple of 4096 preserves. That is an argument,
-    not a check. Run lengths 9..4096 are not covered.
+    last: for highest of at least ROCKETNET_SENT_PACKET_BUFFER_SIZE (4096)
+    the leaf reads sequences only modulo that size, through differences, and
+    through comparisons with highest less
+    ROCKETNET_SENT_PACKET_BUFFER_SIZE - 1 (4095) and highest less
+    ROCKETNET_SENT_PACKET_BUFFER_SIZE / 2 (2048), all of which a shift by a
+    multiple of the size preserves. That is an argument, not a check. Run
+    lengths 9 to ROCKETNET_SENT_PACKET_BUFFER_SIZE (4096) are not covered.
 
     Controls (each must fail; proofs/cbmc/Makefile):
       -DACK_NEGATIVE_CONTROL  the visit-count check negated when a newly
@@ -137,7 +144,8 @@ static void run_block( uint64_t block, uint32_t c_begin, uint32_t c_end, counts_
                 {
                     // the neighbours: every other slot of the run's words holds
                     // a live, unacknowledged record of the sequence the window
-                    // [highest - 4095, highest] maps to it
+                    // of ROCKETNET_SENT_PACKET_BUFFER_SIZE (4096) sequences
+                    // ending at highest maps to it
                     uint64_t neighbour_words[2] = { 0, 0 };
                     uint64_t neighbour_eligible_unacked = 0;
                     if ( fill )

@@ -99,10 +99,14 @@ int rocketnet_gateway_netlink_discover( int family, int interface_index, uint8_t
 // the periodic refresh of one family's gateway MAC: discover's route query
 // and neighbour query, every period, with discover's outcomes, so a change
 // of the default route's gateway IP is followed at the next refresh.
-// The refresh runs inside the update, so its sockets are non-blocking and
-// it never makes a blocking netlink receive: a reply not yet queued when it
-// is read fails that query SYSTEM with EAGAIN, where a blocking read would
-// have waited up to its timeout, and the refresh goes on as for any failure.
+// The refresh runs inside the update, so its sockets are non-blocking: a
+// reply not yet queued when it is read fails that query SYSTEM with EAGAIN,
+// where a blocking read would have waited up to its timeout, and the refresh
+// goes on as for any failure. Non-blocking covers the receive only. The
+// kernel handles each request inside sendto, building the first part of the
+// dump there, and a kernel that takes the rtnl lock for these dumps makes
+// sendto wait while another task holds it: under rtnl contention a refresh
+// can still hold up the update (roadmap: xdp-gateway-refresh-main-thread).
 
 int rocketnet_gateway_netlink_refresh( int family, int interface_index, uint8_t * gateway, bool * gateway_known, uint8_t * mac, int * error );
 

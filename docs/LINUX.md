@@ -7,6 +7,13 @@ memlock limits for 1000 clients, what each transport needs inside a container,
 and the commands that verify a host. Each claim names the file that backs it; find the code by the symbol or message
 the text quotes.
 
+Counter names such as `GSO_PIN_REFUSALS`, `SEND_FAILED` or
+`ROCKETNET_COUNTER_GSO_SEND_DROPPED` are the SDK's internal counter rows
+(`sdk/rocketnet_counters.h`). No public call reads them; they say where the
+library counts an event. What a game reads is `rocketnet_server_stats` and
+`rocketnet_client_stats` ([Errors and logging](ERRORS-AND-LOGGING.md#4-counters))
+and the log lines quoted beside each event.
+
 ## 1. Build
 
 The build needs CMake 3.20 or later (`CMakeLists.txt`, `BUILDING.md`)
@@ -38,7 +45,7 @@ The installed package retains the provider used for its build.
 liburing is optional; without suitable headers and the library, io_uring is
 omitted from the available transports and its name is skipped in a list.
 Jammy's liburing 2.1 also lacks the multishot receive headers needed by that
-transport. Neither case prevents building XDP. See BUILDING.md, "Ubuntu
+transport. Neither case prevents building XDP. See DEPLOYING.md, "Ubuntu
 22.04 build compatibility", for build checks and the separate kernel/NIC
 runtime qualification boundary.
 
@@ -262,7 +269,12 @@ refused pin is warned, counted in `URING_PIN_REFUSALS`, asks for no
 `SCHED_RR`, and the worker is confined to the cpus from `num_os_cpus` up when
 cpu 0 is reserved (`sdk/rocketnet_server_uring.h`,
 `sdk/rocketnet_server_uring_linux.cpp`). A destination hashes to one queue
-and is staged in that queue's send banks, so more workers add send room. See
+and is staged in that queue's send banks. Create sizes each queue's banks
+from `max_clients`: twice the queue's share of 18 packets a client, at least
+4096 and at most 32768 slots (`rocketnet_server_uring_send_slots`). So at 1000
+clients the total stays about the same from 2 to 8 workers and each queue,
+the room behind any one destination, gets smaller; what more workers add is
+send work in parallel. See
 [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds)
 before sizing a large server.
 
@@ -342,31 +354,33 @@ completions on overflow would lose receives and sends without a count.
 
 `xdp` (AF_XDP, `sdk/rocketnet_server_socket_linux.cpp`) is verify-and-bind
 only: the library does not provision host settings, and a read-only pre-flight
-refuses by name on any unmet condition (`BUILDING.md`,
+refuses by name on any unmet condition (`DEPLOYING.md`,
 `sdk/rocketnet_server_socket_linux.cpp`). Provisioning is
 `scripts/rocketnet-provision`, whose header is the authoritative condition list
 (`scripts/rocketnet-provision:18-23`):
 
 | condition | what | script |
 | --- | --- | --- |
-| B1 | `/proc/cmdline` carries `irqaffinity=0 isolcpus=<range> nohz_full=<range>` (and `nosmt`); grub and reboot | `:27-37` |
-| B2 | `/sys/devices/system/cpu/isolated` is non-empty | `:38-39` |
-| B3 | a NIC driver with AF_XDP zero copy (reported, not verified) | `:40-45` |
-| R1 | euid 0 | `:49` |
-| R2 | the interface exists and is UP; an 802.1Q VLAN device resolves to its parent NIC, where R3 to R7 act; the pre-flight checks it carries the public address | `:50-53` |
-| R3 | no XDP program already attached | `:54-64` |
-| R4 | each queue IRQ pinned to its own isolated CPU | `:65-74` |
-| R5 | `napi_defer_hard_irqs` 2, `gro_flush_timeout` 200000 | `:75-77` |
-| R6 | SMT off | `:78-81` |
-| R7 | the NIC's combined channel count equals the server's `num_xdp_threads` | `:82-85` |
-| R8 | `kernel.sched_rt_runtime_us` -1 on a kernel before 6.12; checked by the script only (below) | `:86-95` |
-| K1 | the kernel grants an AF_XDP socket and a BPF program load (pre-flight only) | `:97-101` |
+| B1 | `/proc/cmdline` carries `irqaffinity=0 isolcpus=<range> nohz_full=<range>` (and `nosmt`); `irqaffinity=` may be any cpu list with no isolated cpu; grub and reboot | `:27-39` |
+| B2 | `/sys/devices/system/cpu/isolated` is a non-empty cpu list | `:40-41` |
+| B3 | a NIC driver with AF_XDP zero copy (reported, not verified) | `:42-47` |
+| R1 | euid 0 | `:51` |
+| R2 | the interface exists and is UP; an 802.1Q VLAN device resolves to its parent NIC, where R3 to R7 act, and the parent's `rx-vlan-offload` is off so the tag reaches the filter; the pre-flight checks it carries the public address | `:52-59` |
+| R3 | no XDP program already attached | `:60-79` |
+| R4 | each queue IRQ (`<iface>-TxRx-<k>`) pinned to cpu `num_os_cpus + k`, the cpu its XDP thread pins to, and the interface's other IRQs off those cpus; a NIC without queue names: each IRQ on its own isolated CPU | `:80-95` |
+| R5 | `napi_defer_hard_irqs` 2, `gro_flush_timeout` 200000 | `:96-98` |
+| R6 | SMT off | `:99-102` |
+| R7 | the NIC's combined channel count equals the server's `num_xdp_threads` | `:103-106` |
+| R8 | `kernel.sched_rt_runtime_us` -1 on a kernel before 6.12, or a later one built with `CONFIG_RT_GROUP_SCHED` (read from `/boot/config-<release>`) (below) | `:107-119` |
+| K1 | the kernel grants an AF_XDP socket and a BPF program load (pre-flight only) | `:121-125` |
 
-The script's modes are `provision` (the default), `verify`, `sweep` and
-`selftest` (`scripts/rocketnet-provision:103-127`, parsed at `:135-156`). The
+The script's modes are `provision` (the default), `verify`, `repin`, `sweep`
+and `selftest` (the usage in the script's header, `scripts/rocketnet-provision:127-172`). The
 boot tier is verified, never performed (`scripts/rocketnet-provision:25`).
-`BUILDING.md` walks a fresh box: boot tier, then
-`scripts/rocketnet-provision eth0`, then `... verify`, then the server, and
+[DEPLOYING.md](DEPLOYING.md#deploying-the-xdp-transport-provision-then-verify-and-bind)
+walks a fresh box: boot tier, then
+`scripts/rocketnet-provision eth0`, then `... verify`, then the server (and
+`... repin` on a NIC whose attach moves the queue interrupts), and
 `scripts/rocketnet-provision sweep` after a crash.
 
 **Threads.** `xdp` runs one thread per NIC queue: `num_xdp_threads`
@@ -378,7 +392,11 @@ machine must match: the NIC's combined queue count must equal
 `num_xdp_threads` (R7). Given no count, the script takes
 `ROCKETNET_SERVER_NUM_XDP_THREADS` from its own environment, or the library's
 default of 1 when that is unset, and refuses a count that differs from the
-variable:
+variable. `sudo` drops an exported variable by default, so give the count as
+an argument, or set the variable on the `sudo` line
+(`sudo ROCKETNET_SERVER_NUM_XDP_THREADS=2 scripts/rocketnet-provision eth0`);
+the same holds for `ROCKETNET_SERVER_NUM_OS_CPUS`, which the script reads for
+R4:
 
 ```sh
 sudo scripts/rocketnet-provision eth0 2         # num_xdp_threads 2: 2 combined queues, then R3 to R8
@@ -420,11 +438,52 @@ attaches natively in the CI guest.
 (`eth0.300`, created with `ip link add link eth0 name eth0.300 type vlan id 300`)
 whose parent is a physical NIC or a veth. A VLAN device has no native XDP of its
 own, so the transport attaches to the parent (logging
-`xdp: eth0.300 is 802.1Q VLAN 300 on eth0`), takes only frames tagged with that
-VLAN ID (and untagged frames, which is how a NIC with `rx-vlan-offload` on
-delivers them), passes frames of any other VLAN up the stack, and tags every
-frame it sends. Run the provisioning script on either name: given `eth0.300` it
-says `R3 to R7 act on eth0` and provisions the parent (R2). These are refused by
+`xdp: eth0.300 is 802.1Q VLAN 300 on eth0`) and tags every frame it sends.
+
+What the filter checks is the 802.1Q tag in the frame's bytes. A frame tagged
+with the server's VLAN ID is taken; a frame tagged with any other ID, a second
+tag, or a tag cut short passes up the stack untouched. An untagged frame is
+read as on an untagged server: taken when it is addressed to the server's
+address and port. So the tag must reach the program in the frame. A NIC with
+`rx-vlan-offload` on (the i40e and ixgbe default) strips it before XDP runs,
+and then a frame from any VLAN on that NIC addressed to the server's address
+and port would be taken as the server's. The
+pre-flight therefore refuses a VLAN server whose parent has the offload on
+(`eth0 strips the 802.1Q tag on receive (rx-vlan-offload on) ... run
+ethtool -K eth0 rxvlan off`): a pin on `xdp` refuses the create, and `auto`
+falls to the next transport. The provisioning script turns it off
+(`ethtool -K eth0 rxvlan off`) and reads it back; `verify` reports it unmet
+when it is on, and a NIC whose flag reads `on [fixed]` cannot carry a VLAN
+server on this transport. With the offload off, a frame of another VLAN
+reaches the program tagged and passes up the stack. What stays open: a VLAN
+server still takes an untagged frame from the parent's untagged segment
+addressed to its address and port. Two cases the flag does not settle: a veth
+parent, which leaves a tag that the sender's `tx-vlan-offload` put beside the
+frame outside the frame, so the program sees that frame untagged whatever the
+parent's flag (on a veth the sender must put the tag in the frame, which the
+library cannot read from here); and a NIC that also strips 802.1ad outer tags
+(`rx-vlan-stag-hw-parse` on), which this flag does not cover. A passed flag
+check is that observation, not a guarantee of VLAN isolation: on these paths
+the server's VLAN is not an isolation boundary, and one that matters needs it
+enforced upstream (the switch port) or a NIC that carries only that VLAN.
+Reading the stripped tag from the receive metadata is on the roadmap
+(`xdp-vlan-stripped-tags`).
+
+**An untagged server on a trunk.** The same holds without a VLAN device: an
+untagged server whose NIC also carries tagged VLANs and has `rx-vlan-offload`
+on sees their frames untagged, and takes any addressed to its address and
+port. Neither the pre-flight nor the script refuses this (there is no VLAN to
+check for). Give such a server a port that carries no other VLAN, turn the
+offload off by hand (`ethtool -K eth0 rxvlan off`, after which other VLANs'
+frames reach the filter tagged and pass up the stack), or enforce the
+separation upstream.
+
+Run the provisioning script on the VLAN device: given `eth0.300` it says
+`R3 to R7 act on eth0`, provisions the parent (R2) and checks the parent's
+`rx-vlan-offload` for VLAN 300. Given the bare parent `eth0` it does the same
+parent work but has no VLAN to check for, so it neither turns the offload off
+nor reports it; `verify` on a VLAN server is run on the VLAN device too, and
+its retry line names the device it was given. These are refused by
 name, by the pre-flight and by the script: an 802.1ad (QinQ outer) tag, a VLAN
 on a VLAN, a VLAN on a bond, bridge, team, macvlan or other stacked device, a
 parent in another network namespace, and an address on a bond, bridge, team,
@@ -522,8 +581,9 @@ older than 7.0.0-43.
 **An ixgbe attach takes the link down.** On an 82599 (`ixgbe`, kernel
 7.0.0-42-generic), attaching an XDP program resets the port: the link came
 back 7 to 19 seconds later in every attach recorded on 2026-11-12. Clients whose
-connect starts in that window time out, because a client stops requesting a
-cookie after 10 seconds. Attach before you announce the server.
+connect starts in that window can time out: a client gives up once its connect
+token's `timeout_seconds` (default 10) passes without an answer. Attach before
+you announce the server.
 
 Start qualification with Ubuntu's supplied `i40e` module on the GA
 `linux-generic` 5.15 track. The
@@ -577,8 +637,13 @@ echo 'kernel.sched_rt_runtime_us = -1' | sudo tee /etc/sysctl.d/90-rocketnet-xdp
 ```
 
 `scripts/rocketnet-provision` sets the running value and `verify` reports it
-unmet; only the file keeps it across a reboot. The library's pre-flight does
-not check it. What it costs: an ordinary task on a worker's CPU no longer
+unmet; only the file keeps it across a reboot. The library's pre-flight
+checks the same rule from the same files and refuses `xdp` while it is unmet:
+a kernel of 6.12 or later passes unless `/boot/config-<release>` carries
+`CONFIG_RT_GROUP_SCHED=y`, and one whose `/boot` config cannot be read is
+unmet unless the value is already -1. A container usually has no `/boot`:
+there, set the value to -1 on the host (the sysctl is not per namespace)
+before starting the server. What it costs: an ordinary task on a worker's CPU no longer
 gets any time while the worker spins. On the isolated CPUs of this layout
 that leaves only per-CPU kernel work there, which waits too, so keep every
 other thread and IRQ off the worker CPUs. From 6.12 the throttle is gone: a
@@ -701,8 +766,10 @@ creation (`OUT_OF_MEMORY`).
 Linux reports an ICMP error (port unreachable, host unreachable) to a UDP
 socket only when the socket is connected or has `IP_RECVERR` set (Linux
 `net/ipv4/udp.c` and `net/ipv6/udp.c`, `__udp4_lib_err` and
-`__udp6_lib_err`). rocketnet's server sockets are never connected and never
-set `IP_RECVERR`: they are created at `sdk/rocketnet_platform.cpp`,
+`__udp6_lib_err`). On Linux, rocketnet's server sockets (`portable`, `gso`
+and `io_uring`) are never connected and never set `IP_RECVERR` (the macOS
+`msgx` server, which this guide does not cover, does connect a socket per
+client): they are created at `sdk/rocketnet_platform.cpp`,
 `sdk/rocketnet_server_gso_linux.cpp` and
 `sdk/rocketnet_server_uring_linux.cpp`, and send with `sendto`,
 `sendmmsg` or `SENDMSG` to an address per packet. So a dead or unreachable
@@ -803,8 +870,11 @@ describes larger builds and their qualification limits.
 
 **File descriptors.** A server opens a fixed set of sockets, independent of
 `max_clients`: the plan's `sockets` field (`benchmarks/transport_memory.cpp`).
-For 1000 clients: `portable` 1, `gso` 4, `io_uring` 4 plus its ring, `xdp` 7
-(the plan output in section 10). The default soft limit of 1024 is ample; the
+It follows the transport's network thread count: `portable` 1; `gso` and
+`io_uring` one socket a worker (1 and 2 at their defaults), and `io_uring`
+one ring a worker beside it; `xdp` one AF_XDP socket a queue (1 at the
+default). The section 10 plans print 4 for `io_uring` at 4 workers and 7 for
+`xdp` at 7 queues. The default soft limit of 1024 is ample; the
 section 10 commands create 1000-client `gso` and four-queue `io_uring` servers
 under `ulimit -n 64`. A client opens one UDP socket and, on Linux, one eventfd
 (`sdk/rocketnet_driver_builtin.cpp`,
@@ -865,20 +935,19 @@ limit is too small. See [systemd's resource-limit documentation](https://www.fre
 Apply a user-manager restart only during a maintenance window: it stops the
 user's other services too. Preserve an existing higher limit.
 `xdp` raises its own `RLIMIT_MEMLOCK` to unlimited at create and refuses with
-`server could not setrlimit` if it cannot (`BUILDING.md`,
+`server could not setrlimit` if it cannot (`DEPLOYING.md`,
 `sdk/rocketnet_server_socket_linux.cpp`); as root on a host that
 succeeds.
 
 **Memory.** `./bin/transport_memory <clients> <payload> <transport> <queues> --plan-only`
 prints the plan without opening a socket; without `--plan-only` it creates a
 loopback server and checks the allocator against the plan
-(`benchmarks/transport_memory.cpp`, `BUILDING.md`). At 1000 clients and
-1416-byte payloads the plans are 495,178,594 bytes (`portable`), 536,022,330
-(`gso`), 1,511,867,072 (`io_uring`) and 3,544,766,128 (`xdp`, 7 queues, of which
-1,409,286,144 UMEM). Use the exact-build probe below for current capacity
-planning. The plan excludes OS stacks,
+(`benchmarks/transport_memory.cpp`, `MEMORY.md`).
+[Memory and capacity](MEMORY.md#pre-allocation-server-resource-plans) explains
+the plan; take its byte figures from the section 10 commands run on the exact
+build you ship. The plan excludes OS stacks,
 kernel queues, loader and application memory
-(`sdk/rocketnet_server_transport.cpp`, `BUILDING.md`).
+(`sdk/rocketnet_server_transport.cpp`, `MEMORY.md`).
 
 ## 9. Containers
 
@@ -895,9 +964,9 @@ What each transport needs, from the requirements above:
   socket and a BPF program load (K1), permission to raise `RLIMIT_MEMLOCK`
   to unlimited (section 8), the NIC itself in the container's network
   namespace, and bpffs at `/sys/fs/bpf` for the instance's pin root
-  (`BUILDING.md`). The boot tier belongs to the host. Where bpffs is
+  (`DEPLOYING.md`). The boot tier belongs to the host. Where bpffs is
   shared across pid namespaces, run `sweep` from the namespace that owns the
-  servers (`BUILDING.md`, `scripts/rocketnet-provision:60-64`).
+  servers (`DEPLOYING.md`, `scripts/rocketnet-provision:341-343`).
 
 No CI leg runs a transport inside a container; these needs are read from the
 code and not measured.

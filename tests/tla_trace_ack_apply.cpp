@@ -22,16 +22,23 @@
 //   begin_receive  rocketnet_server_acks_begin_receive, while closed:
 //                  BeginReceive
 //   receive_block  rocketnet_server_acks_receive_block for one client, while
-//                  receiving: Receive(c, b, r). The block acknowledges the
-//                  client's next sent sequence b, which no block has
-//                  acknowledged, and r ranges below it over sequences
-//                  acknowledged already, so its apply gives exactly one id,
-//                  b. Most blocks carry up to 2 ranges and some
-//                  AA_BIG_RANGES, three of which do not fit the range store.
-//                  A block that finds the queue or the range store full is
-//                  the same call and the same action: the code gathers first
-//   settle         rocketnet_server_acks_settle for a client the code says
-//                  has blocks queued, while receiving: Settle(c)
+//                  receiving or closed (never open: both of the code's
+//                  callers run before the open): Receive(c, b, r). Mostly
+//                  the block acknowledges the client's next sent sequence b,
+//                  which no block has acknowledged; sometimes one of the
+//                  client's earlier blocks again (a duplicate, which gives
+//                  no id), sometimes the empty block (largest 0, the model's
+//                  block 0, which changes nothing). Its r ranges lie below it
+//                  over sequences handed to the walk before it, so its apply
+//                  gives at most one id, b. Most blocks carry up to 2 ranges
+//                  and some AA_BIG_RANGES, three of which do not fit the
+//                  range store. A block that finds the queue or the range
+//                  store full is the same call and the same action: the code
+//                  gathers first. While closed the code applies it at once
+//   settle         rocketnet_server_acks_settle for a client, mostly one the
+//                  code says has blocks queued, while receiving; for a client
+//                  with no chain in any phase, where it returns at once:
+//                  Settle(c)
 //   open           rocketnet_server_acks_open: Open
 //   take           rocketnet_server_acks_apply_client for any client, in any
 //                  phase, on the main thread or a game thread: Take(t, c, n)
@@ -46,7 +53,9 @@
 //   phase      acks->phase
 //   queue      acks->pending[0 .. num_pending): each entry's client, block
 //              (its largest), ranges, range offset, next, and the offset and
-//              count of its ids in its client's segment
+//              count of its ids in its client's segment; done is whether the
+//              entry is off its client's chain (head through next), which is
+//              how the code knows it applied
 //   numRanges  acks->num_ranges
 //   head, tail, claim
 //              per client, through the seam
@@ -56,8 +65,10 @@
 //              as the seam says it holds
 //   batch      acks->acked_client_index and acks->acked_packet_ids, the
 //              first num_acked
+//   acked      per client, the walk's blocks whose sent record
+//              (acks->endpoints[c].sent) is marked acknowledged
 //
-// Two variables the code holds no word for are kept by the walk from its
+// Three variables the code holds no word for are kept by the walk from its
 // calls, as the writer's finish layer keeps its touched:
 //
 //   took       per client, the threads whose take returned blocks applied
@@ -65,8 +76,14 @@
 //              keeps only the claim, which says a client is taken, not by
 //              whom
 //   arrived    the blocks the walk handed to receive_block since the last
-//              begin_receive, in order: the history Whole and Published
-//              read. The code's queue forgets it at the gather
+//              begin_receive that arrived new (not acknowledged by the
+//              endpoint before the call, not handed already in this
+//              receive), in order: the history Whole and Published read.
+//              The code's queue forgets it at the gather
+//   gathered   what forced the latest early gather since the last
+//              begin_receive: "queue" when the block found the queue full,
+//              "ranges" when only the range store was, read from the code
+//              before the call
 //
 // The row has no ghost.
 //
@@ -177,7 +194,15 @@ struct aa_walk_t
 {
     struct rocketnet_server_acks_t * acks;
     bool took[AA_CLIENTS][AA_THREADS];      // the threads whose take returned blocks applied, per client, since the last open
+    int last_sequence;                      // each client's sends run 1 .. last_sequence
 };
+
+// whether client c's endpoint has acknowledged its sent sequence s
+static bool aa_acked( const aa_walk_t * walk, int c, int s )
+{
+    const struct rocketnet_sent_packet_record_t * record = &walk->acks->endpoints[c].sent[s % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
+    return record->sequence == (uint64_t) s && record->acked != 0;
+}
 
 struct aa_client_t
 {
@@ -194,12 +219,29 @@ static aa_client_t aa_client( const aa_walk_t * walk, int c )
     return client;
 }
 
-// every variable of RNAckApplyPhase: read from the code, but for took and
-// arrived, which the walk keeps from its calls
-static tla_record_t aa_state( const aa_walk_t * walk, const std::vector<std::string> & arrived )
+// every variable of RNAckApplyPhase: read from the code, but for took,
+// arrived and gathered, which the walk keeps from its calls
+static tla_record_t aa_state( const aa_walk_t * walk, const std::vector<std::string> & arrived, const char * gathered )
 {
     static const char * const phase_names[] = { "\"closed\"", "\"receiving\"", "\"open\"" };
     const struct rocketnet_server_acks_t * acks = walk->acks;
+
+    // an entry is applied when it is no longer on its client's chain: the
+    // code keeps no other word for it. rocketnet_server_acks_receive_block
+    // appends at index num_pending and at the client's tail, and
+    // rocketnet_server_acks_apply_queued applies a client's chain whole and
+    // empties it, so the chain is the client's entries at or past its head
+    // (none while head is -1). The chain is not walked here: the walk
+    // through next is an approved link site only in the code's own functions
+    // (docs/SEQUENCE-BUFFERS.md); every entry's next is still in the record
+    // below, and TLC checks it against the model.
+    std::vector<bool> on_chain( (size_t) ( acks->num_pending > 0 ? acks->num_pending : 1 ), false );
+    for ( int e = 0; e < acks->num_pending; e++ )
+    {
+        const int c = acks->pending[e].client_index;
+        const int head = ( c >= 0 && c < AA_CLIENTS ) ? aa_client( walk, c ).head : -1;
+        on_chain[(size_t) e] = head >= 0 && e >= head;
+    }
 
     std::vector<std::string> queue;
     for ( int e = 0; e < acks->num_pending; e++ )
@@ -213,10 +255,11 @@ static tla_record_t aa_state( const aa_walk_t * walk, const std::vector<std::str
         record.add( "next", tla_int( entry->next ) );
         record.add( "ioff", tla_int( entry->ids_offset ) );
         record.add( "icnt", tla_int( entry->ids_count ) );
+        record.add( "done", tla_bool( !on_chain[(size_t) e] ) );
         queue.push_back( record.text() );
     }
 
-    std::vector<std::string> clients, head, tail, claim, segment, took;
+    std::vector<std::string> clients, head, tail, claim, segment, took, acked;
     for ( int c = 0; c < AA_CLIENTS; c++ )
     {
         const aa_client_t client = aa_client( walk, c );
@@ -242,6 +285,19 @@ static tla_record_t aa_state( const aa_walk_t * walk, const std::vector<std::str
             }
         }
         took.push_back( set + "}" );
+
+        // the walk's blocks its endpoint has acknowledged (every sequence
+        // below AA_FIRST_BLOCK is acknowledged before the first record and
+        // is no block of the model)
+        std::string blocks = "{";
+        for ( int s = AA_FIRST_BLOCK; s <= walk->last_sequence; s++ )
+        {
+            if ( aa_acked( walk, c, s ) )
+            {
+                blocks += ( blocks.size() > 1 ? ", " : "" ) + tla_int( s );
+            }
+        }
+        acked.push_back( blocks + "}" );
     }
 
     std::vector<std::string> batch;
@@ -263,7 +319,9 @@ static tla_record_t aa_state( const aa_walk_t * walk, const std::vector<std::str
     state.add( "segment", tla_function( clients, segment ) );
     state.add( "batch", tla_sequence( batch ) );
     state.add( "took", tla_function( clients, took ) );
+    state.add( "acked", tla_function( clients, acked ) );
     state.add( "arrived", tla_sequence( arrived ) );
+    state.add( "gathered", tla_string( gathered ) );
     return state;
 }
 
@@ -296,6 +354,7 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
     // the endpoint's, not steps of this model
 
     const int blocks = AA_FIRST_BLOCK + steps;
+    walk.last_sequence = blocks;
     bool fault = false;
     if ( !rocketnet_server_acks_lower_capacity_for_test( acks, AA_PENDING, ROCKETNET_ACK_BLOCK_MAX_RANGES ) )
     {
@@ -344,6 +403,7 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
         next_block[c] = AA_FIRST_BLOCK;
     }
     std::vector<std::string> arrived;
+    const char * gathered = "none";
 
     aa_takers_t * takers = new aa_takers_t();
     takers->acks = acks;
@@ -370,7 +430,7 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
     std::vector<tla_record_t> records;
     tla_report_t report;
 
-    records.push_back( tla_step( "init", "init", "<<>>", aa_state( &walk, arrived ) ) );
+    records.push_back( tla_step( "init", "init", "<<>>", aa_state( &walk, arrived, gathered ) ) );
 
     for ( int step = 0; step < steps && !fault; step++ )
     {
@@ -386,19 +446,37 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
         int client = random.below( AA_CLIENTS );
         if ( phase == ROCKETNET_SERVER_ACKS_CLOSED )
         {
-            call = pick < 80 ? AA_BEGIN : AA_TAKE;
+            call = pick < 64 ? AA_BEGIN : ( pick < 80 ? AA_RECEIVE : ( pick < 84 ? AA_SETTLE : AA_TAKE ) );
         }
         else if ( phase == ROCKETNET_SERVER_ACKS_RECEIVING )
         {
             call = pick < 66 ? AA_RECEIVE : ( pick < 74 ? AA_SETTLE : ( pick < 80 ? AA_TAKE : ( pick < 96 ? AA_OPEN : AA_CLOSE ) ) );
-            if ( call == AA_SETTLE )
+            if ( call == AA_SETTLE && random.below( 4 ) != 0 )
             {
-                // a client with blocks queued, the first from the seed's pick; with none, a block arrives instead
-                call = AA_RECEIVE;
+                // mostly a client with blocks queued, the first from the seed's pick
                 for ( int i = 0; i < AA_CLIENTS; i++ )
                 {
                     const int c = ( client + i ) % AA_CLIENTS;
                     if ( aa_client( &walk, c ).head >= 0 )
+                    {
+                        client = c;
+                        break;
+                    }
+                }
+            }
+        }
+        else
+        {
+            call = pick < 66 ? AA_TAKE : ( pick < 72 ? AA_SETTLE : AA_CLOSE );
+            if ( call == AA_SETTLE )
+            {
+                // while open only a client with no chain: settling one with a
+                // chain there is the defect the claim rules out (the code asserts)
+                call = AA_CLOSE;
+                for ( int i = 0; i < AA_CLIENTS; i++ )
+                {
+                    const int c = ( client + i ) % AA_CLIENTS;
+                    if ( aa_client( &walk, c ).head < 0 )
                     {
                         client = c;
                         call = AA_SETTLE;
@@ -407,29 +485,69 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
                 }
             }
         }
-        else
-        {
-            call = pick < 72 ? AA_TAKE : AA_CLOSE;
-        }
 
         if ( call == AA_BEGIN )
         {
             rocketnet_server_acks_begin_receive( acks, AA_RECEIVE_TIME );
             arrived.clear();
+            gathered = "none";
             op = "begin_receive";
             act = "BeginReceive";
         }
         else if ( call == AA_RECEIVE )
         {
-            // the client's next sequence, with ranges over sequences acknowledged already
-            const int b = next_block[client]++;
+            // mostly the client's next sequence; sometimes one of its blocks
+            // again (a duplicate, queued behind its first or after the
+            // endpoint acknowledged it), sometimes the empty block (largest 0).
+            // Every range lies over sequences below the block, all handed to
+            // the walk before it, so a block gives at most one id, its own
+            const int kind = random.below( 10 );
+            int b = 0;
+            if ( kind == 0 )
+            {
+                b = 0;
+            }
+            else if ( kind <= 2 && next_block[client] > AA_FIRST_BLOCK )
+            {
+                b = AA_FIRST_BLOCK + random.below( next_block[client] - AA_FIRST_BLOCK );
+            }
+            else
+            {
+                b = next_block[client]++;
+            }
             // (not named small: that is a macro in the Windows headers)
             const int few = random.below( AA_SMALL_RANGES + 1 );
-            const int ranges = random.below( 10 ) < 3 ? AA_BIG_RANGES : few;
+            const int ranges = b == 0 ? 0 : ( random.below( 10 ) < 3 ? AA_BIG_RANGES : few );
+
+            // the walk's histories, from the state before the call: the block
+            // arrives new when the endpoint has not acknowledged it and it has
+            // not arrived in this receive; a block that finds the queue full,
+            // or failing that the range store, forces the early gather
+            std::vector<std::string> pair;
+            pair.push_back( tla_int( client ) );
+            pair.push_back( tla_int( b ) );
+            const std::string arrival = tla_sequence( pair );
+            bool fresh = b != 0 && !aa_acked( &walk, client, b );
+            for ( size_t i = 0; i < arrived.size() && fresh; i++ )
+            {
+                fresh = arrived[i] != arrival;
+            }
+            if ( b != 0 && phase == ROCKETNET_SERVER_ACKS_RECEIVING )
+            {
+                if ( acks->num_pending == acks->pending_capacity )
+                {
+                    gathered = "queue";
+                }
+                else if ( ranges > acks->ranges_capacity - acks->num_ranges )
+                {
+                    gathered = "ranges";
+                }
+            }
+
             struct rocketnet_ack_block_t block;
             memset( &block, 0, sizeof( block ) );
             block.largest = (uint64_t) b;
-            block.first_range_length = 1;
+            block.first_range_length = b == 0 ? 0 : 1;
             block.num_ranges = ranges;
             for ( int r = 0; r < ranges; r++ )
             {
@@ -443,10 +561,10 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
             call_args.push_back( tla_int( b ) );
             call_args.push_back( tla_int( ranges ) );
             args = tla_sequence( call_args );
-            std::vector<std::string> pair;
-            pair.push_back( tla_int( client ) );
-            pair.push_back( tla_int( b ) );
-            arrived.push_back( tla_sequence( pair ) );
+            if ( fresh )
+            {
+                arrived.push_back( arrival );
+            }
             op = "receive_block";
             act = "Receive";
         }
@@ -511,7 +629,7 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
         }
 
         report.act( act );
-        records.push_back( tla_step( op, act, args, aa_state( &walk, arrived ) ) );
+        records.push_back( tla_step( op, act, args, aa_state( &walk, arrived, gathered ) ) );
 
         // the planted effect, where it shows: a client taken and its claim still standing
         if ( planted )
@@ -560,7 +678,8 @@ static int trace_ack_apply( uint64_t seed, int steps, const char * out )
               "    CloseClearsClaim = TRUE\n"
               "    SettleOnlyReceiving = TRUE\n"
               "    GatherWhenFull = TRUE\n"
-              "    AdvanceTail = TRUE\n",
+              "    AdvanceTail = TRUE\n"
+              "    DupGivesNothing = TRUE\n",
               AA_FIRST_BLOCK, max_block, ROCKETNET_ACK_BLOCK_MAX_RANGES, range_counts, acks->pending_capacity, acks->ranges_capacity );
     const bool written = !fault && tla_write_trace( out, "MCTraceAckApply", seed, "TraceRNAckApplyPhase", "", constants, records );
 

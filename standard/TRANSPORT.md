@@ -539,7 +539,11 @@ before any other field. Its size is the row named prefilter header in
    named receive ceiling in [t3 Constants and registries](#t3), as too large.
 6. A receiver MUST refuse a packet whose filter epoch is not the unkeyed
    filter epoch, the row named unkeyed filter epoch in
-   [t3 Constants and registries](#t3), as a wrong epoch.
+   [t3 Constants and registries](#t3), as a wrong epoch. A receiver that
+   implements [t5.1 Keyed epochs (optional extension)](#t5.1) applies the
+   epoch rules of that subsection in place of this rule, and for a keyed
+   epoch compares the filter value with the value that subsection computes
+   in place of the unkeyed filter value of rule 7.
 7. A receiver MUST refuse a packet whose filter value does not equal the
    receiver's unkeyed filter value as a wrong value.
 8. A receiver MUST return the packet type byte of a packet that passes every
@@ -585,7 +589,11 @@ Every constant this section states is a row of the table below.
 ### t5.1. Keyed epochs (optional extension)
 
 This subsection is an optional extension. It is not part of conformance: an
-implementation that omits it conforms to this standard.
+implementation that omits it conforms to this standard. The reference
+implementation does not implement it: it writes the unkeyed filter epoch and
+refuses every keyed epoch as a wrong epoch by rule 6 of
+[t5 Prefilter header](#t5). No vector covers keyed epochs; the vectors below
+are those of the unkeyed rules of [t5 Prefilter header](#t5).
 
 An implementation MAY accept filter epochs from the row named first keyed
 filter epoch through the row named last keyed filter epoch in the table above.
@@ -1857,7 +1865,11 @@ connection request and connection cookie are not sealed.
    integrity limit below, the endpoint MUST end the connection and MUST
    increment the `INTEGRITY_LIMIT_REACHED` counter; the client enters the
    disconnected state, and the server removes the mapping and releases the
-   slot it holds for it, if any.
+   slot it holds for it, if any. No packet carries the reason. The reference
+   implementation reports this end as protocol violation: on the client as
+   the state protocol violation (-10) of
+   [t11 Handshake: client](#t11), and on the server as the disconnect reason
+   `PROTOCOL_VIOLATION` of the slot, when the mapping holds one.
 
 The key that seals a sealed type:
 
@@ -2466,7 +2478,7 @@ The client is in exactly one of the states of the table below. A state number is
 4. An attempt MUST begin with a fresh connection salt and a fresh ephemeral keypair. The handshake and session sending sequences MUST start at one and MUST NOT be reset within the attempt.
 5. The client MUST enter requesting cookie (1), sending connection request (2), sending connection response (3) and connected (4) in that order, each at most once per attempt.
 6. While the client is in requesting cookie (1) or sending connection request (2), it MUST abandon the attempt for connect token expired (-7) once the token's lifetime, the difference between its expire timestamp and its create timestamp, has elapsed since the attempt began. The check does not apply in sending connection response (3) or connected (4): from the moment the client has sent its connection response the server can already hold it connected, so from then on the only clock that ends the attempt is the timeout of rule 8, and in sending connection response (3) the client waits for the timeout even when the timeout is larger than the token's lifetime.
-7. In requesting cookie (1), sending connection request (2) and sending connection response (3), the client MUST retransmit its current packet at the send rate of [t17 Timing and defaults](#t17) until a packet advances it or a deadline ends the attempt. When a packet advances the client from requesting cookie (1) to sending connection request (2), or from sending connection request (2) to sending connection response (3), the client MAY send the packet of the new state at its next protocol update without waiting for the send rate, at most once for each advance; the send rate then runs from that send. In those three states, apart from that one send for each advance, a client MUST NOT send a packet because a packet arrived, and it MUST NOT send from inside the processing of a received packet. Each state is entered at most once in an attempt, so an attempt sends at most two packets more than the send rate alone would send, whatever arrives: a cookie that does not advance the client, a later or a forged one ([t11.1 Cookie processing](#t11.1)), brings nothing forward, and the packet brought forward is the one the next scheduled send would have carried, so no arrival can be turned into an amplifier.
+7. In requesting cookie (1), sending connection request (2) and sending connection response (3), the client MUST retransmit its current packet at the send rate of [t17 Timing and defaults](#t17) until a packet advances it, or a packet or a deadline ends the attempt. When a packet advances the client from requesting cookie (1) to sending connection request (2), or from sending connection request (2) to sending connection response (3), the client MAY send the packet of the new state at its next protocol update without waiting for the send rate, at most once for each advance; the send rate then runs from that send. In those three states, apart from that one send for each advance, a client MUST NOT send a packet because a packet arrived, and it MUST NOT send from inside the processing of a received packet. Each state is entered at most once in an attempt, so an attempt sends at most two packets more than the send rate alone would send, whatever arrives. The first cookie the client accepts can be forged by anyone who sees its cookie request and echoes its salt, and such a forgery brings forward that one connection request and no more; a cookie that does not advance the client (a later cookie, forged or not: [t11.1 Cookie processing](#t11.1)) brings nothing forward. The packet brought forward is the one the next scheduled send would have carried, so no arrival can be turned into an amplifier.
 8. In a positive state below connected (4), a client that has accepted no authenticated packet for the token's timeout MUST move to the state whose number is one less than the negation of its current state: requesting cookie (1) to cookie request timed out (-2), sending connection request (2) to connection request timed out (-3), sending connection response (3) to connection response timed out (-4). In connected (4) the same silence MUST move the client to connection timed out (-5). An authenticated packet is one that opens under the attempt's keys: a connection challenge or a session packet. The timeout runs from the attempt's start until the first one, and a connection cookie never restarts it ([t11.1 Cookie processing](#t11.1)).
 9. A negative state MUST persist until the client disconnects or accepts a new connect token after any retiring transport from the ended attempt has finished stopping. A disconnect from any state MUST perform the per-connection reset of [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) and MUST return the client to disconnected (0). From disconnected (0), or from a negative state once any retiring transport has finished stopping, the client MAY connect again with a new token.
 
@@ -2474,6 +2486,7 @@ The state numbers:
 
 | Name | Value | Meaning |
 |---|---|---|
+| protocol violation | `-10` | the server sent what the protocol forbids: a challenge carrying a small-order key ([t11.2 Challenge and denial processing order](#t11.2) step 4) |
 | connect token expired | `-7` | the attempt ended at the token's lifetime |
 | invalid connect token | `-6` | the attempt never began: the token failed a pre-send check |
 | connection timed out | `-5` | an established connection received nothing for the timeout |
@@ -2512,7 +2525,7 @@ Each packet MUST be checked in this order:
 1. Its size MUST be the packet's wire size of [t8 Packet formats](#t8). A client MUST refuse a wrong-size packet as WRONG_SIZE before any state, sequence or cryptographic check, MUST NOT count an integrity failure for it, and MUST NOT change its state.
 2. Its sequence MUST be nonzero; a sequence of zero MUST be refused with no state change.
 3. In sending connection request (2), a challenge MUST derive the handshake keys from the carried session nonce and open under them. If it does not open, the client MUST refuse it, MUST count an integrity failure, and MUST NOT change its state.
-4. An accepted challenge MUST derive the four connection keys from the ephemeral exchange, MUST erase the ephemeral secret, MUST build the response once, and MUST move to sending connection response (3).
+4. An accepted challenge whose server ephemeral key is not small-order MUST derive the four connection keys from the ephemeral exchange, MUST erase the ephemeral secret, MUST build the response once, and MUST move to sending connection response (3). When the exchange reports a small-order server ephemeral key ([t7 Key schedule](#t7) rule 5), the challenge opened under the handshake keys, so the server (or a holder of the token's keys) sent what the protocol forbids: the client MUST count `CLIENT_CHALLENGE_SMALL_ORDER_KEY`, MUST NOT derive a session key, MUST release the connection state and MUST move to protocol violation (-10) at once, without waiting for a deadline.
 5. A denial in sending connection request (2) MUST open under handshake keys derived from its carried session nonce; a denial in sending connection response (3) MUST open under the handshake server-to-client key the client already holds. If it does not open, the client MUST refuse it, MUST count an integrity failure, and MUST NOT change its state.
 6. An accepted denial MUST release the connection state and MUST move to connection denied (-1).
 
@@ -2540,7 +2553,8 @@ A session packet opens under the session keys from sending connection response (
 | sending connection request (2) | update, send due or early send armed | | send request with the kept cookie, or, once a latest cookie is stored, with the kept and the latest cookie in turn; clear the early send | sending connection request (2) |
 | sending connection request (2) | cookie | size correct, salt matches | replace the latest cookie; the kept cookie stays | sending connection request (2) |
 | sending connection request (2) | cookie | size wrong or salt differs | ignore | sending connection request (2) |
-| sending connection request (2) | challenge | size correct, opens | derive keys; erase the ephemeral secret; build the response; a client that takes the early send of [t11 Handshake: client](#t11) rule 7 arms it | sending connection response (3) |
+| sending connection request (2) | challenge | size correct, opens, server key not small-order | derive keys; erase the ephemeral secret; build the response; a client that takes the early send of [t11 Handshake: client](#t11) rule 7 arms it | sending connection response (3) |
+| sending connection request (2) | challenge | size correct, opens, small-order server key | count CLIENT_CHALLENGE_SMALL_ORDER_KEY; release the connection state | protocol violation (-10) |
 | sending connection request (2) | challenge | size wrong | refuse as WRONG_SIZE | sending connection request (2) |
 | sending connection request (2) | challenge | sequence zero or does not open | refuse; an unopened packet counts an integrity failure | sending connection request (2) |
 | sending connection request (2) | denied | size correct, opens | release the connection state | connection denied (-1) |
@@ -2739,7 +2753,7 @@ The server turns a connection request into an encryption mapping, and a connecti
 The claim is checked, without being recorded, before the signature; the first request whose signature verifies records the claim for its source address before any seal or keypair work, so a request whose signature fails records nothing; the claim ends at the handshake deadline, when its half-open mapping is removed before that deadline (rule 14), when processing the request refuses it without retaining a mapping, or when a response binds the token ([t17 Timing and defaults](#t17) item 13). A client refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED` recovers by retrying from its own address within its token timeout once the claim is gone.
 10. A server MUST verify the signed connect data before opening the sealed private block, MUST open it only with the keypair its public key names, and MUST ignore a request whose sealed fields disagree with the signed fields or whose client id already holds a slot.
 11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
-12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical.
+12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical. A request whose client ephemeral public key the derivation reports as a small-order point ([t7 Key schedule](#t7) rule 5) MUST be ignored, unanswered, counting `CONNECTION_REQUEST_SMALL_ORDER_KEY`, and recorded against its source as a failure ([t17 Timing and defaults](#t17) item 12).
 13. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, MUST ignore, without denying, one whose free slots are all still held under [t13.4 Slot reset](#t13.4), counting `CONNECTION_RESPONSE_NO_SLOTS`, the counter a denial uses, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive. A held slot counts as free for rule 11 and for the denial of this rule.
 14. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which a request carrying the mapping's connection salt or a response that opens under the mapping's handshake key refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A retransmitted connection response MUST NOT refresh a connected slot's receive time. A server MUST count these removals apart: the handshake deadline as `MAPPING_HANDSHAKE_DEADLINE_EXPIRED`, the half-open idle deadline as `MAPPING_IDLE_TIMEOUT`, and the connected idle timeout as both `MAPPING_IDLE_TIMEOUT` and `CLIENT_TIMED_OUT`, so the half-open removals are the difference of the last two. That shared `MAPPING_IDLE_TIMEOUT` is an exception of this revision to [t18 Error handling and counters](#t18) rule 2. When a server removes a half-open mapping before its handshake deadline -- at the half-open idle deadline, or because the integrity limit tears the mapping down -- it MUST release that mapping's request claim before removing the mapping, so a claim never outlives the mapping that holds it. The claim window is therefore min(handshake deadline, half-open idle deadline), and it stays open only while the holder keeps the mapping alive by sending its copied request. A client refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED` recovers by retrying from its own address within its token timeout once the claim is gone.
 
@@ -2822,6 +2836,7 @@ list is ignored in that state.
 | no mapping | request | signature, seal, private zero pad or sealed-field check fails | ignore, count | no mapping |
 | no mapping | request | client id connected | ignore, count | no mapping |
 | no mapping | request | no free slot | send connection denied | no mapping |
+| no mapping | request | client ephemeral public key is a small-order point | ignore, count, record a failure against the source | no mapping |
 | no mapping | request | all checks pass | create mapping, derive keys, send challenge | mapping |
 | mapping | request | salt matches the mapping's | resend the stored challenge, refresh idle | mapping |
 | mapping | request | salt differs, token matches the mapping's | resend the stored challenge | mapping |
@@ -3222,7 +3237,7 @@ as [t10 Receive processing](#t10) step 12 states, and does not mark it.
 Each endpoint MUST count, per connection and across all of that connection's
 keys, every sealed packet that fails to open, and MUST disconnect the
 connection on reaching the `AEAD integrity limit` of
-[t9 Packet protection](#t9).
+[t9 Packet protection](#t9), as its rule 8 states.
 
 An implementation MAY drop session packets before decryption in a kernel
 prefilter that holds, per source address and port, a high-water mark written
@@ -3232,6 +3247,20 @@ mark, and it MAY drop any packet at or beyond that distance. The mark is never
 ahead of the window's high-water mark, so the prefilter drops only packets the
 window would refuse; a reordered packet the window accepts is never dropped
 in the kernel. The prefilter never advances the mark.
+
+Such a prefilter MAY also drop a session packet whose source address and port
+holds no mark: no session the endpoint has greeted, so the endpoint would
+refuse it unopened. It MAY do so only while the endpoint holds a session's
+first keep-alive until that session's first mark is in the prefilter, since a
+client sends no session packet before its first keep-alive, and only while it
+keeps a mark for each greeted session for that session's life: a mark the
+endpoint deletes or fails to write leaves a live session's packets dropped
+until a later mark lands, which an implementation MUST confine to the paths
+where its own mark storage is full. One packet the
+endpoint would have acted on can then be dropped: a disconnect from a client
+that gives up after the endpoint took its connection response and before the
+first mark lands. The slot then ends at its timeout, the same outcome as a
+lost disconnect, which this standard already allows.
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
@@ -3411,8 +3440,10 @@ does not add debt, so acknowledgements do not elicit acknowledgements.
 When a valid block newly acknowledges a sent sequence, the sender MUST take
 one round-trip sample for that sequence: receive time minus its recorded send
 time. It MUST NOT sample that sequence again from a later block. A negative
-elapsed value produces no sample. The sample measures local elapsed time and
-does not subtract the receiver's processing or acknowledgement aggregation delay.
+elapsed value produces no sample, and neither does an elapsed value of
+1000000 seconds (10^9 milliseconds) or more. The sample measures local
+elapsed time and does not subtract the receiver's processing or
+acknowledgement aggregation delay.
 The reported RTT MUST be the minimum strictly positive retained first-ack
 sample, in milliseconds. If no strictly positive first-ack sample is retained,
 the reported RTT MUST be zero.
@@ -3610,17 +3641,17 @@ an input ([t1.4 Conventions](#t1.4)).
     token is instead refused before verification for the rest of that update
     ([t12 Handshake: server](#t12) rule 9 item 6), so it costs at most one verification an
     update.
- 13. A server MUST refuse a request whose token identifier is claimed by a
-     different source address, and one that finds no free
-     encryption mapping slot, before any signature, seal or keypair work. The
-     first valid request for a token records its claim for the source address;
-     the claim ends at the handshake deadline, when its half-open mapping is
-     removed before that deadline, when a response binds the token, or
-     immediately when processing the request refuses it without retaining a
-     mapping. A full mapping table refuses with no reply and is counted as a
-     refusal. The request-claim table and the response-binding table are
-     independent capacities: claim pressure cannot consume or evict a still
-     live response binding.
+13. A server MUST refuse a request whose token identifier is claimed by a
+    different source address, and one that finds no free
+    encryption mapping slot, before any signature, seal or keypair work. The
+    first valid request for a token records its claim for the source address;
+    the claim ends at the handshake deadline, when its half-open mapping is
+    removed before that deadline, when a response binds the token, or
+    immediately when processing the request refuses it without retaining a
+    mapping. A full mapping table refuses with no reply and is counted as a
+    refusal. The request-claim table and the response-binding table are
+    independent capacities: claim pressure cannot consume or evict a still
+    live response binding.
 
 The values this section introduces are:
 
@@ -3980,6 +4011,7 @@ The registry of counters, in index order, is:
 | `URING_RECEIVE_DROPPED_SOCKET` | `refusal` | `none` |
 | `RECEIVE_DROPPED_RETIRED` | `expected` | `none` |
 | `PORTABLE_PIN_REFUSALS` | `refusal` | `none` |
+| `XDP_KERNEL_DROPPED_NO_SESSION` | `expected` | `none` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -4001,14 +4033,34 @@ frames. These rows alias, one event moving each named row once:
 
 | Shared row | Transport rows counting the same events |
 |---|---|
-| `PREFILTER_TOO_SHORT`, `PREFILTER_TOO_LARGE` | `GSO_RECEIVE_DROPPED_SIZE`; `URING_RECEIVE_DROPPED_SIZE`; `IOCP_RECEIVE_DROPPED` (its size drops) and `IOCP_RECEIVE_TOO_SHORT` or `IOCP_RECEIVE_TOO_LARGE`; `RIO_RECEIVE_DROPPED_SIZE` and `RIO_RECEIVE_TOO_SHORT` or `RIO_RECEIVE_TOO_LARGE` |
-| `RECEIVE_DROPPED_FULL` | `GSO_RECEIVE_DROPPED_OVERFLOW` (which also counts the kernel's drops at a full gso queue socket, SO_RXQ_OVFL, which no shared row counts, as `URING_RECEIVE_DROPPED_SOCKET` does for io_uring); `URING_RECEIVE_DROPPED_OVERFLOW` |
-| `RECEIVE_FAILED` | `GSO_RECEIVE_DROPPED_SOURCE`; `URING_RECEIVE_DROPPED_SOURCE` and `URING_RECEIVE_DROPPED_NO_BUFFER`; `RIO_RECEIVE_FAILED` |
+| `PREFILTER_TOO_SHORT`, `PREFILTER_TOO_LARGE` | `GSO_RECEIVE_DROPPED_SIZE`; `URING_RECEIVE_DROPPED_SIZE`; `IOCP_RECEIVE_TOO_SHORT` or `IOCP_RECEIVE_TOO_LARGE`; `RIO_RECEIVE_DROPPED_SIZE` and `RIO_RECEIVE_TOO_SHORT` or `RIO_RECEIVE_TOO_LARGE` |
+| `RECEIVE_DROPPED_FULL` | `GSO_RECEIVE_DROPPED_OVERFLOW` (which also counts the kernel's drops at a full gso queue socket, SO_RXQ_OVFL, which no shared row counts, as `URING_RECEIVE_DROPPED_SOCKET` does for io_uring) |
+| `RECEIVE_FAILED` | `GSO_RECEIVE_DROPPED_SOURCE`; `RIO_RECEIVE_FAILED` |
 | `SEND_FAILED` | `GSO_SEND_DROPPED`; `URING_SEND_DROPPED`; `IOCP_SEND_FAILED`; `RIO_SEND_FAILED` |
 | `SEND_RING_FULL` | `RIO_SEND_FULL` |
 
-To count distinct events, sum the shared rows and leave the aliasing transport
-rows out; the transport rows not named here alias no shared row.
+`IOCP_RECEIVE_DROPPED` counts every datagram the iocp transport drops as its
+receive completes, whatever the reason, and each of those drops also moves
+the shared row of its reason: the size and prefilter rows,
+`RECEIVE_DROPPED_FULL`, `RECEIVE_FAILED` or `RECEIVE_DROPPED_STOPPED`. It does
+not count the datagrams a stop leaves banked and unread, which were counted as
+received when banked and which move only `RECEIVE_DROPPED_STOPPED`. A shared row can count events
+its transport rows do not: on gso, `SEND_FAILED` also counts a frame whose
+send was refused before it was staged, and on uring, `RECEIVE_FAILED` counts
+the receives the kernel refused, which no uring row counts.
+`URING_RECEIVE_DROPPED_OVERFLOW` counts the datagrams of one coalesced receive
+past the most one receive takes, and `URING_RECEIVE_DROPPED_SOURCE` and
+`URING_RECEIVE_DROPPED_NO_BUFFER` count the receives dropped for an unreadable
+source address or a completion naming no buffer, one for each receive however
+many datagrams it held; no shared row counts these,
+so they alias no shared row.
+
+To count distinct events, sum the shared rows and leave out the aliasing
+transport rows and `IOCP_RECEIVE_DROPPED`; every other transport row aliases
+no shared row. That sum leaves out the kernel's drops at the gso queue
+sockets, which only `GSO_RECEIVE_DROPPED_OVERFLOW` counts, together with the
+drops its shared row also counts, so this revision gives no exact count of
+them alone.
 
 The vector below encodes the registry in index order. For each counter it holds
 the little-endian u32 FNV-1a hash of the ASCII name, the class as one byte
@@ -4145,7 +4197,7 @@ d7 01 00 00 1c 31 f2 57 00 00 00 d4 1f 4d 66 00
 de 00 00 00 d2 0c a4 a8 00 00 00 48 5b 6f 96 00
 00 00 11 00 6a 39 00 00 00 2a 89 85 22 00 00 00
 8b 63 94 cc 00 00 00 dd 5b 1f d0 01 00 00 4a 27
-5c 44 00 00 00
+5c 44 00 00 00 65 b8 a7 43 01 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations
@@ -4335,7 +4387,8 @@ This appendix is informative. It records implementation choices that the wire
 format does not require; a conforming implementation may choose otherwise.
 Each note points to the section whose rule it serves.
 
-### Transport selection
+<a id="tc.1"></a>
+### tc.1. Transport selection
 
 An implementation offers a set of transports for one endpoint role on one
 platform, and `auto` expands to its documented order for that role and
@@ -4347,7 +4400,8 @@ candidate's skip or refusal. A transport never changes a byte on the wire, so
 transport selection is a deployment and diagnosis surface rather than a
 protocol one. See [t2.4 Transport selection](#t2.4).
 
-### Segmented sends
+<a id="tc.2"></a>
+### tc.2. Segmented sends
 
 A Linux server transport may coalesce a run of one destination's packets into
 one UDP segmented send. A route that cannot carry one (an IPsec policy, say)
@@ -4366,7 +4420,8 @@ or packet-too-big message naming the server's address would otherwise make
 the kernel refuse every larger datagram to that client until the route
 exception expires.
 
-### Kernel prefilter and XDP
+<a id="tc.3"></a>
+### tc.3. Kernel prefilter and XDP
 
 A Linux server may place the prefilter and an early replay check in an XDP
 program so that traffic the connection layer would refuse is dropped before
@@ -4411,7 +4466,8 @@ taken from: a reply to a handshake goes to that address, as it would to a
 spoofed one, and the protocol's defences against spoofed sources apply to it
 unchanged.
 
-### Check placement
+<a id="tc.4"></a>
+### tc.4. Check placement
 
 Every check this standard specifies is defined by what it rejects and in what
 order, never by where it runs. A transport may perform any prefix of the
@@ -4421,7 +4477,8 @@ reduces the volume that reaches userspace rather than removing the check from
 it, which keeps one implementation of the logic rather than one per transport.
 See [t10 Receive processing](#t10).
 
-### Configuration surface
+<a id="tc.5"></a>
+### tc.5. Configuration surface
 
 Each configuration field is declared once with its type, default and valid
 range, and the environment variable name derives from the field name. The
@@ -4431,7 +4488,8 @@ unparsable value refuses the create rather than being clamped or corrected.
 The message layer's fields follow the same surface in the section that owns
 each one. See [t2.3 Configuration surface](#t2.3).
 
-### Counters per execution context
+<a id="tc.6"></a>
+### tc.6. Counters per execution context
 
 A multithreaded implementation keeps a counter block per execution context,
 padded and aligned so that no two contexts share a cache line, and sums the
@@ -4441,22 +4499,27 @@ by differencing two reads and a zero still means that the event never
 happened. See [t18 Error handling and counters](#t18).
 
 
-### Create-time maximum-resend delay message reserve
+<a id="tc.7"></a>
+### tc.7. Create-time maximum-resend delay message reserve
 
-Each connection adds a local payload reserve to its configured message-region
-headroom at CREATE. Let `R = ceil(send_kbps * 125 * message_resend_delay_max_ms / 1000)` bytes.
+This note is about the message layer of
+[RN-2 m9.4 Send budget](MESSAGES.md#m9.4); it sits here because RN-2 has no
+informative appendix. Each connection adds a local payload reserve to its
+configured message-region headroom at CREATE. Let `R = ceil(send_kbps * 125 * message_resend_delay_max_ms / 1000)` bytes.
 Client and server creation use their respective resolved per-connection budgets,
 including an explicit creation override. Generic connection sizing conservatively
-uses the larger configured budget. An unlimited budget (`ROCKETNET_SEND_KBPS_UNLIMITED`) has no finite reserve.
+uses the larger configured budget. The value that means no send budget
+([RN-2 m9.4 Send budget](MESSAGES.md#m9.4)) has no finite reserve.
 
 The descriptor pool adds `ceil(R / 128)` entries. The 128-, 512-, and 1152-byte
 fixed pools add `ceil(R / 128)`, `ceil(R / 512)`, and `ceil(R / 1024)` chunks,
 respectively, including each chunk's four bytes of metadata, its four-byte free-stack
 entry and alignment. The send-span
 arena adds R plus up to 15 padding bytes per 1153 payload bytes, rounded to 64.
-Receive-ring and reliable-window wire parameters do not change. This extends the
-base headroom formula and default sizes above; runtime sizing reports
-the resulting total. All parts remain in the single allocator-hook allocation.
+Receive-ring and reliable-window wire parameters do not change. The reserve
+adds to the message region the implementation sizes from the message layer's
+configuration fields; runtime sizing reports the resulting total. All parts
+remain in the single allocator-hook allocation.
 
 The capacity guarantee assumes typical payload sizes of 128/512/1024 bytes in
 the corresponding fixed pools, or larger messages in the span arena. Arbitrarily

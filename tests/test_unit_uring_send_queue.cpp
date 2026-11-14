@@ -16,9 +16,13 @@
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_address.h"
 #include "../sdk/rocketnet_constants.h"
+#include "../sdk/rocketnet_internal.h"
+#include "../sdk/rocketnet_memory.h"
 #include "../sdk/rocketnet_send_queue.h"
 #include "../sdk/rocketnet_uring_send_queue.h"
+#include "loopback_hub.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #define check rocketnet_unit_check
@@ -374,9 +378,9 @@ static void test_uring_send_queues_turn_to_moves_one_queue_to_the_named_bank()
 REGISTER_UNIT_TEST( test_uring_send_queues_turn_to_moves_one_queue_to_the_named_bank );
 
 // a transport sizes a queue by rate, from ROCKETNET_URING_SEND_BANK_SLOTS up
-// to ROCKETNET_URING_SEND_MAX_BANK_SLOTS: create takes every size in range,
-// refuses one past it, and allocation_bytes says what create allocates (0
-// outside the range)
+// to ROCKETNET_URING_SEND_MAX_BANK_SLOTS: the plan grows with the size and is
+// 0 outside the range (what create asks the allocator for is
+// test_uring_send_queues_create_allocates_its_plan)
 
 static void test_uring_send_queues_allocation_bytes_follows_the_size()
 {
@@ -406,6 +410,84 @@ static void test_uring_send_queues_allocation_bytes_follows_the_size()
 }
 
 REGISTER_UNIT_TEST( test_uring_send_queues_allocation_bytes_follows_the_size );
+
+// create asks the installed allocator for exactly its plan: one block of
+// allocation_bytes plus rocketnet_malloc's own overhead (the plan is the
+// block; the transport's plan adds the overhead, rocketnet_memory_allocations),
+// and destroy returns it. A counting allocator is installed for the case
+// (its state is the context create is given, as the transport passes its
+// own) and the default one put back after it
+
+struct uring_send_queue_counting_t
+{
+    int calls;
+    int live;
+    uint64_t requested;
+};
+
+static void * uring_send_queue_count_allocate( void * context, size_t bytes )
+{
+    uring_send_queue_counting_t * counting = (uring_send_queue_counting_t *) context;
+    counting->calls++;
+    counting->live++;
+    counting->requested += bytes;
+    return malloc( bytes );
+}
+
+static void uring_send_queue_count_free( void * context, void * pointer )
+{
+    uring_send_queue_counting_t * counting = (uring_send_queue_counting_t *) context;
+    counting->live--;
+    free( pointer );
+}
+
+static void test_uring_send_queues_create_allocates_its_plan()
+{
+    uring_send_queue_counting_t counting;
+    memset( &counting, 0, sizeof( counting ) );
+    check( rocketnet_test_loopback_hub_release() );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+    int status = -1;
+    check( rocketnet_init_internal( &counting, uring_send_queue_count_allocate, uring_send_queue_count_free, &status ) );
+    check( status == ROCKETNET_STATUS_OK );
+
+    // every queue count at small banks, and the base and past-base bank
+    // sizes at one and two queues: the queue count's term and the bank
+    // size's term of the plan each move, without a create of hundreds of
+    // megabytes (MAX_QUEUES at a full bank) in a suite run one case a core
+    const int plans[][2] = {
+        { 1, 1 },
+        { 1, 3 },
+        { 2, 3 },
+        { ROCKETNET_URING_SEND_MAX_QUEUES, 1 },
+        { ROCKETNET_URING_SEND_MAX_QUEUES, 3 },
+        { 1, ROCKETNET_URING_SEND_BANK_SLOTS },
+        { 2, ROCKETNET_URING_SEND_BANK_SLOTS },
+        { 1, ROCKETNET_URING_SEND_BANK_SLOTS + 1 },
+        { 2, ROCKETNET_URING_SEND_BANK_SLOTS + 1 },
+    };
+    for ( int p = 0; p < (int) ( sizeof( plans ) / sizeof( plans[0] ) ); p++ )
+    {
+        const int queue_count = plans[p][0];
+        const int slots = plans[p][1];
+        const int live = counting.live;
+        counting.calls = 0;
+        counting.requested = 0;
+        struct rocketnet_uring_send_queues_t * queues = rocketnet_uring_send_queues_create( &counting, queue_count, slots );
+        check( queues != NULL );
+        check( counting.calls == 1 );
+        check( counting.requested == rocketnet_uring_send_queues_allocation_bytes( queue_count, slots ) + rocketnet_allocation_overhead() );
+        rocketnet_uring_send_queues_destroy( queues );
+        check( counting.live == live );
+    }
+
+    check( rocketnet_test_loopback_hub_release() );
+    check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+    check( counting.live == 0 );
+    check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+}
+
+REGISTER_UNIT_TEST( test_uring_send_queues_create_allocates_its_plan );
 
 // a bank larger than the base size works end to end: every slot past
 // ROCKETNET_URING_SEND_BANK_SLOTS up to the size is claimable, the next claim

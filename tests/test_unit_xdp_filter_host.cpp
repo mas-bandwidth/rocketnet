@@ -54,8 +54,9 @@ static const int XDP_HOST_REDIRECT = 4;
 
 // A row names the counter it must move with XDP_HOST_COUNTS(counter), and a
 // row that must move none with XDP_HOST_NO_COUNTER.
-// test_xdp_transport_host_every_counter_has_a_case reads this file for the XDP_HOST_COUNTS
-// spelling of every counter sdk/rocketnet_wire.h defines.
+// test_xdp_transport_host_every_counter_has_a_case (a source audit,
+// tests/source_audit_xdp_filter_host.cpp) reads this file for the
+// XDP_HOST_COUNTS spelling of every counter sdk/rocketnet_wire.h defines.
 
 #define XDP_HOST_COUNTS( counter ) ( counter )
 #define XDP_HOST_NO_COUNTER ( -1 )
@@ -114,6 +115,8 @@ struct xdp_host_frame_t
     int override_ip_len = -1;               // >= 0: override the IPv4 total length or IPv6 payload length field
     int pad_bytes = 0;                      // zero bytes after the UDP payload (link-layer padding)
     uint16_t vlan_tci = 42;                 // the tag control information of an 802.1Q or 802.1ad ethertype: VLAN 42, priority 0
+    int ip_version = -1;                    // >= 0: the IP header's version nibble (else the family's own)
+    const uint8_t * destination_mac = NULL; // NULL: the server's MAC
 };
 
 static void xdp_host_put16( std::vector<uint8_t> & out, uint16_t value )
@@ -130,7 +133,8 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
 
     const uint8_t server_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
     const uint8_t client_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
-    out.insert( out.end(), server_mac, server_mac + 6 );
+    const uint8_t * destination_mac = f.destination_mac ? f.destination_mac : server_mac;
+    out.insert( out.end(), destination_mac, destination_mac + 6 );
     out.insert( out.end(), client_mac, client_mac + 6 );
 
     const uint16_t ethertype = f.ethertype != 0 ? f.ethertype : ( f.family == 4 ? 0x0800 : 0x86dd );
@@ -151,7 +155,7 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
         // protocol, checksum (unchecked by the filter), source, destination
 
         const int header_bytes = f.ipv4_ihl * 4;
-        out.push_back( (uint8_t) ( 0x40 | ( f.ipv4_ihl & 0x0f ) ) );
+        out.push_back( (uint8_t) ( ( ( f.ip_version >= 0 ? f.ip_version : 4 ) << 4 ) | ( f.ipv4_ihl & 0x0f ) ) );
         out.push_back( 0x00 );
         xdp_host_put16( out, (uint16_t) ( f.override_ip_len >= 0 ? f.override_ip_len : header_bytes + udp_bytes ) );
         xdp_host_put16( out, 0x0000 );
@@ -182,7 +186,7 @@ static std::vector<uint8_t> xdp_host_frame_bytes( const xdp_host_frame_t & f )
         }
 
         const uint8_t first_next_header = fragment ? 44 : ( !f.ipv6_extensions.empty() ? (uint8_t) ( f.ipv6_extensions[0] & 0xff ) : f.protocol );
-        out.push_back( 0x60 );
+        out.push_back( (uint8_t) ( ( f.ip_version >= 0 ? f.ip_version : 6 ) << 4 ) );
         out.push_back( 0x00 );
         out.push_back( 0x00 );
         out.push_back( 0x00 );
@@ -358,8 +362,10 @@ static struct rocketnet_server_xdp_replay_key_t xdp_host_client_key( int family,
 
 // One row: a frame, the receive queue it arrives on, the socket slot that
 // is populated (-1: none), the configuration, the replay map entry for the
-// client's address and port 50000 in the frame's family (none unless
-// replay_entry), and what must happen.
+// client's address and port 50000 in the frame's family (present unless
+// replay_entry is cleared: a session packet from a source with no entry
+// drops, DROPPED_NO_SESSION, so a row that is about anything else sends from
+// a greeted session), and what must happen.
 
 struct xdp_host_row_t
 {
@@ -368,7 +374,7 @@ struct xdp_host_row_t
     uint32_t queue = 0;
     int populated_slot = 0;
     xdp_host_config_t config;
-    bool replay_entry = false;
+    bool replay_entry = true;
     uint32_t replay_high_water = 0;
     int want_verdict = XDP_HOST_REDIRECT;
     int want_counter = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
@@ -520,22 +526,23 @@ static void xdp_host_redirect_rows( int family, std::vector<xdp_host_row_t> & ro
     }
 }
 
-static void xdp_host_ipv4_rocketnet_packet_redirects_case()
+static void test_xdp_transport_host_ipv4_rocketnet_packet_redirects()
 {
     std::vector<xdp_host_row_t> rows;
     xdp_host_redirect_rows( 4, rows );
     xdp_host_run_rows( rows );
 }
 
-// The master registered unit executes every registered host-filter case in
-// this file. xdp_host_run_row records a counter only after its verdict and
-// complete counter table assertions pass, so the final mask is an execution
-// result rather than a lexical inventory.
-static void test_xdp_transport_host_ipv4_rocketnet_packet_redirects()
+// Every counter moves: this case runs every other registered host-filter case
+// in this file again, in process, so each row runs twice a suite.
+// xdp_host_run_row records a counter only after its verdict and complete
+// counter table assertions pass, so the final mask is an execution result
+// rather than a lexical inventory (the lexical check is
+// test_xdp_transport_host_every_counter_has_a_case, a source audit).
+static void test_xdp_transport_host_cases_move_every_counter()
 {
     xdp_host_runtime_counter_mask = 0;
     xdp_host_runtime_counter_rows = 0;
-    xdp_host_ipv4_rocketnet_packet_redirects_case();
 
     const char host_prefix[] = "test_xdp_transport_host_";
     const char filter_prefix[] = "test_xdp_filter_host_";
@@ -548,7 +555,7 @@ static void test_xdp_transport_host_ipv4_rocketnet_packet_redirects()
         const bool host_case = strncmp( test_name, host_prefix, sizeof( host_prefix ) - 1 ) == 0;
         const bool filter_case = strncmp( test_name, filter_prefix, sizeof( filter_prefix ) - 1 ) == 0;
         if ( ( host_case || filter_case ) &&
-             strcmp( test_name, "test_xdp_transport_host_ipv4_rocketnet_packet_redirects" ) != 0 )
+             strcmp( test_name, "test_xdp_transport_host_cases_move_every_counter" ) != 0 )
         {
             struct rocketnet_unit_file_test_t * test = rocketnet_unit_file_find( test_name );
             rocketnet_unit_check( test != NULL );
@@ -625,8 +632,11 @@ static void test_xdp_transport_host_redirect_needs_a_populated_slot()
 
     rocketnet_xdp_host_reset();
     xdp_host_apply_config( xdp_host_config_t() );
+    const xdp_host_frame_t frame = xdp_host_frame_t();
+    const struct rocketnet_server_xdp_replay_key_t key = xdp_host_client_key( frame.family, xdp_host_client_port );
+    rocketnet_xdp_host_set_replay_entry( &key, 0 );
 
-    const std::vector<uint8_t> bytes = xdp_host_frame_bytes( xdp_host_frame_t() );
+    const std::vector<uint8_t> bytes = xdp_host_frame_bytes( frame );
     rocketnet_unit_check( rocketnet_xdp_host_run( bytes.data(), (int) bytes.size(), 5 ) == XDP_HOST_DROP );
     rocketnet_unit_check( rocketnet_xdp_host_redirect_calls() == 1 );
     rocketnet_unit_check( rocketnet_xdp_host_last_redirect_key() == 5 );
@@ -1492,6 +1502,73 @@ static void test_xdp_transport_host_vlan_server_takes_its_tag()
     xdp_host_run_rows( rows );
 }
 
+// The filter and the AF_XDP frame reader agree on the two frame kinds the
+// reader refuses before it reads a port: an IP version nibble that is not the
+// ethertype's own, and a destination MAC starting ff:ff (broadcast). Each such
+// frame, otherwise one the server takes, passes uncounted (the kernel judges
+// it, as for the socket transports) and the reader refuses it, untagged and
+// behind a VLAN server's own tag; it never spends a ring slot
+
+static void test_xdp_transport_host_version_and_broadcast_pass_as_the_reader_refuses()
+{
+    std::vector<xdp_host_row_t> rows;
+    const int families[2] = { 4, 6 };
+    static const uint8_t broadcast[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+    static const uint8_t broadcast_prefix[6] = { 0xff, 0xff, 0x00, 0x00, 0x00, 0x01 };
+
+    for ( int f = 0; f < 2; f++ )
+    {
+        for ( int tagged = 0; tagged < 2; tagged++ )
+        {
+            xdp_host_row_t base = xdp_host_row( tagged ? "VLAN server, its tag:" : "untagged:", families[f] );
+            if ( tagged )
+            {
+                base.config.vlan_id = 42;
+                base.frame.ethertype = 0x8100;
+            }
+
+            for ( int version = 0; version < 16; version++ )
+            {
+                if ( version == families[f] )
+                {
+                    continue;
+                }
+                xdp_host_row_t row = base;
+                row.label += " IP version " + std::to_string( version ) + " in an IPv" + std::to_string( families[f] ) + " frame";
+                row.frame.ip_version = version;
+                rows.push_back( xdp_host_expect( row, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
+            }
+
+            xdp_host_row_t all = base;
+            all.label += " destination MAC ff:ff:ff:ff:ff:ff";
+            all.frame.destination_mac = broadcast;
+            rows.push_back( xdp_host_expect( all, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
+
+            xdp_host_row_t prefix = base;
+            prefix.label += " destination MAC ff:ff:00:00:00:01";
+            prefix.frame.destination_mac = broadcast_prefix;
+            rows.push_back( xdp_host_expect( prefix, XDP_HOST_PASS, XDP_HOST_NO_COUNTER ) );
+        }
+    }
+
+    // the reader refuses every one of them
+
+    for ( size_t i = 0; i < rows.size(); i++ )
+    {
+        const std::vector<uint8_t> bytes = xdp_host_frame_bytes( rows[i].frame );
+        rocketnet_address_t from;
+        const uint8_t * payload = NULL;
+        int payload_bytes = 0;
+        if ( rocketnet_xdp_frame_parse_vlan( bytes.data(), bytes.size(), rows[i].config.vlan_id, &from, &payload, &payload_bytes ) )
+        {
+            printf( "the reader parses: %s\n", rows[i].label.c_str() );
+        }
+        rocketnet_unit_check( !rocketnet_xdp_frame_parse_vlan( bytes.data(), bytes.size(), rows[i].config.vlan_id, &from, &payload, &payload_bytes ) );
+    }
+
+    xdp_host_run_rows( rows );
+}
+
 // ---------------------------------------------------------------------------
 // drops on the server's port: each counted by its reason
 
@@ -1726,6 +1803,12 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
         xdp_host_apply_config( xdp_host_config_t() );
         rocketnet_xdp_host_set_socket_slot( 0, 1 );
 
+        // a greeted session at the client's address, so the session types are
+        // judged on type and size alone (their sequence, zero, is at its
+        // high-water)
+        const struct rocketnet_server_xdp_replay_key_t sweep_key = xdp_host_client_key( families[f], xdp_host_client_port );
+        rocketnet_xdp_host_set_replay_entry( &sweep_key, 0 );
+
         uint64_t want_counters[ROCKETNET_SERVER_XDP_NUM_COUNTERS] = { 0 };
 
         for ( int bytes = 0; bytes <= ceiling + 1; bytes++ )
@@ -1804,8 +1887,9 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
 // replay: the read-only high-water map (proofs/tla/RNXdpReplay.tla, KernelFilter).
 // With an entry for the source address and port, a session packet whose
 // sequence is ROCKETNET_XDP_REPLAY_WINDOW or more behind the high-water
-// drops; inside the window or ahead it goes on; handshake types and sources
-// with no entry are not checked. The kernel window is the userspace replay
+// drops; inside the window or ahead it goes on; handshake types are not
+// checked; a session packet from a source with no entry drops
+// (DROPPED_NO_SESSION). The kernel window is the userspace replay
 // window (ROCKETNET_REPLAY_WINDOW_BITS, 4096 by default), so the kernel
 // never drops a reordered packet that userspace would accept.
 
@@ -1879,18 +1963,40 @@ static void xdp_host_replay_rows( int family, std::vector<xdp_host_row_t> & rows
     rows.push_back( xdp_host_replay_row( "connection response a window behind is not checked", family, ROCKETNET_CONNECTION_RESPONSE_PACKET,
                                          xdp_host_replay_behind( window ), high_water ) );
 
-    // another source port has no entry
+    // no entry for the source: no session the server has greeted, so every
+    // session type drops (DROPPED_NO_SESSION) at any sequence, and the
+    // handshake types, which carry no session, go on
+
+    const int no_session = XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SESSION );
 
     xdp_host_row_t other = xdp_host_replay_row( "another source port has no entry", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-                                                xdp_host_replay_behind( window ), high_water );
+                                                high_water, high_water );
     other.frame.source_port = xdp_host_client_port + 1;
-    rows.push_back( other );
+    rows.push_back( xdp_host_expect( other, XDP_HOST_DROP, no_session ) );
 
-    // no entry at all
+    const struct
+    {
+        uint8_t type;
+        const char * label;
+    } unsessioned[] = {
+        { ROCKETNET_CONNECTION_PAYLOAD_PACKET, "payload with no replay entry" },
+        { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, "keep-alive with no replay entry" },
+        { ROCKETNET_CONNECTION_ACK_PACKET, "ack with no replay entry" },
+        { ROCKETNET_CONNECTION_DISCONNECT_PACKET, "disconnect with no replay entry" },
+    };
+    for ( size_t i = 0; i < sizeof( unsessioned ) / sizeof( unsessioned[0] ); i++ )
+    {
+        xdp_host_row_t none = xdp_host_replay_row( unsessioned[i].label, family, unsessioned[i].type, high_water + 1, high_water );
+        none.replay_entry = false;
+        rows.push_back( xdp_host_expect( none, XDP_HOST_DROP, no_session ) );
+    }
 
-    xdp_host_row_t none = xdp_host_replay_row( "no replay entry", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, xdp_host_replay_behind( window ), high_water );
-    none.replay_entry = false;
-    rows.push_back( none );
+    xdp_host_row_t request = xdp_host_replay_row( "connection request with no replay entry goes on", family, ROCKETNET_CONNECTION_REQUEST_PACKET, 0, 0 );
+    request.replay_entry = false;
+    rows.push_back( request );
+    xdp_host_row_t response = xdp_host_replay_row( "connection response with no replay entry goes on", family, ROCKETNET_CONNECTION_RESPONSE_PACKET, 0, 0 );
+    response.replay_entry = false;
+    rows.push_back( response );
 
     // the wrap: the difference is modulo 2^32, read as signed
 
@@ -1990,10 +2096,9 @@ static void test_xdp_transport_host_replay_never_writes_the_map()
 }
 
 // ---------------------------------------------------------------------------
-// every counter has a case: each ROCKETNET_SERVER_XDP_COUNTER_* that
-// sdk/rocketnet_wire.h defines (other than the count) must appear in this
-// file as a row's XDP_HOST_COUNTS(...), so a new counter cannot land without
-// a case that makes it move.
+// the UDP length: below the header is too small; past the frame, or past the
+// IP payload, is a forged length and too large; link-layer padding past it
+// is not payload.
 
 static void test_xdp_transport_host_udp_length_drops()
 {
@@ -2135,6 +2240,7 @@ static void test_xdp_transport_queue_default_matches_memory_plan()
 
 #if defined( ROCKETNET_XDP_FILTER_HOST ) && ROCKETNET_XDP_FILTER_HOST
 REGISTER_UNIT_TEST( test_xdp_transport_host_ipv4_rocketnet_packet_redirects );
+REGISTER_UNIT_TEST( test_xdp_transport_host_cases_move_every_counter );
 REGISTER_UNIT_TEST( test_xdp_transport_host_ipv6_rocketnet_packet_redirects );
 REGISTER_UNIT_TEST( test_xdp_transport_host_both_destinations_redirect_and_a_third_passes );
 REGISTER_UNIT_TEST( test_xdp_transport_host_redirect_needs_a_populated_slot );
@@ -2155,6 +2261,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_host_ipv6_first_fragment_drops_counted );
 REGISTER_UNIT_TEST( test_xdp_transport_host_icmpv6_passes_uncounted );
 REGISTER_UNIT_TEST( test_xdp_transport_host_vlan_tagged_passes );
 REGISTER_UNIT_TEST( test_xdp_transport_host_vlan_server_takes_its_tag );
+REGISTER_UNIT_TEST( test_xdp_transport_host_version_and_broadcast_pass_as_the_reader_refuses );
 REGISTER_UNIT_TEST( test_xdp_transport_host_too_small_drops );
 REGISTER_UNIT_TEST( test_xdp_transport_host_too_large_drops );
 REGISTER_UNIT_TEST( test_xdp_transport_host_wrong_epoch_drops );
@@ -2165,32 +2272,6 @@ REGISTER_UNIT_TEST( test_xdp_transport_host_replay_drops_behind_the_window );
 REGISTER_UNIT_TEST( test_xdp_transport_host_replay_never_writes_the_map );
 
 REGISTER_UNIT_TEST( test_xdp_transport_host_udp_length_drops );
-
-// A UDP length past the IP payload, and a UDP length past the frame, are
-// forged lengths. Both count as too large. A length below the UDP header
-// stays too small, and that row lives in test_xdp_transport_host_udp_length_drops.
-
-static void test_xdp_filter_host_udp_length_past_bounds_counts_too_large()
-{
-    std::vector<xdp_host_row_t> rows;
-    const int families[2] = { 4, 6 };
-
-    for ( int f = 0; f < 2; f++ )
-    {
-        xdp_host_row_t past_frame = xdp_host_row( "UDP length past the frame counts too large", families[f] );
-        past_frame.frame.override_udp_len = 8 + past_frame.frame.payload_bytes + 20;
-        rows.push_back( xdp_host_expect( past_frame, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE ) ) );
-
-        xdp_host_row_t past_ip = xdp_host_row( "UDP length past the IP payload counts too large", families[f] );
-        past_ip.frame.pad_bytes = 6;
-        past_ip.frame.override_ip_len = ( families[f] == 4 ? 20 : 0 ) + 8 + past_ip.frame.payload_bytes - 4;
-        rows.push_back( xdp_host_expect( past_ip, XDP_HOST_DROP, XDP_HOST_COUNTS( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_LARGE ) ) );
-    }
-
-    xdp_host_run_rows( rows );
-}
-
-REGISTER_UNIT_TEST( test_xdp_filter_host_udp_length_past_bounds_counts_too_large );
 #endif // #if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST
 
 #if defined( ROCKETNET_XDP ) && ROCKETNET_XDP

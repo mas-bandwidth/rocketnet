@@ -398,9 +398,16 @@ static void test_network_threads_plan_per_transport()
     network_threads_plan( "gso", &config, ROCKETNET_GSO_DEFAULT_WORKERS );
     config.num_gso_workers = 3;
     network_threads_plan( "gso", &config, 3 );
+#if defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING
     network_threads_plan( "io_uring", &config, ROCKETNET_IO_URING_DEFAULT_WORKERS );
     config.num_io_uring_workers = 3;
     network_threads_plan( "io_uring", &config, 3 );
+#else
+    // a build without the io_uring transport (a liburing with no multishot
+    // receive, CMakeLists.txt ROCKETNET_IO_URING_BUILT) plans none
+    rocketnet_server_memory_plan_t uring_plan;
+    check( !rocketnet_builtin_server_memory_plan( &config, "io_uring", uring_plan ) );
+#endif // #if defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING
 #if ROCKETNET_XDP
     network_threads_plan( "xdp", &config, ROCKETNET_XDP_DEFAULT_THREADS );
     config.num_xdp_threads = 3;

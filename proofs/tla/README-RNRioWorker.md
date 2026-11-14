@@ -53,7 +53,17 @@ every RIO call after create.
   - on the send queue, if sends are outstanding.
 
   It then waits on that event and on main's wake. A `RIONotify` on a
-  non-empty queue sets the event at once, per the documented rule.
+  non-empty queue sets the event at once, per the documented rule. The
+  wait also times out: 1 ms after a refused commit or re-post, 50 ms
+  otherwise (`rocketnet_rio_idle_wait`). The model keeps no timeout for an
+  idle worker with nothing outstanding, so where a run shows the worker
+  waiting forever, the code leaves the worker idle until its 50 ms
+  timeout (nominally three updates at 60 Hz), plus scheduling and the
+  processing after it, then runs its next pass; that is not a bound on
+  how late main receives a datagram. While a full bank's worker waits, its
+  queued completions hold their slices unposted, so under load the kernel
+  can drop later arrivals for want of a posted slice (an OS count,
+  `ArriveDropped`), not only delay them.
 - **Stop.**
   1. Stop sets `stopping` and signals the wake.
   2. Each stop pass (`rocketnet_rio_stop_pass`) posts handed phases in
@@ -75,7 +85,13 @@ every RIO call after create.
      `ROCKETNET_RIO_DRAIN_WAITS + 1` failed passes that dequeued none, the
      transport leaks instead of freeing a region the kernel may still
      write (`CountStalledOnly`). That can follow a `closesocket` that
-     succeeded, when the cancellations arrive after the last wait.
+     succeeded, when the cancellations arrive after the last wait. When
+     the bound is spent with `closesocket` refused and nothing posted or
+     outstanding (create failed before it posted a receive), the kernel
+     owns no request on the region: the drain abandons the socket open
+     (`rocketnet_server_rio_create_abandoned_sockets`), runs one more pass
+     and frees the rest of the lane (`WLeak`'s abandon branch,
+     `AbandonUnposted`).
   6. Only after a pass succeeds does the worker set `exited`, which
      `stopped` reports. Destroy joins the worker and frees the registered
      region.
@@ -104,8 +120,11 @@ every RIO call after create.
   - `view` is main's views from its last call as `<<bank, slot,
     datagram>>`, and `consumed` is everything main returned.
   - `drained` is the datagrams the stop pass dequeued and never banked,
-    `stopdrops` what `StopCount` counted, and `late` records a call that
-    broke `DeliveredByNextCall`.
+    which the stop pass counts `RECEIVE_DROP_STOPPED` (the code counts
+    there every completion with a status of 0 and bytes, a datagram the
+    prefilter would refuse included; `drained` keeps only those that pass,
+    as `ExactDelivery` does), `stopdrops` what `StopCount` counted, and
+    `late` records a call that broke `DeliveredByNextCall`.
 - **Send.**
   - `staged[p]` holds the packets staged into phase `p`, for three phases.
   - `state[p]` is one of `fill`, `ready`, `posted` or `idle`.
@@ -116,6 +135,14 @@ every RIO call after create.
   - `cancelled` is the sends that completed after the close, which the
     kernel cancelled: `SendComplete` on a closed socket completes a send
     failed.
+  - A send completion carries no status. On an open socket the kernel may
+    also complete a send failed (a non-zero `Status`, or a
+    `BytesTransferred` other than the slot's length);
+    `rocketnet_rio_retire_send` counts it
+    `SEND_FAILED` instead of `PACKETS_SENT` and frees its slot and the
+    phase's outstanding count exactly as for a good one, so the model does
+    not tell the two apart. Its send properties are about ownership and
+    the one count, not delivery.
 - **Worker.** `wpc` steps through `WTop`, then:
   - `WTake`, under the mutex, which marks the phase posted;
   - `WPost` and `WCommit`; `WPost` lets the kernel refuse any of the
@@ -151,6 +178,16 @@ every RIO call after create.
   (`CountStalledOnly`; `WDrainReceive` remembers a full batch in its place
   `"drainrp"`). A pass may start while at most `StopDrainWaits` have
   stalled, and after `StopDrainWaits + 1` `WLeak` leaks the transport.
+  When the bound is spent, `WLeak` abandons the socket instead of leaking
+  if `closesocket` was refused and nothing is posted, queued or
+  outstanding (`OpenWithNothingPosted`, the code's `posted_receives == 0`
+  and no outstanding send with the socket open): it marks `abandoned`,
+  treats the socket as closed and goes to the drain, which exits, and
+  destroy frees the lane. On create's failure path that state is reached
+  only when create failed before it posted a receive, since nothing
+  dequeues a receive before the close; `Slices` is the receives posted
+  when create failed, so `Slices = 0` is that case
+  (`MCRNRioWorkerInlineStopUnposted.cfg`).
   `stoprefused` records whether the last stop commit or `closesocket` was
   refused. The ghost `countedbusy` records that a counted failed pass had
   dequeued a receive completion, which the code's stalled count never does.
@@ -180,10 +217,26 @@ every RIO call after create.
   - `Stop`, `Destroy`, `Poll` (stopped) and `StopCount`, the one count of
     what was banked and never returned once the worker has exited.
 
-Left out: a refused address write at `rocketnet_server_rio_start_packet`
-and a refused `rocketnet_server_rio_finish_packet` also lose a packet
-counted `SEND_FAILED`, before it is staged; the model's `Stage` is only a
-packet that became postable, so those losses are outside `sent`.
+Left out:
+
+- A refused address write at `rocketnet_server_rio_start_packet` and a
+  refused `rocketnet_server_rio_finish_packet` also lose a packet counted
+  `SEND_FAILED`, before it is staged; the model's `Stage` is only a packet
+  that became postable, so those losses are outside `sent`.
+- A completion queue the kernel reports corrupt (`RIO_CORRUPT_CQ`). The
+  code names it once (`rocketnet_rio_corrupt_queue`) and counts it
+  (`rocketnet_server_rio_corrupt_queues`); the worker pass stops dequeuing
+  that queue for the pass, and the stop pass fails every time, so the
+  worker's lane never reports stopped and its region is never freed (the
+  safe direction: memory the kernel may still write is never freed).
+  `StopCompletesUnlessRefused` assumes no corrupt queue. On create's
+  failure path the drain still ends, by leaking the lane once its bound is
+  spent, so `StopCompletes` holds there; but that leak can come with
+  nothing kernel owned (a closed socket and no receive posted), which
+  `LeakOnlyAfterStalls` does not allow: the code may leak where the model
+  says it frees, again the safe direction.
+- The idle wait's 50 ms timeout with nothing outstanding (see the idle
+  wait above).
 
 ## Properties
 
@@ -210,7 +263,10 @@ packet that became postable, so those losses are outside `sent`.
 - `StopSendsHanded`: at worker exit no handed phase was silently dropped.
 - `StopSendsFinished`: every staged send, including the finished fill
   phase, has retired or was counted refused at its post at exit, and the
-  close cancelled none of them. A refused `RIOSendEx` loses its packet,
+  close cancelled none of them. This is ownership and the one count, not
+  delivery: a retired send is counted `PACKETS_SENT`, or `SEND_FAILED`
+  when the kernel completed it failed on the open socket, which the model
+  does not distinguish. A refused `RIOSendEx` loses its packet,
   counted `SEND_FAILED` (`failed`); `MCRNRioWorkerReachRefusedPost.cfg`
   reaches an exit with one (`NotReachedRefusedPostAtExit`, expected to
   fail).
@@ -224,17 +280,27 @@ packet that became postable, so those losses are outside `sent`.
   drain after a successful `closesocket`: the cancellations may arrive after
   the last stalled pass, and `MCRNRioWorkerReachLateCancelLeak.cfg` reaches
   that leak (`NotReachedLateCancelLeak`, expected to fail). The leak is the
-  safe direction: memory the kernel may still write is never freed.
+  safe direction: memory the kernel may still write is never freed. With
+  `closesocket` refused and nothing posted or outstanding the drain does
+  not leak: it abandons the socket and frees the lane
+  (`MCRNRioWorkerReachAbandonFreed.cfg` reaches that,
+  `NotReachedAbandonFreed`, expected to fail), and
+  `MCRNRioWorkerBrokenLeakUnposted.cfg` (`AbandonUnposted` FALSE) leaks
+  there and fails `LeakOnlyAfterStalls`.
 - `NoGarbageBanked`: no datagram the prefilter refuses (`Garbage`) is ever
   in a bank; the worker counts it in its lane's drop tally and re-posts the
   slice. `ExactDelivery` and `EveryDatagramConsumed` range over the
   datagrams that pass.
 - `EveryDatagramConsumed` and `EveryStagedSent` are the running liveness
   properties; a staged send is sent, or its post refused and counted.
-  They are checked with no wait timeout for an idle worker.
-  The waits that are really timed in the code are while sends are
-  outstanding, a refused commit, or a refused re-post; `WWait` lets those
-  pass. While running, a refused commit is retried until it succeeds
+  They are checked with no wait timeout for an idle worker, which is
+  stricter than the code: every wait in the code times out (50 ms, or
+  1 ms after a refused commit or re-post). So a run that needs a wake
+  the model never gives shows a datagram never consumed, where the code
+  leaves the worker idle until its 50 ms timeout, plus scheduling and the
+  processing after it (not a bound on receive delay). `WWait` lets the wait end without the event
+  or the wake while a send is kernel owned or queued, or a re-post was
+  refused. While running, a refused commit is retried until it succeeds
   (strong fairness on `WCommit` and `WRetire` before stop).
 - No fairness covers the stop pass's commit or `closesocket`: either may
   be refused forever.
@@ -242,7 +308,8 @@ packet that became postable, so those losses are outside `sent`.
     or to `wpc = "leaked"` once the bounded drain gives up.
   - `StopCompletesUnlessRefused`, on the worker's path, which retries
     without bound as the code does: unless the kernel refuses every later
-    stop commit or `closesocket`, `stopping` leads to `freed`.
+    stop commit or `closesocket`, `stopping` leads to `freed`. It assumes
+    no completion queue is reported corrupt (see Left out).
 
 ## Cases and the checks against the code
 
@@ -257,10 +324,13 @@ packet that became postable, so those losses are outside `sent`.
 | `MCRNRioWorkerBrokenUnboundedDequeue.cfg` | `ExactDelivery` | 7854 | 1 | `BoundedDequeue = FALSE` |
 | `MCRNRioWorkerBrokenExitBeforeDrain.cfg` | `FreedOnlyWhenDrained` | 95 | 1 | `DrainBeforeExit = FALSE` |
 | `MCRNRioWorkerBrokenDropHanded.cfg` | `StopSendsHanded` | 260 | 1 | `DropHanded = TRUE` keeps the old stop discard. |
-| `MCRNRioWorkerBrokenNoWake.cfg` | `EveryDatagramConsumed` | 17736 | 13 | `WakeOnReturn = FALSE` |
+| `MCRNRioWorkerBrokenNoWake.cfg` | `EveryDatagramConsumed` | 17736 | 13 | `WakeOnReturn = FALSE`: with no timeout on the model's idle wait the worker never wakes; in the code the same missing wake leaves the worker idle until its 50 ms timeout (nominally three updates at 60 Hz), plus scheduling and the processing after it; not a bound on receive delay. |
 | `MCRNRioWorkerBrokenReadOnlyLeft.cfg` | `DeliveredByNextCall` | 1367 | 1 | `ReadOnlyLeft <- ReadOnlyLeftBroken`: main reads only a bank the worker has left, the old ready FIFO's rule, so a datagram committed before a call waits for a later call (16.7 ms at 60 Hz). Checked against `rocketnet_rio_lane_receive_packets`, which reads the committed bank through `rocketnet_receive_handoff_begin`. |
 | `MCRNRioWorkerBrokenCloseCancelsSends.cfg` | `StopSendsFinished` | 240 | 1 | `DrainSendsBeforeClose = FALSE` keeps the stop pass that closes with sends in flight. |
 | `MCRNRioWorkerInlineStop.cfg` | pass | 480 | 1 | Create's failure path: five posted slices, one datagram, `DrainBatch = 2`, `StopDrainWaits = 1`, every `closesocket` refusable, cancellations late; invariants, `LeakOnlyAfterStalls`, `StopCompletes`. |
+| `MCRNRioWorkerInlineStopUnposted.cfg` | pass | 46 | 1 | Create's failure path with no receive posted (`Slices = 0`), every `closesocket` refusable: the drain closes and stops, or abandons the socket after `StopDrainWaits + 1` refused passes and frees the lane; invariants, `LeakOnlyAfterStalls`, `StopCompletes`. |
+| `MCRNRioWorkerBrokenLeakUnposted.cfg` | `LeakOnlyAfterStalls` | 19 | 1 | `AbandonUnposted <- AbandonUnpostedBroken`: the drain leaks the whole lane with nothing kernel owned. |
+| `MCRNRioWorkerReachAbandonFreed.cfg` | `NotReachedAbandonFreed` | 39 | 1 | Reachability: two refused closes, the socket abandoned, one more pass drains and stops, destroy frees the lane. |
 | `MCRNRioWorkerBrokenUnboundedRetry.cfg` | `StopCompletes` | 210 | 1 | `BoundedStopDrain = FALSE`: the old create loop retries forever. |
 | `MCRNRioWorkerBrokenOneBatchPerPass.cfg` | `LeakOnlyAfterStalls` | 79 | 1 | `DrainLoop = FALSE` and `CountStalledOnly = FALSE`: one batch per queue per pass, and every failed pass counted. Passes that make progress use up the bound. |
 | `MCRNRioWorkerInlineStopBatchPerPass.cfg` | pass | 432 | 1 | That witness with `CountStalledOnly = TRUE`: the passes that dequeue a batch are not counted, the drain finishes, and it leaks only after stalled passes; invariants, `LeakOnlyAfterStalls`, `StopCompletes`. |
@@ -276,8 +346,13 @@ budget at two TLC workers. The distinct states and seconds are the
 2026-11-13 run on amd-3 (one shard per case, two workers, four cases at a
 time) after the receive half moved to the shared receive handoff; all
 twenty-two cases passed or produced exactly the property listed, the
-longest was `MCRNRioWorker.cfg` at 49.0 s, and `RUNS.tsv` holds those
-records.
+longest was `MCRNRioWorker.cfg` at 49.0 s. On 2026-11-13, after the
+abandon branch, all twenty-five cases ran again on aws-mut-3 (pinned
+`tlacheck` and jar, one bounded run per case, four at a time): every case
+passed or produced exactly the property listed, with the same state
+counts as before for the twenty-two older cases; the three new cases took
+under a second each and the longest was `MCRNRioWorker.cfg` at 57.2 s.
+`RUNS.tsv` holds those records.
 
 On 2026-11-10 the bounded stop-drain model ran all fourteen required cases
 on amd-2 (native Linux) with the pinned `tlacheck` built from the commit
@@ -330,13 +405,25 @@ Each reversed witness was read against the code by hand (2026-10-22):
     which fills with datagram 2 before main starts on it: the worker keeps
     it full and stops dequeuing, datagram 3 waiting in the queue. Main's
     call starts on bank 1 and returns datagrams 1 and 2 without a signal.
-    A full bank arms no receive notify, so the worker waits forever and
-    datagram 3 is never banked.
+    A full bank arms no receive notify, and the model's idle wait has no
+    timeout, so the worker waits forever and datagram 3 is never banked.
   - In the code, `rocketnet_rio_lane_receive_packets` calls
     `SetEvent( rio->wake )` after the release when
     `rocketnet_receive_handoff_begin` moved main onto the worker's bank
     (`left >= 0`) and `main_limit >= receives`, a full bank; the woken
     pass commits it and the worker moves to the free bank.
+  - What the witness shows about the code (2026-11-13): without that
+    `SetEvent` the code does not hang, because `rocketnet_rio_idle_wait`
+    times out after 50 ms. The pass after the timeout commits the full bank
+    and moves to the free bank, the next idle wait arms `RIONotify` on the
+    non-empty receive queue, and datagram 3 is banked. So the wake removes
+    an idle stretch until the 50 ms timeout (nominally three updates at
+    60 Hz), plus scheduling and the processing after it, before a full
+    bank's worker moves on (not a bound on how late main receives a
+    datagram), during which the queued completions hold their
+    slices unposted and, under load, the kernel can drop later arrivals;
+    the model, with no timeout on that wait, shows the same missing wake
+    as a datagram never consumed.
 - **ReadOnlyLeft** (2026-11-13).
   - In the trace, bank 0 holds datagram 1, committed, and the worker moved
     to bank 1, which holds datagram 2, committed. A call that takes the
@@ -422,6 +509,28 @@ Each reversed witness was read against the code by hand (2026-10-22):
 - **ReachRefusedPost** (checked 2026-11-11): the same steps with the rule
   on; the refused post is in `failed` at exit, which the code counts as
   above.
+- **LeakUnposted** (checked 2026-11-13).
+  - In the trace, create failed with no receive posted (`posted = 0`).
+    Two stop passes are refused at `closesocket` (`stopwaits` 1, then 2),
+    the bound of `StopDrainWaits + 1 = 2` is spent, and the drain leaks
+    the lane with nothing posted, queued or kernel owned.
+  - In the code, `rocketnet_rio_create_failed_drain` reads
+    `posted_receives` (0); `rocketnet_rio_stop_pass` has no phase to post,
+    and `rocketnet_rio_close_socket` returns false when
+    `rocketnet_rio_close_call` fails. `posted_receives` did not fall, so
+    `++stalled`; `rocketnet_rio_create_drain_wait` returns at once with the
+    socket open. Past `ROCKETNET_RIO_DRAIN_WAITS` (the model's 1 is the
+    code's 10) the drain checks `rio->socket != INVALID_SOCKET`,
+    `posted_receives == 0` and `rocketnet_rio_outstanding_sends( rio ) == 0`,
+    abandons the socket (`rio->socket = INVALID_SOCKET`, counted
+    `rocketnet_server_rio_create_abandoned_sockets`) and returns
+    `rocketnet_rio_lane_stopped( rio )`, whose pass finds nothing to close
+    or dequeue and returns true, so create calls `rocketnet_rio_lane_destroy`.
+    Without that branch it returned false and create leaked the lane.
+- **ReachAbandonFreed** (checked 2026-11-13): the same two refused passes
+  with the rule on; `WLeak` abandons, `WDrainSend` and `WDrainReceive`
+  find both queues empty and nothing posted, the worker state exits and
+  `Destroy` frees the lane, as the code path above does.
 
 The worker's stop pass has no deadline: like the IOCP transport, which
 keeps its socket open until `pending` is zero, it waits for the kernel to
@@ -446,3 +555,9 @@ against a fake kernel whose `closesocket` cancels every send in flight. The
 stop pass keeps the socket open across two passes while the burst is in
 flight, and closes it only after the burst completes. Every packet counts
 `PACKETS_SENT` and none `SEND_FAILED`.
+
+No trace walk binds this model to the code: the unit seams above drive the
+real worker pass, main calls and stop pass, but no `tests/tla_trace_*.cpp`
+walk emits their steps for TLC to check against this spec. That binding is
+owed (a roadmap entry), so the checks above are by hand and by those unit
+cases, not a trace check.

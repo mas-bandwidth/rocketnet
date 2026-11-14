@@ -49,6 +49,14 @@ or the slots.
   the code before the repair: the transport stood still at the ceiling and
   counted a misuse for a time the library made.
 - **Done.** The step budget is spent; the model stops.
+- **Exact time.** The model's times are bounded naturals and its sums are
+  exact. The code's are doubles: the resumed time `last_good + step` rounds
+  (a small step beside a large last good time can add less than the step,
+  or nothing), and for finite inputs near the top of the double range it can
+  overflow to +infinity and stay there, since every later sample is behind
+  it. `ResumeAdvances` and `ClampedNeverDecreases` describe the code only
+  where that sum is exact and finite. A guard on the sum belongs to the
+  code.
 
 ## Properties
 

@@ -12,7 +12,8 @@ Transport selection is runtime: one build carries every transport its
 platform has. Linux production servers have xdp (privileged), gso (SO_REUSEPORT +
 sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and io_uring; macOS production
 servers have msgx; Windows production servers have iocp and rio. Portable
-servers and clients are also available on every platform. Production server
+servers and clients are also available on every platform; the portable server
+is a fallback, not a production server transport. Production server
 auto selection ranks portable after the native transports. Loopback is on every platform and is selected
 only by name. The transport walks an ordered candidate
 list when client connect or server start activates I/O. Public create parses
@@ -93,8 +94,10 @@ line-rate performance; that requires measurements on suitable Windows hardware.
 
 ### To reach 10 Gb/s on Windows set a bind address
 
-The Windows defaults that held 1000 players at 10 Gb/s (5 RIO lanes, or 2
-IOCP completion workers and 2 send threads, on AWS m7i.16xlarge) share the
+The Windows default counts that held the measured peak workload, 1000 players at 60
+Hz and about 900,000 packets a second from the server (an estimated 9.39 Gb/s;
+[PERFORMANCE.md](PERFORMANCE.md)), with 5 RIO lanes, or 2 IOCP completion
+workers and 2 send threads, on AWS m7i.16xlarge, share the
 port by processor, which Windows allows only on a specific local address. Set
 the network card's address in `bind_ipv4_address` (or `bind_ipv6_address`),
 or `ROCKETNET_SERVER_BIND_IPV4_ADDRESS`. Without it the server binds the
@@ -134,19 +137,21 @@ acts are the runtime resources (its embedded BPF program loaded and attached, AF
 the memlock rlimit). Provisioning uses `scripts/rocketnet-provision`, an operator
 step; no application using XDP reconstructs it. The
 script's header carries the authoritative
-condition list; the pre-flight checks exactly those conditions, except R8
-(the real-time throttle), which only the script checks.
+condition list; the pre-flight checks exactly those conditions, R8 (the
+real-time throttle) included.
 
 `xdp` runs one thread per NIC queue, so the NIC is provisioned to the
 server's thread count before the server starts. In order:
 
 1. Choose the thread count, `num_xdp_threads` or
-   `ROCKETNET_SERVER_NUM_XDP_THREADS`, or take the default, 1 (it held 1000
-   players at 10 Gb/s on an X710 pair, main 59890655d, 2026-11-13).
+   `ROCKETNET_SERVER_NUM_XDP_THREADS`, or take the default, 1 (one thread
+   held the measured peak workload on an X710 pair: [PERFORMANCE.md](PERFORMANCE.md)).
 2. Provision the NIC with the script, before the server:
    `sudo scripts/rocketnet-provision eth0 2` for 2 threads. Given no count the
    script takes `ROCKETNET_SERVER_NUM_XDP_THREADS` from its environment, or
-   the default.
+   the default. `sudo` drops an exported variable by default: give the count
+   as the argument, or set the variable on the `sudo` line
+   (`sudo ROCKETNET_SERVER_NUM_XDP_THREADS=2 scripts/rocketnet-provision eth0`).
 3. Start the server: thread `q` runs on cpu `num_os_cpus + q`.
 4. If the counts differ the server does not start `xdp`, and says why:
 
@@ -167,6 +172,9 @@ after the interface name for more):
     # 1. BOOT TIER (once, then reboot): edit GRUB_CMDLINE_LINUX in /etc/default/grub
     #    to carry: nosmt irqaffinity=0 isolcpus=1-15 nohz_full=1-15
     #    then: update-grub && reboot
+    #    (irqaffinity= may be any cpu list naming no isolated cpu: with
+    #    ROCKETNET_SERVER_NUM_OS_CPUS=2 the XDP threads start at cpu 2, so
+    #    irqaffinity=0-1 isolcpus=2-15 nohz_full=2-15)
     #    (the NIC driver needs AF_XDP zero copy: on an X710 the in-tree i40e
     #    of Ubuntu's 7.0.0-43-generic binds it, while Intel's i40e 2.30.18
     #    compiles it out on Ubuntu; LINUX.md section 6 has what was measured)
@@ -176,9 +184,23 @@ after the interface name for more):
     #    The interface is the one carrying the public address. On one
     #    802.1Q VLAN device (eth0.300) the script resolves it to the parent
     #    NIC and provisions that (R2), and the server attaches there and tags
-    #    what it sends; QinQ, 802.1ad and VLANs on bonds or bridges are
-    #    refused by name (LINUX.md section 6, "A VLAN"). Native XDP only: a
-    #    NIC without it refuses an xdp pin, and auto falls to the next rung.
+    #    what it sends. The filter tells the server's VLAN by the 802.1Q tag
+    #    in the frame, so the script also turns the parent's receive VLAN
+    #    offload off (ethtool -K eth0 rxvlan off) and reads it back; with it
+    #    on, the parent would hand the filter every VLAN's frames untagged,
+    #    and the pre-flight refuses xdp (auto falls to the next rung). The
+    #    setting does not survive a reboot or a driver reload: re-run this
+    #    script after either. Give the script the VLAN device (eth0.300),
+    #    never the bare parent: only then does it check the offload, in
+    #    provision and in verify. A passed check is not a guarantee of VLAN
+    #    isolation (a veth parent, 802.1ad stripping and untagged frames on
+    #    the parent's segment are not covered), and an untagged server on a
+    #    NIC that carries other VLANs with the offload on takes their frames
+    #    for its address and port: LINUX.md section 6, "A VLAN" and "An
+    #    untagged server on a trunk". QinQ, 802.1ad and VLANs on bonds or
+    #    bridges are refused by name (LINUX.md section 6, "A VLAN"). Native
+    #    XDP only: a NIC without it refuses an xdp pin, and auto falls to the
+    #    next rung.
     #    The socket transports pay for connection tracking under a stateful
     #    firewall; LINUX.md section 6 gives the notrack rule and what the
     #    ruleset must accept with it.
@@ -200,15 +222,43 @@ after the interface name for more):
     # 4a. ON IXGBE (and any NIC whose XDP attach resets the port): the attach
     #    rebuilds the interrupt vectors after the pre-flight has passed, and
     #    with irqaffinity=0 every queue vector lands on cpu 0, away from the
-    #    worker that polls it. Once the server is up, as root:
+    #    worker that polls it. The library never changes interrupt affinity;
+    #    after its attach it reads the queue vectors again and, when one has
+    #    left its worker's cpu, logs one warning naming this step:
+    #
+    #      xdp: attaching server_xdp moved 1 of eth0's 1 queue interrupts off
+    #      their xdp threads' cpus (irq 120, queue 0, on '0', want cpu 1): ...
+    #      run sudo scripts/rocketnet-provision eth0 1 repin now (docs/DEPLOYING.md, step 4a)
+    #
+    #    Once the server is up, as root:
     scripts/rocketnet-provision eth0 repin
     #    It waits (ROCKETNET_REPIN_WAIT_SECONDS, default 60) for the attached
     #    program, the carrier and one queue vector a thread, pins <if>-TxRx-k
-    #    to the k-th isolated cpu (the cpu XDP worker k pins itself to),
+    #    to cpu num_os_cpus + k (the cpu XDP worker k pins itself to; give the
+    #    script the server's ROCKETNET_SERVER_NUM_OS_CPUS when it is not 1),
     #    moves any other vector of the port off the worker cpus, and reads
-    #    them back. It writes only smp_affinity_list, so it runs beside the
-    #    live server. Provision itself runs R7 (channels) before R4 (IRQs), so
+    #    back every vector it pinned or moved. It writes only
+    #    smp_affinity_list, so it runs beside the live server. Provision itself runs R7 (channels) before R4 (IRQs), so
     #    a port left with many channels provisions on the first run.
+    #
+    #    On such a NIC the order is always: provision, start the server,
+    #    repin. A RESTART needs provision first again: the old server's
+    #    detach rebuilds the vectors once more, and they come back on cpu 0.
+    #    Skip it and the new server's pre-flight refuses R4, one line a
+    #    vector, then the summary, and `auto` falls to gso:
+    #
+    #      xdp pre-flight: irq 120 (queue 0 of eth0) affinity is '0', want cpu 1, the cpu xdp thread 0 pins to (R4): run sudo scripts/rocketnet-provision eth0 1
+    #      xdp pre-flight failed: this machine is not provisioned ...
+    #
+    #    Provision refuses to unload rocketnet's own program while a
+    #    rocketnet server on this host is live (R3), on any interface (the
+    #    pin roots do not record one): stop every rocketnet server on the
+    #    host, then run provision. A crashed server does not block it: its
+    #    pin root names a pid that is gone, or that was recycled (another
+    #    start time), or another boot, and provision unloads its program as
+    #    before (step 5). If provision still names a pid and no rocketnet
+    #    server is running, run the sweep below: it prints each pin root it
+    #    keeps and why; remove one by hand once you have judged it stale.
 
     # 5. AFTER A CRASH (a server that died without destroy): its XDP program
     #    stays ATTACHED to the interface, and it is NOT inert: it drops every
@@ -236,22 +286,17 @@ after the interface name for more):
     #    program. Pin roots alone are inert -- a colliding create refuses
     #    loudly and names this sweep.
 
-    # (scripts/rocketnet-provision selftest holds the script's IRQ-name
-    #  matcher to the C test's case set AND drives the R3/R7 enforcement
-    #  functions end to end, both modes, against stubs replaying captured
-    #  xdp-tools output (R3) and real-shaped ethtool output (R7) -- every
-    #  fail site in both functions has a driving
-    #  case, and
-    #  the WHOLE SCRIPT is driven door-to-fail by a full-flow verify case
-    #  (there is no level above the whole script). it
-    #  needs no root and touches only a private temp dir it creates and
-    #  removes. CI runs it on every push, so neither the matcher halves nor
-    #  the enforcement paths can drift silently.)
+    # (scripts/rocketnet-provision selftest checks the script's own logic
+    #  against recorded tool output and a stub /proc and /sys tree. It
+    #  needs no root and touches only a private temporary directory it
+    #  creates and removes.)
 
-This configuration — isolated cores 1-15, the default one queue and thread,
-per-queue IRQ pinning, the busy-poll pair — held 1000 players at 10 Gb/s on a
-provisioned X710 pair (rows R5-R8, main 59890655d; two queues also passed);
-the magnitude belongs to that machine, and the claim attaches to a
+The measured XDP rows in [PERFORMANCE.md](PERFORMANCE.md) ran this
+configuration with `isolcpus=1-2` (one or two queues and threads, per-queue
+IRQ pinning, the busy-poll pair) on a provisioned X710 pair: one thread held
+the peak workload, 1000 players at 60 Hz and about 900,000 packets a second
+from the server (an estimated 9.39 Gb/s), and two threads did too.
+The magnitude belongs to that machine, and the claim attaches to a
 verified-provisioned box, never to the library alone. The isolated-core mask, the
 queue count and the IRQ pinning scale together with NIC bandwidth: one queue
 wants one isolated core, and higher-bandwidth NICs need more cores (the script

@@ -55,7 +55,9 @@ the outline's heading. Subsections are `### t6.1. Private connect token data`
 and so on, with an anchor `t6.1`; a subsection id is never reused or
 renumbered once published.
 
-The outline below is the one source of the section list. The checker reads
+The outline below is the one source of the section list, except RN-R's
+`rh Revision history`, which follows the outline as the paragraph after it
+states. The checker reads
 it from this file and fails when a document's headings differ from it in
 text, id or order. Adding, removing or renaming a section is an edit here
 first. The checker also rejects a subsection with a missing or mismatched

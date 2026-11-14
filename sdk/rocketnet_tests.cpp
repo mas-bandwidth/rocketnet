@@ -11,6 +11,16 @@
 
 #include "rocketnet_platform.h"
 
+// This file is compiled only with ROCKETNET_DEV=1: a ROCKETNET_DEV=OFF build
+// links a generated stub in its place (CMakeLists.txt, rocketnet_test_support),
+// and test_wide takes rocketnet_dev's definitions. The #if ROCKETNET_DEV
+// guards below are therefore always true; they mark the DEV seams a case
+// uses, and none of them has a production #else half.
+
+#if !ROCKETNET_DEV
+#error "sdk/rocketnet_tests.cpp is development-build only (ROCKETNET_DEV=1)"
+#endif // #if !ROCKETNET_DEV
+
 #include <limits.h>
 #include <math.h>
 
@@ -39,6 +49,8 @@
 #include "rocketnet_allocator.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_message_object.h"
+#include "rocketnet_driver.h"
+#include "rocketnet_client_io.h"
 
 // The interrupt matcher matches fixture lines. Transport creates live in tests/functional/.
 
@@ -2081,7 +2093,22 @@ void rocketnet_test_cookie()
     rocketnet_check( input[0] == 2 );
     rocketnet_check( input[1] == 0x01 && input[2] == 0x20 );   // group 2001 little-endian
 
-    rocketnet_check( rocketnet_generate_cookie_mac( mac, &ipv6_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_key ) );
+    // the ipv6 mac is the keyed hash of that whole ipv6 input (there is no
+    // published ipv6 vector, so the reference is the primitive itself over
+    // the encoding checked above), differs from the ipv4 mac, and moves with
+    // the last address group
+
+    uint8_t ipv6_mac[ROCKETNET_COOKIE_MAC_BYTES];
+    rocketnet_check( rocketnet_generate_cookie_mac( ipv6_mac, &ipv6_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_key ) );
+
+    uint8_t reference_mac[ROCKETNET_COOKIE_MAC_BYTES];
+    crypto_generichash( reference_mac, ROCKETNET_COOKIE_MAC_BYTES, input, (unsigned long long) input_bytes, rocketnet_test_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
+    rocketnet_check( memcmp( ipv6_mac, reference_mac, ROCKETNET_COOKIE_MAC_BYTES ) == 0 );
+    rocketnet_check( memcmp( ipv6_mac, mac, ROCKETNET_COOKIE_MAC_BYTES ) != 0 );
+
+    rocketnet_check( rocketnet_address_parse( &other_address, "[2001:db8::8]:56789" ) );
+    rocketnet_check( rocketnet_generate_cookie_mac( other_mac, &other_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_key ) );
+    rocketnet_check( memcmp( other_mac, ipv6_mac, ROCKETNET_COOKIE_MAC_BYTES ) != 0 );
 }
 
 void rocketnet_test_connection_keys()
@@ -2772,10 +2799,6 @@ void rocketnet_test_request_path_refusals()
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     struct rocketnet_counters_t before;
-
-    const uint8_t * signed_base = good_request + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES +
-                                  ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
-    (void) signed_base;
 
     int signed_offset = ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
 
@@ -3843,8 +3866,11 @@ void rocketnet_test_request_path_ordering()
 {
     // multi-fault packets: the suite's single-fault tests pin WHICH check
     // refuses; these pin THAT the checks run in the standard's order, which
-    // is the security argument itself. each packet fails two rungs and the
-    // earlier one must win with the later one's counter untouched.
+    // is the security argument itself. the cookie, version, already-connected
+    // and resend packets each fail two rungs or more, and the earlier one must
+    // win with the later one's counter untouched. the client-id packet carries
+    // one fault: it pins that rung below the cookie gate and the seal (it is
+    // reached only once both pass), not a race between two faults.
 
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
@@ -4112,7 +4138,10 @@ void rocketnet_test_request_path_config_branches()
         rocketnet_check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->control->timeout_seconds == 30 );
     }
 
-    // a negative timeout is refused: there is no switch that accepts it
+    // a negative timeout is refused: there is no switch that accepts it. unlike
+    // the bit-flipped field of the request-check walk, this token is validly
+    // signed with -1; the timeout rung sits above the cookie gate, so the
+    // refusal must be counted there and nowhere else
 
     rocketnet_check( rocketnet_address_parse( &test.client_address, "198.51.100.61:56789" ) );
 
@@ -4131,7 +4160,9 @@ void rocketnet_test_request_path_config_branches()
 
         rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt, rocketnet_test_client_eph_public, token.signed_connect_data, token.signature );
 
+        struct rocketnet_counters_t before = test.counters;
         rocketnet_check( rocketnet_test_process( &test, request, sizeof( request ), response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+        rocketnet_test_expect_reason( &test, &before, ROCKETNET_COUNTER_CONNECTION_REQUEST_TIMEOUT_INVALID );
         rocketnet_check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
     }
 
@@ -6183,7 +6214,10 @@ void rocketnet_test_client_terminal_states_wipe_secrets()
     // handshake in progress (1095-1098) and, on a denied, to "release all
     // connection state" (2425-2426); proofs/tla/ClientConnection.tla holds the
     // states and their terminal transitions, whose invariant
-    // KeysErasedWhenDown pins cKeys = NoKeys at state <= 0.
+    // KeysErasedWhenDown pins cKeys = NoKeys at state <= 0. The fifth, a
+    // small-order challenge ending the attempt in protocol violation (-10),
+    // is held to the same erasure by
+    // test_client_small_order_challenge_is_a_protocol_violation.
 
     for ( int scenario = 0; scenario < 4; scenario++ )
     {
@@ -6244,7 +6278,8 @@ void rocketnet_test_client_terminal_states_wipe_secrets()
 
                     rocketnet_test_mint_token( token_data, 0xDEDEULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
                     rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
-                    expected_state = rocketnet_test_pump( &test, &client, -1, 5.0 );
+                    rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED );
+                    expected_state = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED;
                 }
 
                 break;
@@ -6281,8 +6316,40 @@ void rocketnet_test_client_terminal_states_wipe_secrets()
     }
 }
 
+// One client update that watches for the named terminal state. When this
+// update is the one that enters it, the timer that fired is checked at both
+// ends: the elapsed time it reads (the same subtraction the client makes)
+// reached its bound, so it did not fire early, and at the previous update's
+// time it had not, so it did not fire late. The token-lifetime deadline
+// (CONNECT_TOKEN_EXPIRED) reads attempt_start_time; every other timed-out
+// state reads last_receive_time. The bound the client holds must be the one
+// the token set (expected_bound), so a timer read from the wrong field fails.
+
+static void rocketnet_test_client_update_watching( struct rocketnet_client_protocol_t * client, double previous_time, double time,
+                                                   int terminal_state, double expected_bound, uint8_t * packet, int * packet_bytes, int * fired )
+{
+    const int state_before = client->state;
+    const bool deadline = terminal_state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED;
+    const double reference = deadline ? client->attempt_start_time : client->last_receive_time;
+    const double bound = deadline ? (double) client->total_deadline_seconds : (double) client->timeout_seconds;
+
+    rocketnet_client_protocol_update( client, time, packet, packet_bytes );
+
+    if ( client->state == terminal_state && state_before != terminal_state )
+    {
+        rocketnet_check( bound == expected_bound );
+        rocketnet_check( time - reference >= bound );
+        rocketnet_check( previous_time - reference < bound );
+        ( *fired )++;
+    }
+}
+
 void rocketnet_test_client_timeout_paths()
 {
+    // Each timeout below is pinned at both ends by
+    // rocketnet_test_client_update_watching: the state is reached, in the
+    // update where its timer's bound is first met, not before and not after.
+
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
     struct rocketnet_client_protocol_t client;
@@ -6297,12 +6364,16 @@ void rocketnet_test_client_timeout_paths()
     rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
     rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
 
+    int fired = 0;
+    double previous_time = 100.0;
     for ( double time = 100.0; time < 112.0; time += 0.05 )
     {
-        rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+        rocketnet_test_client_update_watching( &client, previous_time, time, ROCKETNET_CLIENT_TRANSPORT_STATE_COOKIE_REQUEST_TIMED_OUT, 10.0, packet, &packet_bytes, &fired );
+        previous_time = time;
     }
 
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_COOKIE_REQUEST_TIMED_OUT );
+    rocketnet_check( fired == 1 );
 
     // a server that answers only cookies: sending connection request times
     // out to connection request timed out, the pairing at state 2
@@ -6318,9 +6389,12 @@ void rocketnet_test_client_timeout_paths()
         int payload_bytes = 0;
         int payload_client_index = -1;
 
+        fired = 0;
+        previous_time = 100.0;
         for ( double time = 100.0; time < 115.0; time += 0.05 )
         {
-            rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+            rocketnet_test_client_update_watching( &client, previous_time, time, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_REQUEST_TIMED_OUT, 10.0, packet, &packet_bytes, &fired );
+            previous_time = time;
             if ( client.state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
             {
                 break;
@@ -6342,6 +6416,7 @@ void rocketnet_test_client_timeout_paths()
         }
 
         rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_REQUEST_TIMED_OUT );
+        rocketnet_check( fired == 1 );
         rocketnet_test_server_teardown( &test );
     }
 
@@ -6359,9 +6434,12 @@ void rocketnet_test_client_timeout_paths()
         int payload_bytes = 0;
         int payload_client_index = -1;
 
+        fired = 0;
+        previous_time = 100.0;
         for ( double time = 100.0; time < 115.0; time += 0.05 )
         {
-            rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+            rocketnet_test_client_update_watching( &client, previous_time, time, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT, 10.0, packet, &packet_bytes, &fired );
+            previous_time = time;
             if ( client.state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
             {
                 break;
@@ -6380,6 +6458,7 @@ void rocketnet_test_client_timeout_paths()
         }
 
         rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT );
+        rocketnet_check( fired == 1 );
         rocketnet_test_server_teardown( &test );
     }
 
@@ -6394,12 +6473,16 @@ void rocketnet_test_client_timeout_paths()
         rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
         double connected_time = client.last_receive_time;
+        fired = 0;
+        previous_time = connected_time;
         for ( double time = connected_time; time < connected_time + 12.0; time += 0.05 )
         {
-            rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+            rocketnet_test_client_update_watching( &client, previous_time, time, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT, 10.0, packet, &packet_bytes, &fired );
+            previous_time = time;
         }
 
         rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT );
+        rocketnet_check( fired == 1 );
         rocketnet_test_server_teardown( &test );
         rocketnet_counters_assert_conserved( &client_counters );
     }
@@ -6412,12 +6495,16 @@ void rocketnet_test_client_timeout_paths()
     rocketnet_test_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 5, 60 );
     rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
 
+    fired = 0;
+    previous_time = 100.0;
     for ( double time = 100.0; time < 107.0; time += 0.05 )
     {
-        rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+        rocketnet_test_client_update_watching( &client, previous_time, time, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED, 5.0, packet, &packet_bytes, &fired );
+        previous_time = time;
     }
 
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED );
+    rocketnet_check( fired == 1 );
     rocketnet_counters_assert_conserved( &counters );
 }
 
@@ -7027,6 +7114,15 @@ void rocketnet_test_client_server_lossy_wire()
     // connection still completes and carries traffic. duplicates double as
     // the replay-protection soak: every duplicated session packet must be
     // refused exactly once and change nothing.
+    //
+    // The client keeps a ledger of every datagram it is handed (a 64-bit
+    // FNV-1a hash and the length): a datagram whose bytes it already opened
+    // is a wire duplicate. Each such copy must be refused, deliver nothing,
+    // leave the acked batch alone, and move exactly one ALREADY_RECEIVED
+    // counter by exactly one, with every other client counter unchanged but
+    // the arrival counts (PACKETS_RECEIVED and that type's _RECEIVED). Each
+    // server payload carries its own 8-byte id, so a payload delivered twice
+    // or a payload the server never wrote is caught by id.
 
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
@@ -7057,6 +7153,23 @@ void rocketnet_test_client_server_lossy_wire()
     struct rocketnet_address_t from;
 
     int client_received_payloads = 0;
+
+    enum
+    {
+        LOSSY_MAX_PAYLOADS = 20,
+        LOSSY_LEDGER = 8192
+    };
+
+    uint64_t next_payload_id = 1;
+    int payload_delivered[LOSSY_MAX_PAYLOADS + 1] = {};
+
+    static uint64_t ledger_hash[LOSSY_LEDGER];
+    static int ledger_bytes[LOSSY_LEDGER];
+    static bool ledger_opened[LOSSY_LEDGER];
+    int ledger_count = 0;
+    int duplicates_refused = 0;
+
+    static uint64_t counters_before[ROCKETNET_NUM_COUNTERS];
 
     for ( double time = 100.0; time < 115.0; time += 0.01 )
     {
@@ -7095,12 +7208,16 @@ void rocketnet_test_client_server_lossy_wire()
             }
         }
 
-        if ( rocketnet_client_slots_connected( test.server.client_slots, 0 ) && client_received_payloads < 20 )
+        if ( rocketnet_client_slots_connected( test.server.client_slots, 0 ) && client_received_payloads < LOSSY_MAX_PAYLOADS &&
+             next_payload_id <= LOSSY_MAX_PAYLOADS )
         {
-            const uint8_t stream_byte[1] = { 0x77 };
-            int stream_bytes = rocketnet_server_protocol_write_payload( &test.server, 0, stream_byte, 1, time, response );
+            uint8_t stream_id[8];
+            uint8_t * w = stream_id;
+            rocketnet_write_uint64( &w, next_payload_id );
+            int stream_bytes = rocketnet_server_protocol_write_payload( &test.server, 0, stream_id, 8, time, response );
             if ( stream_bytes > 0 )
             {
+                next_payload_id++;
                 rocketnet_network_simulator_send( simulator, &server_address, &test.client_address, response, stream_bytes, time );
             }
         }
@@ -7109,8 +7226,90 @@ void rocketnet_test_client_server_lossy_wire()
 
         while ( ( bytes = rocketnet_network_simulator_receive( simulator, &test.client_address, time, &from, packet ) ) > 0 )
         {
-            if ( rocketnet_client_protocol_process_packet( &client, packet, bytes, time, payload, sizeof( payload ), &payload_bytes ) && payload_bytes > 0 )
+            uint64_t hash = 0xCBF29CE484222325ULL;
+            for ( int i = 0; i < bytes; i++ )
             {
+                hash ^= packet[i];
+                hash *= 0x100000001B3ULL;
+            }
+
+            int seen = -1;
+            for ( int i = 0; i < ledger_count; i++ )
+            {
+                if ( ledger_hash[i] == hash && ledger_bytes[i] == bytes )
+                {
+                    seen = i;
+                    break;
+                }
+            }
+
+            memcpy( counters_before, client_counters.values, sizeof( counters_before ) );
+            const int acked_before = client.num_acked;
+
+            payload_bytes = 0;
+            const bool accepted = rocketnet_client_protocol_process_packet( &client, packet, bytes, time, payload, sizeof( payload ), &payload_bytes ) != 0;
+
+            if ( seen >= 0 && ledger_opened[seen] )
+            {
+                // a wire duplicate of a datagram the client already opened
+
+                rocketnet_check( !accepted );
+                rocketnet_check( client.num_acked == acked_before );
+
+                // the arrival is counted (PACKETS_RECEIVED and the type's own
+                // _RECEIVED, the conservation law's left sides) and refused
+                // once as that type's ALREADY_RECEIVED; nothing else moves
+
+                static const int session_types[4][2] = {
+                    { ROCKETNET_COUNTER_CLIENT_PAYLOAD_RECEIVED, ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED },
+                    { ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED, ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED },
+                    { ROCKETNET_COUNTER_CLIENT_ACK_RECEIVED, ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED },
+                    { ROCKETNET_COUNTER_CLIENT_DISCONNECT_RECEIVED, ROCKETNET_COUNTER_CLIENT_DISCONNECT_ALREADY_RECEIVED },
+                };
+
+                int type = -1;
+                for ( int t = 0; t < 4; t++ )
+                {
+                    if ( client_counters.values[session_types[t][1]] != counters_before[session_types[t][1]] )
+                    {
+                        rocketnet_check( type < 0 );
+                        type = t;
+                    }
+                }
+                rocketnet_check( type >= 0 );
+
+                for ( int c = 0; c < ROCKETNET_NUM_COUNTERS; c++ )
+                {
+                    const uint64_t delta = client_counters.values[c] - counters_before[c];
+                    const bool expected = c == ROCKETNET_COUNTER_PACKETS_RECEIVED || ( type >= 0 && ( c == session_types[type][0] || c == session_types[type][1] ) );
+                    rocketnet_check( delta == ( expected ? 1u : 0u ) );
+                }
+                duplicates_refused++;
+                continue;
+            }
+
+            if ( seen < 0 )
+            {
+                rocketnet_check( ledger_count < LOSSY_LEDGER );
+                ledger_hash[ledger_count] = hash;
+                ledger_bytes[ledger_count] = bytes;
+                ledger_opened[ledger_count] = false;
+                seen = ledger_count++;
+            }
+
+            if ( accepted && client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            {
+                ledger_opened[seen] = true;
+            }
+
+            if ( accepted && payload_bytes > 0 )
+            {
+                rocketnet_check( payload_bytes == 8 );
+                const uint8_t * q = payload;
+                const uint64_t id = rocketnet_read_uint64( &q );
+                rocketnet_check( id >= 1 && id < next_payload_id );
+                rocketnet_check( payload_delivered[id] == 0 );
+                payload_delivered[id]++;
                 client_received_payloads++;
             }
         }
@@ -7119,12 +7318,17 @@ void rocketnet_test_client_server_lossy_wire()
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     rocketnet_check( client_received_payloads >= 10 );
 
-    // the duplicates the wire injected were each refused exactly once at the
-    // replay window, and nothing downstream of them moved
+    // the wire did duplicate session packets at this seed, and every one the
+    // ledger saw was refused under the rules above; the replay counters hold
+    // at least those refusals (a duplicate of a handshake packet, or of a
+    // packet whose first copy was refused, is not in the ledger's count)
 
+    rocketnet_check( duplicates_refused > 0 );
     rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED] +
-                         client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED] >
-                     0 );
+                         client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED] +
+                         client_counters.values[ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED] +
+                         client_counters.values[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ALREADY_RECEIVED] >=
+                     (uint64_t) duplicates_refused );
 
     rocketnet_network_simulator_destroy( simulator );
     rocketnet_test_server_teardown( &test );
@@ -7310,8 +7514,8 @@ void rocketnet_test_swarm()
             else if ( variant == 1 )
             {
                 uint8_t * p = packet;
-                rocketnet_write_prefilter_header( &p, (uint8_t) ( 8 + ( ROCKETNET_SWARM_RANDOM() % 248 ) ), tag );
-                garbage_bytes = 32;                          // reserved type
+                rocketnet_write_prefilter_header( &p, (uint8_t) ( ROCKETNET_FIRST_RESERVED_PACKET_TYPE + ( ROCKETNET_SWARM_RANDOM() % ( 256 - ROCKETNET_FIRST_RESERVED_PACKET_TYPE ) ) ), tag );
+                garbage_bytes = 32;                          // reserved type (9 through 255; 8 is ACK)
             }
             else if ( variant == 2 )
             {
@@ -7487,13 +7691,32 @@ void rocketnet_test_server_disconnect_client()
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT] == 1 );
     rocketnet_check( test.counters.values[ROCKETNET_COUNTER_CLIENT_DISCONNECTED] == 1 );
 
-    // the first copy lands and the client dies to disconnected; the rest are
-    // replays of consecutive sequences and every one is refused
+    // the first copy lands and the client dies to disconnected; the rest of
+    // the burst (each copy at its ROCKETNET_SEND_BUDGET stride) reaches a
+    // client that is already down, and every one is refused: nothing opens,
+    // nothing is delivered, the state stays disconnected
 
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     rocketnet_check( rocketnet_client_protocol_process_packet( &client, burst, burst_bytes, 200.0, payload, sizeof( payload ), &payload_bytes ) );
     rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+
+    for ( int i = 1; i < burst_count; i++ )
+    {
+        // refused at the state gate, before any key is used: exactly the
+        // arrival, the disconnect type's arrival and its wrong-state refusal
+
+        const struct rocketnet_counters_t copy_before = client_counters;
+        payload_bytes = 0;
+        rocketnet_check( !rocketnet_client_protocol_process_packet( &client, burst + (size_t) i * (size_t) ROCKETNET_SEND_BUDGET, burst_bytes, 200.0, payload, sizeof( payload ), &payload_bytes ) );
+        rocketnet_check( payload_bytes == 0 );
+        rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+        rocketnet_check( rocketnet_counters_expect_core( &copy_before, &client_counters,
+                                                         { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 },
+                                                           { ROCKETNET_COUNTER_CLIENT_DISCONNECT_RECEIVED, 1 },
+                                                           { ROCKETNET_COUNTER_CLIENT_DISCONNECT_WRONG_STATE, 1 } },
+                                                         NULL, 0 ) );
+    }
 
     // a second disconnect of the same index does nothing, loudly countable
 
@@ -8151,13 +8374,13 @@ static const char * rocketnet_test_public_null_exempt_exports[] = {
 
 // The layer audit: every entry point of the SDK's layers (rocketnet_layers.h,
 // and the public calls they share), each exercised with NULL or exempt.
-// The public audit, rocketnet_test_exports below, mirrors rocketnet.h.
-// Formerly the export audit: a mirror of every exported entry point compiled
-// into the non-development library, in header order. Every name is either
-// exercised here (a NULL case above) or exempt (no NULL-able pointer, or NULL
-// is a valid value), each exactly once. tools/check_exports.py derives the set
-// of exported entry points from sdk/rocketnet.h and refuses any name missing
-// here, any table name the header does not declare, and any duplicate.
+// The public audit, rocketnet_test_exports below, mirrors rocketnet.h, and
+// tools/check_exports.py holds that table to the header (a missing name, an
+// undeclared name or a duplicate is refused). This layer table is kept by
+// hand, in header order: no tool compares it with rocketnet_layers.h. Every
+// name in it is either in the NULL-case list (and called with NULL in
+// rocketnet_test_public_api_null_is_a_counted_no_op) or exempt (no NULL-able
+// pointer, or NULL is a valid value), each exactly once.
 static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_init",
     "rocketnet_init_internal",
@@ -8799,6 +9022,14 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_client_transport_stats( NULL, &client_stats );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
+    before = rocketnet_api_misuse_count();
+    rocketnet_client_transport_stop( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( !rocketnet_client_transport_stopped( NULL ) );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
     // server transport
 
     before = rocketnet_api_misuse_count();
@@ -8807,6 +9038,10 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
 
     before = rocketnet_api_misuse_count();
     rocketnet_server_transport_stop( NULL );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( !rocketnet_server_transport_stopped( NULL ) );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
@@ -9138,8 +9373,10 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     // the export audit: every ROCKETNET_EXPORT entry point is either
     // exercised in this suite with a NULL case or exempt (no NULL-able pointer, or NULL
     // is a valid value), each exactly once, and nothing else is claimed. the
-    // static lists mirror sdk/rocketnet.h and the static_assert above pins their
-    // count, so a new export without a case fails here.
+    // lists compare names only: the calls above are what exercise each NULL
+    // case. the layer table is kept by hand (no tool compares it with
+    // rocketnet_layers.h), so a new layer entry point needs its row, its list
+    // and its NULL call added together.
 
     const int num_exports = (int) ( sizeof( rocketnet_test_layer_exports ) / sizeof( rocketnet_test_layer_exports[0] ) );
     const int num_null_case = (int) ( sizeof( rocketnet_test_layer_null_case_exports ) / sizeof( rocketnet_test_layer_null_case_exports[0] ) );
@@ -9958,18 +10195,30 @@ void rocketnet_test_ack_debt()
     rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_ACK_RECEIVED] == 1 );
     rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_ACK_ACCEPTED] == 1 );
 
-    // --- any sent block resets the debt: a keep-alive going out clears it ---
+    uint8_t reset_ack_unused[ROCKETNET_RECEIVE_CEILING];
 
-    for ( int i = 0; i < ROCKETNET_ACK_DEBT_THRESHOLD - 1; i++ )
-    {
-        time += 0.001;
-        bytes = rocketnet_client_protocol_write_payload( &client, data, 4, time, packet );
-        rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, bytes,
-                                                                   ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
-                                                                   payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
-    }
+    // --- any sent block resets the debt: a keep-alive going out clears it ---
+    //
+    // The debt is made positive first (one eliciting packet: at threshold 1
+    // a standalone ack is now due), so the keep-alive has a debt to clear.
+    // Then no standalone ack is due: the keep-alive's block paid it.
+
+    rocketnet_check( test.server.acks->endpoints[0].ack_debt == 0 );
+
+    time += 0.001;
+    bytes = rocketnet_client_protocol_write_payload( &client, data, 4, time, packet );
+    rocketnet_check( rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, bytes,
+                                                               ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                               payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
+    rocketnet_check( test.server.acks->endpoints[0].ack_debt == ROCKETNET_ACK_DEBT_THRESHOLD );
 
     rocketnet_check( rocketnet_server_write_keep_alive( &test.server, 0, time, packet ) >= ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
+
+    rocketnet_check( test.server.acks->endpoints[0].ack_debt == 0 );
+    rocketnet_check( rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, reset_ack_unused ) == 0 );
+
+    // and the debt counts again from zero: one more eliciting packet makes
+    // the standalone ack due
 
     time += 0.001;
     bytes = rocketnet_client_protocol_write_payload( &client, data, 4, time, packet );
@@ -10010,6 +10259,57 @@ void rocketnet_test_ack_debt()
     out_bytes = 12345;
     rocketnet_client_protocol_update( &client, client_time + 0.01, packet, &out_bytes );
     rocketnet_check( out_bytes == 0 );
+
+    rocketnet_test_server_teardown( &test );
+    rocketnet_counters_assert_conserved( &client_counters );
+}
+
+// TRANSPORT.md t13 state table, connected: "any session packet sent | stamp
+// the send clock". A standalone ack is a session packet, so it stamps the
+// client's send clock as a payload or a keep-alive does, and the scheduled
+// keep-alive is due a whole interval after it, not after the last packet
+// before it.
+void rocketnet_test_client_standalone_ack_stamps_send_clock()
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_counters_t client_counters;
+    struct rocketnet_client_protocol_t client;
+    rocketnet_test_ack_connect( &test, &client, &client_counters, 0x5E17DULL );
+    client.ack.ack_debt = 0;
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+
+    const double interval = 1.0 / client.send_rate;
+    const double ack_time = client.last_send_time + 0.25 * interval;        // inside the rate gate: no scheduled send is due
+
+    for ( int i = 0; i < ROCKETNET_ACK_DEBT_THRESHOLD; i++ )
+    {
+        const int ka_bytes = rocketnet_server_write_keep_alive( &test.server, 0, ack_time, packet );
+        rocketnet_check( ka_bytes >= ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
+        rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, ka_bytes, ack_time, payload, sizeof( payload ), &payload_bytes ) );
+    }
+
+    int out_bytes = 0;
+    rocketnet_client_protocol_update( &client, ack_time, packet, &out_bytes );
+    rocketnet_check( out_bytes >= ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES );
+    rocketnet_check( packet[0] == ROCKETNET_CONNECTION_ACK_PACKET );
+    rocketnet_check( client.last_send_time == ack_time );
+
+    // one interval after the earlier packet, but not after the ack: nothing is due
+
+    out_bytes = 12345;
+    rocketnet_client_protocol_update( &client, ack_time + 0.85 * interval, packet, &out_bytes );
+    rocketnet_check( out_bytes == 0 );
+
+    // a whole interval after the ack: the keep-alive
+
+    rocketnet_client_protocol_update( &client, ack_time + interval, packet, &out_bytes );
+    rocketnet_check( out_bytes >= ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
+    rocketnet_check( packet[0] == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET );
 
     rocketnet_test_server_teardown( &test );
     rocketnet_counters_assert_conserved( &client_counters );
@@ -11949,11 +12249,14 @@ static const struct rocketnet_config_field_t * rocketnet_test_find_field( const 
 // Every field of a public config struct, walked from the local descriptor
 // tables below (one row per field, offsetof and sizeof), is one row of the
 // tables the env overlay reads -- the endpoint's transport table, the message
-// table or the budget table -- except config_bytes and the callbacks, which
-// have no env form. The descriptors are proven complete first: sorted by
-// offset they tile the struct with no gap a field could hide in, and they end
-// at its size. So a field added to the struct without a table row, or to the
-// struct without a descriptor, fails here; and each table's rows round-trip
+// table or the budget table -- except config_bytes, the two callbacks
+// (state_change_callback, time_callback), loopback_hub and server_secret_key,
+// which have no env form. The descriptors are proven complete first: there are as
+// many as the struct has members (rn_test_has_exactly_members, which a field
+// hidden in existing padding cannot pass), and sorted by offset they tile the
+// struct up to alignment padding and end at its size. So a field added to the
+// struct without a table row, or to the struct without a descriptor, fails
+// here; and each table's rows round-trip
 // from the environment in rocketnet_test_config_table_round_trip.
 
 struct rn_test_config_field_t
@@ -12039,6 +12342,52 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
 
 #undef RN_TEST_CONFIG_FIELD
 
+// The member count of a public config struct, independent of its layout: an
+// aggregate takes one braced initializer per member and refuses one more
+// ("too many initializers"). The offset walk below cannot see a field added in
+// padding the struct already has (before an 8-aligned pointer, say), because
+// such a field moves no offset and no size; this count can. Each member gets
+// its own braces, so an array member is one initializer, not one per element.
+
+struct rn_test_any_member_t
+{
+    template <class U> operator U() const;
+};
+
+template <size_t... I> struct rn_test_index_list_t
+{
+};
+
+template <size_t N, size_t... I> struct rn_test_make_index_list_t : rn_test_make_index_list_t<N - 1, N - 1, I...>
+{
+};
+
+template <size_t... I> struct rn_test_make_index_list_t<0, I...>
+{
+    typedef rn_test_index_list_t<I...> type;
+};
+
+template <class T, size_t... I>
+static constexpr auto rn_test_takes_members( rn_test_index_list_t<I...>, int ) -> decltype( (void) T{ { ( (void) I, rn_test_any_member_t() ) }... }, true )
+{
+    return true;
+}
+
+template <class T, size_t... I>
+static constexpr bool rn_test_takes_members( rn_test_index_list_t<I...>, long )
+{
+    return false;
+}
+
+// true when T has exactly n members: n braced initializers are accepted and n + 1 are refused
+
+template <class T, size_t N>
+static constexpr bool rn_test_has_exactly_members()
+{
+    return rn_test_takes_members<T>( typename rn_test_make_index_list_t<N>::type(), 0 ) &&
+           !rn_test_takes_members<T>( typename rn_test_make_index_list_t<N + 1>::type(), 0 );
+}
+
 static void rocketnet_test_public_config_fields_have_env( const char * type, const char * endpoint,
                                                           const struct rn_test_config_field_t * descriptors, int count, size_t type_size,
                                                           const struct rocketnet_config_field_t * transport_fields, int num_transport_fields,
@@ -12068,11 +12417,9 @@ static void rocketnet_test_public_config_fields_have_env( const char * type, con
             continue;
         }
 
-        const char * row = strcmp( name, "transport" ) == 0 ? "transport" : name;
-
-        const bool found = rocketnet_test_find_field( row, transport_fields, num_transport_fields ) != NULL ||
-                           rocketnet_test_find_field( row, message_fields, num_message_fields ) != NULL ||
-                           rocketnet_test_find_field( row, budget_fields, num_budget_fields ) != NULL;
+        const bool found = rocketnet_test_find_field( name, transport_fields, num_transport_fields ) != NULL ||
+                           rocketnet_test_find_field( name, message_fields, num_message_fields ) != NULL ||
+                           rocketnet_test_find_field( name, budget_fields, num_budget_fields ) != NULL;
         if ( !found )
         {
             printf( "%s field %s has no env var\n", type, name );
@@ -12080,7 +12427,7 @@ static void rocketnet_test_public_config_fields_have_env( const char * type, con
         rocketnet_check( found );
 
         char env_name[128];
-        rocketnet_check( rocketnet_config_env_var_name_for( endpoint, row, env_name, sizeof( env_name ) ) );
+        rocketnet_check( rocketnet_config_env_var_name_for( endpoint, name, env_name, sizeof( env_name ) ) );
 
         char expected[128];
         snprintf( expected, sizeof( expected ), "ROCKETNET_%s_", strcmp( endpoint, "client" ) == 0 ? "CLIENT" : "SERVER" );
@@ -12360,6 +12707,12 @@ void rocketnet_test_public_config_env_round_trip()
     int kbps = 0;
     rocketnet_test_config_table_round_trip( "client", &kbps, rocketnet_test_budget_default_erased, client_budget, num_client_budget );
     rocketnet_test_config_table_round_trip( "server", &kbps, rocketnet_test_budget_default_erased, server_budget, num_server_budget );
+
+    // the descriptor tables name every member: as many members as rows, by a
+    // count that does not depend on the layout
+
+    rocketnet_check( ( rn_test_has_exactly_members<struct rocketnet_client_config_t, sizeof( rn_test_client_config_fields ) / sizeof( rn_test_client_config_fields[0] )>() ) );
+    rocketnet_check( ( rn_test_has_exactly_members<struct rocketnet_server_config_t, sizeof( rn_test_server_config_fields ) / sizeof( rn_test_server_config_fields[0] )>() ) );
 
     // and every public field is a row of one of those tables
 
@@ -12655,9 +13008,11 @@ void rocketnet_test_public_client_index_not_connected()
 // Send rates: 0 is the endpoint's default rate, never the ceiling, and
 // creates; a negative rate is refused at create with INVALID_ARGUMENT. The
 // setters check the rate before the connection: a negative rate is
-// INVALID_ARGUMENT and a rate past the ceiling CONFIG_OUT_OF_RANGE even on a
-// client or slot that is not CONNECTED, and a valid rate there is
-// INVALID_ARGUMENT (no connection to set it on). This file has no CONNECTED
+// INVALID_ARGUMENT even on a client or slot that is not CONNECTED, and any
+// rate from 0 to ROCKETNET_SEND_KBPS_UNLIMITED there (that ceiling is
+// INT_MAX, so no int rate lies past it; 0 and the ceiling are the ones
+// called) is OK and a no-op (no connection to set it on;
+// sdk/rocketnet_api.cpp rn_send_kbps_runtime). This file has no CONNECTED
 // public client fixture, so the order is what is tested. The environment's
 // rate overrides are cleared for the test.
 
@@ -13248,9 +13603,11 @@ void rocketnet_test_portable_server_release_gate()
 // address the way every other rung refusal works -- the transport order falls to a
 // rung that can, and a PIN on a non-discovering rung refuses the create.
 //
-// WHAT THIS TEST REACHES, honestly: the refusal and its reason are live
-// wherever a non-discovering transport is available (the linux legs of CI).
-// The defect itself -- a GRANTED xdp socket advertising port 0 -- is not
+// WHAT THIS TEST REACHES, honestly: only the per-transport table below
+// (rocketnet_transport_discovers_bound_port). The refusal and its status,
+// TRANSPORT_PORT_ZERO_UNSUPPORTED, are checked in
+// tests/test_unit_status_server_transport_create_internal.cpp on the legs
+// where a non-discovering transport exists (linux). The defect itself -- a GRANTED xdp socket advertising port 0 -- is not
 // reachable here at any privilege: the suite installs the commit barrier
 // structurally, so the committing xdp create never runs under a test. That
 // half is a documented manual reproduction, not an assertion.
@@ -13462,8 +13819,8 @@ void rocketnet_test_config_bytes_exact()
     rocketnet_test_config_bytes_exact_fields( "server", &server, fields, count );
 
     uint8_t tiny = 0;
-    const rocketnet_config_field_t tiny_field = { "test_one_byte", ROCKETNET_CONFIG_KIND_BYTES, 0, 1, 0, 0, 0 };
-    rocketnet_test_config_bytes_exact_fields( "one-byte fixture", &tiny, &tiny_field, 1 );
+    const rocketnet_config_field_t tiny_fields[1] = { { "test_one_byte", ROCKETNET_CONFIG_KIND_BYTES, 0, 1, 0, 0, 0 } };
+    rocketnet_test_config_bytes_exact_fields( "one-byte fixture", &tiny, tiny_fields, 1 );
 }
 
 // Every override logs the variable and displaced value while keeping secret
@@ -14191,189 +14548,469 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
     rocketnet_counters_assert_conserved( &client_counters );
 }
 
-void rocketnet_test_transport_reply_opens_a_later_update()
+// P6 (standard/MESSAGES.md m1.4 rule 6): when the other side of the connection
+// replies to a packet this end sent in update j, this end opens the reply in
+// update j+1 or later, never in update j.
+//
+// The subject is the real client transport in its public step-driven mode
+// (config.step_driven: update and send_packets run the I/O step themselves),
+// on a scripted synchronous remote end: the transport's driver. The remote end's send
+// hands each datagram straight to an in-process server protocol and queues
+// that server's answer (handshake response, ack, keep-alive, and a reply
+// carrying the request's id) on the driver's receive side BEFORE send
+// returns. So the reply to request r is readable by the transport inside the
+// very call that sent r: only the transport's own phase order keeps it out
+// of pass j. The fixture orders no receive itself; it reads the client's
+// delivered payloads at every point the application can, after update and
+// after send_packets.
+//
+// The case runs twice. On the I/O-core path (a driver with wait and wake;
+// a step-driven transport runs that path whenever its link simulator is
+// inactive) odd requests are finished after update and leave in
+// send_packets, and even ones are finished before update and leave in
+// update's own hand-off and trailing step, after its receive batch. The
+// controls: the reply is already queued when the call that sent r returns
+// (send_packets for odd r, update for even r), so a receive step run after
+// send_packets, or a receive batch taken after update's own send, opens it
+// in pass j and fails. On the BASE path (the per-packet path a step-driven
+// transport takes when created with an active link simulator; here
+// simulated_reverse_window = 2, which adds no latency, and a driver with
+// receive_batch and no wait or wake) send_packets leaves request r held in
+// the link simulator, so the control is that the remote end has not seen r when
+// send_packets returns, and that the next update's drain hands r to the remote end,
+// which queues the reply before that update's receive step: the reply is
+// readable in update j+1 and in no earlier one unless the transport runs a
+// receive step inside pass j. Either path's control failing means the case
+// is not on the path it names. No thread, no socket, no clock: time is an
+// argument, and the receive-stamp clock is the test's own.
+
+enum
 {
-    // P6 (standard/MESSAGES.md m1.4): if the other side of the connection sends anything in reply
-    // to a packet this end opened in update j, this end opens the reply in
-    // update j+1 or later. A fixed receive batch per update is what makes
-    // the claim: update j's batch is closed before any packet that update
-    // builds can leave. This loop mirrors the transport's phase order: the
-    // client drains the batch fixed at the top of the update, then the update
-    // opens its request, then the server drains and answers. The update the
-    // client first opens the answer in must be strictly later than the update
-    // that opened the request.
-    //
-    // The single mutation that must bite (applied to the bench copy, never
-    // committed): move the client's batch-drain loop below (the
-    // rocketnet_network_simulator_receive loop against test.client_address)
-    // to after the server's answer loop. The batch is then fixed after the
-    // request left, the zero-latency answer lands in the same pass, reply_seen
-    // equals request_opened, and the strictly-later check at the bottom goes
-    // red.
+    ROCKETNET_TEST_SYNC_REMOTE_INBOUND = 64,
+    ROCKETNET_TEST_SYNC_REMOTE_ROUNDS = 200
+};
 
-    struct rocketnet_test_server_t test;
-    rocketnet_test_server_setup( &test );
-
-    struct rocketnet_counters_t client_counters;
-    struct rocketnet_client_protocol_t client;
-    rocketnet_test_ack_connect( &test, &client, &client_counters, 0x0B6B6ULL );
-
+struct rocketnet_test_sync_remote_t
+{
+    struct rocketnet_test_server_t * test;
     struct rocketnet_address_t server_address;
-    rocketnet_check( rocketnet_address_parse( &server_address, "203.0.113.10:40000" ) );
+    int pass;
+    int inbound_head;
+    int inbound_count;
+    bool wake;
+    struct rocketnet_address_t inbound_from[ROCKETNET_TEST_SYNC_REMOTE_INBOUND];
+    int inbound_bytes[ROCKETNET_TEST_SYNC_REMOTE_INBOUND];
+    uint8_t inbound[ROCKETNET_TEST_SYNC_REMOTE_INBOUND][ROCKETNET_RECEIVE_CEILING];
+    int reply_queued_pass[ROCKETNET_TEST_SYNC_REMOTE_ROUNDS + 1];
+};
 
-    struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 4096, 0x0B6B6B6B6ULL );
-    rocketnet_check( simulator );
-    rocketnet_network_simulator_config( simulator, 0.0, 0.0, 0.0f, 0.0f );
+static double g_rocketnet_test_sync_remote_clock = 0.0;
 
-    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+static double rocketnet_test_sync_remote_clock( void * context )
+{
+    (void) context;
+    return g_rocketnet_test_sync_remote_clock;
+}
+
+static void rocketnet_test_sync_remote_push( struct rocketnet_test_sync_remote_t * remote, const uint8_t * data, int bytes )
+{
+    rocketnet_check( remote->inbound_count < ROCKETNET_TEST_SYNC_REMOTE_INBOUND );
+    rocketnet_check( bytes > 0 && bytes <= ROCKETNET_RECEIVE_CEILING );
+
+    const int slot = ( remote->inbound_head + remote->inbound_count ) % ROCKETNET_TEST_SYNC_REMOTE_INBOUND;
+    remote->inbound_from[slot] = remote->server_address;
+    remote->inbound_bytes[slot] = bytes;
+    memcpy( remote->inbound[slot], data, (size_t) bytes );
+    remote->inbound_count++;
+}
+
+// the server side of one client datagram, run inside the driver's send
+
+static void rocketnet_test_sync_remote_answer( struct rocketnet_test_sync_remote_t * remote, const uint8_t * data, int bytes )
+{
+    struct rocketnet_test_server_t * test = remote->test;
+
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     int payload_client_index = -1;
-    struct rocketnet_address_t from;
+
+    const int result = rocketnet_server_protocol_process_packet( &test->server, &test->client_address, data, bytes,
+                                                                 ROCKETNET_TEST_CREATE_TS, g_rocketnet_test_sync_remote_clock, response, &response_bytes,
+                                                                 payload, &payload_bytes, &payload_client_index );
+    if ( response_bytes > 0 )
+    {
+        rocketnet_test_sync_remote_push( remote, response, response_bytes );
+    }
+
+    if ( result == ROCKETNET_SERVER_PROCESS_ACCEPTED && payload_bytes == 8 )
+    {
+        const uint8_t * q = payload;
+        const uint64_t r = rocketnet_read_uint64( &q );
+
+        struct rocketnet_address_t to;
+        uint64_t sequence = 0;
+
+        rocketnet_check( r >= 1 && r <= ROCKETNET_TEST_SYNC_REMOTE_ROUNDS );
+        rocketnet_check( rocketnet_server_protocol_start_payload( &test->server, 0, &to, &sequence ) );
+
+        uint8_t frame[ROCKETNET_RECEIVE_CEILING];
+        memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, &r, 8 );
+
+        const int wire = rocketnet_server_protocol_seal_payload_frame( &test->server, 0, sequence, (uint64_t) ( 1000000 + r ), frame, 8, g_rocketnet_test_sync_remote_clock );
+        rocketnet_check( wire > 0 );
+
+        rocketnet_test_sync_remote_push( remote, frame, wire );
+        remote->reply_queued_pass[r] = remote->pass;
+    }
+
+    if ( rocketnet_client_slots_connected( test->server.client_slots, 0 ) )
+    {
+        uint8_t control[ROCKETNET_RECEIVE_CEILING];
+        const int ack_bytes = rocketnet_server_protocol_write_ack_if_due( &test->server, 0, g_rocketnet_test_sync_remote_clock, control );
+        if ( ack_bytes > 0 )
+        {
+            rocketnet_test_sync_remote_push( remote, control, ack_bytes );
+        }
+
+        const int keep_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &test->server, 0, g_rocketnet_test_sync_remote_clock, control );
+        if ( keep_bytes > 0 )
+        {
+            rocketnet_test_sync_remote_push( remote, control, keep_bytes );
+        }
+    }
+}
+
+static void * rocketnet_test_sync_remote_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
+{
+    (void) config;
+    (void) bind;
+    return context;
+}
+
+static void rocketnet_test_sync_remote_destroy( void * transport )
+{
+    (void) transport;
+}
+
+static void rocketnet_test_sync_remote_send( void * transport, const rocketnet_address_t * to, const uint8_t * data, int bytes )
+{
+    (void) to;
+    rocketnet_test_sync_remote_answer( (struct rocketnet_test_sync_remote_t *) transport, data, bytes );
+}
+
+static void rocketnet_test_sync_remote_send_batch( void * transport, const rocketnet_platform_send_t * sends, int count )
+{
+    for ( int i = 0; i < count; i++ )
+    {
+        rocketnet_test_sync_remote_answer( (struct rocketnet_test_sync_remote_t *) transport, sends[i].packet_data, sends[i].packet_bytes );
+    }
+}
+
+static int rocketnet_test_sync_remote_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )
+{
+    struct rocketnet_test_sync_remote_t * remote = (struct rocketnet_test_sync_remote_t *) transport;
+    if ( remote->inbound_count == 0 )
+    {
+        return 0;
+    }
+
+    const int slot = remote->inbound_head;
+    remote->inbound_head = ( remote->inbound_head + 1 ) % ROCKETNET_TEST_SYNC_REMOTE_INBOUND;
+    remote->inbound_count--;
+
+    *from = remote->inbound_from[slot];
+    const int bytes = remote->inbound_bytes[slot];
+    memcpy( data, remote->inbound[slot], (size_t) ( bytes < capacity ? bytes : capacity ) );
+    return bytes;
+}
+
+static int rocketnet_test_sync_remote_receive_batch( void * transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
+{
+    int got = 0;
+    while ( got < max_packets )
+    {
+        const int bytes = rocketnet_test_sync_remote_receive( transport, &from[got], packet_data + (size_t) got * (size_t) packet_stride, packet_stride );
+        if ( bytes == 0 )
+        {
+            break;
+        }
+        packet_bytes[got] = bytes;
+        got++;
+    }
+    return got;
+}
+
+static bool rocketnet_test_sync_remote_wait( void * transport, bool readable, double timeout_seconds )
+{
+    (void) timeout_seconds;
+    struct rocketnet_test_sync_remote_t * remote = (struct rocketnet_test_sync_remote_t *) transport;
+    const bool ready = remote->wake || ( readable && remote->inbound_count > 0 );
+    remote->wake = false;
+    return ready;
+}
+
+static void rocketnet_test_sync_remote_wake( void * transport )
+{
+    ( (struct rocketnet_test_sync_remote_t *) transport )->wake = true;
+}
+
+// one request carrying its id r: false when the transport has no room for it
+// this pass
+
+static bool rocketnet_test_sync_remote_request( struct rocketnet_client_transport_t * client, uint64_t r )
+{
+    struct rocketnet_packet_context_t context;
+    uint8_t * out = rocketnet_client_transport_start_packet( client, 8, &context );
+    if ( !out )
+    {
+        return false;
+    }
+
+    rocketnet_write_uint64( &out, r );
+    rocketnet_check( rocketnet_client_transport_finish_packet( client, &context, 8 ) > 0 );
+    return true;
+}
+
+static void rocketnet_test_reply_opens_a_later_update_on( const rocketnet_client_transport_io_operations_t * operations, bool io_core )
+{
+    struct rocketnet_test_server_t test;
+    rocketnet_test_server_setup( &test );
+
+    struct rocketnet_test_sync_remote_t * remote = (struct rocketnet_test_sync_remote_t *) rocketnet_malloc( NULL, sizeof( struct rocketnet_test_sync_remote_t ) );
+    rocketnet_check( remote );
+    memset( remote, 0, sizeof( *remote ) );
+    remote->test = &test;
+    rocketnet_check( rocketnet_address_parse( &remote->server_address, "203.0.113.10:40000" ) );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_test_mint_token( token_data, 0x0B6B7ULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config_current( &config );
+    const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
+    memcpy( config.packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
+    config.step_driven = 1;
+    config.time_callback = rocketnet_test_sync_remote_clock;
+    if ( !io_core )
+    {
+        config.simulated_reverse_window = 2;   // an active link simulator with no latency: the BASE path
+    }
+
+    double time = 100.0;
+    const double dt = 0.001;
+    g_rocketnet_test_sync_remote_clock = time;
+
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_step_driven_at_timestamp( NULL, token_data, &config, time, ROCKETNET_TEST_CREATE_TS, operations, remote );
+    rocketnet_check( client );
+    rocketnet_check( rocketnet_client_transport_uses_io_thread( operations ) == io_core );
 
     enum
     {
-        ROUNDS = 200
+        ROUNDS = ROCKETNET_TEST_SYNC_REMOTE_ROUNDS
     };
 
-    static uint64_t request_opened[ROUNDS + 1];
-    static uint64_t reply_seen[ROUNDS + 1];
+    static int request_opened[ROUNDS + 1];
+    static int reply_seen[ROUNDS + 1];
     memset( request_opened, 0, sizeof( request_opened ) );
     memset( reply_seen, 0, sizeof( reply_seen ) );
 
-    double time = 101.0;
-    const double dt = 0.001;
     int sent_requests = 0;
     int observed = 0;
+    int pass = 0;
 
-    for ( int update = 1; update <= ROUNDS * 60 && observed < ROUNDS; update++ )
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+
+    for ( pass = 1; pass <= ROUNDS * 60 && observed < ROUNDS; pass++ )
     {
         time += dt;
+        g_rocketnet_test_sync_remote_clock = time;
+        remote->pass = pass;
 
-        int bytes;
+        // I/O-core, even r: finished before update, so update's own hand-off
+        // and trailing step send it
 
-        // the client's receive batch for this update, fixed before this update
-        // builds anything. the client records the update each reply is first
-        // opened in. THIS BLOCK is the phase-P6 boundary: it must stay before
-        // the request-open block below (the mutation moves it after the server
-        // answer block).
-
-        while ( ( bytes = rocketnet_network_simulator_receive( simulator, &test.client_address, time, &from, packet ) ) > 0 )
+        const bool sent_before_update = io_core && sent_requests < ROUNDS && ( sent_requests + 1 ) % 2 == 0 &&
+                                        rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                                        rocketnet_test_sync_remote_request( client, (uint64_t) sent_requests + 1 );
+        if ( sent_before_update )
         {
-            if ( rocketnet_client_protocol_process_packet( &client, packet, bytes, time, payload, sizeof( payload ), &payload_bytes ) && payload_bytes == 8 )
-            {
-                uint64_t r = 0;
-                memcpy( &r, payload, 8 );
+            sent_requests++;
+            request_opened[sent_requests] = pass;
+        }
 
-                if ( r >= 1 && r <= ROUNDS && reply_seen[r] == 0 )
+        rocketnet_client_transport_update( client, time );
+
+        // the I/O-core control for even r: the remote end answered inside update,
+        // after update's receive batch, so the reply was readable by the
+        // transport before update returned
+
+        if ( sent_before_update )
+        {
+            rocketnet_check( remote->reply_queued_pass[sent_requests] == pass );
+        }
+
+        // the BASE control: the link simulator held the last pass's request,
+        // and this update's drain handed it to the remote end, which queued the
+        // reply before this update's receive step
+
+        if ( !io_core && sent_requests > 0 && request_opened[sent_requests] == pass - 1 )
+        {
+            rocketnet_check( remote->reply_queued_pass[sent_requests] == pass );
+        }
+
+        // the payloads update opened: the application reads them here, and
+        // again after send_packets below. a reply read at either point was
+        // opened in this pass.
+
+        for ( int read = 0; read < 2; read++ )
+        {
+            if ( read == 1 )
+            {
+                // every r on BASE, odd r on I/O-core: finished after update,
+                // sent by send_packets. One request a pass: update exposes
+                // one received buffer, so a second reply received in the
+                // same pass would open a pass later still (legal, but the
+                // case pins the earliest one)
+
+                const bool connected = rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
+                const bool sent_after_update = connected && !sent_before_update && sent_requests < ROUNDS && ( !io_core || ( sent_requests + 1 ) % 2 == 1 ) &&
+                                               rocketnet_test_sync_remote_request( client, (uint64_t) sent_requests + 1 );
+                if ( sent_after_update )
                 {
-                    reply_seen[r] = (uint64_t) update;
-                    observed++;
+                    sent_requests++;
+                    request_opened[sent_requests] = pass;
                 }
-            }
-        }
 
-        // now this update's send: the client opens the next request, in this
-        // update. the server can only answer it in the server phase below, and
-        // that answer cannot reach this update's batch (already drained above).
+                rocketnet_client_transport_send_packets( client );
 
-        if ( sent_requests < ROUNDS )
-        {
-            uint64_t sequence = 0;
-            if ( rocketnet_client_protocol_start_payload( &client, &sequence ) )
-            {
-                const uint64_t r = (uint64_t) ( sent_requests + 1 );
-                uint8_t frame[ROCKETNET_RECEIVE_CEILING];
-                memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, &r, 8 );
+                // the I/O-core control: the remote end answered inside send_packets,
+                // so the reply to this pass's request was readable by the
+                // transport before send_packets returned. On BASE the request
+                // is still held in the link simulator.
 
-                const int wire = rocketnet_client_protocol_seal_payload_frame( &client, sequence, r, frame, 8, time );
-                rocketnet_check( wire > 0 );
-
-                request_opened[r] = (uint64_t) update;
-                rocketnet_network_simulator_send( simulator, &test.client_address, &server_address, frame, wire, time );
-                sent_requests++;
-            }
-        }
-
-        // the server's receive batch for this update, then its reply. the
-        // request above arrived at the same instant (zero latency), so the
-        // server answers it here; the batched client above cannot see it.
-
-        while ( ( bytes = rocketnet_network_simulator_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
-        {
-            if ( rocketnet_server_protocol_process_packet( &test.server, &from, packet, bytes,
-                                                           ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
-                                                           payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED &&
-                 payload_bytes == 8 )
-            {
-                uint64_t r = 0;
-                memcpy( &r, payload, 8 );
-
-                struct rocketnet_address_t to;
-                uint64_t sequence = 0;
-
-                if ( r >= 1 && r <= ROUNDS && rocketnet_server_protocol_start_payload( &test.server, 0, &to, &sequence ) )
+                if ( sent_after_update )
                 {
-                    uint8_t frame[ROCKETNET_RECEIVE_CEILING];
-                    memcpy( frame + ROCKETNET_FRAME_PAYLOAD_OFFSET - ROCKETNET_FRAME_WIRE_OFFSET, &r, 8 );
-
-                    const int wire = rocketnet_server_protocol_seal_payload_frame( &test.server, 0, sequence, (uint64_t) ( 1000000 + r ), frame, 8, time );
-                    rocketnet_check( wire > 0 );
-
-                    rocketnet_network_simulator_send( simulator, &server_address, &test.client_address, frame, wire, time );
+                    rocketnet_check( remote->reply_queued_pass[sent_requests] == ( io_core ? pass : 0 ) );
                 }
             }
 
-            if ( response_bytes > 0 )
+            int bytes;
+            while ( ( bytes = rocketnet_client_transport_receive_packet( client, payload, sizeof( payload ) ) ) > 0 )
             {
-                rocketnet_network_simulator_send( simulator, &server_address, &from, response, response_bytes, time );
-            }
-        }
+                if ( bytes != 8 )
+                {
+                    continue;
+                }
 
-        {
-            int client_keep = 0;
-            uint8_t client_out[ROCKETNET_RECEIVE_CEILING];
-            rocketnet_client_protocol_update( &client, time, client_out, &client_keep );
-            if ( client_keep > 0 )
-            {
-                rocketnet_network_simulator_send( simulator, &test.client_address, &server_address, client_out, client_keep, time );
-            }
-        }
-
-        rocketnet_server_protocol_update( &test.server, time );
-
-        {
-            uint8_t ack[ROCKETNET_RECEIVE_CEILING];
-            const int ack_bytes = rocketnet_server_protocol_write_ack_if_due( &test.server, 0, time, ack );
-            if ( ack_bytes > 0 )
-            {
-                rocketnet_network_simulator_send( simulator, &server_address, &test.client_address, ack, ack_bytes, time );
-            }
-
-            const int keep_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &test.server, 0, time, ack );
-            if ( keep_bytes > 0 )
-            {
-                rocketnet_network_simulator_send( simulator, &server_address, &test.client_address, ack, keep_bytes, time );
+                uint64_t r = 0;
+                memcpy( &r, payload, 8 );
+                rocketnet_check( r >= 1 && r <= (uint64_t) sent_requests );
+                rocketnet_check( reply_seen[r] == 0 );
+                reply_seen[r] = pass;
+                observed++;
             }
         }
     }
 
+    rocketnet_check( sent_requests == ROUNDS );
     for ( int r = 1; r <= ROUNDS; r++ )
     {
         rocketnet_check( reply_seen[r] != 0 );
         rocketnet_check( reply_seen[r] > request_opened[r] );
+        rocketnet_check( reply_seen[r] == request_opened[r] + 1 );
     }
 
-    rocketnet_network_simulator_destroy( simulator );
+    rocketnet_client_transport_stop( client );
+    for ( int step = 0; step < 1000 && !rocketnet_client_transport_stopped( client ); step++ )
+    {
+        time += dt;
+        g_rocketnet_test_sync_remote_clock = time;
+        rocketnet_client_transport_update( client, time );
+    }
+    rocketnet_check( rocketnet_client_transport_stopped( client ) );
+    rocketnet_check( rocketnet_counters_conserved( rocketnet_client_transport_counters( client ), NULL, 0 ) == 1 );
+    rocketnet_client_transport_destroy( client );
+
+    rocketnet_free( NULL, remote );
+
+    // the server's slot is still held (the client stopped without a
+    // disconnect the remote end forwarded): its counters must balance regardless
 
     rocketnet_test_server_teardown( &test );
-    rocketnet_counters_assert_conserved( &client_counters );
+}
+
+void rocketnet_test_transport_reply_opens_a_later_update()
+{
+    // the I/O-core path: the driver has wait and wake
+
+    const rocketnet_client_transport_io_operations_t io_core = {
+        rocketnet_test_sync_remote_create, rocketnet_test_sync_remote_destroy,
+        rocketnet_test_sync_remote_send, rocketnet_test_sync_remote_receive,
+        NULL, NULL, rocketnet_test_sync_remote_wait, rocketnet_test_sync_remote_wake,
+        NULL, NULL, NULL, NULL
+    };
+    rocketnet_test_reply_opens_a_later_update_on( &io_core, true );
+
+    // the BASE path: an active link simulator (set in the case), and a
+    // driver with receive_batch and no wait or wake
+
+    const rocketnet_client_transport_io_operations_t base = {
+        rocketnet_test_sync_remote_create, rocketnet_test_sync_remote_destroy,
+        rocketnet_test_sync_remote_send, rocketnet_test_sync_remote_receive,
+        rocketnet_test_sync_remote_send_batch, rocketnet_test_sync_remote_receive_batch, NULL, NULL,
+        NULL, NULL, NULL, NULL
+    };
+    rocketnet_test_reply_opens_a_later_update_on( &base, false );
+}
+
+// the server's established mapping for the one test client
+
+static struct rocketnet_encryption_mapping_t * rocketnet_test_established_mapping( struct rocketnet_test_server_t * test )
+{
+    int iterator = -1;
+    while ( rocketnet_encryption_map_next( test->server.encryption_map, &iterator ) )
+    {
+        struct rocketnet_encryption_mapping_t * m = rocketnet_encryption_map_entry( test->server.encryption_map, iterator );
+        if ( m->control->established )
+        {
+            return m;
+        }
+    }
+    return NULL;
+}
+
+// a keep-alive sealed under the mapping's session keys at the given sequence,
+// carrying the given index and slot count
+
+static int rocketnet_test_forge_keep_alive( struct rocketnet_test_server_t * test, struct rocketnet_encryption_mapping_t * mapping,
+                                            uint64_t sequence, uint32_t client_index, uint32_t max_clients, uint8_t * packet )
+{
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + 8];
+    int block_bytes = rocketnet_ack_block_build( plaintext, ROCKETNET_ACK_BLOCK_MAX_BYTES, &mapping->replay_session );
+
+    uint8_t * p = plaintext + block_bytes;
+    rocketnet_write_uint32( &p, client_index );
+    rocketnet_write_uint32( &p, max_clients );
+
+    return rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
+                                          test->server.packet_filter, sequence,
+                                          NULL, plaintext, block_bytes + 8,
+                                          test->server.protocol_id, mapping->connection_salt,
+                                          NULL, mapping->keys.session_server_to_client );
 }
 
 void rocketnet_test_client_index_range_checked()
 {
+    // An index at or above the slot count is refused at the keep-alive's
+    // validator (counted WRONG_OPENED_SIZE) in both states that read one: a
+    // connected client, which only checks it, and a client sending its
+    // connection response, which adopts the index of the first keep-alive it
+    // accepts and so is the state where a bad index would do harm. Each forged
+    // packet takes a sequence never used before, so the index rung, not the
+    // replay window, is what refuses it.
+
     struct rocketnet_test_server_t test;
     rocketnet_test_server_setup( &test );
 
@@ -14391,52 +15028,90 @@ void rocketnet_test_client_index_range_checked()
 
     rocketnet_check( rocketnet_test_pump( &test, &client, -1, 5.0 ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-    // get mapping to get server's keys and salt
-
-    struct rocketnet_encryption_mapping_t * mapping = NULL;
-    int iterator = -1;
-    while ( rocketnet_encryption_map_next( test.server.encryption_map, &iterator ) )
-    {
-        struct rocketnet_encryption_mapping_t * m = rocketnet_encryption_map_entry( test.server.encryption_map, iterator );
-        if ( m->control->established )
-        {
-            mapping = m;
-            break;
-        }
-    }
-
+    struct rocketnet_encryption_mapping_t * mapping = rocketnet_test_established_mapping( &test );
     rocketnet_check( mapping != NULL );
 
-    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + 8];
-    int block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
-    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &mapping->replay_session );
-
-    uint8_t * p = plaintext + block_bytes;
-    rocketnet_write_uint32( &p, 0xFFFFFFFFU ); // invalid index
-    rocketnet_write_uint32( &p, (uint32_t) client.max_clients );
-
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-    int bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
-                                               test.server.packet_filter, mapping->send_sequence_session,
-                                               NULL, plaintext, block_bytes + 8,
-                                               test.server.protocol_id, mapping->connection_salt,
-                                               NULL, mapping->keys.session_server_to_client );
+    int bytes = rocketnet_test_forge_keep_alive( &test, mapping, mapping->send_sequence_session + 100, 0xFFFFFFFFU, (uint32_t) client.max_clients, packet );
     rocketnet_check( bytes > 0 );
-
-    // process the malicious packet
 
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
 
-    int initial_index = client.client_index;
-
-    // the client should reject this packet
+    const int initial_index = client.client_index;
+    uint64_t refused_before = client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE];
 
     rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, bytes, 102.3, payload, sizeof( payload ), &payload_bytes ) == 0 );
-
-    // ensure index is unchanged
-
+    rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE] == refused_before + 1 );
     rocketnet_check( client.client_index == initial_index );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+    rocketnet_test_server_teardown( &test );
+    rocketnet_check( rocketnet_counters_conserved( &client_counters, NULL, 0 ) == 1 );
+
+    // the adopting state: the client has sent its connection response and
+    // the server has established the session, but no keep-alive has reached
+    // the client yet
+
+    rocketnet_test_server_setup( &test );
+    memset( &client_counters, 0, sizeof( client_counters ) );
+    rocketnet_client_protocol_init( &client, &client_counters );
+    rocketnet_test_mint_token( token_data, 0xBEF1ULL, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+    rocketnet_check( rocketnet_client_protocol_connect( &client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+    uint8_t response[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+    int payload_client_index = -1;
+    double time = 100.0;
+
+    for ( int step = 0; step < 500 && rocketnet_test_established_mapping( &test ) == NULL; step++ )
+    {
+        time = 100.0 + 0.01 * (double) step;
+        int packet_bytes = 0;
+        rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
+        if ( packet_bytes <= 0 )
+        {
+            continue;
+        }
+
+        rocketnet_server_protocol_process_packet( &test.server, &test.client_address, packet, packet_bytes,
+                                                  ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
+                                                  payload, &payload_bytes, &payload_client_index );
+
+        // the cookie and the challenge reach the client; nothing the server
+        // sends once the client is answering the challenge does
+
+        if ( response_bytes > 0 && client.state < ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
+        {
+            rocketnet_client_protocol_process_packet( &client, response, response_bytes, time, payload, sizeof( payload ), &payload_bytes );
+        }
+    }
+
+    rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+    rocketnet_check( client.client_index == -1 );
+
+    mapping = rocketnet_test_established_mapping( &test );
+    rocketnet_check( mapping != NULL );
+
+    const uint32_t slots = (uint32_t) rocketnet_client_slots_max_clients( test.server.client_slots );
+
+    bytes = rocketnet_test_forge_keep_alive( &test, mapping, mapping->send_sequence_session + 100, slots, slots, packet );
+    rocketnet_check( bytes > 0 );
+
+    refused_before = client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE];
+    rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, bytes, time, payload, sizeof( payload ), &payload_bytes ) == 0 );
+    rocketnet_check( client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE] == refused_before + 1 );
+    rocketnet_check( client.client_index == -1 );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
+    // the control: the same forge with an index in range is adopted, so the
+    // refusal above is the index rung's alone
+
+    bytes = rocketnet_test_forge_keep_alive( &test, mapping, mapping->send_sequence_session + 101, slots - 1, slots, packet );
+    rocketnet_check( bytes > 0 );
+    rocketnet_check( rocketnet_client_protocol_process_packet( &client, packet, bytes, time, payload, sizeof( payload ), &payload_bytes ) == 1 );
+    rocketnet_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_check( client.client_index == (int) ( slots - 1 ) );
 
     rocketnet_test_server_teardown( &test );
     rocketnet_counters_assert_conserved( &client_counters );
@@ -14638,14 +15313,11 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
                              estimate.thread_stack_bytes == 2 * estimate.thread_stack_bytes_per_thread );
         }
 
-        // rio: its I/O worker
+        // rio: its I/O worker, its registered region and its allocator
 
         if ( strcmp( transport, "rio" ) == 0 )
         {
             rocketnet_check( estimate.worker_threads == 1 );
-        }
-        if ( strcmp( transport, "rio" ) == 0 )
-        {
             rocketnet_check( estimate.registered_region_bytes > 0 && estimate.allocator_bytes > 0 );
         }
     }
@@ -14861,6 +15533,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_ack_apply_skips_acked_range", rocketnet_test_ack_apply_skips_acked_range },
     { "test_ack_apply_counts_unknown_in_acked_run", rocketnet_test_ack_apply_counts_unknown_in_acked_run },
     { "test_ack_debt", rocketnet_test_ack_debt },
+    { "test_client_standalone_ack_stamps_send_clock", rocketnet_test_client_standalone_ack_stamps_send_clock },
     { "test_ack_non_elicitation", rocketnet_test_ack_non_elicitation },
     { "test_ack_replay_protection", rocketnet_test_ack_replay_protection },
     { "test_ack_bad_block_refusals", rocketnet_test_ack_bad_block_refusals },

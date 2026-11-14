@@ -27,6 +27,13 @@ set -u
 
 REPO_URL="https://github.com/mas-bandwidth/rocketnet.git"
 HOME_DIR="${HOME:-/root}"
+# a root step runs as `sudo -n`, and sudo-rs sets HOME to root's: keep the
+# invoking user's base, where build put the binaries and the orchestrator
+# touches the heartbeat
+if [ "$( id -u )" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+    sudo_home=$( getent passwd "$SUDO_USER" | cut -d: -f6 )
+    [ -n "$sudo_home" ] && HOME_DIR=$sudo_home
+fi
 BASE="$HOME_DIR/rocketnet-live"
 SELF=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/$( basename "${BASH_SOURCE[0]}" )
 
@@ -233,7 +240,8 @@ cmd_preflight()
 
 # ------------------------------------------------------------------------
 # arm: the dead-man timer and the watchdog, before anything loads
-# (section 9, steps 2 and 3; XDP SAFETY 2)
+# (section 9, steps 2 and 3; XDP SAFETY 2; proofs/tla/RNLiveFleetRun.tla
+# ArmDeadman, WatchdogFires, DeadmanFires)
 # ------------------------------------------------------------------------
 
 cmd_arm()
@@ -244,6 +252,11 @@ cmd_arm()
 
     mkdir -p "$BASE" || fail "arm: cannot create $BASE"
     : > "$BASE/heartbeat"
+    # the orchestrator touches the heartbeat as the invoking user, without
+    # sudo; a file this root step created is root's and that touch would fail
+    if [ -n "${SUDO_USER:-}" ]; then
+        chown "$SUDO_USER" "$BASE/heartbeat" || fail "arm: cannot give $BASE/heartbeat to $SUDO_USER"
+    fi
 
     # the timer command needs no file on the machine, so a missing script
     # can never turn it into a no-op

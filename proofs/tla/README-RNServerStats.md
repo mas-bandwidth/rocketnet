@@ -31,15 +31,19 @@ none. On the sent side, a write that raises `highest` from `h0` to `h1`:
    (the Late branch does not use its result). This is not another code-side
    retirement step.
 
-The received side instead keeps 64 fixed physical-slot summaries for the
-2,048-record ring. `rocketnet_ack_stats_received_advance` clears summaries for
-whole physical blocks that leave the retained full window and rebuilds at most
-two partial edge blocks. A write then replaces the exact full-width sequence
-tag, rebuilds that one 32-slot block, and
-`rocketnet_ack_stats_received_query` reduces the older-half range from whole
-summaries plus at most two query edges. Exact tags keep a stale physical alias
-out of every rebuild and query; receive-time order is never inferred from
-sequence order.
+The received side instead summarizes the 2,048-record ring per 32-sequence
+generation, one summary per physical block tagged with its generation
+(`rocketnet_ack_stats_received_summarize`): nothing is cleared when blocks
+leave the window, since a newer generation's first write retags its block and
+a generation is read only through its exact tag
+(`rocketnet_ack_stats_received_generation`). `rocketnet_ack_stats_received_refresh`
+publishes the older half: inside one generation record by record, otherwise
+from three cached pieces (suffixes over base's generation, the whole
+generations between, and top's generation appended record by record), reused
+while the write lands above the cached top. Exact tags keep a stale physical
+alias out of every summary and piece; receive-time order is never inferred
+from sequence order. That layout is modelled in `RNReceivedBlocksLayout.tla`
+(README-RNReceivedBlocksLayout.md); this model takes it whole (below).
 
 The received side refuses a sequence below the window base (at least one ring
 behind `highest`) before any of this, and leaves the ring and the aggregates
@@ -57,11 +61,30 @@ to the next counted sequence. Sent times follow sequence (update refuses a
 time that goes backwards, and concurrent fill writers of one phase share its
 time), so sent spans come from the sequence bounds. Received writes may arrive
 in any sequence or time order, so each block summary holds count, bytes, and
-receive-time extrema. The immutable 2,048-slot layout has a fixed worst case
-of 224 block/record visits per receive: at most 129 for retention, 32 for the
-point-block rebuild and 63 for the 1,024-slot query. Its 2,048 summary bytes
-reuse the former four link bytes in each received record, so endpoint memory
-does not grow.
+receive-time extrema. In steady traffic a receive merges its record into one
+summary, reads one suffix aggregate and appends one record; a duplicate's
+block rebuild plus a full rebuild of the pieces is under 130 record/summary
+visits, and every receive is bounded at 256
+(`test_ack_received_stats_adversarial_sequence_is_bounded` and every received
+step of `tests/test_unit_ack_stats.cpp` assert it). The summaries, suffixes
+and cached pieces use 916 of the 2,048 32-bit stats words reclaimed from the
+received records (one per record), so endpoint memory does not grow.
+
+### What the received side checks here, and what it takes whole
+
+On the received side (`Late = TRUE`) the aggregate is `Reduce` of the
+reference window after every slide and write: `agg` is defined as the
+reference, so `CountedIsWindow`, `RangeAggregateExact` and
+`PublishedSpanExact` hold there by construction and cannot fail. What the
+received cases check is the write itself: the floor below the window base
+(`RetainedIsNewest`, `LateNeverShrinks`, and `BrokenAlias` as their witness),
+the base (`BaseFollowsHighest`), and that the span is reduced from the counted
+records rather than read at the sequence bounds (`BrokenSeqTimes` fails
+`PublishedSpanExact` through its `SeqTimes` reading, not through `agg`).
+Whether the code's summaries, suffixes and pieces equal that reduction is
+checked by `RNReceivedBlocksLayout.tla` (`QueryIsReference`), which models
+`rocketnet_ack_stats_received_summarize`, `_generation` and `_refresh`; this
+model does not.
 
 ## What the model has
 
@@ -89,12 +112,12 @@ the numbers; `LateNeverShrinks` is an action property over every step.
 | Property | Statement |
 |---|---|
 | `BaseFollowsHighest` | the base is the one `highest` implies |
-| `CountedIsWindow` | the counted set, `cnt` and `unacked` are exactly the reference window's |
+| `CountedIsWindow` | the counted set, `cnt` and `unacked` are exactly the reference window's (received side: true by construction, see above) |
 | `EligibleExact` | `ecnt` and `eunacked` are exactly the reference's loss-eligible sends |
 | `BoundsExact` | the lowest/highest present and acknowledged sequences are the reference's |
-| `RangeAggregateExact` | exact-tagged reduced leaves are precisely the reference window |
+| `RangeAggregateExact` | exact-tagged reduced leaves are precisely the reference window (by construction on the received side; the layout is RNReceivedBlocksLayout's `QueryIsReference`) |
 | `OrderedByTime` | historical checked name; aliases `RangeAggregateExact` |
-| `PublishedSpanExact` | the published span is the reference's earliest-to-latest time |
+| `PublishedSpanExact` | the published span is the reference's earliest-to-latest time (received side: fails only through the `SeqTimes` reading) |
 | `AckedSpanExact` | the acknowledged span is the reference's (sent side) |
 | `RetainedIsNewest` | every sequence written at or above the base is still in the ring |
 | `LateNeverShrinks` | a write at or below `highest` never lowers the counted total (action property) |
@@ -145,7 +168,8 @@ sequences. TLC's trace: receive 2 (time 1), then 1 late (time 2). The window
 holds 1 and 2, the earliest time is 1 (at sequence 2), but the sequence bounds
 give time 2 at sequence 1: the span is negative and the published received rate
 reads 0 where the reference has a rate. The code instead reduces receive-time
-extrema from exact-tagged block summaries and partial edge records.
+extrema from exact-tagged generation summaries and the cached pieces
+(RNReceivedBlocksLayout).
 
 `BrokenAlias` is the received write without its floor. TLC's trace: receive 5
 (window `[2, 3]`, the retained range `[2, 5]`), then 1, admitted by replay

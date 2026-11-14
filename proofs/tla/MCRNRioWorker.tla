@@ -33,6 +33,12 @@
 (* stop burst refused at its post and counted.                             *)
 (*   MCRNRioWorkerBrokenUncountedPost.cfg     (CountRefusedPost)           *)
 (*                                            StopSendsFinished            *)
+(* MCRNRioWorkerInlineStopUnposted.cfg is the rule on create's failure     *)
+(* path when create failed before it posted a receive:                     *)
+(*   MCRNRioWorkerBrokenLeakUnposted.cfg      (AbandonUnposted)            *)
+(*                                            LeakOnlyAfterStalls          *)
+(* MCRNRioWorkerReachAbandonFreed.cfg must fail NotReachedAbandonFreed:    *)
+(* the drain abandons the socket and the lane is freed.                    *)
 (* MCRNRioWorkerReachLateCancelLeak.cfg must fail                          *)
 (* NotReachedLateCancelLeak: the inline drain can leak after a close that  *)
 (* succeeded when the cancellations arrive late, as the code can.          *)
@@ -64,4 +70,9 @@ RetireFirstBroken == FALSE
 \* MCRNRioWorkerBrokenReadOnlyLeft.cfg: main reads only a bank the worker
 \* has left (the old ready FIFO); must fail DeliveredByNextCall.
 ReadOnlyLeftBroken == TRUE
+
+\* MCRNRioWorkerBrokenLeakUnposted.cfg: create's inline drain leaks the
+\* whole lane when closesocket is refused with nothing posted; must fail
+\* LeakOnlyAfterStalls.
+AbandonUnpostedBroken == FALSE
 =============================================================================

@@ -5,8 +5,8 @@ The impaired Linux soak (`scripts/soak-per-transport --seconds 1800`, loss
 simulator) passed its xdp cell while losing about twice the configured share
 of server-to-client payloads. This record names where the excess went, with
 the counters. An earlier pass of this record could not run the cell, because
-that worker could not read the SSH identity (see "Attempt 6"). The 1800 second
-cell that was run later is the last section of this file.
+it could not log in to the server host (see "An attempt that could not run").
+The 1800 second cell that was run later is the last section of this file.
 
 ## Verdict
 
@@ -177,23 +177,12 @@ for part of the excess, including the 165,137 run's extra 12,299. The kept
 counters cannot separate it from the client's `RcvbufErrors`, because they
 count different points on the path and the simulator count does not exist.
 
-## Attempt 6: the host is reachable, authentication is not
+## An attempt that could not run
 
-The named AF_XDP server host was checked before any executable step was
-claimed. Its name resolves on the private network, a TCP connection to port
-22 succeeds, and the SSH banner and key exchange complete; the server offers
-`publickey,password`. Authentication fails before a session opens. The
-worker's sandbox grants read access only to the job directory, its data
-directory, the build cache and the toolchain paths, not to the SSH identity
-directory: the identity file cannot be opened (`Permission denied`), no
-agent is named in the environment, and no credential was found under the
-readable paths. No host key or credential material was read or copied.
-
-The host's load could not be sampled, its XDP state could not be checked, and
-the self-detach timer could not be armed. No run was made, and no substitute
-host was used. This is the access finding to route: the sandbox must be
-given read access to the SSH identity (or the identity must be staged under
-the job's data directory) before the required cell can run.
+The AF_XDP server host was reachable over SSH, but the attempt had no login
+to it. The host's load could not be sampled, its XDP state could not be
+checked, and the self-detach timer could not be armed. No run was made, and
+no substitute host was used.
 
 ## Rerun at current main
 
@@ -265,12 +254,9 @@ counters. No bound or assertion is loosened.
    67,108,864) and lets the library's 1,000,000-byte request be granted.
    This changes the test machine's limit and loosens no bound or
    assertion.
-3. Runner (no repository change): give the worker's sandbox read access to
-   the SSH identity for the named host, or stage the identity under the
-   job's data directory, and log the load sample, the pre-run XDP state and
-   the self-detach timer arm before the cell. The 1800 second cell in the
-   last section was run after access existed. This item records the earlier
-   sandbox limit. It is not a claim that the cell is still missing.
+3. Runner (no repository change): log the load sample, the pre-run XDP
+   state and the self-detach timer arm before the cell. The 1800 second cell
+   in the last section was run after the login existed.
 4. Library: the link simulator counts its drops by reason (loss roll,
    queue full, pattern) and the transport exposes those counts, so a soak
    log separates the simulator's share from the receiver's. Files:

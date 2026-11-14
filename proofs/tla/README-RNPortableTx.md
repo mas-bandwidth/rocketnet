@@ -126,7 +126,8 @@ cover partial-prefix retention and persistent-refusal shutdown separately.
 | `MCRNPortableTxFourBanks.cfg` | pass | The same with four banks and a modulus of four. |
 | `MCRNPortableTxBrokenFullOffByOne.cfg` | `ExactSend` | `FullSlack = 1` |
 | `MCRNPortableTxBrokenWrapTail.cfg` | `ExclusiveOwnership` | `TailMod = 2` |
-| `MCRNPortableTxBrokenNoWrap.cfg` | `InBounds` | `HeadMod = 0`, `TailMod = 0` |
+| `MCRNPortableTxBrokenNoHeadMod.cfg` | `InBounds` | `HeadMod = 0` (tail modulus kept) |
+| `MCRNPortableTxBrokenNoTailMod.cfg` | `InBounds` | `TailMod = 0` (head modulus kept) |
 | `MCRNPortableTxBrokenQuitAfterUnlock.cfg` | `ExitSentAll` | `QuitUnderLock = FALSE` |
 | `MCRNPortableTxBrokenQuitFirst.cfg` | `ExitSentAll` | `PublishBeforeQuit = FALSE` |
 | `MCRNPortableTxBrokenNoRetryOnIdle.cfg` | `EveryAcceptedSent` | `RetryOnIdle = FALSE` |
@@ -154,11 +155,23 @@ Each reversed witness was read against the code by hand (2026-10-29):
   - In the code, the tail is `( free_head + free_count ) % PORTABLE_TX_BANKS`
     in `portable_tx_step`, and the ready tail the same in
     `portable_tx_publish`.
-- **NoWrap.**
-  - In the trace, the second return computes position `2 + 1 = 3` in a
-    three-entry array, and `oob` is set.
-  - In the code, every head advance and every tail position is reduced
-    modulo `PORTABLE_TX_BANKS`.
+- **NoHeadMod** (one rule: the head advance; the tail keeps its modulus).
+  - In the trace, three publishes and two worker returns move `freeHead`
+    from 0 to 3 with no wrap; the fourth publish reads `freeIdx` at position
+    3 of a three-entry array, and `oob` is set.
+  - In the code, the head advances are `( free_head + 1 ) %
+    PORTABLE_TX_BANKS` in `portable_tx_publish` and `( ready_head + 1 ) %
+    PORTABLE_TX_BANKS` in the worker's take, separate from the tail.
+- **NoTailMod** (one rule: the tail position; the head keeps its modulus).
+  - In the trace, two publishes leave `freeHead = 2`, and the worker's
+    second return writes the free tail at `2 + 1 = 3` in a three-entry
+    array, and `oob` is set.
+  - In the code, every tail is `( head + count ) % PORTABLE_TX_BANKS`, a
+    second modulus beside the head's (the ready tail in
+    `portable_tx_publish`, the free tail at each return).
+  - The two witnesses replace one that removed both moduli together
+    (`MCRNPortableTxBrokenNoWrap.cfg`), which could not show either one
+    alone was needed.
 - **QuitAfterUnlock.**
   - In the trace, the worker takes the mutex and finds the ready queue empty.
     It releases the mutex. Main calls stop, publishes the producer (ready

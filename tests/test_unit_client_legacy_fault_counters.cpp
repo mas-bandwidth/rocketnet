@@ -2,7 +2,8 @@
 // The client's BASE receive path (a transport without wait and wake) and the
 // public counters: a byte count past the UDP size limit reads
 // PREFILTER_TOO_LARGE once at update, as on the I/O thread path; a negative
-// byte count is a transport fault no public counter names. The transport is
+// byte count is a transport fault no public counter names, checked against
+// every counter of a run that received nothing. The transport is
 // created step-driven against the fake client transport
 // (tests/fake_client_driver.h): no thread, no socket, no real time; the clock
 // argument starts at 1000.0.
@@ -78,14 +79,6 @@ static void test_client_legacy_receive_counts_too_large_at_update()
 
     const uint64_t too_large = rocketnet_client_transport_counters( transport )->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
 
-    // a negative byte count: a fault, not a datagram too large
-
-    client_legacy_fault_bytes = -1;
-    client_legacy_fault_calls = 0;
-    rocketnet_client_transport_step_legacy_for_test( transport, 1000.0 );
-    rocketnet_client_transport_update( transport, 1000.0 );
-    rocketnet_unit_check( rocketnet_client_transport_counters( transport )->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large );
-
     // a byte count past the UDP size limit: once, however many updates follow
 
     client_legacy_fault_bytes = ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES + 1;
@@ -99,6 +92,56 @@ static void test_client_legacy_receive_counts_too_large_at_update()
     rn_test_client_transport_stop_and_destroy( transport );
 }
 REGISTER_UNIT_TEST( test_client_legacy_receive_counts_too_large_at_update );
+
+// A negative byte count is a fault, not a datagram: every public counter
+// after one receive step and update that met it equals the same run whose
+// receive met no datagram at all. Both runs see the same clock, so whatever
+// the client sends or counts on its own is the same in each.
+
+static void client_legacy_fault_counters_after( int bytes, struct rocketnet_counters_t * counters )
+{
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_base;
+    operations.receive = client_legacy_fault_receive;
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    client_legacy_fault_token( token );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    config.time_callback = client_legacy_fault_time;
+
+    client_legacy_fault_now = 1000.0;
+    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven( NULL, token, &config, 1000.0, &operations, &fake );
+    rocketnet_unit_check( transport != NULL );
+
+    client_legacy_fault_bytes = bytes;
+    client_legacy_fault_calls = 0;
+    rocketnet_client_transport_step_legacy_for_test( transport, 1000.0 );
+    rocketnet_unit_check( client_legacy_fault_calls == 1 );
+    rocketnet_client_transport_update( transport, 1000.0 );
+
+    memcpy( counters->values, rocketnet_client_transport_counters( transport )->values, sizeof( counters->values ) );
+
+    rn_test_client_transport_stop_and_destroy( transport );
+}
+
+static void test_client_legacy_negative_byte_count_moves_no_counter()
+{
+    struct rocketnet_counters_t fault;
+    struct rocketnet_counters_t control;
+    memset( &fault, 0, sizeof( fault ) );
+    memset( &control, 0, sizeof( control ) );
+
+    client_legacy_fault_counters_after( -1, &fault );
+    client_legacy_fault_counters_after( 0, &control );
+
+    for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
+    {
+        rocketnet_unit_check( fault.values[i] == control.values[i] );
+    }
+}
+REGISTER_UNIT_TEST( test_client_legacy_negative_byte_count_moves_no_counter );
 
 // A byte count of exactly the UDP size limit is a datagram, not a fault: the
 // receive keeps it, the update's prefilter refuses it as too large, and it

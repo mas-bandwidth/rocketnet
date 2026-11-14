@@ -16,8 +16,10 @@
 //       them. The four failure modes are denial and the three handshake
 //       timeouts.
 //   F8  TerminalAbsorbing (ClientConnection): a terminal state leaves only
-//       by connect (to 1) or by disconnect (to 0). disconnect() from a
-//       terminal state returns the client to DISCONNECTED.
+//       by connect (to 1) or by disconnect (to 0). Updates past every
+//       deadline, a cookie echoing the salt and a keep-alive under the
+//       client's own key leave it where it is; disconnect() from a terminal
+//       state returns the client to DISCONNECTED.
 //   One client id, one live connection (ServerConnection F9, History
 //       "none"): two handshakes, each with its own token for one client id;
 //       the client-id check at the response refuses the second while the
@@ -495,6 +497,54 @@ static void rocketnet_handshake_prepare_terminal( struct rocketnet_client_protoc
             break;
         }
 
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION:
+        {
+            // the cookie is delivered, the server's challenge swallowed, and
+            // a challenge sealed under the handshake keys carrying a
+            // small-order server ephemeral is delivered in its place
+            struct rocketnet_handshake_server_t test;
+            rocketnet_handshake_server_setup( &test );
+            rocketnet_handshake_mint_token( token_data, 1, ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 10 );
+            rocketnet_unit_check( rocketnet_client_protocol_connect( client, token_data, 100.0, ROCKETNET_TEST_CREATE_TS ) );
+
+            uint8_t response[ROCKETNET_RECEIVE_CEILING];
+            int response_bytes = 0;
+            uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+            int payload_bytes = 0;
+            int payload_client_index = -1;
+
+            double time = 100.0;
+            for ( ; time < 105.0 && client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST; time += 0.05 )
+            {
+                rocketnet_client_protocol_update( client, time, packet, &packet_bytes );
+                if ( packet_bytes > 0 )
+                {
+                    rocketnet_handshake_process_at( &test, &test.client_address, packet, packet_bytes,
+                                                    response, &response_bytes, payload, &payload_bytes, &payload_client_index );
+                    if ( response_bytes > 0 && response[0] == ROCKETNET_CONNECTION_COOKIE_PACKET )
+                    {
+                        rocketnet_client_protocol_process_packet( client, response, response_bytes, time, payload, sizeof( payload ), &payload_bytes );
+                    }
+                }
+            }
+            rocketnet_unit_check( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+
+            uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
+            memset( session_nonce, 0x11, sizeof( session_nonce ) );
+            struct rocketnet_connection_keys_t handshake;
+            rocketnet_derive_handshake_keys( &handshake, client->token.client_to_server_key, client->token.server_to_client_key,
+                                             client->connection_salt, session_nonce );
+            const uint8_t small_order_point[ROCKETNET_KEY_BYTES] = { 0 };
+            const int challenge_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_CHALLENGE_PACKET, client->packet_filter, 1,
+                                                                       session_nonce, small_order_point, ROCKETNET_KEY_BYTES,
+                                                                       client->signed_fields.protocol_id, client->connection_salt,
+                                                                       client->client_ephemeral_public_key, handshake.handshake_server_to_client );
+            rocketnet_unit_check( challenge_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+            rocketnet_client_protocol_process_packet( client, packet, challenge_bytes, time, payload, sizeof( payload ), &payload_bytes );
+            rocketnet_handshake_server_teardown( &test );
+            break;
+        }
+
         default:
             rocketnet_unit_check( 0 );
             break;
@@ -545,25 +595,101 @@ static int rocketnet_handshake_disconnect_returns_disconnected( struct rocketnet
     return client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
 }
 
+// the absorbing half of F8: a client in a terminal state stays in it through
+// updates long past every deadline, sending nothing (the state guards at the
+// top of rocketnet_client_check_deadlines and rocketnet_client_protocol_update),
+// and through the two packets that move a live attempt: a cookie echoing the
+// attempt's salt (it advances requesting cookie) and a keep-alive sealed under
+// the client's own session key (it connects sending connection response).
+// Each packet is refused at its state rung and nothing else moves.
+
+static int rocketnet_handshake_terminal_absorbs( struct rocketnet_client_protocol_t * client,
+                                                 const struct rocketnet_counters_t * counters )
+{
+    const int terminal_state = client->state;
+    const double last_send_time = client->last_send_time;
+    const double state_first_send_time = client->state_first_send_time;
+
+    // the send clocks stay where they were: past the update's guard the send
+    // path stamps them even when the state sends nothing
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    const double update_times[3] = { 120.0, 1000.0, 100000.0 };
+    for ( int i = 0; i < 3; i++ )
+    {
+        int packet_bytes = -1;
+        rocketnet_client_protocol_update( client, update_times[i], packet, &packet_bytes );
+        if ( client->state != terminal_state || packet_bytes != 0 ||
+             client->last_send_time != last_send_time || client->state_first_send_time != state_first_send_time )
+        {
+            return 0;
+        }
+    }
+
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+
+    uint8_t cookie[ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES];
+    const uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES] = { 0 };
+    rocketnet_write_connection_cookie_packet( cookie, client->packet_filter, client->connection_salt,
+                                              ROCKETNET_TEST_CREATE_TS + 3, cookie_mac );
+    const uint64_t cookie_wrong_state = counters->values[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE];
+    const uint64_t cookie_stored = counters->values[ROCKETNET_COUNTER_CLIENT_COOKIE_STORED];
+    rocketnet_client_protocol_process_packet( client, cookie, (int) sizeof( cookie ), 100000.0, payload, (int) sizeof( payload ), &payload_bytes );
+    if ( client->state != terminal_state ||
+         counters->values[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE] != cookie_wrong_state + 1 ||
+         counters->values[ROCKETNET_COUNTER_CLIENT_COOKIE_STORED] != cookie_stored )
+    {
+        return 0;
+    }
+
+    uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 8];
+    memset( plaintext, 0, sizeof( plaintext ) );
+    uint8_t * p = plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES;
+    rocketnet_write_uint32( &p, 0 );
+    rocketnet_write_uint32( &p, 4 );
+    uint8_t keep_alive[ROCKETNET_RECEIVE_CEILING];
+    const int keep_alive_bytes = rocketnet_write_sealed_packet( keep_alive, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, client->packet_filter, 1,
+                                                                NULL, plaintext, (int) sizeof( plaintext ),
+                                                                client->signed_fields.protocol_id, client->connection_salt,
+                                                                NULL, client->keys.session_server_to_client );
+    if ( keep_alive_bytes <= 0 )
+    {
+        return 0;
+    }
+    const uint64_t keep_alive_wrong_state = counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_STATE];
+    const uint64_t keep_alive_accepted = counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ACCEPTED];
+    rocketnet_client_protocol_process_packet( client, keep_alive, keep_alive_bytes, 100000.0, payload, (int) sizeof( payload ), &payload_bytes );
+    if ( client->state != terminal_state ||
+         counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_STATE] != keep_alive_wrong_state + 1 ||
+         counters->values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ACCEPTED] != keep_alive_accepted )
+    {
+        return 0;
+    }
+
+    return 1;
+}
+
 // ---------------------------------------------------------------------------
 // F4, EphemeralErasedOutsideHandshake (ClientConnection.tla). a denial or a
 // handshake timeout is set_state of a state <= DISCONNECTED, which zeroes
-// the ephemeral secret and the token keys. the four failure modes are
-// denial, request timeout, challenge timeout and response timeout.
+// the ephemeral secret and the token keys. the five failure modes are
+// denial, request timeout, challenge timeout, response timeout and a
+// small-order challenge (protocol violation).
 // ---------------------------------------------------------------------------
 
 static void test_client_ephemeral_erased_outside_handshake()
 {
-    const int failure_states[4] = {
+    const int failure_states[5] = {
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED,                 // -1 denial
         ROCKETNET_CLIENT_TRANSPORT_STATE_COOKIE_REQUEST_TIMED_OUT,          // -2 request timeout
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_REQUEST_TIMED_OUT,      // -3 challenge timeout
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT,     // -4 response timeout
+        ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION,                // -10 small-order challenge
     };
 
     int zeroed = 0;
 
-    for ( int i = 0; i < 4; i++ )
+    for ( int i = 0; i < 5; i++ )
     {
         struct rocketnet_client_protocol_t client;
         struct rocketnet_counters_t counters;
@@ -575,18 +701,20 @@ static void test_client_ephemeral_erased_outside_handshake()
         rocketnet_counters_assert_conserved( &counters );
     }
 
-    rocketnet_unit_check( zeroed == 4 );
+    rocketnet_unit_check( zeroed == 5 );
 }
 
 // ---------------------------------------------------------------------------
 // F8, TerminalAbsorbing (ClientConnection.tla). a terminal state leaves
-// only by connect or by disconnect. disconnect() from each terminal state
+// only by connect or by disconnect. each terminal state absorbs updates and
+// packets (rocketnet_handshake_terminal_absorbs), and disconnect() from it
 // returns DISCONNECTED.
 // ---------------------------------------------------------------------------
 
 static void test_disconnect_absorbs_terminal_state()
 {
-    const int terminal_states[7] = {
+    const int terminal_states[8] = {
+        ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION,                // -10
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED,             // -7
         ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN,             // -6
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT,              // -5
@@ -596,13 +724,18 @@ static void test_disconnect_absorbs_terminal_state()
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED,                 // -1
     };
 
+    int absorbed = 0;
     int returned = 0;
 
-    for ( int i = 0; i < 7; i++ )
+    for ( int i = 0; i < 8; i++ )
     {
         struct rocketnet_client_protocol_t client;
         struct rocketnet_counters_t counters;
         rocketnet_handshake_prepare_terminal( &client, &counters, terminal_states[i] );
+        if ( rocketnet_handshake_terminal_absorbs( &client, &counters ) )
+        {
+            absorbed++;
+        }
         if ( rocketnet_handshake_disconnect_returns_disconnected( &client ) )
         {
             returned++;
@@ -610,7 +743,8 @@ static void test_disconnect_absorbs_terminal_state()
         rocketnet_counters_assert_conserved( &counters );
     }
 
-    rocketnet_unit_check( returned == 7 );
+    rocketnet_unit_check( absorbed == 8 );
+    rocketnet_unit_check( returned == 8 );
 }
 
 // ---------------------------------------------------------------------------

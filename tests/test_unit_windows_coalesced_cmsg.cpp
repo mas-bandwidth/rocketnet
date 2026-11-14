@@ -91,6 +91,39 @@ static void test_windows_coalesced_cmsg_other_headers_are_skipped()
 
     memset( &b, 0, sizeof( b ) );
     check( rocketnet_iocp_coalesced_stride( &b.message ) == 0 );
+
+    // two headers: another protocol's first, the coalesced one second. The
+    // walk goes past the first to the second and reads its stride
+
+    check( 2 * WSA_CMSG_SPACE( sizeof( DWORD ) ) <= sizeof( b.control ) );
+    memset( &b, 0, sizeof( b ) );
+    b.message.Control.buf = b.control;
+    b.message.Control.len = (ULONG) ( 2 * WSA_CMSG_SPACE( sizeof( DWORD ) ) );
+    WSACMSGHDR * first = WSA_CMSG_FIRSTHDR( &b.message );
+    check( first != NULL );
+    if ( !first )
+    {
+        return;
+    }
+    first->cmsg_len = WSA_CMSG_LEN( sizeof( DWORD ) );
+    first->cmsg_level = IPPROTO_IP;
+    first->cmsg_type = UDP_COALESCED_INFO;
+    const DWORD other = 99;
+    memcpy( WSA_CMSG_DATA( first ), &other, sizeof( other ) );
+
+    WSACMSGHDR * second = WSA_CMSG_NXTHDR( &b.message, first );
+    check( second != NULL );
+    if ( !second )
+    {
+        return;
+    }
+    second->cmsg_len = WSA_CMSG_LEN( sizeof( DWORD ) );
+    second->cmsg_level = IPPROTO_UDP;
+    second->cmsg_type = UDP_COALESCED_INFO;
+    const DWORD stride = 1234;
+    memcpy( WSA_CMSG_DATA( second ), &stride, sizeof( stride ) );
+
+    check( rocketnet_iocp_coalesced_stride( &b.message ) == 1234 );
 }
 
 REGISTER_UNIT_TEST( test_windows_coalesced_cmsg_whole_dword_is_read );

@@ -204,8 +204,9 @@ static void test_server_receipts_after_kick_same_update()
     receipts_kicked_now = time;
     rocketnet_server_update( server, time );
     check( !rocketnet_server_client_connected( server, index ) );
-    // the kicking update wrote the first message's ACKED outcome
-    check( rocketnet_counter_value( rocketnet_message_server_counters( rocketnet_server_message_server( server ) ), ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED ) >= 1 );
+    // the kicking update wrote the first message's ACKED outcome, the one
+    // receipt this fresh server has acknowledged, so the count is exactly one
+    check( rocketnet_counter_value( rocketnet_message_server_counters( rocketnet_server_message_server( server ) ), ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED ) == 1 );
 
     rocketnet_receipt_t out[4];
     memset( out, 0, sizeof( out ) );

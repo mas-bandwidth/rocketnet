@@ -6,9 +6,10 @@
 (* tla/Link.tla (D2R, "data to receiver"); B sends ack blocks back over a  *)
 (* second instance (R2D).  A is one direction's session sequence and ack   *)
 (* endpoint: sdk/rocketnet_ack.cpp (record_sent, process_block, apply_run) *)
-(* and the staged send of the client and server transports.  B is the     *)
-(* replay window as a set (sdk/rocketnet_replay.cpp) and the block builder *)
-(* (rocketnet_ack_block_build).                                            *)
+(* and the staged send of the client and server transports.  B is two     *)
+(* windows as sets (sdk/rocketnet_replay.cpp), replay_session and          *)
+(* accepted_session, and the block builder (rocketnet_ack_block_build,     *)
+(* through rocketnet_session_ack_block_build on accepted_session).         *)
 (*                                                                         *)
 (* Sequences.  A spends session sequences in order: one per payload, and a *)
 (* burn spends a sequence nothing is ever sent on (USAGE.md, "Not every    *)
@@ -17,12 +18,21 @@
 (* what surfaces in the acked batch.                                       *)
 (*                                                                         *)
 (* The receiver's replay state is the abstract set of opened sequences in  *)
-(* the window (highestOpened - Window, highestOpened].  The word-level     *)
+(* the window (highestOpened - Window, highestOpened], replay_session; the *)
+(* block is built from a second window, accepted_session, the sequences    *)
+(* the endpoint took in (highestAccepted, accepted).  The word-level       *)
 (* representation and its large-skip clear is module ReplayWindow's        *)
-(* business; here every block is truthful by construction unless Witness = *)
-(* "overclaim".  Every packet this model sends is a payload, which is ack- *)
-(* eligible once it opens (standard/TRANSPORT.md t15.3), so the block is   *)
-(* built from the opened set.                                              *)
+(* business, and so is the order in which a packet enters the two windows; *)
+(* here every block is truthful by construction unless Witness =           *)
+(* "overclaim".  Every packet this model sends is a payload, and a payload *)
+(* enters accepted_session only when it is accepted                        *)
+(* (rocketnet_server_protocol_accept_payload,                              *)
+(* rocketnet_client_protocol_accept_payload), not when it opens.  The      *)
+(* model takes the payload acks as not deferred, the default: the          *)
+(* transport accepts each payload in the same call that processed it, so   *)
+(* RecvData advances both windows in one step and they hold the same set.  *)
+(* Deferred acks, where the application accepts later or never, are not    *)
+(* modelled here (ReplayWindow's Accept is that order).                    *)
 (*                                                                         *)
 (* Time.  Tick is one update on both ends: A's acked batch drains, B's     *)
 (* receive drain resets, both links Age.                                   *)
@@ -102,9 +112,11 @@ VARIABLES
     memoBlock,      \* the block's fields, as the set of sequences it names
     memoHigh,       \* highest_sequence when it was applied
     repeatExact,    \* ghost: every skipped repeat left what the full apply would
-    \* the receiver: the replay window and the drain
-    highestOpened,  \* replay highest_opened
+    \* the receiver: the two windows and the drain
+    highestOpened,  \* replay_session.highest_opened
     opened,         \* opened sequences in (highestOpened - Window, highestOpened]
+    highestAccepted,\* accepted_session.highest_opened
+    accepted,       \* accepted sequences in (highestAccepted - Window, highestAccepted]
     drained,        \* packets drained this update
     \* ghosts
     burned,         \* sequences spent and never sent
@@ -121,7 +133,7 @@ R2D == INSTANCE Link WITH wire <- r2dWire, sent <- r2dSent, pulse <- r2dPulse,
                           Packets <- AckPackets, Pattern <- R2DPattern
 
 senderVars   == <<nextSeq, sent, highestSent, batch, outbox>>
-receiverVars == <<highestOpened, opened, drained>>
+receiverVars == <<highestOpened, opened, highestAccepted, accepted, drained>>
 ghostVars    == <<burned, surfacedCount, openedEver, namedEver>>
 d2rVars      == <<d2rWire, d2rSent, d2rPulse>>
 r2dVars      == <<r2dWire, r2dSent, r2dPulse>>
@@ -144,6 +156,7 @@ Init ==
     /\ batch = <<>>
     /\ outbox = <<>>
     /\ highestOpened = 0 /\ opened = {} /\ drained = 0
+    /\ highestAccepted = 0 /\ accepted = {}
     /\ burned = {}
     /\ surfacedCount = [s \in Seqs |-> 0]
     /\ openedEver = {} /\ namedEver = {}
@@ -278,32 +291,39 @@ FullApply(b, skip) ==
 Expect(b) == {s \in b : InWindow(s) /\ sent[s % SentRing].seq = s /\ ~sent[s % SentRing].acked}
 
 \* process_block's full apply (rocketnet_ack_endpoint_process_block_full,
-\* and process_block when the memo does not hold b): the walk, then the
-\* memo set to b unless an id was deferred (a visited record left
-\* unacknowledged)
+\* and process_block when the memo does not hold b): the reconcile, the
+\* walk, then the memo set to b unless an id was deferred (a visited record
+\* left unacknowledged).  An empty block (largest 0: the receiver had
+\* accepted nothing when it built it) returns at once, before the
+\* reconcile, in both functions: nothing is reconciled, walked or
+\* remembered.
 RecvAck ==
     /\ r2dWire # <<>>
     /\ LET b      == Head(r2dWire).pkt
            cand   == {s \in b : InWindow(s) /\ s % SentRing \in ReconciledUnacked /\ sent[s % SentRing].seq = s}
            skip   == IF Witness = "walkskip" /\ cand # {} THEN Min(cand) ELSE 0
        IN
-        /\ ~MemoHit(b)
-        /\ R2D!Deliver(b)
-        /\ LET st == FullApply(b, skip)
-               deferred == \E s \in st.visited : ~st.sent[s % SentRing].acked
-           IN /\ sent' = st.sent
-              /\ batch' = st.batch
-              /\ surfacedCount' = st.sc
-              /\ unacked' = st.unacked
-              /\ lastVisited' = st.visited
-              /\ memoValid' = (~deferred \/ Witness = "skipdeferred")
-        /\ held' = ReconciledHeld
-        /\ bitsChecked' = highestSent
-        /\ lastExpect' = Expect(b)
-        /\ memoBlock' = b
-        /\ memoHigh' = highestSent
-    /\ UNCHANGED <<nextSeq, highestSent, outbox, repeatExact>>
-    /\ UNCHANGED <<receiverVars, burned, openedEver, namedEver, d2rVars>>
+        IF b = {}
+        THEN /\ R2D!Deliver(b)
+             /\ UNCHANGED <<senderVars, receiverVars, ghostVars, d2rVars, bitVars>>
+        ELSE
+          /\ ~MemoHit(b)
+          /\ R2D!Deliver(b)
+          /\ LET st == FullApply(b, skip)
+                 deferred == \E s \in st.visited : ~st.sent[s % SentRing].acked
+             IN /\ sent' = st.sent
+                /\ batch' = st.batch
+                /\ surfacedCount' = st.sc
+                /\ unacked' = st.unacked
+                /\ lastVisited' = st.visited
+                /\ memoValid' = (~deferred \/ Witness = "skipdeferred")
+          /\ held' = ReconciledHeld
+          /\ bitsChecked' = highestSent
+          /\ lastExpect' = Expect(b)
+          /\ memoBlock' = b
+          /\ memoHigh' = highestSent
+          /\ UNCHANGED <<nextSeq, highestSent, outbox, repeatExact>>
+          /\ UNCHANGED <<receiverVars, burned, openedEver, namedEver, d2rVars>>
 
 \* process_block when the memo holds b: the reconcile, then nothing walked,
 \* nothing acked, nothing surfaced. repeatExact records whether the full
@@ -313,6 +333,7 @@ RecvAckRepeat ==
     /\ LET b  == Head(r2dWire).pkt
            st == FullApply(b, 0)
        IN
+        /\ b # {}
         /\ MemoHit(b)
         /\ R2D!Deliver(b)
         /\ repeatExact' = (repeatExact /\ st.sent = sent /\ st.batch = batch
@@ -327,34 +348,39 @@ RecvAckRepeat ==
     /\ UNCHANGED <<receiverVars, burned, openedEver, namedEver, d2rVars>>
 
 (***************************************************************************)
-(* The receiver's replay window (sdk/rocketnet_replay.cpp) as a set.       *)
+(* The receiver's windows (sdk/rocketnet_replay.cpp) as sets.              *)
 (***************************************************************************)
-Floor == IF highestOpened >= Window THEN highestOpened - Window + 1 ELSE 1
+FloorOf(h) == IF h >= Window THEN h - Window + 1 ELSE 1
 
-\* rocketnet_replay_already_received, negated
+Floor == FloorOf(highestOpened)
+
+AccFloor == FloorOf(highestAccepted)
+
+\* rocketnet_replay_already_received on replay_session, negated
 Fresh(s) == s > highestOpened \/ (s >= Floor /\ s \notin opened)
 
-\* rocketnet_replay_advance
-AdvanceHighest(s) == IF s > highestOpened THEN s ELSE highestOpened
-AdvanceOpened(s)  == {x \in opened \cup {s} : x > AdvanceHighest(s) - Window}
+\* rocketnet_replay_advance on a window (h, set)
+AdvanceHighest(h, s) == IF s > h THEN s ELSE h
+AdvanceSet(h, set, s) == {x \in set \cup {s} : x > AdvanceHighest(h, s) - Window}
 
 (***************************************************************************)
-(* rocketnet_ack_block_build: the run ending at largest, then (gap, run)   *)
-(* pairs downward to the floor, at most MaxRanges of them; a trailing gap  *)
-(* names nothing.  The block is the set of sequences named.                *)
+(* rocketnet_ack_block_build on accepted_session                           *)
+(* (rocketnet_session_ack_block_build): the run ending at largest, then    *)
+(* (gap, run) pairs downward to the floor, at most MaxRanges of them; a    *)
+(* trailing gap names nothing.  The block is the set of sequences named.   *)
 (***************************************************************************)
-RunDownFrom(s) == {x \in Floor..s : \A y \in x..s : y \in opened}
+RunDownFrom(s) == {x \in AccFloor..s : \A y \in x..s : y \in accepted}
 
 RECURSIVE NamedFrom(_, _)
 NamedFrom(top, runs) ==
-    IF top < Floor \/ runs = 0 THEN {}
-    ELSE IF top \notin opened THEN NamedFrom(top - 1, runs)
+    IF top < AccFloor \/ runs = 0 THEN {}
+    ELSE IF top \notin accepted THEN NamedFrom(top - 1, runs)
     ELSE LET run == RunDownFrom(top) IN run \cup NamedFrom(Min(run) - 1, runs - 1)
 
 Block ==
-    IF highestOpened = 0 THEN {}
-    ELSE IF Witness = "overclaim" THEN Floor..highestOpened
-    ELSE NamedFrom(highestOpened, 1 + MaxRanges)
+    IF highestAccepted = 0 THEN {}
+    ELSE IF Witness = "overclaim" THEN AccFloor..highestAccepted
+    ELSE NamedFrom(highestAccepted, 1 + MaxRanges)
 
 \* A session packet carrying the current block.  Every session type carries
 \* one; the standalone ack (type 8) is the one sent for the block alone, and
@@ -364,8 +390,11 @@ SendAck ==
     /\ namedEver' = namedEver \cup Block
     /\ UNCHANGED <<senderVars, receiverVars, burned, surfacedCount, openedEver, d2rVars, bitVars>>
 
-\* A data packet arrives: the reading order's replay check, then the
-\* payload is opened.  A refused packet was still drained.
+\* A data packet arrives: the reading order's replay check on
+\* replay_session, then the payload is opened and replay_session advanced;
+\* the payload is handed up and accepted in the same call (payload acks not
+\* deferred), accept_payload advancing accepted_session.  A refused packet
+\* was still drained.
 RecvData ==
     /\ drained < DrainCap
     /\ d2rWire # <<>>
@@ -373,9 +402,11 @@ RecvData ==
         /\ D2R!Deliver(s)
         /\ drained' = drained + 1
         /\ IF ~Fresh(s)
-           THEN UNCHANGED <<highestOpened, opened, openedEver>>
-           ELSE /\ highestOpened' = AdvanceHighest(s)
-                /\ opened' = AdvanceOpened(s)
+           THEN UNCHANGED <<highestOpened, opened, highestAccepted, accepted, openedEver>>
+           ELSE /\ highestOpened' = AdvanceHighest(highestOpened, s)
+                /\ opened' = AdvanceSet(highestOpened, opened, s)
+                /\ highestAccepted' = AdvanceHighest(highestAccepted, s)
+                /\ accepted' = AdvanceSet(highestAccepted, accepted, s)
                 /\ openedEver' = openedEver \cup {s}
     /\ UNCHANGED <<senderVars, burned, surfacedCount, namedEver, r2dVars, bitVars>>
 
@@ -387,7 +418,7 @@ Tick ==
     /\ drained' = 0
     /\ D2R!Age /\ R2D!Age
     /\ UNCHANGED <<nextSeq, sent, highestSent, outbox>>
-    /\ UNCHANGED <<highestOpened, opened, ghostVars, bitVars>>
+    /\ UNCHANGED <<highestOpened, opened, highestAccepted, accepted, ghostVars, bitVars>>
 
 D2REnvironment == D2R!Environment /\ UNCHANGED <<senderVars, receiverVars, ghostVars, r2dVars, bitVars>>
 R2DEnvironment == R2D!Environment /\ UNCHANGED <<senderVars, receiverVars, ghostVars, d2rVars, bitVars>>
@@ -448,6 +479,8 @@ TypeOK ==
     /\ outbox \in Seq(DataPackets) /\ Len(outbox) <= 1
     /\ highestOpened \in 0..MaxSeq
     /\ opened \subseteq Seqs /\ opened \subseteq Floor..highestOpened
+    /\ highestAccepted \in 0..MaxSeq
+    /\ accepted \subseteq Seqs /\ accepted \subseteq AccFloor..highestAccepted
     /\ drained \in 0..DrainCap
     /\ burned \subseteq Seqs
     /\ surfacedCount \in [Seqs -> 0..2]
@@ -518,5 +551,12 @@ Retained(s) == sent[s % SentRing].seq = s
 \* surfaces from a later block.
 OpenedSurfacesOrLaps ==
     \A s \in Seqs : [](s \in openedEver => <>(surfacedCount[s] >= 1 \/ ~Retained(s)))
+
+\* A reach witness only (MCSessionAcksReachLap.cfg): no payload the receiver
+\* opened is lapped in the sent ring before it surfaces.  It is reachable,
+\* so the ~Retained disjunct of OpenedSurfacesOrLaps is a behaviour the
+\* lapping instances explore.
+NoLapBeforeSurface ==
+    \A s \in Seqs : (s \in openedEver /\ surfacedCount[s] = 0 /\ s <= highestSent) => Retained(s)
 
 =============================================================================

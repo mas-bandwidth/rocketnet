@@ -291,6 +291,36 @@ bool rocketnet_server_socket_interrupt_line_matches_interface( const char * line
 
 bool rocketnet_server_socket_interrupt_next_irq( FILE * interrupts, const char * interface_name, int * irq );
 
+// the same, and the line's queue: k when its name is <interface>-TxRx-<k>
+// (rocketnet_xdp_queue_vector), else -1.
+
+bool rocketnet_server_socket_interrupt_next_vector( FILE * interrupts, const char * interface_name, int * irq, int * queue );
+
+// The pre-flight's file-reading conditions, each reading its /proc, /sys and
+// /boot files under root ("" in production; a unit case's directory holds a
+// fake tree with the same paths), so every arm is driven with no machine
+// state. Each logs every unmet condition and returns false when one is
+// unmet. interface_name is the device XDP attaches to.
+//
+// B1: the kernel command line (root/proc/cmdline, root/sys/devices/system/cpu/isolated).
+bool rocketnet_server_socket_preflight_boot_line( const char * root );
+// R4: the interface's IRQs (root/proc/interrupts,
+// root/proc/irq/N/smp_affinity_list, root/sys/devices/system/cpu/isolated).
+bool rocketnet_server_socket_preflight_irqs( const char * root, const char * interface_name, int num_queues, int num_os_cpus );
+// R8: the real-time throttle (root/proc/sys/kernel/osrelease,
+// root/proc/sys/kernel/sched_rt_runtime_us, root/boot/config-<release>).
+bool rocketnet_server_socket_preflight_rt_throttle( const char * root );
+// R2 on a VLAN: the filter reads the 802.1Q tag in the frame, so the parent
+// NIC must not strip it on receive. Judges the parent's ETHTOOL_GFLAGS read:
+// read_errno 0 and flags, or the errno the read failed with. An untagged
+// server (vlan_id 0) passes; offload on, or a failed read, is unmet.
+bool rocketnet_server_socket_preflight_vlan_tag( const char * parent_name, int vlan_id, int read_errno, uint32_t flags );
+// After the attach: how many of the interface's queue vectors
+// (<interface>-TxRx-<k>, k < num_queues) are not on the cpu xdp thread k pins
+// to (root/proc/interrupts, root/proc/irq/N/smp_affinity_list). The first is
+// described in first (irq, queue, affinity, wanted cpu). Reads only.
+int rocketnet_server_socket_queue_irqs_off_worker( const char * root, const char * interface_name, int num_queues, int num_os_cpus, char * first, size_t first_bytes );
+
 // The filter value configures the kernel prefilter: only packets carrying it
 // reach the AF_XDP rings. It is the same value the protocol object checks, at the same epoch.
 //

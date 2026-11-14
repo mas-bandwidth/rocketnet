@@ -23,13 +23,34 @@ lands above the cached top. Top leaving its generation with base in place
 moves the finished right piece and any passed generations into the middle;
 base leaving its generation rebuilds the suffixes and the middle.
 
-A summary or piece is the set of `<<sequence, bytes>>` records it counts: the
-code's bytes, count and time extrema are functions of those records and its
-merge is their union. Two payloads make a duplicate that is merged instead of
-rebuilt visible as two records of one sequence. The merge order (the first
-record's NaN) is checked by the unit tests against the scan oracle
+A summary or piece is the bag (multiset) of `<<sequence, bytes>>` records it
+counts. The code's merge (`rocketnet_ack_stats_received_merge`) adds counts
+and bytes, so the model's merge is bag addition: a record merged into a piece
+twice is counted twice in the model as in the code, and `QueryIsReference`
+sees it (a set union would hide it; `MCRNReceivedBlocksLayoutBrokenOverlap.cfg`
+passes the set model of v1.1.54 and fails this one). The time extrema are
+functions of the bag's records. A duplicate that is merged instead of rebuilt
+shows as a second copy of its sequence. The merge order (the first record's
+NaN) is checked by the unit tests against the scan oracle
 (`tests/test_unit_ack_stats.cpp`). `RNServerStats.tla` checks the aggregates
 with the reduction taken whole.
+
+`Init` is `rocketnet_ack_endpoint_reset`: the block tags, the cached base and
+top and the middle and right aggregates are zero, which is the empty
+aggregate (the reset zeroes them, so the refresh's first load of a cached
+piece reads a word a write has set; through v1.1.54 only the tags and the base
+were zeroed, and the other loaded values were discarded unused, so that had no
+behavioural effect). `Init` states the reset the code now does; it does not
+check it. With the cached base 0 the model's refresh, like the code's, finds
+the cache invalid and rebuilds top, middle and right without reading them, so
+the model would pass the same way with those three `Unset`: a read of a word no
+write has set is checked here only for the block summaries and suffixes, below,
+and the unit test `test_ack_received_stats_reset_sets_every_cached_piece`
+checks the reset by value. The block summaries
+and the left suffixes are left as they were: the model starts them as `Unset`,
+the bag of a record no receive writes, so a summary read before its tag is set
+or a suffix read before it is built would reach the published cohort and fail
+`QueryIsReference`.
 
 ## The instance
 
@@ -56,7 +77,10 @@ with different bytes. The witnesses use sequences to 20 and both payloads.
 | `MCRNReceivedBlocksLayoutBrokenLater.cfg` | a write into a block tagged with a later generation retags it | `QueryIsReference` |
 | `MCRNReceivedBlocksLayoutBrokenDuplicate.cfg` | a duplicate joins its summary instead of rebuilding it | `QueryIsReference` |
 | `MCRNReceivedBlocksLayoutBrokenBaseMove.cfg` | the left piece and middle are reused after base leaves its generation | `QueryIsReference` |
+| `MCRNReceivedBlocksLayoutBrokenOverlap.cfg` | the right piece is appended from the cached top, not the sequence after it (`next = cache_top`), so that record is counted twice | `QueryIsReference` (receive 2 then 3: the right piece holds 2 twice) |
 
-Each witness is also a code mutant: the same rule turned off in
+The first four witnesses are also code mutants: the same rule turned off in
 `sdk/rocketnet_ack.cpp` fails `test_ack_received_stats_random_receives_match_scan`,
 and the inside and base-move mutants fail older received statistics cases too.
+The overlap witness is the multiplicity check: it needs one payload only, since
+the second copy changes the count and bytes, not the set of records.

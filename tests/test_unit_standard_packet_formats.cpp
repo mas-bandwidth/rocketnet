@@ -5,8 +5,9 @@
 
 // test_unit_standard_packet_formats.cpp -- the assembled wire vectors of RN-1
 // t8 (standard/TRANSPORT.md, Packet formats): one packet of every type 0 to
-// 9, regenerated through the sdk code that writes it and compared byte for
-// byte with the twin in the document. No socket, no thread, no clock.
+// 8 (nine vectors; 9 and above are reserved), regenerated through the sdk
+// code that writes it and compared byte for byte with the twin in the
+// document. No socket, no thread, no clock.
 
 #include "test_unit_standard.h"
 

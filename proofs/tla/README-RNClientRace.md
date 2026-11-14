@@ -42,6 +42,29 @@ it frees. A backend with no close operation keeps the losing socket open
 until destroy; every built-in backend that races has one (loopback never
 races).
 
+Destroy frees each family once because of two things in the code, not
+because the model forbids a second free: the transport is destroyed once
+(the API's contract, `CallerDestroy`'s guard), and
+`rocketnet_client_transport_io_close` destroys a family only while its
+instance is set and then clears it. `frees` counts every free per thread and
+family, so `FreedOnce` sees a repeat free by the same owner;
+`MCRNClientRaceBrokenNoLiveCheck.cfg` takes the instance check away after a
+reader free, and `MCRNClientRaceBrokenDestroyTwice.cfg` destroys twice
+without it.
+
+**Destination and family.** After the commit the model drops a slot
+addressed to the losing family's server. The code drops by address family:
+`rocketnet_client_race_send`, `rocketnet_client_race_send_progress` and
+`rocketnet_client_race_send_batch` take each slot's family from its
+destination (`rocketnet_client_race_family_of`) and send only the kept
+family's slots. The two are equal: only the two server addresses are ever
+sent to (IPv4 `server_address[0]`, IPv6 `server_address[1]`), so a
+destination's address family names its server, and the commit sets
+`protocol.server_address` to `server_address[kept]` and rebinds a Filling
+ring bound to the losing server (`rocketnet_client_io_rebind_held`), so
+after the commit every send is addressed to the kept server. A slot for the
+losing server after the commit is the `commitkeepsring` defect.
+
 ## Properties
 
 | name | kind | meaning |
@@ -49,12 +72,13 @@ races).
 | `NoUseAfterClose` | invariant | no thread sends, receives or waits on a closed handle or freed memory |
 | `FreedOnlyByCaller` | invariant | every free is made by the caller's thread |
 | `FreedOnlyAfterJoin` | invariant | memory is freed only after the reading thread is joined |
-| `FreedOnce`, `FreedIsClosed` | invariant | each family is freed once, and only closed |
+| `FreedOnce`, `FreedIsClosed` | invariant | each family is freed once, by any thread and counting a repeat by the same thread, and only closed |
 | `ClosedOnlyLoser`, `SeenMeansClosed` | invariant | the reader closes only the losing family, in the step that first sees the commit |
 | `EverythingFreed` | liveness | with fair threads, destroy frees every family |
 | `PostCommitSlotsKept` | invariant | no slot committed after the commit leaves for the losing family, where the race's send drops it |
 | `SendFailedMonotonic` | invariant | SEND_FAILED never goes down between two reads |
-| `LoserClosed` | liveness | a commit leads to the losing family's close |
+| `LoserClosed` | liveness | a commit leads to the reading thread closing the losing family, at its step or at the I/O thread's exit; stated over the ghost `closer`, so destroy's close of every family does not satisfy it. The legacy receive worker's exit is not modelled: it closes nothing, so a commit it never steps past leaves the losing family to destroy |
+| `StepClosesAtSight` | invariant | before its exit, a reader that has seen the commit closed the losing family in that step (`closer = "step"`) |
 
 ## Cases
 
@@ -67,6 +91,10 @@ races).
 | `MCRNClientRaceBrokenReaderClosesEarly.cfg` | `NoUseAfterClose`: the reader closes a family before any commit |
 | `MCRNClientRaceBrokenCommitKeepsRing.cfg` | `PostCommitSlotsKept`: the commit leaves a ring bound to the losing server, as the code did before `rocketnet_client_io_rebind_held` |
 | `MCRNClientRaceBrokenNoKeepAtCommit.cfg` | `SendFailedMonotonic`: only the reader's close keeps the losing family's failures, as the code did before the commit kept them |
+| `MCRNClientRaceBrokenNoLiveCheck.cfg` | `FreedOnce`: the reader frees the losing family and destroy frees every family without `rocketnet_client_transport_io_close`'s instance check, so the losing family is freed twice |
+| `MCRNClientRaceBrokenDestroyTwice.cfg` | `FreedOnce`: the transport destroyed twice, without the instance check, so the caller frees each family twice, a repeat by the same owner that only the counting `frees` can see |
+| `MCRNClientRaceBrokenNoReaderClose.cfg` | `LoserClosed` (temporal): the reading thread closes nothing at a step or its exit, as a backend with no close operation would, so only destroy closes the losing family |
+| `MCRNClientRaceBrokenNoStepClose.cfg` | `StepClosesAtSight`: the step that first sees the commit does not close the losing family; the exit still does, so `LoserClosed` alone would pass. The same trace also breaks `SeenMeansClosed`, which had no reversed witness before |
 
 Each counterexample was checked by hand against the code: the reader-frees
 trace is commit, then one reading step whose `rocketnet_client_race_kept`
@@ -86,6 +114,20 @@ holds the I/O mutex for the update that resends the cookie request, so that
 hand-off is LATE, then lets the cookie from IPv4 commit the race in an update
 whose connection request joins the same ring; before the rebind the request
 never left, and with it the request reaches IPv4 in that update.
+
+The no-reader-close trace is a commit, a stop, the reader's exit that
+closes nothing, the join and destroy, which closes the losing family
+(`closer = "destroy"`) and stutters: the old form of `LoserClosed`, over
+the handle alone, held on this trace. In the code that is a backend with no
+close operation, whose losing socket stays open until
+`rocketnet_client_race_destroy` (the code still sets `race->closed` and keeps
+the failures there, which the defect leaves out and `LoserClosed` does not
+read); every built-in backend that races has one. The same trace is real on
+the legacy receive worker's path, whose exit closes nothing: the model's
+reader is the I/O thread and the caller's own step.
+The no-step-close trace is a commit and one reading step that loads it
+(`seen = 0`) and closes nothing, where `rocketnet_client_race_kept` closes
+the losing family's handles at its first sight of the commit.
 
 The no-keep trace is a send failure on family 0, a read (1), a commit
 to family 1, and a read before the reader's step: the kept family's count

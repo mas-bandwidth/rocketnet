@@ -1462,6 +1462,42 @@ static void test_ack_received_stats_reset_forgets_high_cache_base()
 }
 REGISTER_UNIT_TEST( test_ack_received_stats_reset_forgets_high_cache_base );
 
+// A reset sets every cached piece of the older half, not only its base: the
+// base and top pairs and the middle and right aggregates (8 words each). The
+// first refresh that spans two generations loads all of them before its
+// validity check, and with the base 0 it discards what it loaded, so a stale
+// top, middle or right never reaches a published number; set by the reset,
+// those loads read only words a write has set (proofs/tla/RNReceivedBlocksLayout.tla
+// Init). The word indexes are sdk/rocketnet_ack.cpp's layout: 64 blocks of
+// 10 words, 32 suffix aggregates of 8, then the cached pieces. Every word of
+// the endpoint starts poisoned; no time, no socket.
+
+static void test_ack_received_stats_reset_sets_every_cached_piece()
+{
+    const int blocks = ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE / 32;
+    const int pieces = blocks * 10 + 32 * 8;
+    const int words = 2 + 2 + 8 + 8;
+    rocketnet_unit_check( pieces + words <= ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
+
+    auto * endpoint = (rocketnet_ack_endpoint_t *) rocketnet_malloc( NULL, sizeof( rocketnet_ack_endpoint_t ) );
+    rocketnet_unit_check( endpoint );
+    memset( (void *) endpoint, 0xA5, sizeof( rocketnet_ack_endpoint_t ) );
+
+    rocketnet_ack_endpoint_reset( endpoint );
+
+    for ( int word = pieces; word < pieces + words; ++word )
+    {
+        rocketnet_unit_check( endpoint->received[word].stats_word == 0 );
+    }
+
+    // the suffix aggregates before them are built before they are read, and
+    // a reset leaves them as they were
+    rocketnet_unit_check( endpoint->received[pieces - 1].stats_word == 0xA5A5A5A5u );
+
+    rocketnet_free( NULL, endpoint );
+}
+REGISTER_UNIT_TEST( test_ack_received_stats_reset_sets_every_cached_piece );
+
 // A drifted sent count whose low record has left the window. Counted
 // survivors lie only in [base, old_top]. The scan must stop there and record
 // the internal error. A present record one ring above the scan base lets an

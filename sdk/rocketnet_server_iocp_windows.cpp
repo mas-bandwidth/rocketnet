@@ -3356,6 +3356,8 @@ void rocketnet_server_iocp_finish_packet( rocketnet_server_iocp_t * iocp, uint64
     op->packet_bytes = packet_bytes;
 }
 
+// proofs/tla/RNIocpSendLanes.tla Abort: the slot keeps zero bytes, and the
+// send bank releases its operation unposted (Post)
 void rocketnet_server_iocp_abort_packet( rocketnet_server_iocp_t * iocp, uint64_t packet_id, uint8_t * frame )
 {
     rocketnet_iocp_ref_t ref;

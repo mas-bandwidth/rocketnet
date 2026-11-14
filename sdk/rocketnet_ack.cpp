@@ -426,10 +426,12 @@ static_assert( ROCKETNET_ACK_RECEIVED_STATS_STORAGE_WORDS <= ROCKETNET_RECEIVED_
 // proofs/tla/RNWrittenRing.tla Reset. Every field but the two record rings, which
 // a written bit guards (Write sets it, every Read checks it first): the
 // rings' payloads are never zeroed. Reset also clears the 64 generation
-// tags and the cached pieces' base in the received records' reclaimed stats
-// words (520 bytes), without
-// touching sequence/time/bytes: an untagged block summarizes nothing, and a
-// suffix is always built before it is read.
+// tags and the cached pieces (base, top, middle and right) in the received
+// records' reclaimed stats words (592 bytes), without touching
+// sequence/time/bytes: an untagged block summarizes nothing, and a suffix is
+// always built before it is read. With the base 0 the refresh discards the
+// other cached pieces it loads; zeroing them as well means it never loads a
+// word no write has set (proofs/tla/RNReceivedBlocksLayout.tla Init).
 
 void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
 {
@@ -455,8 +457,10 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
         endpoint->received[word].stats_word = 0;
         endpoint->received[word + 1].stats_word = 0;
     }
-    endpoint->received[ROCKETNET_ACK_RECEIVED_STATS_CACHE_BASE_WORD].stats_word = 0;
-    endpoint->received[ROCKETNET_ACK_RECEIVED_STATS_CACHE_BASE_WORD + 1].stats_word = 0;
+    for ( int word = ROCKETNET_ACK_RECEIVED_STATS_CACHE_BASE_WORD; word < ROCKETNET_ACK_RECEIVED_STATS_STORAGE_WORDS; ++word )
+    {
+        endpoint->received[word].stats_word = 0;
+    }
 }
 
 // -----------------------------------------
