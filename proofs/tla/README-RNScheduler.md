@@ -156,19 +156,20 @@ application's choice and not fair.
 
 ## Cases
 
-Measured on the bench (amd-2), 2 workers, 110 s budget.
+Measured on an AWS bench (2026-11-13, after the drain reset), 2 workers, 110 s budget.
 
 | Case | Constants | Result |
 |---|---|---|
-| `MCRNScheduler.cfg` | code instance, every rule on, every invariant and `NoStarvation` | pass 3778 distinct states, 8.2 s |
-| `MCRNSchedulerBrokenPerMessagePriority.cfg` | reserved levels, `ChannelFIFO = FALSE` | invariant `FirstWriteInOrderPerChannel`, exit 12, 6-state trace (27 distinct states, 0.9 s) |
-| `MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg` | code instance, `UnreliableLast = FALSE` | temporal `NoStarvation`, exit 13, lasso of 11 states (51 distinct, 1.1 s) |
-| `MCRNSchedulerBrokenRtxPerMessage.cfg` | code instance, `ChannelFIFO = FALSE` | invariant `RtxHeadBoost`, exit 12, 10-state trace (172 distinct, 0.8 s) |
-| `MCRNSchedulerBrokenStallEndsPass.cfg` | code instance, `StallEndsPass = TRUE` | invariant `UnreliableNotBlockedByWindow`, exit 12, 11-state trace (107 distinct, 0.9 s) |
-| `MCRNSchedulerReservedLevels.cfg` | reserved levels, every rule on | pass 4934 distinct states, 10.4 s |
-| `MCRNSchedulerKeepsSending.cfg` | keeps sending, every rule on | pass 1654 distinct states, 4.4 s |
-| `MCRNSchedulerBrokenReadyKeepsTurn.cfg` | keeps sending, `ReadyRotate = FALSE` | temporal `NoStarvation`, exit 13, lasso of 32 states (1552 distinct, 7.7 s) |
-| `MCRNSchedulerBrokenRtxById.cfg` | code instance, `RtxSendOrder = FALSE` | invariant `RtxHeadBoost`, exit 12, 13-state trace (550 distinct, 1.0 s) |
+| `MCRNScheduler.cfg` | code instance, every rule on, every invariant and `NoStarvation` | pass 3235 distinct states, 6.7 s |
+| `MCRNSchedulerBrokenPerMessagePriority.cfg` | reserved levels, `ChannelFIFO = FALSE` | invariant `FirstWriteInOrderPerChannel`, exit 12, 6-state trace (30 distinct states, 1.0 s) |
+| `MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg` | code instance, `UnreliableLast = FALSE` | temporal `NoStarvation`, exit 13, lasso of 12 states (68 distinct, 1.5 s) |
+| `MCRNSchedulerBrokenUnreliableFirstClassOrder.cfg` | code instance, `UnreliableLast = FALSE` | invariant `ClassOrderBeforePriority`, exit 12, 4-state trace (10 distinct, 1.1 s) |
+| `MCRNSchedulerBrokenRtxPerMessage.cfg` | code instance, `ChannelFIFO = FALSE` | invariant `RtxHeadBoost`, exit 12, 10-state trace (144 distinct, 1.1 s) |
+| `MCRNSchedulerBrokenStallEndsPass.cfg` | code instance, `StallEndsPass = TRUE` | invariant `UnreliableNotBlockedByWindow`, exit 12, 11-state trace (105 distinct, 1.1 s) |
+| `MCRNSchedulerReservedLevels.cfg` | reserved levels, every rule on | pass 4477 distinct states, 10.9 s |
+| `MCRNSchedulerKeepsSending.cfg` | keeps sending, every rule on | pass 1272 distinct states, 3.8 s |
+| `MCRNSchedulerBrokenReadyKeepsTurn.cfg` | keeps sending, `ReadyRotate = FALSE` | temporal `NoStarvation`, exit 13, lasso of 25 states (1220 distinct, 5.7 s) |
+| `MCRNSchedulerBrokenRtxById.cfg` | code instance, `RtxSendOrder = FALSE` | invariant `RtxHeadBoost`, exit 12, 13-state trace (403 distinct, 1.3 s) |
 
 What the earlier instance could not show, measured with the cases' constants
 changed (bench runs, not cases): the earlier `UnreliableNotBlockedByWindow`,
@@ -200,10 +201,10 @@ drains whatever the turns do.
   (`rn_endpoint_next_packet_bytes`), so CONFIG and the two messages go in the
   first three updates. `ClassOrderBeforePriority` is the safety face of the
   same flaw and is left out, so the failure checked is the liveness one.
-- **`MCRNSchedulerBrokenUnreliableFirstClassOrder.cfg`**: the same constants,
-  checking only `ClassOrderBeforePriority`: a reliable item numbered, then the
-  write takes the update's unreliable item while that numbered item could be
-  written. The code's `rn_packet_builder_write` class loop takes the classes
+- **`MCRNSchedulerBrokenUnreliableFirstClassOrder.cfg`** (4 states): the
+  same constants, checking only `ClassOrderBeforePriority`: CONFIG is queued
+  and numbered, then the write takes the update's unreliable item while that
+  numbered item could be written. The code's `rn_packet_builder_write` class loop takes the classes
   in the budget's order, and the unreliable phase starts only after the
   reliable phase ends.
 - **`MCRNSchedulerBrokenRtxPerMessage.cfg`**: CONFIG and channel 0's message
@@ -229,12 +230,13 @@ drains whatever the turns do.
   `reliable_waiting` and sets `RN_ENDPOINT_WRITE_UNRELIABLE`, and the
   unreliable packet is written. The trace also shows the rotation at work:
   channel 1 is numbered before channel 0's second message.
-- **`MCRNSchedulerBrokenReadyKeepsTurn.cfg`**: a lasso: CONFIG numbered and
-  written, items 2 and 3 queued on channel 0, item 4 queued on channel 1
-  (ready 0, 1); item 2 numbered and channel 0 keeps the head (ready 0, 1),
-  written, lost and resent, acked; item 2 requeued behind 3; item 3 numbered
-  (ready 0, 1), written, acked, requeued; item 2 numbered; and so on: every
-  number goes to channel 0 and item 4 stays queued. The code pops channel 0
+- **`MCRNSchedulerBrokenReadyKeepsTurn.cfg`** (lasso of 25 states, back to
+  16): CONFIG numbered and written, lost and resent, items 2 and 3 queued on
+  channel 0, item 4 queued on channel 1 (ready 0, 1); CONFIG acked; item 2
+  numbered and channel 0 keeps the head (ready 0, 1), written, acked,
+  requeued behind 3; item 3 numbered (ready 0, 1), written, acked, requeued;
+  item 2 numbered; and so on: every number goes to channel 0 and item 4
+  stays queued. The code pops channel 0
   off the turns and rejoins it at the back after each number
   (`rn_ready_remove_named`, then `rn_ready_push`): after item 2 the list is
   1, 0, and once item 2's ack opens the window item 4 is numbered next.

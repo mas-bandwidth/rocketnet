@@ -199,6 +199,27 @@ counterexample below was checked against the C by hand.
    In the code the next drain's wrap test would hide it, but the stop step
    ends the stop there, and the drop is the one pop that does not lower the
    cursor with each burst it removes.
+5. **`MCRNDisconnectBurstRingBrokenQueueAbandonNoPop.cfg`** (two queues,
+   `AbandonQueuePops = FALSE`): the several-queue stop step without its pop
+   loop. Violates `HeadNotComplete` (4 states, checked by hand): one client
+   connects, the stop appends its burst at slot 0, and the stop step marks
+   it complete for its full queue and leaves it at the head. The code's
+   several-queue branch of `rocketnet_server_transport_stop_step` runs the
+   head pop right after the marking loop.
+
+Two scope witnesses show the one-queue rules do not hold with several
+queues; each must fail, and neither is a code change:
+
+- **`MCRNDisconnectBurstRingQueuesPassFair.cfg`** (`PassFair`, 5 states,
+  checked by hand): one burst is deferred, its queue is full so the drain
+  steps past it (cursor 1, count 1), and the next drain wraps the cursor to
+  0 and seals it: the pass ended with that burst owed a seal. The drain's
+  full-queue step in `rocketnet_server_transport_drain_disconnect_bursts`
+  is this.
+- **`MCRNDisconnectBurstRingQueuesSealedFall.cfg`** (`SealedFallFromHead`,
+  6 states, checked by hand): the stop appends bursts 1 and 2, burst 1's
+  queue is full and is stepped past, burst 2 is sealed, so the burst behind
+  the head holds more seals than the head.
 
 Not advancing the head on a drop is not a witness here: with `count` 0 every
 head is a valid empty ring (`Defer` writes slot `head`, the pass starts
@@ -211,12 +232,16 @@ Bench runs of this version (two workers, `distinct` states and seconds):
 
 | Case | Result | Distinct | Seconds |
 |---|---|---|---|
-| `MCRNDisconnectBurstRing.cfg` | pass | 435,502 | 4.5 |
-| `MCRNDisconnectBurstRingK3.cfg` | pass | 670,782 | 6.4 |
+| `MCRNDisconnectBurstRing.cfg` | pass | 435,502 | 6.2 |
+| `MCRNDisconnectBurstRingK3.cfg` | pass | 670,782 | 9.2 |
 | `MCRNDisconnectBurstRingBrokenSteadyCapOffByOne.cfg` | `NoOverwrite`, exit 12 | 158 | 0.8 |
-| `MCRNDisconnectBurstRingBrokenCursorWrapLate.cfg` | `SealOnlyLive`, exit 12 | 21 | 0.8 |
+| `MCRNDisconnectBurstRingBrokenCursorWrapLate.cfg` | `SealOnlyLive`, exit 12 | 21 | 0.7 |
 | `MCRNDisconnectBurstRingBrokenCursorKept.cfg` | `SealedFallFromHead`, exit 12 | 81 | 0.8 |
-| `MCRNDisconnectBurstRingBrokenDropKeepsCursor.cfg` | `CursorInRange`, exit 12 | 25 | 0.8 |
+| `MCRNDisconnectBurstRingBrokenDropKeepsCursor.cfg` | `CursorInRange`, exit 12 | 25 | 0.7 |
+| `MCRNDisconnectBurstRingQueues.cfg` | pass | 386,173 | 11.3 |
+| `MCRNDisconnectBurstRingQueuesPassFair.cfg` | `PassFair`, exit 12 | 28 | 0.7 |
+| `MCRNDisconnectBurstRingQueuesSealedFall.cfg` | `SealedFallFromHead`, exit 12 | 61 | 0.8 |
+| `MCRNDisconnectBurstRingBrokenQueueAbandonNoPop.cfg` | `HeadNotComplete`, exit 12 | 15 | 0.7 |
 
 The records are in `RUNS.tsv` (group `rndisconnectburstring`), made with the
 pinned runner as `proofs/tla/README.md` describes.

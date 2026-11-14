@@ -305,17 +305,32 @@ committed case. One model error was found and fixed on the way.
    `sdk/rocketnet_server_protocol.cpp`); a response from address 2 finds no mapping and
    is `NO_MAPPING`, and the slot at address 1 is left to its idle timeout. With the code's
    behaviour the property holds (`MCServerConnectionMove.cfg`).
+7. **`ResendFromRequest`** (`MCServerConnectionBrokenResendFromRequest.cfg`,
+   `StoredChallengeResent`, 13 states): attempt 1 gets its cookie and sends
+   its cookie-bearing request with salt `<<1, 1>>`, then the client
+   disconnects and starts attempt 2 with the same token; the server takes the
+   attempt-1 request still on the wire and opens a half-open mapping with
+   its challenge stored under `<<1, 1>>`; attempt 2's request, salt
+   `<<1, 2>>` and the same token, takes the resend arm, and the witness
+   answers under `<<1, 2>>`, a challenge the mapping would not open the
+   response to. Replayed: the code's resend arm in
+   `rocketnet_server_protocol_process_connection_request` copies the stored
+   `mapping->challenge_packet`, sealed under the mapping's own salt, so the
+   property holds in `MCServerConnection.cfg`, `MCServerConnectionMove.cfg`
+   and `MCServerConnectionLossy.cfg`. `StoredChallengeNeverReplaced` alone
+   holds by construction (`csalt` and `cnonce` are written only when the
+   mapping opens), so this is the check that can fail.
 
 ### One token, one live connection
 
-7. **The used-token history flushed** (`MCServerConnectionHistoryNone.cfg`, pass). The code
+8. **The used-token history flushed** (`MCServerConnectionHistoryNone.cfg`, pass). The code
    has no admitted-token set (`docs/SESSION.md` 1.6): the rule is one token, one live
    connection, and a token whose connection has closed may connect again inside its expiry.
    `OneConnectionPerToken` is `OneTokenOneLiveConnection`. With one token shared by two
    clients and no history binding, the client-id checks at the request and the response
    keep the token to one live slot. `MCServerConnectionClientIdNoCheck.cfg` turns the
    response-time check off and fails it.
-8. **A bound token never replaces a half-open mapping.** A request whose salt and token
+9. **A bound token never replaces a half-open mapping.** A request whose salt and token
    both differ from a half-open mapping at its address would replace that mapping; the
    code lets it only when its token is bound to no address in the history, its own
    included (`rocketnet_used_token_history_check` against the zero address in
@@ -328,7 +343,7 @@ committed case. One model error was found and fixed on the way.
 
 ### Model errors, fixed
 
-9. **The salt keyed on the attempt number.** The first draft's key pair was
+10. **The salt keyed on the attempt number.** The first draft's key pair was
    `[att, nonce]` with `att` each client's own attempt counter, as ClientConnection has it
    for its one client. TLC's first full run (19 states, `OneClientPerSlot`) had two clients
    present the same token with attempt number 1 each: the first got a mapping and its
