@@ -46,9 +46,10 @@
 (* resend_delay_max) (rn_window_ack_compute_resend_delay), and resets the  *)
 (* back-off to 1.  Before any sample rto is RtoInitial.  A record's own    *)
 (* ack may come at any update, or never: every send may be lost.  At tick  *)
-(* Timeout after its own first send (MESSAGES m9.3) an unacked record      *)
-(* ends the connection (RELIABLE_TIMEOUT), when the timeout is configured, *)
-(* and nothing more is sent.  The                                          *)
+(* Timeout after its own first send (MESSAGES m9.3) the oldest unacked     *)
+(* record, U, ends the connection (RELIABLE_TIMEOUT) when it is on the    *)
+(* wire and the timeout is configured, and nothing more is sent; a later   *)
+(* record's clock is never read.  The                                      *)
 (* code keeps each number's first send in send_first_sends                 *)
 (* (rn_window_ack_record_first_send).  BlockClock = TRUE times the chunk   *)
 (* from its block's first send at tick 0, the code before the fix: the     *)
@@ -221,6 +222,12 @@ RefuseFor == 0
 StampRefused == FALSE
 RefuseForLong == Timeout - 2
 StampRefusedOn == TRUE
+
+\*   AnyClock: FALSE times out on U alone, the code (the rule); TRUE on any
+\*            unacked record on the wire past its deadline (the reversed
+\*            witness).  (AnyClock <- AnyClockOn)
+AnyClock == FALSE
+AnyClockOn == TRUE
 
 \*   SeedAt:  the tick the transport first reports a round trip; past the
 \*            horizon (never) by default.
@@ -402,10 +409,22 @@ Deadline(r) == Clock(r) + Timeout
 Horizon == ChunkFirst + RefuseFor + Timeout
 Started(r) == t >= FirstSend(r)
 
-\* rn_window_ack_check_timeout: the oldest unacked record that has a first
-\* send has stood its timeout; a record never sent has no clock.  Only
-\* when the timeout is configured (or under the reversed witness).
-TimedOut == Timed /\ \E r \in Records : ~acked[r] /\ OnWire(r) /\ t >= Deadline(r)
+\* U, the oldest unacknowledged number: the records are numbered s, c, s2.
+U == IF ~acked["s"] THEN "s" ELSE IF ~acked["c"] THEN "c" ELSE "s2"
+
+\* rn_window_ack_check_timeout: U, the oldest unacked number, is on the wire
+\* and has stood its timeout (has_oldest is set only for U on the wire:
+\* rn_window_ack_refresh_oldest, rn_window_ack_record_first_send).  A later
+\* number's clock is never read: while U's first send is refused and U is
+\* never sent, nothing times out.  Only when the timeout is configured (or
+\* under the reversed witness).  AnyClock = TRUE is the model before it was
+\* matched to the code: any unacked record on the wire past its deadline
+\* (the reversed witness MCRNResendTimingBrokenAnyClock.cfg).
+TimedOut ==
+    /\ Timed
+    /\ IF AnyClock
+       THEN \E r \in Records : ~acked[r] /\ OnWire(r) /\ t >= Deadline(r)
+       ELSE ~acked[U] /\ OnWire(U) /\ t >= Deadline(U)
 
 Due(r) == ~acked[r] /\ ~TimedOut /\ Started(r) /\ (attempts[r] = 0 \/ t >= lastSend[r] + Delay(r))
 
@@ -418,9 +437,6 @@ Ended == TimedOut \/ silenced
 \* ticks in which nothing was heard.  Nothing but a packet heard in this
 \* update (Ack, Sample, KeepAlive) or the end (SilenceEnd) may happen.
 SilenceDue == TrackQuiet /\ quiet >= SilenceAt
-
-\* U, the oldest unacknowledged number: the records are numbered s, c, s2.
-U == IF ~acked["s"] THEN "s" ELSE IF ~acked["c"] THEN "c" ELSE "s2"
 
 \* rn_window_ack_probing: the timeout off, U on the wire (has_oldest), and
 \* Probe ticks since the later of the last progress and U's first send.
@@ -874,6 +890,14 @@ NoDueRecordHeld ==
 RetryPlanned ==
     (Room > 0 /\ phase = "walk" /\ Live /\ ~SeedOwed /\ calls < Room) =>
         \A r \in Records : (refused[r] /\ Due(r) /\ ~Held(r)) => r \in Picks
+
+\* MESSAGES m9.3: the reliable timeout runs from the oldest unacknowledged
+\* number's own first send.  The connection ends by it only once U is on
+\* the wire and Timeout ticks have passed since U's first send: a later
+\* number's earlier clock never ends it, and a U whose first send is still
+\* refused has no clock.
+TimeoutFromOldest ==
+    (TimedOut /\ ~BlockClock) => (OnWire(U) /\ t - firstSend[U] >= Timeout)
 
 \* From the update the transport first reports a round trip until this
 \* layer's own first sample, no unacked record waits longer than the
