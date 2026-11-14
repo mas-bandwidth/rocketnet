@@ -17,19 +17,29 @@
 #                      witnesses), then proves each partition with its
 #                      intended-failure reachability control.
 #   reconstruct        proved: proof_reconstruct_sequence.c, unwind 1, on
-#                      sdk/rocketnet_protocol.cpp and sdk/rocketnet_message.h:
-#                      - rocketnet_reconstruct_near (k=32, 2^32 <= expected <
-#                        2^64 - 2^32): keeps wire low 32 bits, |result -
-#                        expected| <= 2^31, round-trips every in-window value
-#                        (tie at 2^31 goes to the larger candidate).
+#                      sdk/rocketnet_protocol.cpp and sdk/rocketnet_message.h.
+#                      No floor is assumed: the first lap is proved from 0.
+#                      The ceilings are assumed and the range above them is
+#                      not proved.
+#                      - rocketnet_reconstruct_near (k=32, expected <
+#                        2^64 - 2^32): keeps wire low 32 bits, picks the
+#                        nearest non-negative candidate (tie at 2^31 goes to
+#                        the larger), round-trips every non-negative
+#                        in-window value; |result - expected| <= 2^31 from
+#                        expected >= 2^31 on (on the first lap no candidate
+#                        below 0 exists, so the nearest can be farther).
 #                      - rocketnet_reconstruct_sequence (reference =
-#                        highest_opened + 1, 2^32 - 1 <= highest_opened <
+#                        highest_opened + 1, highest_opened <
 #                        2^64 - 2^32 - 1): same claims.
 #                      - rocketnet_message_u24_delta (k=24 signed half-range,
-#                        2^23 <= reference <= 2^64 - 2^23): reference + delta
-#                        keeps wire low 24 bits, |result - reference| <= 2^23,
-#                        round-trips every in-window value (tie at 2^23 goes
-#                        to the lower candidate).
+#                        reference <= 2^64 - 2^23): where the behind value is
+#                        non-negative, reference + delta keeps wire low 24
+#                        bits and |result - reference| <= 2^23; a behind
+#                        value below 0 (first lap only; rn_window_receive_accept
+#                        refuses it as behind) has no non-negative candidate
+#                        in the window. Round-trips every non-negative
+#                        in-window value (tie at 2^23 goes to the lower
+#                        candidate).
 #   replay-far         proved: harness_replay_far in proof_replay_advance.c,
 #                      unwind 65, sequence - highest_opened >= 4096: a delta of
 #                      at least 4096 clears every word, then sets the new
@@ -86,7 +96,8 @@ XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_con
 # instance, in the same sense as replay-delta-1-3:
 #   read-write         proved: proof_read_write.c, unwind 9. Symbolic
 #                      buffers of 8 bytes. Writers and readers round-trip;
-#                      rocketnet_copy_string with
+#                      rocketnet_copy_string (the sdk's own text, cut out of
+#                      sdk/rocketnet.cpp below) with
 #                      dest_size 0 writes nothing and returns 0; a positive
 #                      dest_size up to 8 keeps the copy inside the buffer
 #                      and terminates it.

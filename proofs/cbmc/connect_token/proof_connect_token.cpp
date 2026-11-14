@@ -23,9 +23,12 @@
            pointer and divide-by-zero checks. The proof target bounds each
            solver run to 30 minutes and 8 GiB of address space.
     Unwinding: per harness. The byte-copy library model needs one iteration
-    beyond the longest field copy (576, 432, or 256 bytes); the identifier
-    hash and private-block output models need 17 and 385 respectively for
-    the shared shim's nondeterministic byte-write loops.
+    beyond the longest field copy (ROCKETNET_SIGNED_CONNECT_DATA_BYTES (576),
+    ROCKETNET_SEALED_BLOCK_BYTES (432) or ROCKETNET_USER_DATA_BYTES (256)
+    bytes); the identifier hash and private-block output models need
+    ROCKETNET_TOKEN_IDENTIFIER_BYTES + 1 (17) and
+    ROCKETNET_PRIVATE_BLOCK_BYTES + 1 (385) respectively for the shared
+    shim's nondeterministic byte-write loops.
 */
 
 #define thread_local
@@ -246,7 +249,7 @@ void harness_read_connect_token( void )
     rocketnet_read_connect_token( &output, token );
 
     __CPROVER_assert( output.signed_connect_data[0] == token[0] && output.signed_connect_data[ROCKETNET_SIGNED_CONNECT_DATA_BYTES - 1] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES - 1],
-                      "the signed connect data is the first 576 token bytes" );
+                      "the signed connect data is the first ROCKETNET_SIGNED_CONNECT_DATA_BYTES (576) token bytes" );
     __CPROVER_assert( output.signature[0] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES] && output.signature[ROCKETNET_SIGNATURE_BYTES - 1] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES - 1],
                       "the signature follows the signed connect data" );
     __CPROVER_assert( output.client_to_server_key[0] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES] && output.client_to_server_key[ROCKETNET_KEY_BYTES - 1] == token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES + ROCKETNET_KEY_BYTES - 1],
@@ -355,8 +358,10 @@ void harness_verify_signed_connect_data( void )
     PROOF_REACHED( "harness_verify_signed_connect_data" );
 }
 
-/* the sealed-block opener: exactly 576 bytes of signed data, so the sealed
-   block at offset 89 is inside it. The model checks the offset and length. */
+/* the sealed-block opener: exactly ROCKETNET_SIGNED_CONNECT_DATA_BYTES (576)
+   bytes of signed data, so the sealed block at offset
+   ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK (89) is inside it. The model checks
+   the offset and length. */
 
 void harness_open_connect_token_private( void )
 {
@@ -398,7 +403,8 @@ void harness_private_consistent( void )
     PROOF_REACHED( "harness_private_consistent" );
 }
 
-/* the identifier: the 16-byte hash of exactly 576 symbolic signed bytes. */
+/* the identifier: the hash, ROCKETNET_TOKEN_IDENTIFIER_BYTES (16) bytes, of
+   exactly ROCKETNET_SIGNED_CONNECT_DATA_BYTES (576) symbolic signed bytes. */
 
 void harness_connect_token_identifier( void )
 {

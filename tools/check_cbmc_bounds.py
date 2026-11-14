@@ -13,7 +13,8 @@ when a stated value differs from the SDK's, so a changed constant cannot
 leave the records stating a bound the harnesses no longer run at. It also
 fails when it finds no statement at all.
 
---self-test plants a stale statement and requires the check to refuse it.
+--self-test plants a stale statement and requires the check to refuse it,
+including one in a .cpp harness comment found by the record walk.
 Prints one OK line per file with statements; exits 1 on a refusal.
 """
 
@@ -37,6 +38,8 @@ HEADERS = [
     "rocketnet_protocol.h",
     "rocketnet_message.h",
     "rocketnet_history.h",
+    "rocketnet_constants.h",
+    "rocketnet_connect_token.h",
 ]
 
 NAME = r"ROCKETNET_[A-Z0-9_]+"
@@ -135,12 +138,28 @@ def self_test():
         if found != {"harness.c", "harness.cpp", "harness.h", "notes.md"}:
             print(f"FAIL: the record walk read {sorted(found)}, not every .md, .c, .cpp and .h", file=sys.stderr)
             return False
+        # a C++ harness comment found by the walk: its true statement passes
+        # (so the file was read and evaluated), its stale one is refused
+        cpp_tree = Path(directory) / "cpp_tree" / "harness"
+        cpp_tree.mkdir(parents=True)
+        harness = cpp_tree / "planted.cpp"
+        for text, want in (("/* exactly ROCKETNET_SIGNED_CONNECT_DATA_BYTES (576) signed bytes */\n", True),
+                           ("/* exactly ROCKETNET_SIGNED_CONNECT_DATA_BYTES (577) signed bytes */\n", False)):
+            harness.write_text(text, encoding="utf-8")
+            files = collect(cpp_tree.parent)
+            if harness not in files:
+                print(f"FAIL: the record walk does not read C++ harnesses: {harness.name} not found", file=sys.stderr)
+                return False
+            if check(files) != want:
+                print(f"FAIL: a {'true' if want else 'stale'} C++ statement was {'refused' if want else 'passed'}: {text.strip()}",
+                      file=sys.stderr)
+                return False
         empty = Path(directory) / "empty.md"
         empty.write_text("no statements\n", encoding="utf-8")
         if check([empty]):
             print("FAIL: a tree with no statements passed the check", file=sys.stderr)
             return False
-    print("OK self-test: stale statements in both forms and an empty tree are refused; .md, .c, .cpp and .h are read")
+    print("OK self-test: stale statements in both forms, a stale C++ harness comment and an empty tree are refused; .md, .c, .cpp and .h are read")
     return True
 
 
