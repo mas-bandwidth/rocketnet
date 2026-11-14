@@ -93,8 +93,16 @@ namespace RocketNet.Backend
             ArgumentNullException.ThrowIfNull( privateFields );
             ArgumentNullException.ThrowIfNull( seal );
             byte[] block = WritePrivate( signedFields, privateFields );
-            byte[] sealedBlock = seal( block, signedFields.ServerPublicKey );
-            CryptographicOperations.ZeroMemory( block );
+            byte[] sealedBlock;
+            try
+            {
+                sealedBlock = seal( block, signedFields.ServerPublicKey );
+            }
+            finally
+            {
+                // the plain private block is wiped whether the seal returns or throws
+                CryptographicOperations.ZeroMemory( block );
+            }
             if ( sealedBlock.Length != SealedBlockBytes )
             {
                 throw new CryptographicException( $"sealed block is {sealedBlock.Length} bytes, not {SealedBlockBytes}" );
@@ -228,10 +236,12 @@ namespace RocketNet.Backend
             config.ServerPublicKey.CopyTo( signedFields.ServerPublicKey, 0 );
             WriteServerAddresses( signedFields, config.ServerAddresses );
             ConnectTokenPrivate privateFields = new ConnectTokenPrivate { ClientId = clientId };
-            random( privateFields.ClientToServerKey );
-            random( privateFields.ServerToClientKey );
             try
             {
+                // the session keys travel on in the token; these arrays are
+                // wiped on every exit, a random fill that throws included
+                random( privateFields.ClientToServerKey );
+                random( privateFields.ServerToClientKey );
                 return Write( signedFields, privateFields, config.BackendPrivateKey, seal );
             }
             finally

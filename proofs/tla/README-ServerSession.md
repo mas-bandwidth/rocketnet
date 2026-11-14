@@ -105,6 +105,7 @@ outstanding cookies, which no slot record holds, so no property here depends on 
 |---|---|
 | `Create`, `Destroy` | create (STOPPED, fresh object); destroy from any state (client packets in flight outlive it) |
 | `Start` | start: refused with a status code unless STOPPED; every slot's reason is NONE |
+| `StartFailsKept` | a start that fails after its transport's worker started, the worker not exited a second after the stop: the server keeps the transport and is STOPPING until the worker exits (`StopCompletes`); any other failed start is a stutter |
 | `Stop`, `StopCompletes` | stop: RUNNING to STOPPING with every slot reset and reason NONE; then STOPPING to STOPPED when the workers have exited |
 | `Read(s)` | the server reads one in-flight datagram, only while RUNNING |
 | `DisconnectAll` | `disconnect_all_clients`, one step: every CONNECTED slot is sent its disconnect and reset with reason SERVER_DISCONNECTED; a slot still in HANDSHAKE is left as it is |

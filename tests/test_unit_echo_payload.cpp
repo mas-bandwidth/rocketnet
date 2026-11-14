@@ -115,7 +115,10 @@ static void test_echo_payload_refuses_numbered_messages( void )
     fragment.bytes = 1000;
     bytes = echo_payload_write( payload, (int) sizeof( payload ), &fragment, 1 );
     rocketnet_unit_check( bytes > 0 );
-    rocketnet_unit_check( rocketnet_echo_payload_refusal( payload, bytes ) != NULL );
+    {
+        const char * refusal = rocketnet_echo_payload_refusal( payload, bytes );
+        rocketnet_unit_check( refusal != NULL && strcmp( refusal, "a fragment of a numbered block (a message over one record, promoted)" ) == 0 );
+    }
 
     // raw bytes that are not message records: echoed as they came
     uint8_t raw[64];

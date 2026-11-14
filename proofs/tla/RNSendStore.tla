@@ -4,7 +4,7 @@
 (* 4 and 15; sdk/rocketnet_allocator.cpp, rn_send_store_take and           *)
 (* rn_send_store_free_checked).  The three classes share no state, so one  *)
 (* class is the whole model.  RNSendStoreLayout.tla is the same store with *)
-(* the code's arithmetic: the meta array, the watermark and the cursor.    *)
+(* the code's arithmetic: the meta array, the watermark and the stack.     *)
 (*                                                                         *)
 (* A send of up to one fragment holds one chunk.  Alloc takes any free     *)
 (* chunk and tags it with a generation; Free returns it.  An allocated     *)

@@ -157,9 +157,14 @@ def land(api, repo, number, dry_run=False, out=sys.stdout, gates=None, sleep=tim
                 return 1
             sleep(POLL_SECONDS)
         ok, rerun, sha2 = judge(api, repo, number, out, gates, cap, slack, local_ruleset, full)
-        if rerun or sha2 != sha:
-            if rerun:
-                print("REFUSE: cancelled again after the one re-run", file=out)
+        if rerun:
+            print("REFUSE: cancelled again after the one re-run", file=out)
+            return 1
+        if sha2 != sha:
+            # every refusal names its reason: a head that moved during the
+            # re-run is a new head, landed only by a fresh run of the tool
+            print(f"REFUSE: the head moved from {sha[:10]} to {sha2[:10]} during the re-run; run land.py again "
+                  f"for the new head", file=out)
             return 1
     if not ok:
         return 1

@@ -276,6 +276,25 @@ Start ==
                    established, doubleTok, observed, crossDelivered,
                    collateral, silentEnd, queuedIn, messageIn, readmitted>>
 
+\* A start that fails after its transport's worker started, that worker not
+\* exited a second after it was told to stop: the create hands the transport
+\* to the server's failed_start rather than free it under the worker
+\* (rocketnet_server_transport_abort_create, sdk/rocketnet_server_transport.cpp;
+\* rocketnet_server_start, sdk/rocketnet_api.cpp). Nothing ran and no slot
+\* was used, but the server is STOPPING until the worker exits
+\* (StopCompletes): rocketnet_server_stopped is false and start is refused
+\* until then, and the next start or the destroy frees the transport. Any
+\* other failed start is a stutter. The finalization of the run before it
+\* (rn_server_finish_stop before the create) is left to the next Start,
+\* which folds cidBase and priorTokens to the same values.
+StartFailsKept ==
+    /\ state = "STOPPED"
+    /\ state' = "STOPPING"
+    /\ startFrom' = startFrom \cup {state}
+    /\ UNCHANGED <<slot, kept, env, lastEnd, established, estTokens, doubleTok, observed,
+                   crossDelivered, collateral, silentEnd, queuedIn, messageIn, priorTokens,
+                   readmitted>>
+
 \* stop: one call, RUNNING to STOPPING (rocketnet_server_stop,
 \* sdk/rocketnet_api.cpp). Each connected client is disconnected at
 \* the transport and kicked, the running block moves to retiring and
@@ -586,7 +605,7 @@ SealStep(s) == SealWaiting(s) /\ droppedIn' = {} /\ allBefore' = {} /\ readIn' =
 \* seals every waiting packet on the shutdown path and destroy wipes the
 \* waiting keys, so neither leaves one waiting.
 Next ==
-    \/ /\ \/ Create \/ Start \/ StopCompletes
+    \/ /\ \/ Create \/ Start \/ StartFailsKept \/ StopCompletes
           \/ \E i \in Slots : \/ Deny(i) \/ SlotTimeout(i)
                               \/ ClientLeaves(i) \/ ServerSend(i) \/ MessageEnd(i)
           \/ \E s \in Sessions : ClientSend(s) \/ Lose(s)

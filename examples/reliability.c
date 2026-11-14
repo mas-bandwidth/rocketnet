@@ -18,6 +18,7 @@
 
 #define NUM_MODES 8
 #define NUM_MESSAGES 8
+#define RECEIPTS_HELD 256       // the server's max_message_receipts, set below; an environment value above it is caught after each read
 
 static const enum rocketnet_reliability_t modes[NUM_MODES] = {
     ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
@@ -87,6 +88,7 @@ int main( void )
     server_config.transport = "loopback";
     server_config.loopback_hub = hub;
     server_config.num_channels = NUM_MODES;
+    server_config.max_message_receipts = RECEIPTS_HELD;
 
     // the development network simulator: 20 ms latency, 35 ms jitter, set before start
 
@@ -210,6 +212,8 @@ int main( void )
     }
 
     int sent = 0;
+    int malformed = 0;          // received messages that are not this example's, dropped and counted
+    int receipts_over = 0;      // an update reported more receipts than the array holds
 
     for ( int frame = 0; frame < 400; frame++ )
     {
@@ -217,13 +221,21 @@ int main( void )
         rocketnet_server_update( server, now );
         rocketnet_client_update( client, now );
 
-        // each message is its mode and its number, 1 to 8
+        // each message is its mode and its number, 1 to 8. The sender's bytes
+        // are checked before they index anything: any other size or value is
+        // dropped and counted
 
         const struct rocketnet_message_batch_t * batch;
         while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
         {
             for ( int i = 0; i < batch->num_messages; i++ )
             {
+                if ( batch->bytes[i] != 2 || batch->data[i][0] >= NUM_MODES || batch->data[i][1] < 1 || batch->data[i][1] > NUM_MESSAGES )
+                {
+                    malformed++;
+                    continue;
+                }
+
                 struct mode_t * s = &stats[batch->data[i][0]];
                 const int number = batch->data[i][1];
                 s->increasing &= s->arrived == 0 || number > s->order[s->arrived - 1];
@@ -242,9 +254,10 @@ int main( void )
         }
 
         const int slot = rocketnet_client_index( client );
-        struct rocketnet_receipt_t receipts[32];
-        const int count = slot >= 0 ? rocketnet_server_receipts( server, slot, receipts, 32 ) : 0;
-        for ( int r = 0; r < count && r < 32; r++ )   // count may exceed the 32 the array holds
+        struct rocketnet_receipt_t receipts[RECEIPTS_HELD];
+        const int count = slot >= 0 ? rocketnet_server_receipts( server, slot, receipts, RECEIPTS_HELD ) : 0;
+        receipts_over |= count > RECEIPTS_HELD;
+        for ( int r = 0; r < count && r < RECEIPTS_HELD; r++ )
         {
             for ( int m = 5; m < NUM_MODES; m++ )
             {
@@ -316,6 +329,16 @@ int main( void )
     }
 
     int result = sent == NUM_MODES * NUM_MESSAGES ? 0 : 1;
+    if ( malformed != 0 )
+    {
+        printf( "FAIL: %d malformed messages dropped\n", malformed );
+        result = 1;
+    }
+    if ( receipts_over )
+    {
+        printf( "FAIL: an update reported more receipts than the %d the array holds\n", RECEIPTS_HELD );
+        result = 1;
+    }
 
     for ( int m = 0; m < NUM_MODES; m++ )
     {
