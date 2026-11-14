@@ -38,7 +38,12 @@
 (* the lowest free slot; rocketnet_client_slots_assign pops the top of a   *)
 (* LIFO free stack (the slot released last), whose layout                  *)
 (* RNClientSlotsLayout.tla checks.  Which free slot is taken changes no    *)
-(* predicate here.                                                         *)
+(* predicate here.  Not modelled: the code holds a slot released in this  *)
+(* update until rocketnet_client_slots_publish at its end, and a response  *)
+(* that finds only held slots free is ignored (not denied) and takes a     *)
+(* slot from a later update; here Release frees the slot at once and the   *)
+(* next response may take it.  The hold is RNClientSlotsLayout.tla's       *)
+(* (ReleaseHandle, Publish, NoTakeBeforePublish) and RNSlots.tla's.        *)
 (*                                                                         *)
 (* Tokens.  A token is a number; its client id is IdOf(t).  A client       *)
 (* presents its own token (TokenChoice = "own") or any token the           *)
@@ -542,7 +547,9 @@ serverRecvUnchanged == <<clientVars, sDiscPending, sDiscPkt>>
 \* through and replaces that mapping if the check sequence accepts it, reusing the
 \* map entry; no cookie (or a cookie issued to another address) -> a cookie;
 \* an expired token is refused before cookie/decrypt; a token bound
-\* elsewhere or a connected client id is silent; history binds only when a
+\* elsewhere, a bound token (to any address, this one included) that would
+\* replace a half-open mapping, or a connected client id is silent; history
+\* binds only when a
 \* response opens; a full map is silent before any slot denial; else
 \* map+challenge
 ServerRecvRequest(p) ==
@@ -550,6 +557,12 @@ ServerRecvRequest(p) ==
     /\ C2S!Deliver(p)
     /\ LET m == smap[p.from]
            boundElsewhere == History = "kept" /\ bound[p.tok] \notin {0, p.from}
+           \* a request that would replace a half-open mapping (salt and token
+           \* both differ: the resend arm above did not take it) must carry a
+           \* token bound to no address, its own included
+           \* (sdk/rocketnet_server_protocol.cpp, the history check against the
+           \* zero address before the signature)
+           boundReplace == m.live /\ History = "kept" /\ bound[p.tok] # 0
            heldFull == HoldUntilExpire /\ bound[p.tok] = 0
                        /\ Cardinality({t \in Tokens : bound[t] # 0}) >= HeldCapacity
            fresh == Fresh(p.tok)
@@ -571,7 +584,7 @@ ServerRecvRequest(p) ==
             [] ~p.cookie ->
                  ServerSendPacket([type |-> "cookie", to |-> p.from, salt |-> p.salt])
                  /\ UNCHANGED <<smap, bound, churnDenied>>
-            [] (boundElsewhere \/ ClientIdConnectedAtRequest(p.tok)
+            [] (boundElsewhere \/ boundReplace \/ ClientIdConnectedAtRequest(p.tok)
                  \/ (HoldUntilExpire /\ bound[p.tok] # 0) \/ heldFull) ->
                  ServerSilent /\ UNCHANGED <<smap, bound>>
                  /\ churnDenied' = (churnDenied \/ (fresh /\ (FreeSlots > 0)))

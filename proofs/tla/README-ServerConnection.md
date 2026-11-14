@@ -150,6 +150,13 @@ the establishing keep-alive once at the response and never again. The code's beh
   run so the admitted set is seen to carry the rule alone.
 - **The client id** is a function of the token: `IdOf(t) = t`, or `1` for every token with
   `SameId = TRUE` (one player holding two tokens).
+- **The slot hold** is not modelled. The code holds a slot released in this update until
+  `rocketnet_client_slots_publish` at the update's end, and a response that finds only held
+  slots free is ignored (counted as `CONNECTION_RESPONSE_NO_SLOTS`, not denied) and takes a
+  slot from a later update (`rocketnet_server_process_connection_response`). Here `Release`
+  frees the slot at once and the next response may take it. The hold is
+  `RNClientSlotsLayout.tla`'s (`ReleaseHandle`, `Publish`, `NoTakeBeforePublish`) and
+  `RNSlots.tla`'s.
 - **Payloads and the standalone ack** are not here: a payload confirms a slot and refreshes
   it as a keep-alive does, and neither moves a slot or a mapping. The #90 clock (a payload
   stream suppressing the keep-alive) is ClientConnection's witness.
@@ -306,10 +313,20 @@ committed case. One model error was found and fixed on the way.
    clients and no history binding, the client-id checks at the request and the response
    keep the token to one live slot. `MCServerConnectionClientIdNoCheck.cfg` turns the
    response-time check off and fails it.
+8. **A bound token never replaces a half-open mapping.** A request whose salt and token
+   both differ from a half-open mapping at its address would replace that mapping; the
+   code lets it only when its token is bound to no address in the history, its own
+   included (`rocketnet_used_token_history_check` against the zero address in
+   `rocketnet_server_protocol_process_connection_request`), and is otherwise silent
+   (`TOKEN_ALREADY_USED`). The model's request ladder had only the bound-elsewhere rung, so
+   with `TokenChoice = "any"` and `History = "kept"` a client that connected from A with
+   token 1, then left a half-open mapping at A under token 2, replaced it with token 1.
+   The silent rung now carries `boundReplace` (`m.live /\ History = "kept" /\
+   bound[p.tok] # 0`).
 
 ### Model errors, fixed
 
-8. **The salt keyed on the attempt number.** The first draft's key pair was
+9. **The salt keyed on the attempt number.** The first draft's key pair was
    `[att, nonce]` with `att` each client's own attempt counter, as ClientConnection has it
    for its one client. TLC's first full run (19 states, `OneClientPerSlot`) had two clients
    present the same token with attempt number 1 each: the first got a mapping and its
