@@ -1057,9 +1057,10 @@ static void test_wide_fill_check_running_read_once()
 // check's entry by the trace hook, which makes a whole stop (nested, so its
 // own work) before the outer one goes on. The outer stop then finds the run
 // it read already retired and returns: the retiring run is kept until the
-// destroy. Read again inside the check, the outer stop found the server
-// stopped and stored that NULL over the retiring run, so the server reported
-// stopped at once and the run's transport was never polled or destroyed.
+// destroy. Before, the outer stop read the server again inside the check,
+// found it stopped and stored that NULL over the retiring run, so the server
+// reported stopped at once and the run's transport was never polled or
+// destroyed.
 
 struct wide_fill_stop_inside_t
 {
@@ -1369,6 +1370,8 @@ static void test_wide_fill_refused_receive_keeps_batch()
     check( batch != NULL );
     if ( !batch )
     {
+        wide_fill_world_destroy( &world );
+        rocketnet_assert_function( NULL );
         return;
     }
     const int held = batch->num_messages;

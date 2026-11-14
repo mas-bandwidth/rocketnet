@@ -3223,9 +3223,9 @@ void rocketnet_server_stop( struct rocketnet_server_t * server )
         return;
     }
 
-    // a stop that ran whole between the read and the check (a second thread's,
-    // a rule broken that the check did not meet) left this one nothing to do:
-    // the copy is retiring, kept by the server until the next start or destroy
+    // a stop on another thread that ran whole between the read and this check
+    // left this one nothing to do: the copy is retiring, kept by the server
+    // until the next start or destroy
 
     if ( rn_server( server ) != running )
     {
