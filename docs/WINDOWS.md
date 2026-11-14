@@ -258,8 +258,9 @@ At this version (v1.1.x), IOCP completion worker `w` sits on the first logical
 processor of core `w` (processor `2w` with two a core), and its send threads
 take the cores after the workers. Each worker's socket is bound to its worker's
 own processor, so RSS queue `w` on that processor brings worker `w` its flows,
-and the worker shares its processor with the network card's DPCs. In a release
-build at this version nothing moves the worker off it, and there is no
+and the worker shares its processor with the network card's DPCs. In a production
+build (`ROCKETNET_DEV=0`) at this version there is no supported layout override
+to move the worker off it, and there is no
 measured RSS layout that keeps the DPCs off the completion workers. The measured `iocp` row (2 completion
 workers, 2 send threads, peak load) did keep them apart, with a
 development-only layout (`ROCKETNET_TEST_IOCP_LAYOUT`, a `ROCKETNET_DEV`
