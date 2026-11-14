@@ -19,6 +19,12 @@
     at 20 or 30 Hz). It requires all connections and protocol-valid payloads
     to survive the measured window, while reporting kernel drops and update
     cost without turning either into a portable-server performance promise.
+    Refusals are counted from the start of traffic: the connect phase may
+    have the cookie reply limit withhold a reply (a keyed-hash collision
+    among 1000 synchronized first requests; the client sends again), which
+    is not a refusal of traffic. Two server updates without sends follow the
+    traffic, so the payloads of the last period are read before the counts
+    are taken.
     It is absent from the default suite unless ROCKETNET_LOW_TICK_MEASURE=1.
     Linux only: the socket drop count is read from procfs.
 */
@@ -345,6 +351,10 @@ static const int server_receive_low_tick_payload_bytes_per_second = 32000; // 25
 static const int server_receive_low_tick_packets_per_client_update = 4;    // 4 x 800 bytes per 0.1 s at 10 Hz
 static const int server_receive_low_tick_slices = 10;                 // clients are updated in 10 slices of 100
 static const double server_receive_low_tick_traffic_seconds = 10.0;
+// server updates without sends after the traffic: the portable server
+// delivers a period's payloads at the update after it, so the last period is
+// read only after the traffic ends
+static const int server_receive_low_tick_drain_updates = 2;
 
 struct server_receive_low_tick_udp_row_t
 {
@@ -471,6 +481,37 @@ static uint64_t server_receive_low_tick_refusals( const struct rocketnet_counter
     }
 
     return total;
+}
+
+struct server_receive_low_tick_refusal_sum_t
+{
+    uint64_t refusals;
+    uint64_t socket_send_drops;
+};
+
+// the refusal counters and socket send drops of the server and every client,
+// summed: read when the traffic starts and again at the end, so the gate
+// counts only what the traffic refused
+static server_receive_low_tick_refusal_sum_t server_receive_low_tick_refusal_sum( struct rocketnet_server_transport_t * server,
+                                                                                  const std::vector<struct rocketnet_client_transport_t *> & clients )
+{
+    server_receive_low_tick_refusal_sum_t sum = { 0, 0 };
+
+    // one read of each transport's counters, so the send drops subtracted
+    // are the ones the refusal sum holds
+
+    const struct rocketnet_counters_t * server_counters = rocketnet_server_transport_counters( server );
+    sum.refusals = server_receive_low_tick_refusals( server_counters );
+    sum.socket_send_drops = rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_SEND_FAILED );
+
+    for ( size_t i = 0; i < clients.size(); ++i )
+    {
+        const struct rocketnet_counters_t * counters = rocketnet_client_transport_counters( clients[i] );
+        sum.refusals += server_receive_low_tick_refusals( counters );
+        sum.socket_send_drops += rocketnet_counter_value( counters, ROCKETNET_COUNTER_SEND_FAILED );
+    }
+
+    return sum;
 }
 
 static uint64_t server_receive_low_tick_queue_overflows( const struct rocketnet_counters_t * counters )
@@ -629,8 +670,13 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     struct rocketnet_server_transport_stats_t stats_before;
     rocketnet_server_transport_stats( server, &stats_before );
 
+    // the connect phase's refusals, kept apart from the traffic's
+
+    const server_receive_low_tick_refusal_sum_t refusals_at_traffic_start = server_receive_low_tick_refusal_sum( server, clients );
+
     // traffic: every slice updates 100 clients, each sending one update's
-    // worth of packets; every 10 slices the server updates once
+    // worth of packets; every 10 slices the server updates once. After the
+    // traffic, the slices go on without sends for the drain updates.
 
     const double traffic_start = rocketnet_platform_time();
     double next_slice = traffic_start;
@@ -647,9 +693,18 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     uint64_t connection_state_failures = 0;
     uint64_t receive_queue_peak_bytes = 0;
     double server_update_seconds = 0.0;
-    while ( rocketnet_platform_time() - traffic_start < server_receive_low_tick_traffic_seconds )
+    bool sending = true;
+    uint64_t payloads_received_before_drain = 0;
+    int drain_updates = 0;
+    while ( drain_updates < server_receive_low_tick_drain_updates )
     {
         const double now = rocketnet_platform_time();
+        if ( sending && now - traffic_start >= server_receive_low_tick_traffic_seconds )
+        {
+            sending = false;
+            payloads_received_before_drain = payloads_received;
+        }
+
         if ( now < next_slice )
         {
             rocketnet_platform_sleep( next_slice - now < 0.001 ? next_slice - now : 0.001 );
@@ -669,7 +724,7 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
                 continue;
             }
 
-            for ( int p = 0; p < server_receive_low_tick_packets_per_client_update; ++p )
+            for ( int p = 0; sending && p < server_receive_low_tick_packets_per_client_update; ++p )
             {
                 struct rocketnet_packet_context_t context;
                 uint8_t * packet = rocketnet_client_transport_start_packet( client, packet_bytes, &context );
@@ -718,6 +773,10 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
             rocketnet_server_transport_update( server, time );
             server_update_seconds += rocketnet_platform_time() - update_start;
             ++server_updates;
+            if ( !sending )
+            {
+                ++drain_updates;
+            }
 
             const int num_payloads = rocketnet_server_transport_num_payloads( server );
             for ( int i = 0; i < num_payloads; ++i )
@@ -795,21 +854,25 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     const uint64_t kernel_drops = after.drops - before.drops;
     const uint64_t wire_bytes = stats_after.bytes_received - stats_before.bytes_received;
     const uint64_t wire_packets = stats_after.packets_received - stats_before.packets_received;
-    uint64_t refusal_counters = server_receive_low_tick_refusals( rocketnet_server_transport_counters( server ) );
     uint64_t queue_overflow_counters = server_receive_low_tick_queue_overflows( rocketnet_server_transport_counters( server ) );
     uint64_t disconnect_counters = server_receive_low_tick_disconnects( rocketnet_server_transport_counters( server ) );
-    uint64_t socket_send_drops = rocketnet_counter_value( rocketnet_server_transport_counters( server ), ROCKETNET_COUNTER_SEND_FAILED );
 
     for ( size_t i = 0; i < clients.size(); ++i )
     {
         const struct rocketnet_counters_t * counters = rocketnet_client_transport_counters( clients[i] );
-        refusal_counters += server_receive_low_tick_refusals( counters );
         queue_overflow_counters += server_receive_low_tick_queue_overflows( counters );
         disconnect_counters += server_receive_low_tick_disconnects( counters );
-        socket_send_drops += rocketnet_counter_value( counters, ROCKETNET_COUNTER_SEND_FAILED );
     }
 
+    // every refusal counter is in the sum, counted from the start of traffic
+    const server_receive_low_tick_refusal_sum_t refusals_at_end = server_receive_low_tick_refusal_sum( server, clients );
+    const uint64_t connect_refusal_counters = refusals_at_traffic_start.refusals;
+    const uint64_t refusal_counters = refusals_at_end.refusals - refusals_at_traffic_start.refusals;
+    const uint64_t socket_send_drops = refusals_at_end.socket_send_drops - refusals_at_traffic_start.socket_send_drops;
     const uint64_t correctness_refusals = refusal_counters - socket_send_drops;
+
+    // the inbound bytes per update are over the updates that had traffic
+    const uint64_t traffic_updates = server_updates - (uint64_t) drain_updates;
 
     const bool correctness_pass = before.found && after.found && clients_connected == max_clients &&
                                   server_connected == max_clients && connection_state_failures == 0 && payloads_sent > 0 &&
@@ -821,18 +884,19 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     // information, never a gate: the portable server has no performance
     // guarantee and the host's load and rmem_max decide the drop count
 
-    printf( "server_receive_low_tick update_hz=%d clients=%d traffic_seconds=%.1f server_updates=%llu "
+    printf( "server_receive_low_tick update_hz=%d clients=%d traffic_seconds=%.1f server_updates=%llu drain_updates=%d "
             "wire_packets=%llu wire_bytes=%llu wire_bytes_per_update=%llu payloads_sent=%llu payload_bytes_sent=%llu "
-            "payloads_received=%llu payload_bytes_received=%llu payloads_checked=%llu "
+            "payloads_received_before_drain=%llu payloads_received=%llu payload_bytes_received=%llu payloads_checked=%llu "
             "invalid_payload_lengths=%llu invalid_payload_clients=%llu invalid_payload_content=%llu "
             "per_client_wire_kbps=%.1f receive_queue_peak_bytes=%llu kernel_receive_drops=%llu "
             "server_update_seconds=%.3f clients_connected=%d server_connected=%d connection_state_failures=%llu "
-            "disconnect_counters=%llu refusal_counters=%llu correctness_refusals=%llu queue_overflow_counters=%llu "
-            "socket_send_drops=%llu correctness=%s\n",
-            update_hz, max_clients, server_receive_low_tick_traffic_seconds, (unsigned long long) server_updates,
+            "disconnect_counters=%llu connect_refusal_counters=%llu refusal_counters=%llu correctness_refusals=%llu "
+            "queue_overflow_counters=%llu socket_send_drops=%llu correctness=%s\n",
+            update_hz, max_clients, server_receive_low_tick_traffic_seconds, (unsigned long long) server_updates, drain_updates,
             (unsigned long long) wire_packets, (unsigned long long) wire_bytes,
-            (unsigned long long) ( server_updates ? wire_bytes / server_updates : 0 ),
+            (unsigned long long) ( traffic_updates ? wire_bytes / traffic_updates : 0 ),
             (unsigned long long) payloads_sent, (unsigned long long) payload_bytes_sent,
+            (unsigned long long) payloads_received_before_drain,
             (unsigned long long) payloads_received, (unsigned long long) payload_bytes_received,
             (unsigned long long) payloads_checked,
             (unsigned long long) invalid_payload_lengths, (unsigned long long) invalid_payload_clients,
@@ -841,6 +905,7 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
             (unsigned long long) receive_queue_peak_bytes, (unsigned long long) kernel_drops,
             server_update_seconds, clients_connected, server_connected,
             (unsigned long long) connection_state_failures, (unsigned long long) disconnect_counters,
+            (unsigned long long) connect_refusal_counters,
             (unsigned long long) refusal_counters, (unsigned long long) correctness_refusals,
             (unsigned long long) queue_overflow_counters, (unsigned long long) socket_send_drops,
             correctness_pass ? "PASS" : "FAIL" );
