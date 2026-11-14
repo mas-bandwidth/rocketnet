@@ -255,7 +255,7 @@ hand-written traces:
 ## Where it runs, and what it costs
 
 - **Every commit:** the `tla-trace` job of `ci.yml` builds `tla_trace_all` (the harness
-  and every plant) and runs `--layer all --seeds 1-4 --jobs 8 --shard I/9` in nine parallel shard jobs
+  and every plant) and runs `--layer all --seeds 1-4 --jobs 8 --shard I/10` in ten parallel shard jobs
   (a summary job carries the required name "TLA+ trace check (fixed seeds)").
 - **Nightly:** the `trace` job of `tlc.yml` runs 64 seeds that start where the day of
   the year puts them.
@@ -268,14 +268,14 @@ hand-written traces:
   seed's first over the whole run (a plant whose violation TLC reports without
   printing a behaviour is run again, up to five times; each seed's log says
   `PLANT-ATTEMPTS` when it was).
-- **Shards are (layer, seed) pairs:** `--shard I/9` runs row I of `SHARDS` in
+- **Shards are (layer, seed) pairs:** `--shard I/10` runs row I of `SHARDS` in
   `tools/tla_trace_check.py`, where an entry is `layer:seed` or a whole `layer`. A heavy
   layer (msgx, xdp-reply-macs) is spread by seed; its action coverage and reach
   predicates run in the shard holding its first seed, which walks its other seeds again
   (the walk alone; TLC checks each of them in its own shard). An entry `layer:reach`
   moves the layer's reach predicates to that shard, which walks the layer's seeds the
   same way and tries the predicates on them; coverage stays at the first seed's shard
-  (msgx's reach is in shard 3: at its home it doubled the check step). The OK line names
+  (msgx's reach is alone in shard 9: at its home it doubled the check step, and beside other pairs it took a shard near the cap). The OK line names
   the shard's `homes=` and `reach=` layers. The table is checked on every run: a pair in
   two shards, a pair in none, an empty shard, a layer's reach moved twice, or moved for a
   layer with no reach predicate is red. Any other
