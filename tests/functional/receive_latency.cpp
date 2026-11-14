@@ -653,6 +653,18 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
     snprintf( too_late, sizeof( too_late ), "more messages than the bound waited an extra %.1f ms at %.0f Hz (one update)", 1000.0 / rate, rate );
     receive_latency_check( late * 100 <= total * RECEIVE_LATENCY_LATE_PERCENT, name, too_late );
     receive_latency_check( client_steady_opens == 0, name, "a client's update opened a session packet after the I/O thread opened one: a steady-state payload passed raw" );
+#if ROCKETNET_DEV
+    // the check above arms only once a client's update delivers a measured
+    // message while opening nothing; a client whose every payload passed raw
+    // never arms it, so each client must have armed by the end of the run
+    if ( row->direction == RECEIVE_LATENCY_CLIENT )
+    {
+        for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
+        {
+            receive_latency_check( client_delivered[c], name, "a client never received a measured message its I/O thread opened: every payload passed raw" );
+        }
+    }
+#endif // #if ROCKETNET_DEV
 }
 
 static void receive_latency_run_named( const char * row_name )
