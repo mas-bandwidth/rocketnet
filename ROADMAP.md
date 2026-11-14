@@ -13,7 +13,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 - [Trace check: gaps the README declares](#trace-check-gaps-the-readme-declares) (8)
 - [Decisions](#decisions) (7)
 - [Found while landing and re-measuring the v1.1.x transport work](#found-while-landing-and-re-measuring-the-v11x-transport-work) (27)
-- [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (73)
+- [Found by the review before v1.2.0, not fixed for it](#found-by-the-review-before-v120-not-fixed-for-it) (74)
 
 ## Suspected defects not yet fixed
 
@@ -1060,3 +1060,9 @@ From: Review before v1.2.0, wave 2, finding W2-75 (script parts)
 proofs/tla/RNServerReplaySlots.tla models the per-slot records of rocketnet_server_replay_marks_walk (seen record, mark, owed mark, skip mark) and their supersedes, but no trace check runs the code's walk against it: the xdp-replay trace check (tests/tla_trace_xdp_replay.cpp) excludes a slot reused while another address's forget is owed. The model also takes the mark pass as one step (Cand and Blocked from the records after the forget pass), where the code decides slot by slot after earlier slots' supersedes; a trace check would need either a per-slot mark step in the model or a refinement mapping that allows it. Bind it as the other layers are: the walk's random driver emits traces, TLC checks each is a behaviour, in CI beside the witnesses.
 
 From: Hostile-input-cost round 1, the replay orphan fix (Astra H01), cold read finding L3
+
+### The per-frame checked server calls read the running server more than once
+
+rocketnet_server_update, update_receive, update_finish, send_packets, receipts and receive_messages read server->running before their check and again after it (their check opens inside the message server call), where stop, the disconnects and the send rate now take one copy, use only that copy after their check, and return when a stop retired it (fix/v1.1.x/checked-server-overlap-refusals). Under a stop on another thread overlapping one of these calls, which the header forbids and promises to refuse: the overlap can go uncounted (the second read finds NULL before the check opens), a false API misuse can be counted for that NULL (asserting in a debug build), or, when the stop ran whole before the call's check, the call can step or read the stopping run (update and send_packets step its stopping transport, receipts can return receipts from slots the stop just kicked, receive_messages releases its batch and clears the count). No data loss or crash found. The fix is the same pattern: read running once, open the check in the wrapper on that run's transport (an update call for the three update calls), return when refused or when rn_server(server) != running, pass the copy on; the message server's own check then nests on the same thread. It moves where the check opens on the per-frame main-thread calls, so it needs a main-thread cost measurement at the 1000-player bar, before and after, before it lands.
+
+From: Audit v1.1.58, finding S3-2 (Emma), the per-frame calls left by the overlap-refusals fix; review of 138d227ef, H1
