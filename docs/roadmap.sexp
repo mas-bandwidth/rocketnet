@@ -954,11 +954,6 @@
    :text "DST caps messages at 16384 bytes (tests/dst_checks.h) and draws sizes from 14 to 16384 (rocketnet_dst_draw_size in tests/dst_harness.h), so it reaches about 15 fragments and never the 57-fragment default, the 64-fragment ceiling, or the resend bitmap words past them. 16384 is an input to the budget slack derivation (dst_checks.h, dst_harness.h), so raising it means deriving that slack again, not changing one constant."
    :date "2026-11-13" :origin "Tests review TA030 (P12)")
 
-  (item "dst-handshake-escaped-request" :group "review-v1-2" :area "tests"
-   :title "DST handshake rows: a state-2 request that left before the outage ends the attempt with -4"
-   :text "Since W2-51 (e04c7f45, the next handshake packet goes out in the update a reply advances the client) nightly-dst fails 450 handshake rows per OS, the same on Linux, macOS and Windows: every row in tests/dst_outage_grid.h with start=2 and dark=c2s. 400 end with client state -4 (CONNECTION_RESPONSE_TIMED_OUT), which the CONNECT_OR_RETRY branch at tests/dst_outage.h:1107 does not allow; 50 (T=10, rtt=150) fail 'the client never connected' at :982. The state-2 request now leaves in the update that enters state 2, before the harness goes dark, so the server answers and the client reaches state 3. Smallest fix: record a request_escaped flag the way response_escaped is recorded at :971-975, and for such a row allow -4 (and survival) as the state-3 rows do. Test only; the library behaves as W2-51 intends."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-dst 43586901457 at a1a426851; first red a15a98cf1")
-
   (item "check-memory-worker-table" :group "review-v1-2" :area "tools"
    :title "check_memory.py hard-codes each transport's worker count"
    :text "tools/check_memory.py:24 fixes the one-queue worker count per transport ('iocp': 3) and asserts it at :55, :87 and :112. The library's count moves with the plan: at a15a98cf1 the plan had 3 against a table of 2; 5677b4bf set 3; v1.1.61's sizing commits (81352192, 65e48f4f) made it 2, so the Windows Debug job fails with AssertionError ('iocp', 2). Smallest fix: take the expected count from the plan the server prints (its 'N workers'), and keep only the invariants that do not depend on sizing."
@@ -1022,11 +1017,6 @@
   (item "macos-soak-selftest-send-fault" :group "review-v1-2" :area "tools"
    :title "macOS platform selftest: the soak summary selftest fails at its send-fault leg"
    :text "Nightly CI platform selftests / macos (mini-m5-1, 21543f689) failed the soak argument and summary selftest at leg 9 (send fault): --seconds 3 exited 1. Green at cbad53d3b. GUESS: a TEST tool timing leg on a loaded host. Settled by the leg-9 output on its next failure."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-ci 43554956087")
-
-  (item "macos-oversize-datagram-watchdog" :group "review-v1-2" :area "tests"
-   :title "test_receive_drops_oversize_datagram times out on loaded macOS runners"
-   :text "Nightly CI macos Release functional_production (studio-4, 21543f689) failed check packet_bytes == ROCKETNET_RECEIVE_CEILING + 1 (tests/functional/rocketnet_functional_tests.cpp:2906 at c2df6bc8e) after the case's watchdog: the oversize datagram over real loopback was not seen in time. Green at cbad53d3b. Fix: send again until seen, through the loss gate (tests/kernel_drops.h), as the reply cases do."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-ci 43554956087")
 
   (item "trace-plant-never-fires" :group "trace-check" :area "tools"
