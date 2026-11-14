@@ -17,7 +17,8 @@ Refused, with file:line:
   - a make invocation ($(MAKE), ${MAKE}, `make`) carrying `-j` or `--jobs`
     with no number;
   - `--parallel` or (on a `cmake --build` line) `-j` followed by nothing,
-    another option, a line continuation or a shell operator;
+    another option, a line continuation, a shell operator or a redirection
+    (`2>&1` is a file descriptor, not a job count);
   - in Python and Go argument lists, "--parallel" or "-j" as the last
     element of the list.
 
@@ -36,11 +37,13 @@ import tempfile
 SHELL_SHEBANG = re.compile(r"^#!.*\b(sh|bash)\b")
 MAKE_CALL = re.compile(r"(\$\(MAKE\)|\$\{MAKE\}|(^|[\s;&|(`'\"])make(\s|$))")
 CMAKE_BUILD = re.compile(r"cmake\s+--build\b")
-# a flag, then nothing that is a value: end, another option, continuation, operator
-BARE_AFTER = r"(?=\s*($|-|\\|;|&|\||\)|#))"
+# a flag, then nothing that is a value: end, another option, continuation,
+# operator, or a redirection (`2>&1`, `> log`, `<in`: digits before < or > are
+# a file descriptor, not a job count)
+BARE_AFTER = r"(?=\s*($|-|\\|;|&|\||\)|#|[0-9]*[<>]))"
 BARE_PARALLEL = re.compile(r"(^|[\s,(])--parallel" + BARE_AFTER)
-BARE_J = re.compile(r"(^|[\s,(])-j(?=\s|$|\))(?!\s+[0-9$\"'])")
-BARE_JOBS = re.compile(r"(^|[\s,(])--jobs(?=\s|$|\))(?!\s+[0-9$\"'])")
+BARE_J = re.compile(r"(^|[\s,(])-j(?=\s|$|\))(?!\s+(?![0-9]*[<>])[0-9$\"'])")
+BARE_JOBS = re.compile(r"(^|[\s,(])--jobs(?=\s|$|\))(?!\s+(?![0-9]*[<>])[0-9$\"'])")
 LIST_BARE = re.compile(r"[\"'](--parallel|-j)[\"']\s*,?\s*[\]\)}]")
 
 
@@ -134,6 +137,11 @@ RED = [
     (".github/workflows/ci.yml", "          cmake --build build --parallel \\\n            --target x\n"),
     (".github/workflows/ci.yml", "          cmake --build build -j && ./bin/test\n"),
     ("tools/run_x.sh", "cmake --build \"$dir\" --target test --parallel\n"),
+    (".github/workflows/x.yml", "          cmake --build build --parallel 2>&1 | tee logs/build.log\n"),
+    (".github/workflows/x.yml", "          cmake --build build --parallel > logs/build.log\n"),
+    (".github/workflows/x.yml", "          cmake --build build --parallel</dev/null\n"),
+    (".github/workflows/x.yml", "          cmake --build build -j 2>&1 | tee logs/build.log\n"),
+    ("Makefile", "\tmake --jobs 2>/dev/null\n"),
     ("scripts/thing", "#!/usr/bin/env bash\nmake -j\n"),
     ("tools/build.py", "run([\"cmake\", \"--build\", d, \"--parallel\"])\n"),
     ("tools/x/x.go", "{\"cmake\", \"--build\", dir, \"-j\"},\n"),
@@ -144,6 +152,8 @@ GREEN = [
     ("Makefile", "\t$(MAKE) -j$(JOBS) -C sub\n"),
     ("Makefile", "\t$(MAKE) -j 4 -C sub\n"),
     (".github/workflows/ci.yml", "        run: cmake --build build --parallel 8\n"),
+    (".github/workflows/ci.yml", "          cmake --build build --parallel 8 2>&1 | tee logs/build.log\n"),
+    (".github/workflows/ci.yml", "          cmake --build build -j 4 2>&1 | tee logs/build.log\n"),
     (".github/workflows/ci.yml", "        run: cmake --build build --parallel \"$jobs\" --target t\n"),
     (".github/workflows/ci.yml", "        # cmake --build build --parallel\n"),
     ("tools/build.py", "run([\"cmake\", \"--build\", d, \"--parallel\", \"4\"])\n"),

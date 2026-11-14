@@ -51,7 +51,7 @@ restore()
 {
     cp "$WORK/source" "$SOURCE"
     touch "$SOURCE"
-    cmake --build "$BUILD" --target test --parallel > "$WORK/rebuild.log" 2>&1 || echo "red-zones-selftest: rebuild after restore failed" >&2
+    cmake --build "$BUILD" --target test --parallel 8 > "$WORK/rebuild.log" 2>&1 || echo "red-zones-selftest: rebuild after restore failed" >&2
     rm -rf "$WORK"
 }
 trap restore EXIT
@@ -70,7 +70,7 @@ export UBSAN_OPTIONS=print_stacktrace=1
 # ---------------------------------------------------------------------------
 # 1. control: the clean tree passes the reaching case
 
-if ! cmake --build "$BUILD" --target test --parallel > "$WORK/build-clean.log" 2>&1; then
+if ! cmake --build "$BUILD" --target test --parallel 8 > "$WORK/build-clean.log" 2>&1; then
     fail "the clean test build failed"
     tail -n 20 "$WORK/build-clean.log" >&2
     exit 1
@@ -101,7 +101,7 @@ if [ "$( grep -c -F "$PLANT" "$SOURCE" )" -ne 1 ] || [ "$( grep -c -F "$CLEAN" "
     exit 1
 fi
 
-if ! cmake --build "$BUILD" --target test --parallel > "$WORK/build-plant.log" 2>&1; then
+if ! cmake --build "$BUILD" --target test --parallel 8 > "$WORK/build-plant.log" 2>&1; then
     fail "the planted test build failed"
     tail -n 20 "$WORK/build-plant.log" >&2
     exit 1
