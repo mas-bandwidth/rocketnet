@@ -1863,6 +1863,10 @@ inline HANDLE suite_commit_lock_open()
     if ( !suite_commit_holder_view() )
     {
         suite_commit_record_error() = GetLastError();
+        if ( mapping )
+        {
+            CloseHandle( mapping );
+        }
     }
     return lock;
 }
@@ -1894,16 +1898,24 @@ inline std::string suite_commit_holder_text()
     {
         state = ", process no longer running";
     }
-    const time_t start = (time_t) holder.start;
-    struct tm start_tm;
+    // Any account may write the record, so its start is untrusted: only a
+    // start in (0, now] is printed and subtracted (no signed overflow).
+    const long long now = (long long) time( NULL );
     char start_text[32] = "?";
-    if ( gmtime_s( &start_tm, &start ) == 0 )
+    char age_text[32] = "age unknown";
+    if ( holder.start > 0 && holder.start <= now )
     {
-        strftime( start_text, sizeof( start_text ), "%Y-%m-%dT%H:%M:%SZ", &start_tm );
+        const time_t start = (time_t) holder.start;
+        struct tm start_tm;
+        if ( gmtime_s( &start_tm, &start ) == 0 )
+        {
+            strftime( start_text, sizeof( start_text ), "%Y-%m-%dT%H:%M:%SZ", &start_tm );
+        }
+        snprintf( age_text, sizeof( age_text ), "%lld s", now - holder.start );
     }
     char text[600];
-    snprintf( text, sizeof( text ), "pid %lu (%s) running %s, holding it since %s (%lld s)%s", (unsigned long) holder.pid, holder.exe,
-              holder.name, start_text, (long long) time( NULL ) - holder.start, state );
+    snprintf( text, sizeof( text ), "pid %lu (%s) running %s, holding it since %s (%s)%s", (unsigned long) holder.pid, holder.exe, holder.name,
+              start_text, age_text, state );
     return text;
 }
 
