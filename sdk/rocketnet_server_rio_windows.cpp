@@ -2042,7 +2042,7 @@ static void rocketnet_rio_retry_receives( rocketnet_rio_lane_t * rio )
 }
 
 // proofs/tla/RNRioWorker.tla WDequeue, second half: every available receive completion up
-// to the fill bank's room, and at most one bank's worth of completions a pass
+// to the worker bank's room, and at most one bank's worth of completions a pass
 // (receives), so a flood the prefilter refuses cannot hold the worker from its
 // sends. A full bank leaves the rest in the queue with their slices unposted
 // (backpressure), never dropped. Returns the count.
@@ -2564,7 +2564,8 @@ bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * pack
 
 // One receive completion of a valid-size datagram from 127.0.0.1:port on an
 // IPv4 lane through the production completion step (rocketnet_rio_complete_receive):
-// banked is what reached the fill bank, failed the lane's RIO_RECEIVE_FAILED.
+// banked is what reached the worker's bank of the receive handoff, failed the
+// lane's RIO_RECEIVE_FAILED.
 // The lane is stopping, so the slice is not re-posted and no kernel is asked.
 bool rocketnet_server_rio_test_receive_source( uint16_t port, int * banked, uint64_t * failed )
 {
@@ -2590,7 +2591,7 @@ bool rocketnet_server_rio_test_receive_source( uint16_t port, int * banked, uint
     result.RequestContext = (ULONGLONG) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, 0 );
     rocketnet_rio_complete_receive( rio, &result );
 
-    *banked = rio->banks[rio->fill_bank].num_packets;
+    *banked = rocketnet_rio_worker_bank( rio )->num_packets;
     *failed = rio->counters[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED - ROCKETNET_SERVER_RIO_FIRST_COUNTER].load( std::memory_order_relaxed );
 
     rocketnet_rio_test_fixture_free( rio );
