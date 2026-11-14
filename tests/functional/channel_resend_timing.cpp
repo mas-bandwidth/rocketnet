@@ -557,10 +557,12 @@ void resend_timing_table_over_lossy_links_default()
     block arrives whole in every run; under "resend_delay" the client's wire bytes are
     at most 1.4 times the block's payload, and below the cap's; and the small
     messages beside the block are all delivered and never held behind its
-    chunks: after every update's packets are written, the oldest unacked
-    number of the client's small-record FIFO is not due
+    chunks: after every update's packets are written, no unacked number of
+    the client's small-record FIFO is due unless probe pacing holds it (m9.3:
+    once 1 s has passed with no reliable number newly acknowledged, counted
+    from the later of the last progress and U's first send, only U is resent)
     (RNResendTiming!NoDueRecordHeld on the product's walk, the small class; "small_held"
-    counts the updates where it was). Their p99 is printed and not asserted:
+    counts the updates where one was). Their p99 is printed and not asserted:
     with a few dozen messages a run it is the slowest one, set by how many of
     its sends were lost.
 */
@@ -583,15 +585,47 @@ struct block_cost_row_t
     int small_held;
 };
 
+// The first send of every number from first_number on, as this case sees it
+// after each update: a number's last_send is its update's time once it is
+// written, and the case looks after every update, so the first time it sees a
+// number on the wire is that number's first send (-1.0: not seen sent).
+#define BLOCK_COST_NUMBERS_MAX 8192
+
+static void block_cost_note_first_sends( const rocketnet_channel_harness_t * h, uint64_t first_number, double * first_send )
+{
+    const rn_ordered_t * ordered = &h->message_client->object.connections[0].ordered;
+    const rn_region_t * region = ordered->channels.region;
+    for ( uint64_t number = ordered->send.U; number < ordered->send.next; number++ )
+    {
+        if ( number < first_number || number - first_number >= BLOCK_COST_NUMBERS_MAX || first_send[number - first_number] >= 0.0 )
+        {
+            continue;
+        }
+        const rn_send_number_t * slot = &region->send_numbers[number & ( region->window - 1 )];
+        if ( slot->number == number && !rn_send_number_unsent_due( slot->last_send ) )
+        {
+            first_send[number - first_number] = slot->last_send;
+        }
+    }
+}
+
 // RNResendTiming!NoDueRecordHeld on the product's walk, the small class: after an
-// update's packets are written, the oldest unacked number in the client's
-// small-record FIFO is not due (a due one would have been written). Returns 1
-// when it is due, that is, when the update held it.
-static int block_cost_small_held( const rocketnet_channel_harness_t * h )
+// update's packets are written, no unacked number in the client's small-record
+// FIFO is due (a due one would have been written) unless probe pacing holds
+// it (Held: while probing, every number on the wire but U waits;
+// standard/MESSAGES.md m9.3, applied here by resend_timing_probing from the
+// later of the last progress and U's first send as this case saw it). The
+// FIFO is walked oldest last send first, as the walk does: a held number is
+// passed over, and the first number on the wire not yet due ends it. Returns
+// 1 when a due number that probe pacing does not hold was kept back.
+static int block_cost_small_held( const rocketnet_channel_harness_t * h, int reliable_timeout_ms, uint64_t first_number, const double * first_send )
 {
     const rn_ordered_t * ordered = &h->message_client->object.connections[0].ordered;
     const rn_window_ack_t * ack = &ordered->ack;
     const rn_region_t * region = ordered->channels.region;
+    const uint64_t u = ordered->send.U;
+    const double u_first_send = u >= first_number && u - first_number < BLOCK_COST_NUMBERS_MAX ? first_send[u - first_number] : -1.0;
+    const bool probing = resend_timing_probing( reliable_timeout_ms, u, ordered->send.next, u_first_send, ack->last_progress, h->now );
     for ( uint32_t cursor = rn_window_ack_resend_first( ack, false ); cursor != RN_RESEND_NONE; cursor = rn_window_ack_resend_next( ack, false, cursor ) )
     {
         const rn_send_number_t * slot = &region->send_numbers[cursor];
@@ -599,7 +633,19 @@ static int block_cost_small_held( const rocketnet_channel_harness_t * h )
         {
             continue;
         }
-        return ( rn_send_number_unsent_due( slot->last_send ) || h->now >= slot->last_send + rn_window_ack_resend_delay( ack ) ) ? 1 : 0;
+        if ( rn_send_number_unsent_due( slot->last_send ) )
+        {
+            return 1;
+        }
+        if ( h->now < slot->last_send + rn_window_ack_resend_delay( ack ) )
+        {
+            return 0;
+        }
+        if ( probing && slot->number != u )
+        {
+            continue;
+        }
+        return 1;
     }
 
     return 0;
@@ -660,6 +706,15 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
     const int64_t wire_before = h.wire_bytes_to_server;
     const double start = h.now;
 
+    // the block's first number and every number after it: their first sends,
+    // for probe pacing's clock in block_cost_small_held
+    static double first_send[BLOCK_COST_NUMBERS_MAX];
+    for ( int i = 0; i < BLOCK_COST_NUMBERS_MAX; i++ )
+    {
+        first_send[i] = -1.0;
+    }
+    const uint64_t first_number = h.message_client->object.connections[0].ordered.send.next;
+
     resend_timing_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, block, BLOCK_COST_BYTES ) != 0 );
 
     int delivered = 0;
@@ -692,9 +747,11 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
 
         up = rocketnet_channel_harness_pump( &h, tick );
 
+        block_cost_note_first_sends( &h, first_number, first_send );
+
         if ( with_small && small_sent > 0 )
         {
-            small_held += block_cost_small_held( &h );
+            small_held += block_cost_small_held( &h, config.reliable_message_timeout_ms, first_number, first_send );
         }
 
         // the small messages share channel 0 with the block; they are told
