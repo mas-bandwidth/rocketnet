@@ -3340,6 +3340,10 @@ bool rocketnet_server_rio_test_pin_refusal( uint64_t * not_asked_out, uint64_t *
     rocketnet_rio_test_refuse_pin = false;
     rocketnet_rio_lane_counters( rio, counters );
     *refused_out = counters[ROCKETNET_COUNTER_RIO_PIN_REFUSALS];
+    // the refused pin moved the row by exactly one (folded into the result,
+    // as the other seams fold their counters, so tools/check_counter_observed.py
+    // sees the row checked by value)
+    valid &= counters[ROCKETNET_COUNTER_RIO_PIN_REFUSALS] == *not_asked_out + 1;
     *placement_out = rio->placement.load();
     valid &= rio->placement_error.load() == (unsigned long) ERROR_ACCESS_DENIED;
 
