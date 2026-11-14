@@ -218,7 +218,9 @@ Each reversed witness was read against the code by hand (2026-10-29):
   succeed. The code's `take` uses `compare_exchange_strong` from active, so
   one wins (`test_lifecycle.cpp` `check_packet_leases` runs two threads on it).
 - **ReadWhileWriting.** `resolve` reads `owned` while the writer is mid-copy.
-  The code waits first.
+  The code reads no entry in the writing phase: `resolve` continues the probe
+  past it (`OnWriting = {"skip"}`, the `( state & 3 ) == 1` test in
+  `sdk/rocketnet_packet_lease.h` `resolve`).
 - **NoEpochBump.** A lease of the previous fill is still current after reset.
   The code bumps the epoch in `reset`.
 - **EpochUnlimited.** Epoch 3 shifted into a word that holds epochs to 2 reads
