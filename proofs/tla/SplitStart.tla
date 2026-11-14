@@ -7,16 +7,28 @@
 (* and never past ReadyLease from time 0 (the launcher's 60 s readiness    *)
 (* lease, load_split.c ready_time), then sends ARM and waits PhaseWindow   *)
 (* for every ACK, sends GO and waits PhaseWindow for every GO ACK, then    *)
-(* sends RUN.  Every start message is reliable ordered: a loss is the SDK's *)
-(* resend, so each message arrives 1..Delay ticks after it is sent, and   *)
-(* Delay <= RunTimeout, the reliable message timeout after which the SDK   *)
-(* gives up on a connection.  A server that fails ends every connection;  *)
-(* the end reaches each shard 1..Delay ticks later.                        *)
+(* sends RUN.  Every start message is reliable ordered: a loss is the      *)
+(* SDK's resend, so each message arrives 1..Delay ticks after it is sent.  *)
+(* A server that fails ends every connection; the end reaches each shard   *)
+(* 1..Delay ticks later.                                                   *)
+(*                                                                         *)
+(* RunTimeout is the shard's allowance for RUN in flight (load_split.c     *)
+(* start_allowance_s): the reliable message timeout when one is set, else  *)
+(* the connection timeout the tokens carry (SPLIT_TOKEN_TIMEOUT_SECONDS).  *)
+(* load_split keeps reliable_message_timeout_ms at its default 0 (off), so *)
+(* it is the token timeout, which ends only a silent connection.           *)
+(*                                                                         *)
+(* Assumption, not enforced by the harness: ASSUME Delay <= RunTimeout,    *)
+(* every start message, with its resends, arrives within RunTimeout.  A    *)
+(* path that carries keepalives but keeps losing RUN's resends keeps the   *)
+(* connection up past it; the server has set startup_complete right after  *)
+(* sending RUN, so a shard that then gives up on its own clock breaks      *)
+(* ServerIsTheAuthority.  The properties hold under this assumption only.  *)
 (*                                                                         *)
 (* Rule "one" is the shard rule: one deadline from the shard's own         *)
 (* connection, ConnectWindow + 2 * PhaseWindow + RunTimeout.  Rule         *)
 (* "per_phase" is the rule it replaced: PhaseWindow from the shard's own   *)
-(* connection for ARM, then PhaseWindow from each local step for GO and   *)
+(* connection for ARM, then PhaseWindow from each local step for GO and    *)
 (* RUN.  Rule "no_run" is the one rule without the RunTimeout term.        *)
 (*                                                                         *)
 (* ServerIsTheAuthority: a shard gives up on its own clock only after the  *)
@@ -37,6 +49,8 @@ EXTENDS Integers, FiniteSets
 CONSTANTS Shards, ConnectWindow, PhaseWindow, RunTimeout, Delay, MaxTime, Rule,
           ReadyLease
 
+\* Delay <= RunTimeout is the path assumption stated in the header; the
+\* harness does not enforce it (reliable_message_timeout_ms is 0)
 ASSUME Delay >= 1 /\ Delay <= RunTimeout
 ASSUME Rule \in {"one", "per_phase", "no_run"}
 ASSUME ReadyLease >= ConnectWindow

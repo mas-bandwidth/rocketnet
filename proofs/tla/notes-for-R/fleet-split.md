@@ -31,3 +31,14 @@ ServerFail for the population window only. The model now has the lease too. New 
 sentence: "proofs/tla/SplitStart.tla Connect: each client connecting, from the first connect time;
 ServerExpired and ServerFail: the readiness lease or the population window expiring fails the start,
 and cleanup ends every connection."
+
+## Package C (comment only, tools/load_split_barrier.h), MA021
+
+load_split_barrier.h:86-91, the comment above split_shard_start_begin, says the deadline adds "one reliable
+message timeout for RUN itself" and that the server is the one authority. load_split keeps
+reliable_message_timeout_ms at 0, so the term is the token timeout (load_split.c start_allowance_s), and the
+authority claim rests on a path assumption. New text for those sentences: "the server's population window,
+both server start windows, and the allowance for RUN in flight (the reliable message timeout when one is
+set, else the token timeout). Every server window closes first, so the server is the one authority that
+fails a start, provided RUN, with its resends, arrives within the allowance (proofs/tla/SplitStart.tla,
+ASSUME Delay <= RunTimeout); the harness does not enforce that."
