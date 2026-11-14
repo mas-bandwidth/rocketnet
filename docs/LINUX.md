@@ -144,8 +144,20 @@ kernel or seccomp profile that refuses io_uring (many container runtimes'
 default profiles, or `kernel.io_uring_disabled`) makes the create log
 `io_uring transport refused: this kernel does not accept the io_uring ring,
 opcodes, provided buffer ring or multishot receive (Linux 6.0) the transport
-needs` and `auto` goes on to `gso`. To run `gso` where io_uring would start,
-pin it (section 3).
+needs: <step> failed, errno <n> <NAME>` as a warning and `auto` goes on to
+`gso`. To run `gso` where io_uring would start, pin it (section 3).
+
+`auto` tries `io_uring` before `gso`, so two things that did not reach a
+server without root before now can. A seccomp filter that kills the process
+on the io_uring syscalls, rather than refusing them with an errno, kills it
+at the probe's first `io_uring_setup`, before `gso` is tried: where the
+filter does that, set `ROCKETNET_SERVER_TRANSPORT=gso`. And `io_uring`'s
+memory plan is larger than `gso`'s: at 1000 players and 1416 byte payloads
+`transport_memory 1000 1416 <name> 0 --plan-only` reads 1,169,755,611
+allocator bytes for `io_uring` and 616,314,336 for `gso`. `auto` already sizes
+its plan for its largest candidate, and a failed allocation inside a candidate's
+create is not a refusal: start ends with `ROCKETNET_STATUS_OUT_OF_MEMORY` and
+does not fall to `gso` (`sdk/rocketnet_server_transport.cpp`).
 
 **How start walks it.** Public create parses the list; server start tries
 candidates left to right and the first grant wins (`sdk/rocketnet_server_transport.cpp`). Each refusal logs a warning,
