@@ -68,14 +68,6 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_protocol.h"
 
-// the session types the filter checks against the replay map: from a source
-// with no entry they drop (DROPPED_NO_SESSION)
-static inline bool fz_session_type( uint8_t type )
-{
-    return type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET || type == ROCKETNET_CONNECTION_PAYLOAD_PACKET ||
-           type == ROCKETNET_CONNECTION_DISCONNECT_PACKET || type == ROCKETNET_CONNECTION_ACK_PACKET;
-}
-
 #if defined( ROCKETNET_FUZZ_XDP_FILTER_HOST )
 #define ROCKETNET_FUZZ_XDP_FILTER_ACTIVE 1
 #else // #if defined( ROCKETNET_FUZZ_XDP_FILTER_HOST )
@@ -86,6 +78,15 @@ static inline bool fz_session_type( uint8_t type )
 #include "rocketnet_xdp_limits.h"
 #include "rocketnet_xdp_frame.h"
 #include "xdp_host/server_xdp_host.h"
+
+// the session types the filter checks against the replay map: from a source
+// with no entry they drop (DROPPED_NO_SESSION). Only the host filter replay
+// reads it, so it is defined only where that replay is built.
+static inline bool fz_session_type( uint8_t type )
+{
+    return type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET || type == ROCKETNET_CONNECTION_PAYLOAD_PACKET ||
+           type == ROCKETNET_CONNECTION_DISCONNECT_PACKET || type == ROCKETNET_CONNECTION_ACK_PACKET;
+}
 #endif // #if ROCKETNET_FUZZ_XDP_FILTER_ACTIVE
 
 #include <stdint.h>

@@ -16,10 +16,12 @@ profiles = [(1, 1416), (2, 1416), (1000, 1416)]
 transports = ['portable']
 # The workers each transport plans at one queue (the probe's last argument):
 # portable and msgx a receive and a transmit worker; one-queue IOCP a
-# completion worker and a send thread; GSO one worker a queue that receives
+# completion worker and its default send threads, min(lanes, 2): even one
+# client is sized at ROCKETNET_SERVER_MIN_SIZED_CLIENTS, which is 4 send lanes,
+# so 2; GSO one worker a queue that receives
 # and sends (sdk/rocketnet_server_gso_linux.cpp starts one thread a queue).
 # Statistics run no thread. The native planner must include every worker.
-one_queue_workers = {'portable': 2, 'msgx': 2, 'iocp': 2, 'gso': 1}
+one_queue_workers = {'portable': 2, 'msgx': 2, 'iocp': 3, 'gso': 1}
 if sys.platform == 'darwin':
     transports.append('msgx')
 elif sys.platform == 'win32':
