@@ -322,7 +322,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // 1000 clients the same arrays, 136 more bytes of pointers, sizes and carve
 // alignment; the client unchanged: actual=1665308923 and 15046474 (studio,
 // Apple clang, Debug, DEV=ON), measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664260347 )
+// The msgx receive on the shared receive handoff (committed counts and main's
+// cursors in place of the ready-slot banks): 64 more to the server, the
+// client unchanged: actual=1665308987 and 15046474 (studio, Apple clang,
+// Debug, DEV=ON), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664260411 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997898 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).

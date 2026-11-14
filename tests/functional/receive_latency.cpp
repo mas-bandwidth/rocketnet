@@ -133,6 +133,7 @@ static const struct receive_latency_row_t receive_latency_rows[] = {
     { "server_xdp", "xdp", "portable", RECEIVE_LATENCY_SERVER, true, true },
     { "server_rio", "rio", "portable", RECEIVE_LATENCY_SERVER, false, true },
     { "server_iocp", "iocp", "portable", RECEIVE_LATENCY_SERVER, false, true },
+    { "server_msgx", "msgx", "portable", RECEIVE_LATENCY_SERVER, false, true },
     { "client_portable", "portable", "portable", RECEIVE_LATENCY_CLIENT, false, false },
     { "client_gso", "portable", "gso", RECEIVE_LATENCY_CLIENT, false, true },
     { "client_msgx", "portable", "msgx", RECEIVE_LATENCY_CLIENT, false, RECEIVE_LATENCY_MSGX_DELAY_ENFORCED },
@@ -804,4 +805,11 @@ void rocketnet_test_receive_latency_server_rio()
 void rocketnet_test_receive_latency_server_iocp()
 {
     receive_latency_run_named( "server_iocp" );
+}
+
+void rocketnet_test_receive_latency_server_msgx();
+
+void rocketnet_test_receive_latency_server_msgx()
+{
+    receive_latency_run_named( "server_msgx" );
 }

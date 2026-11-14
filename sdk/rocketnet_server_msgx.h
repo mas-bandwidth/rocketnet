@@ -68,11 +68,11 @@ struct rocketnet_server_msgx_t;
 // update's whole receive budget at the server's configured max_clients
 // (rocketnet_server_receive_packets_per_update, 16000 at 1000 clients, the
 // budget the Linux and Windows servers size theirs by), sized at create, so
-// main takes an update's budget in one claim. The worker reads only into room
+// main takes an update's budget in one call. The worker reads only into room
 // (sdk/rocketnet_msgx_receive_fill.h): a read asks for the batch or the room
 // left, whichever is less, so a bank smaller than the batch is read in
-// smaller calls. With its bank full and the last one not yet taken by main it
-// stops reading, the kernel's socket buffers hold the rest, and it sleeps
+// smaller calls. With its bank full and main not yet started on it, it stops
+// reading, the kernel's socket buffers hold the rest, and it sleeps
 // HOLD_SECONDS before it looks again
 #define ROCKETNET_MSGX_RECV_QUEUE_SIZE( max_clients )                 rocketnet_server_receive_packets_per_update( max_clients )
 #define ROCKETNET_MSGX_RECV_BATCH                                       32
