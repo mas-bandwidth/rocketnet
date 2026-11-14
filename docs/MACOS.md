@@ -276,16 +276,15 @@ running `test_loopback_transport_udp`, `test_loopback_transport_ipv6`,
 
 The workloads are the performance report's: 1000 players at 60 Hz, about
 480,000 packets a second on average and about 900,000 at peak
-([PERFORMANCE.md](PERFORMANCE.md), "Workload and measurement"). In the
-project's own tests a `msgx` server holds the average load for 1000 players.
-At peak, macOS tops out lower, and more transmit workers do not close the
-gap. In those tests the limit was in the operating system: every packet the
-Mac sent on its interface passed through that interface's one output queue,
-behind one lock, and one kernel transmit thread handed the packets to the
-driver (an interface whose driver works another way may differ). All the
-transmit workers' sends meet in that queue, so past a point more workers wait
-on its lock rather than send more. The performance report has no macOS record
-yet, so it gives no figure for the peak a Mac reaches.
+([PERFORMANCE.md](PERFORMANCE.md), "Workload and measurement"). The
+performance report has no macOS record yet, so this section gives no figure
+for how much a `msgx` server sends; measure your own workload. One limit the
+operating system sets: every packet a Mac sends on an interface passes
+through that interface's one output queue, behind one lock, and one kernel
+transmit thread hands the packets to the driver (an interface whose driver
+works another way may differ). All the transmit workers' sends meet in that
+queue, so past a point more workers wait on its lock rather than send more:
+more transmit workers are not always more throughput.
 
 Test with many client addresses. When every test client sends from one
 address (all the clients on one load machine with one address), every packet
