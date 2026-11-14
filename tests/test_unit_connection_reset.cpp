@@ -22,6 +22,7 @@
 #include "../sdk/rocketnet_client_io.h"
 #include "../sdk/rocketnet_driver.h"
 #include "../sdk/rocketnet_connect_token.h"
+#include "../sdk/rocketnet_internal.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -562,6 +563,29 @@ static void test_connection_reset_client_slots_stale_handle_cannot_release_reuse
                    sizeof( new_user_data ) ) == 0 );
 
     check( rocketnet_client_slots_release_handle( slots, &current ) );
+    check( rocketnet_client_slots_num_connected( slots ) == 0 );
+    rocketnet_client_slots_publish( slots );        // the server update's end
+
+    // The same client reconnects into the same slot: the stale handle now
+    // names the replacement's index and full id, and only the generation
+    // differs, so the generation comparison alone must refuse it.
+
+    check( rocketnet_client_slots_assign( slots, old_id, 29, 3, new_user_data ) == 0 );
+
+    rocketnet_client_slot_handle_t same_id;
+    check( rocketnet_client_slots_handle( slots, 0, &same_id ) );
+    check( same_id.client_id == stale.client_id );
+    check( same_id.client_index == stale.client_index );
+    check( same_id.generation != stale.generation );
+
+    check( !rocketnet_client_slots_release_handle( slots, &stale ) );
+    check( rocketnet_client_slots_num_connected( slots ) == 1 );
+    check( rocketnet_client_slots_find( slots, old_id ) == 0 );
+    check( rocketnet_client_slots_mapping_index( slots, 0 ) == 29 );
+    check( memcmp( rocketnet_client_slots_user_data( slots, 0 ), new_user_data,
+                   sizeof( new_user_data ) ) == 0 );
+
+    check( rocketnet_client_slots_release_handle( slots, &same_id ) );
     check( rocketnet_client_slots_num_connected( slots ) == 0 );
     rocketnet_client_slots_destroy( slots );
 }
@@ -1440,6 +1464,57 @@ static void reset_client_transport_clean( rocketnet_client_transport_t * transpo
     check( clean );
 }
 
+// The client transport's secret spans (rocketnet_client_transport_secret_spans_for_test,
+// sdk/rocketnet_client_transport.cpp): the protocol's four keys, its token and
+// its ephemeral secret, which the protocol's rocketnet_client_connection_reset
+// zeroes (its secure wipe, then its whole-state zero), and the
+// I/O thread's open copy of the session key, which the reset's retire hook
+// clears. A connection that ended without the reset, or whose reset lost the
+// hook, leaves bytes here; the payload ring alone is empty either way.
+
+static int reset_client_transport_span_bytes( rocketnet_client_transport_t * transport, int span )
+{
+    size_t offsets[4];
+    size_t bytes[4];
+    check( rocketnet_client_transport_secret_spans_for_test( transport, offsets, bytes, 4 ) == 4 );
+    check( span >= 0 && span < 4 );
+
+    int nonzero = 0;
+    for ( size_t i = 0; i < bytes[span]; i++ )
+    {
+        nonzero += ( (const uint8_t *) transport )[offsets[span] + i] != 0;
+    }
+    return nonzero;
+}
+
+static int reset_client_transport_secret_bytes( rocketnet_client_transport_t * transport )
+{
+    int nonzero = 0;
+    for ( int span = 0; span < 4; span++ )
+    {
+        nonzero += reset_client_transport_span_bytes( transport, span );
+    }
+    return nonzero;
+}
+
+// Refills the protocol's three spans (keys, token, ephemeral), the ones every
+// reset wipes. The I/O thread's copy is left as it is: once retired it is
+// zeroed by its owner on the retired epoch and nothing fills it again until a
+// new connection publishes keys, so a refilled retired copy is a state the
+// library never reaches.
+
+static void reset_client_transport_poison_secrets( rocketnet_client_transport_t * transport )
+{
+    size_t offsets[4];
+    size_t bytes[4];
+    check( rocketnet_client_transport_secret_spans_for_test( transport, offsets, bytes, 4 ) == 4 );
+    for ( int span = 0; span < 3; span++ )
+    {
+        memset( (uint8_t *) transport + offsets[span], 0xC3, bytes[span] );
+    }
+    check( reset_client_transport_secret_bytes( transport ) > 0 );
+}
+
 static void reset_server_slot_clean( rocketnet_message_server_t * server, int client_index )
 {
     char failure[256];
@@ -1716,9 +1791,11 @@ UNIT_TEST_SKIPPED_UNLESS( test_connection_reset_server_reset_touches_only_its_sl
 #if ROCKETNET_DEV
 
 // The client ends the connection itself, by its own timeout: the server goes
-// silent and only the client runs. The transport state a connection leaves
-// behind is marked first, so the reset on the transport's update path is the
-// only thing that can make it clean.
+// silent and only the client runs. While connected the session keys and the
+// I/O thread's open copy are live; the protocol's reset at the timed-out
+// state (rocketnet_client_set_state) zeroes the first and its retire hook
+// the second, so after the timeout every secret span reads zero and the
+// payload ring is empty.
 
 static void reset_loopback_client_timeout_scenario()
 {
@@ -1734,6 +1811,8 @@ static void reset_loopback_client_timeout_scenario()
     }
 
     rocketnet_client_transport_t * transport = rocketnet_message_client_transport( f.clients[0] );
+    check( reset_client_transport_span_bytes( transport, 0 ) > 0 );      // the keys
+    check( reset_client_transport_span_bytes( transport, 3 ) > 0 );      // the I/O thread's open copy
 
     for ( int i = 0; i < 400 && rocketnet_message_client_state( f.clients[0] ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++ )
     {
@@ -1743,12 +1822,14 @@ static void reset_loopback_client_timeout_scenario()
     }
 
     check( rocketnet_message_client_state( f.clients[0] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT );
+    check( reset_client_transport_secret_bytes( transport ) == 0 );
     reset_client_transport_clean( transport );
     reset_loopback_destroy( &f );
 }
 
 // The client's connection ends by a denial: both slots are taken, so the
-// server denies a third client mid-handshake.
+// server denies a third client mid-handshake. Its token is live during the
+// handshake and every secret span reads zero once the denial ends it.
 
 static void reset_loopback_client_denied_scenario()
 {
@@ -1765,14 +1846,20 @@ static void reset_loopback_client_denied_scenario()
 
     rocketnet_client_transport_t * transport = rocketnet_message_client_transport( denied );
 
+    int token_live = 0;
     for ( int i = 0; i < 400 && rocketnet_message_client_state( denied ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++ )
     {
+        const int token_bytes = reset_client_transport_span_bytes( transport, 1 );
+        token_live = token_bytes > token_live ? token_bytes : token_live;
+
         reset_loopback_step( &f );
         check( rocketnet_message_client_update( denied, f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( denied );
     }
 
     check( rocketnet_message_client_state( denied ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED );
+    check( token_live > 0 );
+    check( reset_client_transport_secret_bytes( transport ) == 0 );
     reset_client_transport_clean( transport );
     rn_test_message_client_stop_and_destroy( denied );
     reset_loopback_destroy( &f );
@@ -2532,7 +2619,9 @@ REGISTER_UNIT_TEST( test_connection_reset_server_reset_refuses_an_index_past_the
 // A client whose connection timed out is disconnected by its caller after the
 // fact (the order rocketnet_client_destroy asks for): the second reset of the
 // one connection runs the transport's retire hook again, with the context the
-// first reset kept, and the transport ends DISCONNECTED and clean.
+// first reset kept, and the transport ends DISCONNECTED and clean. The
+// protocol's secret spans are refilled before that disconnect, so only its
+// own protocol reset can zero them again.
 
 static void test_connection_reset_disconnect_after_a_timeout_is_clean()
 {
@@ -2557,13 +2646,20 @@ static void test_connection_reset_disconnect_after_a_timeout_is_clean()
     }
 
     check( rocketnet_message_client_state( f.clients[0] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT );
+    check( reset_client_transport_secret_bytes( transport ) == 0 );
 
+    reset_client_transport_poison_secrets( transport );
     rocketnet_client_transport_disconnect( transport );
     check( rocketnet_client_transport_state( transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+    check( reset_client_transport_secret_bytes( transport ) == 0 );
     reset_client_transport_clean( transport );
 
+    // a disconnect from disconnected is refused before any reset (nothing is
+    // left to wipe), so this one is not poisoned first: it must stay clean
+
     rocketnet_client_transport_disconnect( transport );
     check( rocketnet_client_transport_state( transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+    check( reset_client_transport_secret_bytes( transport ) == 0 );
 
     f.now += 0.05;
     check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );

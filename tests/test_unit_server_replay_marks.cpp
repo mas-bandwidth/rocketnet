@@ -6,7 +6,7 @@
 // The server replay walk (sdk/rocketnet_server_replay_marks.h) against
 // proofs/tla/RNXdpReplay.tla Walk: the forgets first, then the marks, once per
 // update. The client slots and encryption map are built directly, time is an
-// argument, and there is no transport, transport or clock.
+// argument, and there is no socket, transport or clock.
 
 #include "test_unit_registry.h"
 
