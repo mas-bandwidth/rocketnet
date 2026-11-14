@@ -112,14 +112,23 @@ static inline int rocketnet_server_rio_send_queue_size( int max_clients )
     return staging > ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE ? staging : ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE;
 }
 
+// The posted receives are at least ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE
+// (twice one connection's default send batch), a structure minimum: a lane
+// posts room for a single client's default update twice over, as the shared
+// receive budget does. Twice the staging passes it from 256 clients up.
 static inline int rocketnet_server_rio_receives( int max_clients )
 {
-    return 2 * rocketnet_server_send_staging_packets( max_clients );
+    const int receives = 2 * rocketnet_server_send_staging_packets( max_clients );
+    return receives > ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE ? receives : ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE;
 }
+
+ROCKETNET_STATIC_ASSERT( 2 * ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 * 512 ) >= ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE,
+                         "the RIO posted-receive minimum leaves every size from 512 clients unchanged" );
 
 // The receive budget twice the send staging, at every count n from one
 // client: the staging pow2( 2n ) is under four packets per client and the
-// process batch holds at least sixteen per client. It does not bound the RIO
+// process batch holds at least sixteen per client, and both minimums are
+// ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE. It does not bound the RIO
 // send phase's floor (ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE): the posted receives
 // are twice the staging, not twice the phase.
 ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT >= 2 * 4,

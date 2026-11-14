@@ -124,9 +124,17 @@ static void test_max_clients_derived_limits()
         check( lanes * lane_packets >= ( wanted < ROCKETNET_IOCP_MAX_OPERATIONS ? wanted : ROCKETNET_IOCP_MAX_OPERATIONS ) );
         check( lanes * lane_packets <= UINT16_MAX + 1 );
         check( rocketnet_server_iocp_receive_queue_size( n, 1 ) == rocketnet_server_receive_packets_per_update( n ) );
+        // a worker's bank is its share of the budget, never fewer than the
+        // receives it posts
+        const int share = rocketnet_server_receive_packets_per_update( n ) / ROCKETNET_IOCP_MAX_WORKERS;
+        check( rocketnet_server_iocp_receive_queue_size( n, ROCKETNET_IOCP_MAX_WORKERS ) ==
+               ( share > ROCKETNET_IOCP_RECEIVES_PER_WORKER ? share : ROCKETNET_IOCP_RECEIVES_PER_WORKER ) );
         // each RIO lane's phase is the staging with a floor of 16384
         check( rocketnet_server_rio_send_queue_size( n ) == ( staging > ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE ? staging : ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE ) );
-        check( rocketnet_server_rio_receives( n ) == 2 * staging );
+        // its posted receives twice the staging, never fewer than the
+        // receive budget's minimum
+        check( rocketnet_server_rio_receives( n ) ==
+               ( 2 * staging > ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE ? 2 * staging : ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE ) );
 
         const int macs = rocketnet_xdp_reply_mac_entries( n );
         check( macs >= 4 * sized && macs >= ROCKETNET_XDP_REPLY_MAC_MIN_ENTRIES && ( macs & ( macs - 1 ) ) == 0 );
@@ -181,7 +189,9 @@ REGISTER_UNIT_TEST( test_max_clients_derived_limits );
 // Every relation the per-server sizes keep holds at every configured count
 // from 1 to ROCKETNET_MAX_CLIENTS, not only at the counts above: the receive
 // budget twice the portable send batch and twice the server-wide staging, the
-// IOCP process view twice a lane, a RIO bank inside the process view, the XDP
+// IOCP process view twice a lane, a RIO bank inside the process view and at
+// least the receive budget's minimum, an IOCP worker's bank at least the
+// receives it posts, the XDP
 // view twice its send queue, the reply MAC table wider than four probe
 // windows, the io_uring bank at least the budget, and the send capacity
 // inside the payload ring. No size at 512 clients or more is raised by any
@@ -207,6 +217,11 @@ static void test_max_clients_sizing_relations_hold_at_every_count()
         const int macs = rocketnet_xdp_reply_mac_entries( n );
         check( macs >= 4 * ROCKETNET_XDP_REPLY_MAC_PROBES && ( macs & ( macs - 1 ) ) == 0 );
         check( rocketnet_server_uring_bank_packets( n ) >= receive );
+        check( rocketnet_server_rio_receives( n ) >= ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE );
+        for ( int workers = 1; workers <= ROCKETNET_IOCP_MAX_WORKERS; ++workers )
+        {
+            check( rocketnet_server_iocp_receive_queue_size( n, workers ) >= ROCKETNET_IOCP_RECEIVES_PER_WORKER );
+        }
         const int capacity = n > ROCKETNET_SERVER_MIN_SEND_PACKETS ? n : ROCKETNET_SERVER_MIN_SEND_PACKETS;
         check( capacity <= send );
         if ( n >= 512 )
@@ -214,6 +229,8 @@ static void test_max_clients_sizing_relations_hold_at_every_count()
             check( receive == ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * n );
             check( send == n );
             check( rocketnet_server_iocp_receive_packets_per_update( n ) == receive );
+            check( rocketnet_server_rio_receives( n ) == 2 * staging );
+            check( rocketnet_server_iocp_receive_queue_size( n, ROCKETNET_IOCP_MAX_WORKERS ) == receive / ROCKETNET_IOCP_MAX_WORKERS );
             check( macs == (int) rocketnet_power_of_two_at_least( 4 * n ) );
         }
     }

@@ -174,14 +174,22 @@ static inline int rocketnet_server_iocp_send_queue_size( int max_clients )
 // staging: the workers' banks together hold one update's receive budget
 // (rocketnet_server_receive_packets_per_update, 16000 at 1000 clients), so a
 // flood the worker prefilter cannot name is still taken at the rate the main
-// thread processes. Both are sized at create.
+// thread processes. A bank holds at least the worker's posted receives
+// (ROCKETNET_IOCP_RECEIVES_PER_WORKER), so one round of its completions always
+// fits: a structure minimum, which the budget share passes from 512 clients up
+// at every worker count (8192 / 32 workers is 256). Both are sized at create.
 #define ROCKETNET_IOCP_RECEIVES_PER_WORKER 128
 
 static inline int rocketnet_server_iocp_receive_queue_size( int max_clients, int workers )
 {
     const int budget = rocketnet_server_receive_packets_per_update( max_clients );
-    return workers > 1 ? budget / workers : budget;
+    const int share = workers > 1 ? budget / workers : budget;
+    return share > ROCKETNET_IOCP_RECEIVES_PER_WORKER ? share : ROCKETNET_IOCP_RECEIVES_PER_WORKER;
 }
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * 512 / ROCKETNET_IOCP_MAX_WORKERS >= ROCKETNET_IOCP_RECEIVES_PER_WORKER &&
+                             ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE >= ROCKETNET_IOCP_RECEIVES_PER_WORKER,
+                         "a worker's bank minimum leaves every size from 512 clients and every one-worker size unchanged" );
 
 // The IOCP process batch: the shared per-update receive budget, raised to
 // twice one lane's staging so the receive budget holds twice send at every

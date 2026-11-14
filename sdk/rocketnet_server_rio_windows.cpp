@@ -66,7 +66,9 @@ static_assert( ROCKETNET_RIO_RECEIVE_SLICE_BYTES >= ROCKETNET_RECEIVE_CEILING + 
 
 // A whole bank fits the process view: a bank holds twice the staging,
 // 2 x pow2( 2n ) < 8n packets for n clients, and the view at least sixteen
-// per client, so it holds at every count from one client up.
+// per client; both take the same minimum,
+// ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE, so it holds at every count
+// from one client up.
 static_assert( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT >= 8, "a whole bank fits the process view" );
 
 // The request context packs a slot or slice index in its low 32 bits, so the
