@@ -18,6 +18,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_window_send.h"
 #include "rocketnet_window_receive.h"
+#include "rocketnet_window_ack.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -343,7 +344,7 @@ static void world_check( world_t * w )
         const ref_slot_t * s = &m->slot[n & ( m->w - 1 )];
         seq_check( s->live );
         seq_check( s->held );
-        seq_check( n >= m->released );
+        seq_check( s->number == n );
     }
 }
 
@@ -491,34 +492,6 @@ static int world_write_block( world_t * w )
     return 1;
 }
 
-static int world_ack_completes_live( const world_t * w )
-{
-    if ( w->ref.u >= w->ref.next )
-    {
-        return 0;
-    }
-    const ref_slot_t * oldest = &w->ref.slot[w->ref.u & ( w->ref.w - 1 )];
-    const uint64_t first = oldest->first;
-    const uint32_t count = oldest->block_count ? oldest->block_count : 1;
-    int others = 1;
-    int any_live = 0;
-    for ( uint32_t f = 0; f < count; f++ )
-    {
-        const ref_slot_t * q = &w->ref.slot[( first + f ) & ( w->ref.w - 1 )];
-        if ( first + f != w->ref.u && !q->acked )
-        {
-            others = 0;
-        }
-
-        if ( q->live )
-        {
-            any_live = 1;
-        }
-    }
-
-    return others && any_live;
-}
-
 static void world_free_message( world_t * w, uint64_t first )
 {
     ref_slot_t * s = ref_at( &w->ref, first );
@@ -597,6 +570,42 @@ static int world_ack( world_t * w )
     return world_ack_number( w, w->ref.u );
 }
 
+// the walk's ack: the oldest unacked number whose message the receiver has
+// fully released. Acking a live message would advance U' in the reference
+// before the release unmarks its ring span, which the reference's one span
+// map cannot represent; the directed probes ack completing numbers in
+// states built for it.
+
+static int world_ack_released( world_t * w )
+{
+    for ( uint64_t n = w->ref.u; n < w->ref.next; n++ )
+    {
+        const ref_slot_t * s = ref_at( &w->ref, n );
+        if ( s->acked )
+        {
+            continue;
+        }
+
+        const uint64_t first = s->first;
+        const uint32_t count = s->block_count ? s->block_count : 1;
+        int any_live = 0;
+        for ( uint32_t f = 0; f < count; f++ )
+        {
+            if ( ref_at( &w->ref, first + f )->live )
+            {
+                any_live = 1;
+            }
+        }
+
+        if ( !any_live )
+        {
+            return world_ack_number( w, n );
+        }
+    }
+
+    return 0;
+}
+
 static int world_release( world_t * w )
 {
     if ( w->ref.released >= w->ref.next )
@@ -671,10 +680,7 @@ static void world_apply( world_t * w, int action )
     }
     else if ( action == 3 )
     {
-        if ( !world_ack_completes_live( w ) )
-        {
-            world_ack( w );
-        }
+        world_ack_released( w );
     }
     else if ( action == 4 )
     {
@@ -1096,6 +1102,76 @@ static void test_window_send_mark_acked_refuses_duplicate_and_out_of_window()
 }
 
 REGISTER_UNIT_TEST( test_window_send_mark_acked_refuses_duplicate_and_out_of_window );
+
+// The library's own free policy, driven through the ack map (TM080): the walk
+// above frees descriptors by its own rule, so this probe commits packets to an
+// rn_window_ack_t and acks them by packet id. A descriptor stays in use until
+// every fragment of its message is acked, and is freed by the ack itself; an
+// unknown packet id frees nothing. If the ack path freed early, late or never,
+// the in_use checks below would fail.
+
+static void test_window_ack_frees_descriptor_when_message_fully_acked()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.receive_message_buffer_bytes = 65536;
+    config.max_message_bytes = 32768;
+
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    rocketnet_unit_check( arena != NULL );
+
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    world_bind( &g_world, region, 1, 0 );
+    action_begin();
+
+    rn_window_ack_t ack;
+    rn_window_ack_init( &ack, &g_world.send, region, NULL );
+
+    const double now = 100.0;
+
+    // one packet carries the message's only number; its ack frees the descriptor
+
+    seq_check( world_write_single( &g_world, 16 ) );
+    const uint64_t n0 = g_world.ref.next - 1;
+    const uint32_t d0 = ref_at( &g_world.ref, n0 )->descriptor;
+    rocketnet_unit_check( region->send_descriptors[d0].in_use );
+
+    rn_window_ack_commit_packet( &ack, 7001, &n0, 1, now );
+    rocketnet_unit_check( rn_window_ack_on_ack( &ack, 7001, now + 0.01 ) == 1 );
+    rocketnet_unit_check( !region->send_descriptors[d0].in_use );
+
+    // a block's two fragments travel in two packets: the first ack leaves the
+    // descriptor in use, the second frees it
+
+    seq_check( world_write_block( &g_world ) );
+    const uint64_t first = g_world.ref.next - 2;
+    const uint32_t d1 = ref_at( &g_world.ref, first )->descriptor;
+    rocketnet_unit_check( region->send_descriptors[d1].in_use );
+
+    const uint64_t f0 = first;
+    const uint64_t f1 = first + 1;
+    rn_window_ack_commit_packet( &ack, 7002, &f0, 1, now );
+    rn_window_ack_commit_packet( &ack, 7003, &f1, 1, now );
+
+    rocketnet_unit_check( rn_window_ack_on_ack( &ack, 7002, now + 0.02 ) == 1 );
+    rocketnet_unit_check( region->send_descriptors[d1].in_use );
+    rocketnet_unit_check( rn_window_ack_on_ack( &ack, 7003, now + 0.03 ) == 1 );
+    rocketnet_unit_check( !region->send_descriptors[d1].in_use );
+
+    // an ack for a packet never committed frees nothing
+
+    seq_check( world_write_single( &g_world, 16 ) );
+    const uint64_t n2 = g_world.ref.next - 1;
+    const uint32_t d2 = ref_at( &g_world.ref, n2 )->descriptor;
+    rocketnet_unit_check( rn_window_ack_on_ack( &ack, 7999, now + 0.04 ) == 0 );
+    rocketnet_unit_check( region->send_descriptors[d2].in_use );
+
+    rn_arena_destroy( arena );
+}
+
+REGISTER_UNIT_TEST( test_window_ack_frees_descriptor_when_message_fully_acked );
 
 // rn_window_receive_duplicate repeats rn_window_receive_accept's duplicate
 // test, read only (proofs/tla/RNOrderingWrap.tla ReceiveDuplicate), so the
