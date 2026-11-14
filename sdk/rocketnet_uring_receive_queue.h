@@ -121,6 +121,7 @@ struct rocketnet_uring_receive_queue_config_t
     bool gro;                               // UDP_GRO is on: a buffer may hold a coalesced receive
     bool socket_drops;                      // SO_RXQ_OVFL is on: each receive carries the socket's drop count
     const uint8_t * packet_filter;          // the server's packet filter value, ROCKETNET_FILTER_VALUE_BYTES, copied at create; NULL: no prefilter, the size pass alone (a caller driving the transport with raw datagrams, as the gso transport)
+    int * setup_retries;                    // the server create's ENOMEM retries left (ROCKETNET_URING_SETUP_ENOMEM_RETRIES), spent here too; NULL: no retry
 };
 
 struct rocketnet_uring_receive_slot_t
@@ -273,7 +274,25 @@ int rocketnet_uring_receive_queue_test_take( const struct rocketnet_uring_receiv
 int rocketnet_uring_receive_queue_test_write( struct rocketnet_uring_receive_queue_t * queue, int buffer_id, const void * name, int name_bytes, const uint8_t * payload,
                                               int payload_bytes, int segment_bytes, uint32_t socket_drops, uint32_t out_flags );
 
+// the first count buffer ring registration attempts of every
+// rocketnet_uring_receive_queue_create answer -ENOMEM in place of the
+// kernel's answer; 0 ends it
+void rocketnet_uring_receive_queue_test_buf_ring_enomem( int count );
+
 #endif // #if ROCKETNET_DEV
+
+// a ring setup or buffer ring registration at server create that the kernel
+// refuses with ENOMEM is tried again, ROCKETNET_URING_SETUP_ENOMEM_WAIT_SECONDS
+// after the refusal, out of one budget of ROCKETNET_URING_SETUP_ENOMEM_RETRIES
+// retries for the whole create: every queue and both steps share it, so a
+// create waits at most 100 ms in all for these. Once the budget is spent, the
+// next ENOMEM fails the create as before. Why: a release gate on a saturated
+// host saw ENOMEM at ring setup on the second of 1000 create and destroy
+// cycles. The cause was not reproduced; a library leak and the locked-memory
+// limit were ruled out by measurement, and a transient kernel refusal is what
+// remains. 10 retries and 10 ms are chosen, not measured.
+#define ROCKETNET_URING_SETUP_ENOMEM_RETRIES 10
+#define ROCKETNET_URING_SETUP_ENOMEM_WAIT_SECONDS 0.01
 
 // the provided buffer ring's registration, with the fallback for kernels
 // whose resv check is inverted (Ubuntu 24.04 6.8.0-136 to 6.8.0-148): the
