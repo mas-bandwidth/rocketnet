@@ -19,9 +19,13 @@
 #include "../sdk/rocketnet_allocator.h"
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_message_object.h"
+#include "../sdk/rocketnet_memory.h"
 #include "../sdk/rocketnet_send_budget.h"
 #include "../sdk/rocketnet_layers.h"
 #include "../sdk/rocketnet_config.h"
+#if ROCKETNET_DEV
+#include "../sdk/rocketnet_test_seams.h"
+#endif // #if ROCKETNET_DEV
 #include "loopback_hub.h"
 #include "unit_shutdown.h"
 
@@ -242,3 +246,140 @@ static void test_message_required_memory_takes_the_create_budget()
 REGISTER_UNIT_TEST( test_message_client_create_refuses_budget_and_config );
 REGISTER_UNIT_TEST( test_message_server_create_refuses_budget_and_config );
 REGISTER_UNIT_TEST( test_message_required_memory_takes_the_create_budget );
+
+#if ROCKETNET_DEV
+
+// ---------------------------------------------------------------------------
+// The layered message server create with no caller block, whose one
+// allocation (the object's block) is refused after the transport was
+// created: the create unwinds through rn_message_link_abort_create
+// (sdk/rocketnet_message_server.cpp; proofs/tla/RNCreateUnwind.tla
+// UnwindWaits). The create returns no handle, so nothing else can own the
+// transport: it waits for the worker with no deadline, then frees it, and
+// returns with nothing live. The DEV link hold answers for the worker on a
+// counter clock, "not stopped" for 6000 polls, three times the 1 s budget
+// a destroy gives (two polls a 1 ms step), then "stopped"; the loop reads it
+// once more after the update, so 6000 or 6001 polls. Mutation that must
+// bite: the 1 s deadline on this wait (the code before this fix) returns
+// after about 2000 polls, logs the transport as kept, and leaves it live
+// with no owner. The transport is loopback: no socket, no real time. The
+// create applies a ROCKETNET_SERVER_MAX_CLIENTS override from the
+// environment and required_memory does not, so with it set the refused size
+// would not match.
+// What this does not show: a real worker held past a second, which no unit
+// test can make without real time; the hold stands in for it.
+// ---------------------------------------------------------------------------
+
+static int64_t mcu_live = 0;
+static uint64_t mcu_refuse_bytes = 0;
+static int mcu_refused = 0;
+
+static void * mcu_malloc( void * context, size_t bytes )
+{
+    (void) context;
+    if ( mcu_refuse_bytes != 0 && (uint64_t) bytes == mcu_refuse_bytes )
+    {
+        mcu_refused++;
+        return NULL;
+    }
+    void * p = malloc( bytes );
+    if ( p )
+    {
+        mcu_live++;
+    }
+    return p;
+}
+
+static void mcu_free( void * context, void * p )
+{
+    (void) context;
+    if ( p )
+    {
+        mcu_live--;
+    }
+    free( p );
+}
+
+struct mcu_hold_t
+{
+    int polls;
+    int release;
+    int kept_logged;
+};
+
+static int mcu_hold( void * context )
+{
+    mcu_hold_t * hold = (mcu_hold_t *) context;
+    hold->polls++;
+    check( hold->polls <= hold->release + 1 );
+    return hold->polls < hold->release ? 1 : 0;
+}
+
+static void mcu_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t )
+{
+    if ( level == ROCKETNET_LOG_LEVEL_ERROR && strstr( message, "the transport is kept, not freed" ) != NULL )
+    {
+        ( (mcu_hold_t *) context )->kept_logged++;
+    }
+}
+
+static void test_message_server_create_unwind_waits_for_the_worker()
+{
+    check( rocketnet_test_loopback_hub_release() );
+    rocketnet_term();
+    check( rocketnet_init( NULL, mcu_malloc, mcu_free ) == ROCKETNET_STATUS_OK );
+
+    uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    uint8_t server_secret_key[RN_TEST_SERVER_SECRET_KEY_BYTES];
+    check( rocketnet_generate_backend_keypair( backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_default_config_current( &server_config );
+    server_config.protocol_id = 0x6d63756e77696e64ULL;
+    server_config.max_clients = 1;
+    memcpy( server_config.backend_public_key, backend_public_key, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.server_public_key, server_public_key, sizeof( server_config.server_public_key ) );
+    memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
+    snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+    memset( server_config.packet_filter, 0x5A, sizeof( server_config.packet_filter ) );
+
+    const uint32_t create_kbps = 1000;
+    const uint64_t object_bytes = rocketnet_message_server_required_memory( &server_config, NULL, create_kbps );
+    check( object_bytes > 0 );
+
+    mcu_hold_t hold = {};
+    hold.release = 6000;
+    rocketnet_dev_set_link_stop_wait_hold_hook( mcu_hold, &hold );
+    rocketnet_log_function( mcu_log, &hold );
+
+    const int64_t live_before = mcu_live;
+    mcu_refused = 0;
+    mcu_refuse_bytes = object_bytes + rocketnet_allocation_overhead();
+
+    int status = ROCKETNET_TEST_STATUS_UNSET;
+    rocketnet_message_server_t * server = rocketnet_message_server_create_internal( NULL, "127.0.0.1:40000", &server_config, NULL, NULL, 0, create_kbps, &status, 0 );
+
+    mcu_refuse_bytes = 0;
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_dev_set_link_stop_wait_hold_hook( NULL, NULL );
+
+    check( server == NULL );
+    check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+    check( mcu_refused == 1 );
+    check( hold.polls >= hold.release && hold.polls <= hold.release + 1 );
+    check( hold.kept_logged == 0 );
+    check( mcu_live == live_before );
+
+    check( rocketnet_test_loopback_hub_release() );
+    rocketnet_term();
+    check( mcu_live == 0 );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+
+REGISTER_UNIT_TEST( test_message_server_create_unwind_waits_for_the_worker );
+
+#endif // #if ROCKETNET_DEV

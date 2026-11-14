@@ -12,13 +12,13 @@ Want to make games servers with thousands of players and bandwidth at line rate?
 
 ## Quick start
 
-Start [here](docs/GETTING-STARTED.md). It takes you through
+[Start here](docs/GETTING-STARTED.md). We take you through
 building the library, sending a message over an in-memory connection, and
 running a client and server in separate processes over UDP.
 
 ## Integrate with your game
 
-| Task | Start here |
+| Task | Documentation |
 | --- | --- |
 | Build, install, or embed the SDK | [Building](docs/BUILDING.md) |
 | Update, receive, simulate, queue, and send each frame | [Integration guide](docs/USAGE.md#frame-loop) |

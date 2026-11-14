@@ -17,6 +17,8 @@
 #include <time.h>
 
 // one frame: the server echoes every message back, the client sends one while connected
+static int echo_failures;      // echoes the server started and could not finish
+
 static void frame( struct rocketnet_server_t * server, struct rocketnet_client_t * client, double now, int send )
 {
     rocketnet_server_update( server, now );
@@ -40,8 +42,10 @@ static void frame( struct rocketnet_server_t * server, struct rocketnet_client_t
                 {
                     memcpy( p, batch->data[i], (size_t) batch->bytes[i] );
 
-                    const uint32_t serial = rocketnet_server_finish_message( server, batch->bytes[i] );
-                    (void) serial;
+                    if ( rocketnet_server_finish_message( server, batch->bytes[i] ) == 0 )
+                    {
+                        echo_failures++;
+                    }
                 }
             }
         }
@@ -287,7 +291,12 @@ int main( void )
     printf( "client after disconnect state %s\n", rocketnet_client_state_name( rocketnet_client_state( client ) ) );
     printf( "server client %d disconnect reason %s\n", client_index, rocketnet_disconnect_reason_name( rocketnet_server_disconnect_reason( server, client_index ) ) );
 
-    const int result = client_stats.bytes_sent > 0 && client_stats.rtt_ms >= 0.0 && slot_stats.bytes_sent > 0 && slot_stats.rtt_ms >= 0.0 &&
+    if ( echo_failures != 0 )
+    {
+        printf( "echoes not finished: %d\n", echo_failures );
+    }
+
+    const int result = echo_failures == 0 && client_stats.bytes_sent > 0 && client_stats.rtt_ms >= 0.0 && slot_stats.bytes_sent > 0 && slot_stats.rtt_ms >= 0.0 &&
                                server_stats.connections_accepted >= 1 &&
                                rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED
                            ? 0

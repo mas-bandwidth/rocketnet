@@ -227,6 +227,25 @@ code; `test_handshake_client_id_connected_never_limits` and
 `test_handshake_full_server_denial_never_limits` pin the refusals that
 charge nothing.
 
+`RepeatSpec` is the refusal past the verify that charges nothing: one
+sender with a valid token refused because its client id already holds a
+slot, or denied because the server is full (TRANSPORT.md t17 item 12
+forbids charging either). `UnchargedRefusal` spends one unit of the work
+budget and, with `RepeatRung`, holds the token for the rest of the
+update (`repeatHeld`, emptied by `FloodUpdate`), so a repeat is refused
+at the repeat rung before the work budget (t12 rule 9 item 6). The
+sender then takes at most one verify an update, and with a work budget of
+two the honest request stays enabled and, under weak fairness only,
+connects (`Repeat.cfg`). At a work budget of one the sender's first request
+of an update can still take its only verify, so the property needs two or
+more there, as TRANSPORT.md t12 rule 9 item 6 says. `BrokenRepeat.cfg` holds nothing
+(`RepeatRung <- MCNoRepeatRung`), the code before 2026-11-13: the sender
+takes the whole work budget ahead of the honest request in every update
+and `HonestConnectsUnderFlood` fails. The same two tests pin it: the
+first request of an update is verified and refused, its 99 repeats are
+refused before the work budget, and an honest request in that update is
+verified.
+
 ## Findings
 
 Each finding is verified by hand against the code. The model lists the
@@ -275,11 +294,13 @@ Each reversed witness has a committed configuration registered in
 | `BrokenUnfairBudget.cfg` | `FloodSpecWeakHonest` (weak fairness for `HonestRequest`), `VerifyBudget = 1` | `HonestConnectsUnderFlood` |
 | `BrokenReleaseKeepsSlot.cfg` | `ReleaseToFree <- MCReleaseToFree` (`FALSE`) | `CanRecordMatchesScan` |
 | `BrokenReleaseTwice.cfg` | `ReleaseChecksLive <- MCReleaseChecksLive` (`FALSE`) | `FreeAndOrderPartitionSlots` |
+| `BrokenRepeat.cfg` | `RepeatRung <- MCNoRepeatRung` (`FALSE`), RepeatSpec | `HonestConnectsUnderFlood` |
 
 `Flood.cfg` is FloodSpec's passing control: `FloodInvariants` (with
 `FloodWindowBounded`) and `HonestConnectsUnderFlood` hold.
 `FloodBudgetOne.cfg` is the same control at `VerifyBudget = 1`.
-`Charge.cfg` is ChargeSpec's passing control.
+`Charge.cfg` is ChargeSpec's passing control, and `Repeat.cfg` is
+RepeatSpec's.
 
 Refresh every case of the group through the pinned `tlacheck` runner and merge with
 `--keep proofs/tla/RUNS.tsv` as `README.md` describes. The measured ledger contains

@@ -102,6 +102,33 @@ static uint32_t resend_trace_pass( resend_trace_fixture_t * f, double now )
     return resent;
 }
 
+// A standard-to-internal adapter, not a test of the public setters.
+// MESSAGES.md m9.4's meaning of a budget: 0 sets the direction's default,
+// and 2147483647 is no send budget, which the message layer holds as 0
+// (uncapped). The vector states the standard's value, so the trace passes it
+// through this meaning, never straight to the internal setter; the no-budget
+// value is the header's, so a header that drifted from the standard's
+// 2147483647 fails the trace. The public setters' own mapping of 0, of
+// ROCKETNET_SEND_KBPS_UNLIMITED and of the largest finite rate is checked
+// through the public calls on a connected client and server in
+// test_client_set_send_kbps_limit_budget_and_reconnect_rules and
+// test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rules.
+
+static int budget_trace_message_layer_kbps( int standard_kbps, int default_kbps )
+{
+    if ( standard_kbps == 0 )
+    {
+        return default_kbps;
+    }
+
+    if ( standard_kbps == ROCKETNET_SEND_KBPS_UNLIMITED )
+    {
+        return 0;
+    }
+
+    return standard_kbps;
+}
+
 static int standard_resend_and_budget_generate( const char * id, uint8_t * out, int capacity )
 {
     if ( strcmp( id, "m9.resend-trace" ) == 0 )
@@ -193,9 +220,10 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
         rocketnet_send_budget_begin_update( &budget, 1000.3 );
         out[n++] = (uint8_t) rocketnet_send_budget_admit( &budget, ROCKETNET_SEND_CLASS_NEW_RELIABLE, 1452 );
 
-        // a budget of 0 detaches the bucket and nothing is charged; the large
-        // state is promoted to RELIABLE_SEQUENCED (the promotion
-        // rule), so its first packet is no larger than one maximum packet
+        // the vector's budget of 2147483647, no send budget, detaches the
+        // bucket and nothing is charged; the large state is promoted to
+        // RELIABLE_SEQUENCED (the promotion rule), so its first packet is no
+        // larger than one maximum packet
         {
             rocketnet_message_config_t config;
             rocketnet_message_default_config( &config );
@@ -213,7 +241,8 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             rn_endpoint_t endpoint;
             rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
             rn_endpoint_reset( &endpoint, 1000.0 );
-            out[n++] = (uint8_t) rn_endpoint_set_send_kbps( &endpoint, 0, 1000.0 );
+            const int standard_kbps = 2147483647;
+            out[n++] = (uint8_t) rn_endpoint_set_send_kbps( &endpoint, budget_trace_message_layer_kbps( standard_kbps, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS ), 1000.0 );
             check( endpoint.send_budget_enabled == 0 );
 
             const int bytes = 13000;

@@ -8,7 +8,11 @@
 \* A forward raw step of d advances the clamped time by exactly d while the
 \* caller's clock is still behind the clamped one. A backwards raw step
 \* returns the last good time, records the new raw time and counts one
-\* misuse. A non-finite sample changes neither value and counts one misuse.
+\* misuse. A non-finite or negative sample is refused before the clock reads
+\* it: it changes neither value and counts one misuse (NonFiniteStep stands
+\* for both). Raw times are therefore never negative, which is why
+\* BackwardStep draws its target from 0..raw-1: every negative sample, the
+\* first and each one after it, is a NonFiniteStep, never a backwards step.
 \* Once the caller's clock has caught up with the clamped one, the clock is
 \* the caller's clock again.
 \*
@@ -72,8 +76,9 @@ BackwardStep(t) ==
     /\ lastDelta' = 0
     /\ steps' = steps + 1
 
-\* A non-finite sample: neither the clamped time nor the raw time nor the
-\* offset changes, and the misuse is counted.
+\* A non-finite or negative sample, refused before the clock reads it:
+\* neither the clamped time nor the raw time nor the offset changes, and the
+\* misuse is counted.
 NonFiniteStep ==
     /\ steps < MaxSteps
     /\ UNCHANGED <<clamped, raw, offset>>

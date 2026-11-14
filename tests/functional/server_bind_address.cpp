@@ -669,10 +669,15 @@ void rocketnet_test_server_bind_refused_io_uring()
 }
 
 // the default, no transport named: every transport the server tries is
-// refused the same bind
+// refused the same bind. With port 0 the auto list's xdp rung, which cannot
+// report a granted port, is passed over; the transports that can are then
+// refused the bind, so the start reports the bind refusal, not
+// TRANSPORT_PORT_ZERO_UNSUPPORTED: a transport that reports its port was
+// listed and tried
 void rocketnet_test_server_bind_refused_default_transports()
 {
     bind_refused_for( NULL );
+    bind_check( bind_refused_start( NULL, "127.0.0.1:0", "192.0.2.1" ) == ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
 }
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

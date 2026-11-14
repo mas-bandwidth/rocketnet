@@ -5,7 +5,8 @@ layout of `sdk/rocketnet_allocator.cpp` and with the code's own arithmetic.
 [RNSendStore](README-RNSendStore.md) is the store's abstract contract and
 [RNLazyPool](README-RNLazyPool.md) the descriptor pool's; this model carries
 the fields those abstractions cannot see: the meta words, the watermarks, the
-scan cursor and a free stack stored inside the descriptors it lists.
+store's free stack of chunk indices and a free stack stored inside the
+descriptors it lists.
 
 One store class is the whole store: the three classes share no state, and
 every store allocation is one chunk (a message above one fragment takes a span,
@@ -17,7 +18,9 @@ which RNSendSpans.tla models).
 |---|---|
 | `meta[i]`, `[live, gen]` | `cls->meta[i]`: `RN_META_LIVE` and `RN_META_GENERATION` |
 | `fresh` | `cls->fresh`: chunks at or past it were never taken |
-| `freeHead` | `cls->free_head`, the scan cursor |
+| `cStack`, `cTop` | `cls->free_stack` and `cls->free_top`: entries `[0, free_top)` are the free chunks below `fresh` |
+| `freeHead` | under `ScanFind` only (the reversed witness): the scan cursor `free_head` the code had before finding W2-86 |
+| `visits` | ghost: the entries the last choice of a chunk examined |
 | `freeCount` | `cls->free_count` |
 | `desc[d]`, `[inUse, gen, slot, chunk]` | `send_descriptors[d]`: `in_use`, `generation`, `free_slot`, `chunk` |
 | `dTop`, `dFree`, `dFresh` | `descriptors_free_top`, `descriptors_free`, `descriptors_fresh` |
@@ -45,10 +48,10 @@ Functions in `sdk/rocketnet_allocator.cpp`.
 - **`Alloc`**: `rn_region_send_alloc` with room. Its guard is
   `rn_region_send_fit_store`: not exhausted, a free descriptor, and
   `rn_send_store_find`, which refuses at `free_count == 0` and otherwise
-  scans from `free_head` up with `rn_store_chunk_is_free`, `i >= fresh`
-  first. The take is `rn_send_store_take`: the next generation, read only
-  below `fresh` and skipping 0, `fresh` moved past a first take and the
-  cursor to `index + 1`. Then `rn_region_descriptor_take`: the pop of
+  returns the top of the free stack, or `fresh` when the stack is empty.
+  The take is `rn_send_store_take`: the pop (or `fresh` moved past a first
+  take) and the next generation, read only below `fresh` and skipping 0.
+  Then `rn_region_descriptor_take`: the pop of
   `free_slot` at depth `top - 1` or the fresh descriptor, the generation,
   `keep_free_slot`.
 - **`AllocSpan`**: the descriptor take of `rn_region_send_alloc_span`.
@@ -56,7 +59,7 @@ Functions in `sdk/rocketnet_allocator.cpp`.
   store's find) and `rn_region_send_refuse`, which counts the refusal and
   leaves the region as it was (revision 1.1 below).
 - **`Free(d)`**: `rn_region_send_free`: `rn_send_store_free_checked`
-  clears the live bit and lowers the cursor, then
+  clears the live bit and pushes the chunk on the free stack, then
   `rn_region_descriptor_release` pushes `d` into
   `send_descriptors[top].free_slot`. `rn_region_send_free_fragment`
   ends in the same free on a send's last fragment.
@@ -72,9 +75,13 @@ Functions in `sdk/rocketnet_allocator.cpp`.
 - **`NoTakeWhileLive`**: no chunk and no descriptor is handed out while live.
 - **`RefuseOnlyWhenNoneFree`**: the store refuses only when no chunk is free.
 - **`FreeCountExact`**: `free_count` is the number of free chunks.
-- **`CursorBelowFree`**: `free_head` is at or below `fresh` and at or below
-  every free chunk, so the scan from it finds the lowest free chunk and never
-  needs to wrap.
+- **`FreeStackExact`**: the free stack holds exactly the free chunks below
+  `fresh`, each once, so the find needs nothing but its top and `fresh`.
+- **`ChoiceBounded`**: each choice of a chunk (an allocation, or the room
+  query `rn_region_send_fit_store` behind `rocketnet_*_can_send_message`)
+  examines at most one entry, however many chunks are held. The receiver
+  chooses which sends it acknowledges, so it chooses which chunks are freed;
+  a choice that walked held chunks was its to steer (finding W2-86).
 - **`LiveIsHeld`**: a chunk below `fresh` is live exactly when one live
   descriptor names it.
 - **`StackExact`**: the stack holds exactly the released descriptors below
@@ -84,9 +91,8 @@ Functions in `sdk/rocketnet_allocator.cpp`.
 - **`HeldGenerationPositive`**: a live chunk's or descriptor's generation is
   never 0.
 
-`CursorBelowFree` is why `rn_send_store_find` has no wrapping second pass: a
-take moves the cursor just past the lowest free chunk and a free lowers it to
-the freed chunk, so no free chunk is ever below it.
+`CursorBelowFree` (still defined, for `ScanFind`) was the old scan's reason
+to need no wrapping second pass; the stack needs no scan at all.
 
 ## The instance
 
@@ -111,20 +117,30 @@ Each turns one rule off and must fail with the invariant it names. Every
 counterexample below was checked against the C by hand.
 
 1. **`MCRNSendStoreLayoutBrokenNoFreshGuard.cfg`** (`FreshGuard = FALSE`):
-   `rn_store_chunk_is_free` without `i >= cls->fresh ||`. Violates
-   `NeverTouchPastFresh` at the first `Alloc`: with `fresh = 0`, the scan
-   from `free_head = 0` reads `meta[0]`, which nothing has written since the
-   carve (an arena's fresh memory, or the previous connection's meta). With a
-   stale live bit set, the class would also refuse while empty.
-2. **`MCRNSendStoreLayoutBrokenNoLowerCursor.cfg`** (`LowerCursor = FALSE`):
-   `rn_send_store_free_checked` without `if ( i < cls->free_head )
-   cls->free_head = i;`. Violates `RefuseOnlyWhenNoneFree`: three
-   allocs take chunks 0, 1, 2 and leave `free_head = 3`; freeing chunk 0
-   leaves it at 3; the next alloc has `free_count = 1` but the scan from 3
-   meets nothing, so `rn_region_send_fit_store` returns
-   `RN_SEND_FIT_STORE_FULL` and the send is refused with chunk 0 free.
-   This is the bug class a cursor scan without a wrap has; the code needs no
-   wrap because the free lowers the cursor.
+   `rn_send_store_take` without its `if ( index < cls->fresh )` around the
+   generation read. Violates `NeverTouchPastFresh` at the first `Alloc`: with
+   `fresh = 0` the take of chunk 0 reads `meta[0]`, which nothing has written
+   since the carve (an arena's fresh memory, or the previous connection's
+   meta), and would tag the chunk with that garbage plus one.
+2. **`MCRNSendStoreLayoutBrokenNoPush.cfg`** (`PushOnFree = FALSE`):
+   `rn_send_store_free_checked` without `cls->free_stack[cls->free_top++] =
+   i;`. Violates `RefuseOnlyWhenNoneFree`: three allocs take chunks 0, 1, 2
+   (`fresh = 3`); freeing chunk 0 leaves the stack empty, so the next find has
+   `free_count = 1`, no stack entry and no fresh chunk, and
+   `rn_region_send_fit_store` refuses with chunk 0 free.
+2a. **`MCRNSendStoreLayoutBrokenScan.cfg`** (`ScanFind = TRUE`): the scan
+   from the cursor the code had before finding W2-86 (`rn_send_store_find`
+   looping from `free_head` with `rn_store_chunk_is_free`, the take setting
+   `free_head = index + 1`, the free lowering it). Violates `ChoiceBounded`
+   in six states: chunks 0 and 1 are taken, chunk 0 is freed (the cursor
+   lowered to 0), chunk 0 is taken again (one visit, the cursor at 1), and
+   the next allocation examines held chunk 1 and then fresh chunk 2: two
+   visits. At the default config the same walk is the whole held run. The
+   unit test tests/test_unit_connection_memory.cpp
+   test_store_choice_never_walks_a_held_run holds the whole small class
+   without descriptors and measured 30,122 entries before the fix; through
+   an endpoint the run is bounded by the descriptors, 20,554 (Q less the two
+   starts).
 3. **`MCRNSendStoreLayoutBrokenChunkGenZero.cfg`** (`ChunkSkipZero = FALSE`):
    `rn_send_store_take` without `if ( generation == 0 ) generation = 1;`.
    Violates `HeldGenerationPositive`: chunk 0 is taken (1), freed,
@@ -302,3 +318,48 @@ Witness traces, checked by hand against the code:
 | `MCRNSendSpansRefuse.cfg` | pass | 0 | 81901 | 4.8 |
 | `MCRNSendSpansAbort.cfg` | pass | 0 | 9101 | 1.2 |
 | `MCRNSendSpansBrokenLinkFirst.cfg` | `RefuseLeavesRing` | 13 | 10 | 0.7 |
+
+## Revision 1.1.x: the free stack (finding W2-86)
+
+The chunk choice was a scan from the lowest free index (`freeHead`), and the
+receiver steers which chunks are free through its selective acks, so one
+choice could walk a held run of up to Q chunks (20,554 at the default
+configuration: about 20 us an update for one hostile receiver, and the room query
+paid the same scan again). The code now keeps a LIFO stack of freed indices
+per class (`free_stack`, `free_top`) beside the meta words; a take pops the
+top or takes the fresh chunk, a free pushes. The model carries the stack
+(`cStack`, `cTop`) and a ghost `visits`, the entries the last choice examined.
+`FreeStackExact` says the stack holds exactly the free chunks below `fresh`,
+once each; `ChoiceBounded` says a choice examines at most one entry.
+`ScanFind = TRUE` restores the old scan and is the reversed witness for
+`ChoiceBounded`; `PushOnFree = FALSE` (renamed from `BrokenNoLowerCursor`)
+drops the push.
+
+Runs with the pinned checker (tla2tools v1.7.4), 2 workers, bench-xdp-9:
+
+| Case | Expected | Exit | Distinct | Seconds |
+|---|---|---:|---:|---:|
+| `MCRNSendStoreLayout.cfg` | pass | 0 | 681900 | 48.1 |
+| `MCRNSendStoreLayoutRefuse.cfg` | pass | 0 | 118188 | 8.7 |
+| `MCRNSendStoreLayoutBrokenScan.cfg` | `ChoiceBounded` | 12 | 891 | 0.8 |
+| `MCRNSendStoreLayoutBrokenNoPush.cfg` | `RefuseOnlyWhenNoneFree` | 12 | 707 | 0.7 |
+| `MCRNSendStoreLayoutBrokenNoFreshGuard.cfg` | `NeverTouchPastFresh` | 12 | 9 | 0.7 |
+| `MCRNSendStoreLayoutBrokenNoKeepFreeSlot.cfg` | as before | 12 | 2503 | 0.8 |
+| `MCRNSendStoreLayoutBrokenChunkGenZero.cfg` | as before | 12 | 939 | 0.8 |
+| `MCRNSendStoreLayoutBrokenDescGenZero.cfg` | as before | 12 | 939 | 0.7 |
+| `MCRNSendStoreLayoutBrokenDescFirst.cfg` | `RefuseLeavesLayout` | 13 | 4 | 0.7 |
+| `MCRNSendStoreLayoutBrokenChunkFirst.cfg` | `RefuseLeavesLayout` | 13 | 154 | 0.7 |
+| `MCRNSendStoreLayoutBrokenRefuseExhausts.cfg` | `RefuseLeavesLayout` | 13 | 4 | 0.7 |
+| `MCRNSendStoreLayoutBrokenRefuseSticky.cfg` | `StoreNeverExhausts` | 13 | 4 | 0.7 |
+| `MCRNSendStoreLayoutBrokenUncountedQueueFull.cfg` | `RefuseLeavesLayout` | 13 | 60 | 0.7 |
+
+Witness traces, checked by hand against the code:
+
+- Scan (6 states): take 0, take 1, free 0, take 0 (one visit); the next
+  choice starts at the lower cursor and walks the held chunk 1 before it
+  reaches fresh chunk 2: two visits. In the code before the fix,
+  `rn_send_store_find` looped from `free_head` over live meta words; with the
+  stack the same choice takes `fresh` and examines one entry.
+- NoPush: three allocs take chunks 0, 1, 2 (`fresh = 3`); freeing chunk 0
+  leaves `cTop = 0`, so `rn_send_store_find` sees `free_count = 1`, an empty
+  stack and no fresh chunk, and the fit refuses with chunk 0 free.
