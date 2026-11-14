@@ -8,7 +8,14 @@ shutdown assumptions do not describe this API.
 
 The public client calls disconnect/disconnected; the public server and both
 transports call stop/stopped. Each request disables new work, retains the
-object, and returns without waiting for worker progress. A completion check
+object, and returns without waiting for worker progress. It does no worker's
+work, with one backend call on the client I/O path: a development link
+simulator belongs to the caller there, never to the I/O thread, so
+`rocketnet_client_transport_stop` sends every copy it still holds
+(`rocketnet_client_link_drain` at `DBL_MAX`) before it hands over the final
+ring. Those are synchronous sends that wait on no worker; they are
+`RNClientLinkStop`'s `Stop` on its `iocore` path, and this model, which has no
+packets, has no step for them. A completion check
 returns false until all worker ownership has ended. Destroy is synchronous,
 requires completion, joins threads, then frees. Restart/reconnect may finalize
 the previous generation synchronously after completion; storage reuse requires
@@ -28,11 +35,12 @@ The four named control families instantiate one module:
   reopening a ring or making producer space. The worker finishes all three
   rings, wipes its key copy, then acknowledges quiescence. The endpoint also
   owns one socket (`sock`, `queued`): `Arrive` queues a datagram on the open
-  socket, and the worker's quiescence reads and counts what is queued and
-  closes the socket (`rocketnet_client_io_discard_at_stop`,
+  socket, and the worker's quiescence drains it in counted reads, then
+  closes it (`rocketnet_client_io_discard_at_stop`,
   sdk/rocketnet_client_io.h), so a later datagram meets a closed port. The
-  ghost `lost` records a queue that `Free` or the next generation's `Start`
-  frees unread.
+  drain is bounded (below). The ghost `lost` records a queue that `Free` or
+  the next generation's `Start` frees unread; `closeLoss` records datagrams
+  the close took unread.
 - `RNClientReceiveQuit`: one receive worker, no send-ring abstraction.
 - `ClientSession`: one retained transport owner and its key storage. This is
   lifecycle coverage, not another handshake or wire-state model.
@@ -74,8 +82,8 @@ reversed guarantees. Negative controls separately restore:
 5. Acknowledging before wiping worker-owned keys.
 6. Calling the terminal callback again on repeated request.
 7. Exiting with the socket's queue unread and the socket open
-   (`exitunread`): `StoppedSocketDrained` fails, a completed stop with a
-   datagram still queued. The positive `RNClientIo` controls also check
+   (`exitunread`): `StoppedSocketDrained` fails, a completed stop with the
+   socket still open and a datagram queued on it. The positive `RNClientIo` controls also check
    `StoppedSocketDrained` and `NoUnreadDiscard`.
 8. Closing the wake handle at the worker's exit before the stop request's
    wake call has returned (`closebeforewake`): `NoWakeAfterClose` fails, the
@@ -83,6 +91,27 @@ reversed guarantees. Negative controls separately restore:
    stores `stop_woken` after the wake call and the exit waits for it before
    `close` (sdk/rocketnet_client_io.h). Found by ThreadSanitizer in
    test_lifecycle.
+
+## The exit's bounded drain
+
+The client I/O worker's `WorkerQuiesce` is three kinds of step, as
+`rocketnet_client_io_discard_at_stop` runs them: reads, each taking one queued
+datagram and counting it in `receive_discarded_at_stop`; the end of the drain;
+and the close. The drain ends at an empty read, at a read the transport
+refuses (counted as a transport fault, which can come at any read), or after
+`ROCKETNET_CLIENT_IO_DISCARD_MAX` datagrams (`DiscardCap`, 2 here, against a
+one-slot queue, so a sender that refills the queue at every read reaches it).
+The exit then waits for `stop_woken` and closes the socket. A datagram that
+arrives after the drain's last read, or past the cap, is still queued at the
+close and goes with it, unread and uncounted: the model allows it (`closeLoss`)
+because the code does. A bounded drain is the design (a flooding sender
+cannot hold the exit); the claim is what changed. `StoppedSocketDrained` says
+the socket a completed stop reports is closed with nothing waiting on it, not
+that every datagram was read; `NoUnreadDiscard` says no queue waits unread for
+`Free` or the next `Start`. `MCRNClientIoShutdownReachCloseDrops.cfg` is a
+reach case, not a property of the code: it breaks `NoCloseLoss` (TLC prints a
+behaviour in which a datagram queued after the drain ended goes with the
+close).
 
 The three-ring fixture intentionally tests the final handoff boundary; ordinary
 ring allocation, payload bytes, address binding and receive publication remain

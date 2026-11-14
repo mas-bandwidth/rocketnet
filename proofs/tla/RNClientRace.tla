@@ -46,6 +46,43 @@
                       a step (the race had no close operation, so a family
                       it kept open stayed open from the exit to destroy):
                       ExitedIsClosed
+     "nolivecheck"    destroy frees each family whether or not its memory
+                      is still live (rocketnet_client_transport_io_close
+                      without its instance check and clear); with
+                      "readerfrees" a family is freed twice: FreedOnce
+     "destroytwice"   the transport is destroyed a second time; with
+                      "nolivecheck" the caller frees each family twice,
+                      a repeat by the same owner: FreedOnce
+     "nostepclose"    the reader's step does not close the losing family
+                      at the first sight of the commit; its exit still
+                      does: StepClosesAtSight
+     "noreaderclose"  the reading thread closes nothing, at a step or at its
+                      exit (a backend with no close operation), so only
+                      destroy closes the losing family: LoserClosed
+
+   Destroy's single free per family rests on two things in the code: the
+   transport is destroyed once (the API's contract; CallerDestroy's
+   ~destroyed guard), and rocketnet_client_transport_io_close destroys a
+   family only while its instance is set and then clears it. frees counts
+   every free per <<thread, family>>, so a repeat free by the same owner is
+   visible to FreedOnce.
+
+   The send's destination. After the commit the models drop a send whose
+   destination is not servers[committed]; the code drops by address family:
+   rocketnet_client_race_send, rocketnet_client_race_send_progress and
+   rocketnet_client_race_send_batch each take a slot's family from its
+   destination with rocketnet_client_race_family_of (the family whose server
+   has the address family of to) and, after the commit, send only the slots
+   of the kept family. These are the same: the protocol only ever sends to
+   the two server addresses,
+   server_address[0] (IPv4) and server_address[1] (IPv6), so a destination's
+   address family names its server; and the commit sets
+   protocol.server_address to server_address[kept] and rebinds a Filling
+   ring bound to the losing server (rocketnet_client_io_rebind_held), so
+   after the commit every send and every ring is addressed to the kept
+   server. A slot addressed to the losing server after the commit is the
+   "commitkeepsring" defect, never the code. The model's family numbers
+   name the servers: the destination is a family.
 
    The Filling ring of the I/O ring path (rocketnet_client_io_hand_off): a
    hand-off attempt binds the ring's destination to the protocol's server, the
@@ -66,7 +103,8 @@
 EXTENDS Integers, FiniteSets
 CONSTANTS Defect
 ASSUME Defect \subseteq {"readerfrees", "callerusesloser", "freebeforejoin", "readerclosesearly",
-                         "commitkeepsring", "nokeepatcommit", "noexitclose"}
+                         "commitkeepsring", "nokeepatcommit", "noexitclose", "nolivecheck",
+                         "destroytwice", "nostepclose", "noreaderclose"}
 
 MaxFail == 2
 
@@ -75,9 +113,12 @@ Threads == {"caller", "reader"}
 VARIABLES committed,  \* -1 while both are in flight, else the kept family (caller writes, release)
           seen,       \* the reader's acquire load of committed
           closed,     \* the reader closed the losing family (race->closed)
-          handle,     \* [Families -> {"open", "closed"}]
+          closer,     \* ghost: the action that closed the losing family's handle after
+                      \* the commit, "none", "step" (ReaderStep), "exit" (ReaderExit)
+                      \* or "destroy" (CallerDestroy)
+          handle,    \* [Families -> {"open", "closed"}]
           memory,     \* [Families -> {"live", "freed"}]
-          frees,      \* the set of <<thread, family>> frees made
+          frees,      \* [Threads \X Families -> Nat]: the frees each thread made of each family
           reader,     \* "running", "stopping", "exited"
           joined,     \* the caller joined the reading thread
           destroyed,  \* the caller destroyed the transport
@@ -89,7 +130,7 @@ VARIABLES committed,  \* -1 while both are in flight, else the kept family (call
           kept,       \* race->closed_send_failures
           reported,   \* the last SEND_FAILED the caller read
           dipped      \* a SEND_FAILED read was below the one before it
-vars == <<committed, seen, closed, handle, memory, frees, reader, joined, destroyed, fault,
+vars == <<committed, seen, closed, closer, handle, memory, frees, reader, joined, destroyed, fault,
           ringTo, ringPost, lost, failures, kept, reported, dipped>>
 ringVars == <<ringTo, ringPost, lost>>
 failVars == <<failures, kept, reported, dipped>>
@@ -99,14 +140,16 @@ Loser == 1 - committed
 Server == IF committed >= 0 THEN committed ELSE 0
 \* rocketnet_client_race_send_failures
 SendFailed == IF committed >= 0 THEN failures[committed] + kept ELSE failures[0] + failures[1]
+\* the reader's step closes the losing family at its first sight of the commit
+StepCloses == "nostepclose" \notin Defect /\ "noreaderclose" \notin Defect
 Usable(f) == handle[f] = "open" /\ memory[f] = "live"
 Use(t, fs) == fault' = IF \A f \in fs : Usable(f) THEN fault ELSE t
 
 Init ==
-    /\ committed = -1 /\ seen = -1 /\ closed = FALSE
+    /\ committed = -1 /\ seen = -1 /\ closed = FALSE /\ closer = "none"
     /\ handle = [f \in Families |-> "open"]
     /\ memory = [f \in Families |-> "live"]
-    /\ frees = {}
+    /\ frees = [p \in Threads \X Families |-> 0]
     /\ reader = "running" /\ joined = FALSE /\ destroyed = FALSE
     /\ fault = "none"
     /\ ringTo = -1 /\ ringPost = FALSE /\ lost = FALSE
@@ -119,7 +162,7 @@ CallerSend ==
     /\ IF committed < 0 THEN Use("caller", Families)
        ELSE IF "callerusesloser" \in Defect THEN Use("caller", Families)
        ELSE Use("caller", {committed})
-    /\ UNCHANGED <<committed, seen, closed, handle, memory, frees, reader, joined, destroyed>>
+    /\ UNCHANGED <<committed, seen, closed, closer, handle, memory, frees, reader, joined, destroyed>>
     /\ UNCHANGED <<ringVars, failVars>>
 
 (* rocketnet_client_transport_io_hand_off, then rocketnet_client_io_hand_off
@@ -130,7 +173,7 @@ CallerHandOffLate ==
     /\ ~destroyed /\ reader = "running"
     /\ ringTo' = IF ringTo < 0 THEN Server ELSE ringTo
     /\ ringPost' = (ringPost \/ committed >= 0)
-    /\ UNCHANGED <<committed, seen, closed, handle, memory, frees, reader, joined, destroyed, fault>>
+    /\ UNCHANGED <<committed, seen, closed, closer, handle, memory, frees, reader, joined, destroyed, fault>>
     /\ UNCHANGED <<lost, failVars>>
 
 (* the same hand-off returning HANDED_OFF: the ring leaves for its bound
@@ -144,7 +187,7 @@ CallerHandOff ==
            post == ringPost \/ committed >= 0
        IN lost' = (lost \/ (post /\ to # committed))
     /\ ringTo' = -1 /\ ringPost' = FALSE
-    /\ UNCHANGED <<committed, seen, closed, handle, memory, frees, reader, joined, destroyed, fault>>
+    /\ UNCHANGED <<committed, seen, closed, closer, handle, memory, frees, reader, joined, destroyed, fault>>
     /\ UNCHANGED failVars
 
 (* rocketnet_client_race_commit, the caller in update: rebinds a Filling ring
@@ -155,7 +198,7 @@ CallerCommit(f) ==
     /\ committed' = f
     /\ ringTo' = IF ringTo = 1 - f /\ "commitkeepsring" \notin Defect THEN f ELSE ringTo
     /\ kept' = IF "nokeepatcommit" \in Defect THEN kept ELSE failures[1 - f]
-    /\ UNCHANGED <<seen, closed, handle, memory, frees, reader, joined, destroyed, fault>>
+    /\ UNCHANGED <<seen, closed, closer, handle, memory, frees, reader, joined, destroyed, fault>>
     /\ UNCHANGED <<ringPost, lost, failures, reported, dipped>>
 
 (* a send on an open family fails: the I/O thread's or the caller's, before
@@ -163,7 +206,7 @@ CallerCommit(f) ==
 SendFails(f) ==
     /\ handle[f] = "open" /\ memory[f] = "live" /\ failures[f] < MaxFail
     /\ failures' = [failures EXCEPT ![f] = @ + 1]
-    /\ UNCHANGED <<committed, seen, closed, handle, memory, frees, reader, joined, destroyed, fault>>
+    /\ UNCHANGED <<committed, seen, closed, closer, handle, memory, frees, reader, joined, destroyed, fault>>
     /\ UNCHANGED <<ringVars, kept, reported, dipped>>
 
 (* rocketnet_client_transport_counters on the caller's thread *)
@@ -171,7 +214,7 @@ CallerRead ==
     /\ ~destroyed
     /\ reported' = SendFailed
     /\ dipped' = (dipped \/ SendFailed < reported)
-    /\ UNCHANGED <<committed, seen, closed, handle, memory, frees, reader, joined, destroyed, fault>>
+    /\ UNCHANGED <<committed, seen, closed, closer, handle, memory, frees, reader, joined, destroyed, fault>>
     /\ UNCHANGED <<ringVars, failures, kept>>
 
 (* rocketnet_client_race_kept, then the receive or wait: the reader's
@@ -180,16 +223,17 @@ CallerRead ==
 ReaderStep ==
     /\ reader \in {"running", "stopping"}
     /\ seen' = committed
-    /\ IF committed >= 0 /\ ~closed
+    /\ IF committed >= 0 /\ ~closed /\ StepCloses
        THEN /\ closed' = TRUE
             /\ kept' = failures[Loser]
             /\ handle' = [handle EXCEPT ![Loser] = "closed"]
+            /\ closer' = IF handle[Loser] = "open" THEN "step" ELSE closer
             /\ IF "readerfrees" \in Defect
                THEN /\ memory' = [memory EXCEPT ![Loser] = "freed"]
-                    /\ frees' = frees \cup {<<"reader", Loser>>}
+                    /\ frees' = [frees EXCEPT ![<<"reader", Loser>>] = @ + 1]
                ELSE UNCHANGED <<memory, frees>>
             /\ Use("reader", {committed})
-       ELSE /\ UNCHANGED <<closed, handle, memory, frees, kept>>
+       ELSE /\ UNCHANGED <<closed, handle, memory, frees, kept, closer>>
             /\ IF committed >= 0 THEN Use("reader", {committed}) ELSE Use("reader", Families)
     /\ UNCHANGED <<committed, reader, joined, destroyed>>
     /\ UNCHANGED <<ringVars, failures, reported, dipped>>
@@ -199,14 +243,14 @@ ReaderCloseEarly(f) ==
     /\ "readerclosesearly" \in Defect
     /\ reader \in {"running", "stopping"} /\ committed < 0 /\ handle[f] = "open"
     /\ handle' = [handle EXCEPT ![f] = "closed"]
-    /\ UNCHANGED <<committed, seen, closed, memory, frees, reader, joined, destroyed, fault>>
+    /\ UNCHANGED <<committed, seen, closed, closer, memory, frees, reader, joined, destroyed, fault>>
     /\ UNCHANGED <<ringVars, failVars>>
 
 (* rocketnet_client_transport_stop: the request, then the reader's exit *)
 CallerStop ==
     /\ reader = "running"
     /\ reader' = "stopping"
-    /\ UNCHANGED <<committed, seen, closed, handle, memory, frees, joined, destroyed, fault>>
+    /\ UNCHANGED <<committed, seen, closed, closer, handle, memory, frees, joined, destroyed, fault>>
     /\ UNCHANGED <<ringVars, failVars>>
 
 (* rocketnet_client_io_discard_at_stop, the reader's exit: its discard reads
@@ -224,29 +268,40 @@ ReaderExit ==
     /\ IF committed >= 0 /\ ~closed
        THEN kept' = failures[Loser]
        ELSE UNCHANGED kept
-    /\ IF "noexitclose" \in Defect
+    /\ IF "noreaderclose" \in Defect
+       THEN UNCHANGED <<closed, handle>>
+       ELSE IF "noexitclose" \in Defect
        THEN /\ closed' = (closed \/ committed >= 0)
             /\ handle' = IF committed >= 0 THEN [handle EXCEPT ![Loser] = "closed"] ELSE handle
        ELSE /\ closed' = TRUE
             /\ handle' = [f \in Families |-> "closed"]
+    /\ closer' = IF committed >= 0 /\ handle[Loser] = "open" /\ handle'[Loser] = "closed"
+                 THEN "exit" ELSE closer
     /\ UNCHANGED <<committed, memory, frees, joined, destroyed>>
     /\ UNCHANGED <<ringVars, failures, reported, dipped>>
 
 CallerJoin ==
     /\ reader = "exited" /\ ~joined
     /\ joined' = TRUE
-    /\ UNCHANGED <<committed, seen, closed, handle, memory, frees, reader, destroyed, fault>>
+    /\ UNCHANGED <<committed, seen, closed, closer, handle, memory, frees, reader, destroyed, fault>>
     /\ UNCHANGED <<ringVars, failVars>>
 
 (* rocketnet_client_transport_destroy, then rocketnet_client_race_destroy:
-   the caller closes what is still open and frees both families. *)
+   the caller closes what is still open and frees both families, each
+   through rocketnet_client_transport_io_close, which destroys a family only
+   while its instance is set and then clears it (a family whose memory is
+   already gone is not freed again). The transport is destroyed once. *)
 CallerDestroy ==
-    /\ ~destroyed
+    /\ \/ ~destroyed
+       \/ "destroytwice" \in Defect /\ \A p \in Threads \X Families : frees[p] < 2
     /\ joined \/ ("freebeforejoin" \in Defect /\ reader # "running")
     /\ destroyed' = TRUE
     /\ handle' = [f \in Families |-> "closed"]
     /\ memory' = [f \in Families |-> "freed"]
-    /\ frees' = frees \cup {<<"caller", f>> : f \in {g \in Families : memory[g] = "live"}}
+    /\ frees' = [p \in Threads \X Families |->
+                    IF p[1] = "caller" /\ (memory[p[2]] = "live" \/ "nolivecheck" \in Defect)
+                    THEN frees[p] + 1 ELSE frees[p]]
+    /\ closer' = IF committed >= 0 /\ handle[Loser] = "open" THEN "destroy" ELSE closer
     /\ UNCHANGED <<committed, seen, closed, reader, joined, fault>>
     /\ UNCHANGED <<ringVars, failVars>>
 
@@ -272,9 +327,10 @@ FairSpec == Spec
 
 TypeOK ==
     /\ committed \in {-1, 0, 1} /\ seen \in {-1, 0, 1} /\ closed \in BOOLEAN
+    /\ closer \in {"none", "step", "exit", "destroy"}
     /\ handle \in [Families -> {"open", "closed"}]
     /\ memory \in [Families -> {"live", "freed"}]
-    /\ frees \subseteq (Threads \X Families)
+    /\ frees \in [Threads \X Families -> 0..2]
     /\ reader \in {"running", "stopping", "exited"}
     /\ joined \in BOOLEAN /\ destroyed \in BOOLEAN
     /\ fault \in {"none"} \cup Threads
@@ -285,11 +341,12 @@ TypeOK ==
 (* No thread sends, receives or waits on a closed handle or freed memory. *)
 NoUseAfterClose == fault = "none"
 (* Only the caller's thread frees. *)
-FreedOnlyByCaller == \A r \in frees : r[1] = "caller"
+FreedOnlyByCaller == \A f \in Families : frees[<<"reader", f>>] = 0
 (* Memory is freed only after the reading thread is joined. *)
 FreedOnlyAfterJoin == \A f \in Families : memory[f] = "freed" => joined
-(* Each family is freed at most once, and a freed family is closed. *)
-FreedOnce == \A f \in Families : Cardinality({r \in frees : r[2] = f}) <= 1
+(* Each family is freed at most once, by any thread, counting repeats by the
+   same thread, and a freed family is closed. *)
+FreedOnce == \A f \in Families : frees[<<"caller", f>>] + frees[<<"reader", f>>] <= 1
 FreedIsClosed == \A f \in Families : memory[f] = "freed" => handle[f] = "closed"
 (* Before its exit the reader closes only the losing family, and only after
    the commit. *)
@@ -312,6 +369,14 @@ SendFailedMonotonic == ~dipped
 (* With the reader and the caller fair, the transport is destroyed with
    every family freed, by the caller, once. *)
 EverythingFreed == <>(destroyed /\ \A f \in Families : memory[f] = "freed")
-(* A commit the reader goes on running past closes the losing family. *)
-LoserClosed == committed >= 0 ~> (committed >= 0 /\ handle[Loser] = "closed")
+(* A commit leads to the reading thread closing the losing family: its step
+   at the first sight of the commit, or its exit when it is stopped first
+   (the I/O thread's exit; the legacy receive worker's exit closes nothing
+   and is not modelled, see ReaderExit). It is stated over the ghost closer,
+   so the close every family gets at destroy (CallerDestroy) does not
+   satisfy it. *)
+LoserClosed == committed >= 0 ~> closer \in {"step", "exit"}
+(* While the reader has not exited, a reader that has seen the commit closed
+   the losing family in that step: the exit's close does not count. *)
+StepClosesAtSight == seen >= 0 /\ reader # "exited" => closer = "step"
 =============================================================================

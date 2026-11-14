@@ -284,7 +284,10 @@ ProducerExchange(t) ==
 (* it also takes the oldest ready one (Expose, or the send worker).      *)
 (* Receive Return uses take FALSE only while a buffer is held; after it *)
 (* succeeds another Return is disabled until an Expose takes a buffer.   *)
-(* Both exchanges read/clear owed and wake only after unlocking.         *)
+(* Main's exchanges read and clear owed (rocketnet_buffer_handoff_owed) *)
+(* and wake only after unlocking.  The worker's send-side exchange never  *)
+(* calls rocketnet_buffer_handoff_owed: it leaves owed as it is, and the  *)
+(* next successful publish clears it.                                     *)
 ConsumerExchange(t, take) ==
     /\ t = Consumer
     /\ pc[t] = "locked"
@@ -296,7 +299,7 @@ ConsumerExchange(t, take) ==
           /\ ready' = IF take /\ ready # << >> THEN Tail( ready ) ELSE ready
           /\ view' = IF taken # NONE THEN content[taken] ELSE << >>
           /\ idle' = IF t = "worker" THEN taken = NONE ELSE idle
-    /\ owed' = FALSE
+    /\ owed' = IF t = "main" THEN FALSE ELSE owed
     /\ wakeOnUnlock' = ( t = "main" /\ owed /\ ~SkipWake )
     /\ pc' = [ pc EXCEPT ![t] = "unlock" ]
     /\ UNCHANGED << lock, pheld, content, produced, consumed, wake, asleep, quit, final, exited, lockedWork >>
@@ -388,7 +391,11 @@ Reset ==
 (* send: the family race's commit keeps server "B"; a Filling ring a      *)
 (* deferred hand-off bound to the losing server "A" is bound to "B"       *)
 (* (rocketnet_client_race_commit, rocketnet_client_io_rebind_held);       *)
-(* SkipRebind leaves it bound to "A"                                       *)
+(* SkipRebind leaves it bound to "A".  Rebind runs only from addr = "A":  *)
+(* a commit after a Reset (addr "Z") is not explored here; RNClientRace   *)
+(* carries the commit's rebind on its own, and this model only the rebind *)
+(* of a ring bound to the losing server while the protocol still names    *)
+(* it.                                                                    *)
 Rebind ==
     /\ Direction = "send"
     /\ pc["main"] = "run" /\ ~quit

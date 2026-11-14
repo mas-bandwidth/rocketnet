@@ -11,14 +11,25 @@
 \* ends the create on either family. A list whose every socket is refused is
 \* exhausted.
 \*
+\* Before any socket the operator memory budget is applied
+\* (rocketnet_client_transport_resolve): a candidate whose memory plan
+\* exceeds the budget is refused and later skipped without a socket, the
+\* transport order falling to the next candidate; a candidate whose plan is
+\* unavailable is neither refused nor counted as fitting; and when some
+\* candidate is refused and none fits, the create is refused before the
+\* first allocation (NO_TRANSPORT_FOUND, result "nobudget"). A budget of
+\* zero refuses nothing: every candidate "fits" or is "unknown".
+\*
 \* Each socket's outcome is the environment's, chosen once at Init for every
-\* candidate and family: "ok", "refused" or "oom". The host is one with IPv6,
-\* so a token naming IPv6 selects it first.
+\* candidate and family: "ok", "refused" or "oom"; so is each candidate's
+\* plan against the budget. The host is one with IPv6, so a token naming
+\* IPv6 selects it first.
 \*
 \* Broken names the reversed witnesses: "nofallback" falls to the next
 \* candidate on an IPv6 refusal, "oomfalls" tries the IPv4 server after an
-\* IPv6 refusal for want of memory, and "ignorestoken" falls back to IPv4 for
-\* a token that names IPv6 alone.
+\* IPv6 refusal for want of memory, "ignorestoken" falls back to IPv4 for
+\* a token that names IPv6 alone, and "budgetopens" opens a socket for a
+\* candidate the budget refused.
 EXTENDS Naturals, Sequences
 
 CONSTANTS NumCandidates, Broken
@@ -27,10 +38,20 @@ Families == {"v4", "v6"}
 Outcomes == {"ok", "refused", "oom"}
 Candidates == 1..NumCandidates
 Tokens == {{"v4"}, {"v6"}, {"v4", "v6"}}
+Plans == {"fits", "refused", "unknown"}
 
-VARIABLES token, outcome, rung, family, result, tried
+VARIABLES token, outcome, budget, rung, family, result, tried
 
-vars == <<token, outcome, rung, family, result, tried>>
+vars == <<token, outcome, budget, rung, family, result, tried>>
+
+\* the budget refused the create: some candidate refused, none fits
+NoBudget == (\E c \in Candidates : budget[c] = "refused") /\ ~(\E c \in Candidates : budget[c] = "fits")
+
+\* a candidate the transport order opens sockets for
+Opens(c) == budget[c] # "refused" \/ "budgetopens" \in Broken
+
+\* the candidates opened, in list order
+OpenSeq == SelectSeq([i \in 1..NumCandidates |-> i], Opens)
 
 \* the family the token selects on a host with IPv6
 Primary(t) == IF "v6" \in t THEN "v6" ELSE "v4"
@@ -42,16 +63,18 @@ Falls(t) == IF "ignorestoken" \in Broken THEN "v6" \in t ELSE t = Families
 \* then its IPv4 fallback when the token names both
 RungOrder(t) == IF t = Families THEN <<"v6", "v4">> ELSE <<Primary(t)>>
 
+\* over the candidates the budget did not refuse
 Order(t) ==
     LET k == Len(RungOrder(t))
-    IN [i \in 1..(NumCandidates * k) |-> <<((i - 1) \div k) + 1, RungOrder(t)[((i - 1) % k) + 1]>>]
+    IN [i \in 1..(Len(OpenSeq) * k) |-> <<OpenSeq[((i - 1) \div k) + 1], RungOrder(t)[((i - 1) % k) + 1]>>]
 
 Init ==
     /\ token \in Tokens
     /\ outcome \in [Candidates \X Families -> Outcomes]
+    /\ budget \in [Candidates -> Plans]
     /\ rung = 1
     /\ family = Primary(token)
-    /\ result = "trying"
+    /\ result = IF NoBudget THEN "nobudget" ELSE "trying"
     /\ tried = <<>>
 
 \* the next candidate, or the exhausted list
@@ -63,24 +86,28 @@ NextRung ==
          /\ family' = Primary(token)
          /\ result' = "trying"
 
-\* the socket for the server the token selected, on this candidate
+\* the socket for the server the token selected, on this candidate; a
+\* candidate the budget refused is skipped instead, with no socket
 TryPrimary ==
     /\ result = "trying"
     /\ family = Primary(token)
-    /\ tried' = Append(tried, <<rung, family>>)
-    /\ LET o == outcome[<<rung, family>>]
-       IN CASE o = "ok" ->
-                 /\ result' = "granted"
-                 /\ UNCHANGED <<rung, family>>
-            [] o = "oom" /\ ~("oomfalls" \in Broken /\ family = "v6" /\ Falls(token)) ->
-                 /\ result' = "oom"
-                 /\ UNCHANGED <<rung, family>>
-            [] OTHER ->
-                 IF family = "v6" /\ Falls(token) /\ ~("nofallback" \in Broken)
-                 THEN /\ family' = "v4"
-                      /\ UNCHANGED <<rung, result>>
-                 ELSE NextRung
-    /\ UNCHANGED <<token, outcome>>
+    /\ IF ~Opens(rung)
+       THEN /\ UNCHANGED tried
+            /\ NextRung
+       ELSE /\ tried' = Append(tried, <<rung, family>>)
+            /\ LET o == outcome[<<rung, family>>]
+               IN CASE o = "ok" ->
+                         /\ result' = "granted"
+                         /\ UNCHANGED <<rung, family>>
+                    [] o = "oom" /\ ~("oomfalls" \in Broken /\ family = "v6" /\ Falls(token)) ->
+                         /\ result' = "oom"
+                         /\ UNCHANGED <<rung, family>>
+                    [] OTHER ->
+                         IF family = "v6" /\ Falls(token) /\ ~("nofallback" \in Broken)
+                         THEN /\ family' = "v4"
+                              /\ UNCHANGED <<rung, result>>
+                         ELSE NextRung
+    /\ UNCHANGED <<token, outcome, budget>>
 
 \* the token's IPv4 server on the same candidate, after its IPv6 socket was
 \* refused
@@ -96,9 +123,10 @@ TryFallback ==
                  /\ result' = "oom"
                  /\ UNCHANGED <<rung, family>>
             [] OTHER -> NextRung
-    /\ UNCHANGED <<token, outcome>>
+    /\ UNCHANGED <<token, outcome, budget>>
 
-\* the create has ended: granted, exhausted or out of memory
+\* the create has ended: granted, exhausted, out of memory or refused by the
+\* budget
 Done ==
     /\ result # "trying"
     /\ UNCHANGED vars
@@ -110,9 +138,10 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(TryPrimary \/ TryFallback)
 TypeOK ==
     /\ token \in Tokens
     /\ outcome \in [Candidates \X Families -> Outcomes]
+    /\ budget \in [Candidates -> Plans]
     /\ rung \in Candidates
     /\ family \in Families
-    /\ result \in {"trying", "granted", "exhausted", "oom"}
+    /\ result \in {"trying", "granted", "exhausted", "oom", "nobudget"}
     /\ Len(tried) <= 2 * NumCandidates
 
 Last == tried[Len(tried)]
@@ -120,17 +149,21 @@ Last == tried[Len(tried)]
 \* every socket dials a server the token names
 TriedInToken == \A i \in 1..Len(tried) : tried[i][2] \in token
 
-\* sockets are tried in the code's order: candidate by candidate, the
-\* selected family first and its IPv4 fallback next, no candidate skipped
+\* sockets are tried in the code's order: candidate by candidate over the
+\* candidates the budget did not refuse, the selected family first and its
+\* IPv4 fallback next, no such candidate skipped
 TransportOrder ==
     /\ Len(tried) <= Len(Order(token))
     /\ \A i \in 1..Len(tried) : tried[i] = Order(token)[i]
 
-\* the transport order exhausts only when no socket the token names on any candidate
-\* would have been granted
+\* no socket is opened for a candidate whose memory plan the budget refused
+NoSocketForRefusedPlan == \A i \in 1..Len(tried) : budget[tried[i][1]] # "refused"
+
+\* the transport order exhausts only when no socket the token names on any
+\* candidate the budget did not refuse would have been granted
 NoExhaustWhileReachable ==
     result = "exhausted" =>
-        \A r \in Candidates, f \in token : outcome[<<r, f>>] # "ok"
+        \A r \in Candidates, f \in token : budget[r] # "refused" => outcome[<<r, f>>] # "ok"
 
 \* a refusal for want of memory is the last socket tried
 NoTryAfterOom == \A i \in 1..(Len(tried) - 1) : outcome[tried[i]] # "oom"

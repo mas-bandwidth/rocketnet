@@ -39,6 +39,17 @@
 (*   Timeout       the worker's waits time out (0.1 s production bound).   *)
 (*                 The liveness controls run with Timeout = FALSE, so      *)
 (*                 progress is proved from the wake protocol alone.        *)
+(*   IdleWait      what ends the idle wait besides the wake.  "readable":  *)
+(*                 socket readability (ROCKETNET_PLATFORM_HAS_WAKE,        *)
+(*                 rocketnet_platform_wake_wait with readable set).        *)
+(*                 "timeout": BSD, whose wake is event-only, so the idle   *)
+(*                 wait returns on the wake or its 1 ms timeout alone,     *)
+(*                 at any time (MCRNPortableRxBsd.cfg); that timeout is    *)
+(*                 the wait's mechanism there, not the 0.1 s guard that    *)
+(*                 Timeout stands for.  Both are the code, on different    *)
+(*                 platforms.  "wakeonly" is the reversed witness          *)
+(*                 MCRNPortableRxBsdBrokenNoTimeout.cfg: BSD's wait        *)
+(*                 without its timeout.                                    *)
 (*   BoundedRead   one socket read spends a read budget of Cap on every    *)
 (*                 datagram it takes, kept or discarded; FALSE counts only *)
 (*                 kept datagrams, so chaff (zero-length datagrams,        *)
@@ -55,11 +66,13 @@ CONSTANTS NumBanks,        \* PORTABLE_RX_BANKS, at least 2
           MaxDatagrams,    \* datagrams the network delivers to the socket
           MaxChaff,        \* discarded datagrams the network delivers
           HoldOnFull, ReturnWhenRead, QuitBeforeWake, WakeOnReturn, Timeout,
-          BoundedRead
+          BoundedRead,
+          IdleWait         \* what ends the idle wait besides the wake
 
 ASSUME NumBanks >= 2 /\ Cap >= 1 /\ Budget >= 1 /\ MaxDatagrams >= 1 /\ MaxChaff >= 0
 ASSUME {HoldOnFull, ReturnWhenRead, QuitBeforeWake, WakeOnReturn, Timeout,
         BoundedRead} \subseteq BOOLEAN
+ASSUME IdleWait \in {"readable", "timeout", "wakeonly"}
 
 Banks == 1..NumBanks
 Ids == 1..MaxDatagrams
@@ -237,12 +250,15 @@ WWaitFull ==
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
                    lock, quit, stopping, mpc, budget, freed, chaff, taken>>
 
-\* an empty read: wait on the wake or socket readability
+\* an empty read: wait on the wake or socket readability (on BSD the wake or
+\* the timeout alone)
 WWaitIdle ==
     /\ wpc = "waitidle"
     /\ \/ /\ wake
           /\ wake' = FALSE
-       \/ /\ sock # <<>>
+       \/ /\ IdleWait = "readable" /\ sock # <<>>
+          /\ UNCHANGED wake
+       \/ /\ IdleWait = "timeout"
           /\ UNCHANGED wake
        \/ /\ Timeout
           /\ UNCHANGED wake
