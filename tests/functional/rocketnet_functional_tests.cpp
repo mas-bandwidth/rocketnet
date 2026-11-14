@@ -7918,19 +7918,26 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     const int TOTAL = FRAMES * PACKETS_PER_FRAME;
 
     // Each tag is one datagram over a real socket, and a loaded host can lose
-    // one: the kernel drops it on receive, or the send call refuses it and the
-    // sending transport counts it as SEND_FAILED (the clang-18 nightly saw the
-    // client receive 1201 of 1280 with the portable server's SEND_FAILED=79).
-    // So the exchange runs in rounds of round_seconds. At the end of a round
-    // with tags missing, the case prints the round and fails by name when the
-    // client is no longer connected; otherwise it asks the loss gate
+    // one on receive, where the kernel counts it. So the exchange runs in
+    // rounds of round_seconds. At the end of a round with tags missing, the
+    // case prints the round and both transports' counters and fails by name
+    // when the client is no longer connected; otherwise it asks the loss gate
     // (tests/kernel_drops.h) with the kernel's receive drops of this process's
-    // sockets plus both transports' SEND_FAILED since the exchange began, and
-    // sends the missing tags again only when that count covers them, at most
+    // sockets since the exchange began, and sends the missing tags again only
+    // when that count covers them, at most
     // ROCKETNET_LOSS_GATE_RESENDS times: the case ends, red by name or green,
     // within (1 + resends) rounds, 40 s. A tag is received at most as many
     // times as it was sent, every byte of every copy is checked, and every tag
     // is received in the end.
+    //
+    // SEND_FAILED is not loss the gate admits. Under load on aws-mut-2 (600
+    // runs at once, 2026-11-14) every SEND_FAILED here was the portable
+    // server's send handoff dropping on its no-free-bank path (the producer
+    // bank full and every other bank in flight, sdk/rocketnet_driver_builtin.cpp
+    // portable_tx_drop): no send call and no errno, not a full socket. No
+    // counter separates a full socket's EAGAIN or ENOBUFS from the other
+    // refusals SEND_FAILED counts, so the gate takes none of them
+    // (docs/roadmap.sexp exact-delivery-asserts).
 
     static uint8_t server_seen[FRAMES * PACKETS_PER_FRAME];
     static uint8_t client_seen[FRAMES * PACKETS_PER_FRAME];
@@ -7960,8 +7967,6 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
 
     struct rocketnet_loss_gate_t gate;
     rocketnet_loss_gate_begin( &gate, "gso_client_wire_exchange" );
-    const uint64_t server_send_failed_before = rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED];
-    const uint64_t client_send_failed_before = rocketnet_client_transport_counters( client )->values[ROCKETNET_COUNTER_SEND_FAILED];
     const double round_seconds = 10.0;
     int round = 1;
 
@@ -7974,9 +7979,6 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
             const int missing_at_server = TOTAL - server_received;
             const int missing_at_client = TOTAL - client_received;
             const int state = rocketnet_client_transport_state( client );
-            const uint64_t send_failed =
-                ( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_SEND_FAILED] - server_send_failed_before ) +
-                ( rocketnet_client_transport_counters( client )->values[ROCKETNET_COUNTER_SEND_FAILED] - client_send_failed_before );
             printf( "gso_client_wire_exchange: round %d ended after %.3f s: %d missing at the server, %d at the client (sent %d, %d), client state %d\n",
                     round, rocketnet_platform_time() - round_start, missing_at_server, missing_at_client, client_sent, server_sent, state );
             for ( int t = 0; t < TOTAL; t++ )
@@ -8000,7 +8002,7 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
             fflush( stdout );
             rocketnet_check( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
             rocketnet_check( client_next == client_queue.size() && server_next == server_queue.size() );
-            rocketnet_check( rocketnet_loss_gate_resend_counted( &gate, missing_at_server + missing_at_client, send_failed ) );
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, missing_at_server + missing_at_client ) );
             for ( int tag = 0; tag < TOTAL; tag++ )
             {
                 if ( !server_seen[tag] )
@@ -8170,12 +8172,10 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     rocketnet_client_gso_test_disable_gro.store( false );
 
     // the client's start refuses at a full ring under load, and the loop
-    // above sends that frame's rest on the next pass: an expected refusal. A
-    // send the socket refused (SEND_FAILED) was accounted by the loss gate
-    // above and its tag sent again, so it is expected on a loaded host too
+    // above sends that frame's rest on the next pass: an expected refusal
 
-    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ROCKETNET_COUNTER_SEND_RING_FULL, ROCKETNET_COUNTER_SEND_FAILED );
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_SEND_FAILED );
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ROCKETNET_COUNTER_SEND_RING_FULL );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 
     rocketnet_test_env_restore( &client_guard );
     rocketnet_test_env_restore( &server_guard );
