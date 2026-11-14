@@ -434,7 +434,8 @@ struct rocketnet_server_transport_t
     // staging. At the end of update and of send_packets main gives each queue a
     // budget: its room less the reserve the next update's protocol frames may
     // need there. A game packet start claims one unit of its queue's budget with one
-    // atomic add and is refused (SEND_RESERVE_REFUSED) past it; protocol
+    // atomic add and is refused (SEND_RESERVE_REFUSED or
+    // SEND_RESERVE_REFUSED_TAILS_HELD) past it; protocol
     // frames never claim. Written by main only while no game packet is being started; the
     // claims are atomic adds.
     int send_queues;                                    // the transport's send_queues, or 1

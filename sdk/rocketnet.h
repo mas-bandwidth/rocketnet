@@ -3310,8 +3310,9 @@ ROCKETNET_EXPORT void rocketnet_server_update_finish( struct rocketnet_server_t 
 /// keep-alive is given one place an update out of the kept part. A message
 /// that would take more is not lost by that: it waits in its queue, as a
 /// message does when the transport is full, and goes out in a later call
-/// once the transport has sent what it holds. The SDK-internal counter
-/// SEND_RESERVE_REFUSED counts the sends held back this way. Before this
+/// once the transport has sent what it holds. The SDK-internal counters
+/// SEND_RESERVE_REFUSED and SEND_RESERVE_REFUSED_TAILS_HELD count the sends
+/// held back this way. Before this
 /// rule a send was held back only when the whole room was spent, which the
 /// SDK-internal counter SEND_RING_FULL counted; it still counts a send room
 /// that is full. The portable and loopback transports keep nothing back.

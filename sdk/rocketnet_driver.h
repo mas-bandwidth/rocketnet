@@ -188,7 +188,8 @@ struct rocketnet_server_transport_io_operations_t
     // queue (or per send lane). Without them the transport is one queue whose
     // room is send_room. The server keeps a protocol reserve in each queue:
     // a game packet start (rocketnet_server_transport_start_packet) is refused,
-    // counted as SEND_RESERVE_REFUSED, once its claims in a queue reach that
+    // counted in SEND_RESERVE_REFUSED or SEND_RESERVE_REFUSED_TAILS_HELD,
+    // once its claims in a queue reach that
     // queue's room when main last opened the budget, less the reserve; the
     // protocol's own frames (responses, keep-alives, disconnect bursts) may
     // use the whole room (proofs/tla/RNSendReserve.tla).
