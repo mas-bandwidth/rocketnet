@@ -241,7 +241,10 @@ static void wide_fill_connect_all( wide_fill_world_t * world )
 
 static uint8_t wide_fill_byte( int kind, int slot, uint32_t seq, uint32_t frame, int i )
 {
-    return (uint8_t) ( ( kind * 131 ) ^ ( slot * 29 ) ^ ( ( slot >> 8 ) * 71 ) ^ (int) ( seq * 7u ) ^ (int) ( frame * 37u ) ^ ( i * 13 ) );
+    // each tail byte carries one byte of the frame in turn, so a change to any
+    // of the field's four bytes fails the check (a tail is at least 6 bytes)
+    const uint32_t frame_byte = ( frame >> ( 8 * ( i & 3 ) ) ) & 0xFFu;
+    return (uint8_t) ( ( kind * 131 ) ^ ( slot * 29 ) ^ ( ( slot >> 8 ) * 71 ) ^ (int) ( seq * 7u ) ^ (int) ( frame_byte * 37u ) ^ ( i * 13 ) );
 }
 
 static void wide_fill_write( uint8_t * p, int bytes, int kind, int slot, uint32_t seq, uint32_t frame )
