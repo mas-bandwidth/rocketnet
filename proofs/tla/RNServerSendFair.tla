@@ -102,7 +102,8 @@
 (* still catches a rotation bug.  With two queues the window fails under   *)
 (* a live room for the code as it is: a slot held before any frame was     *)
 (* written does not hold the cursor (MCRNServerSendFairQueuesLiveSkip.cfg, *)
-(* handed up under MM057).  Only the first queue's room is live; K1 stays. *)
+(* roadmap send-pass-hold-alternating-room).  Only the first queue's room  *)
+(* is live; K1 stays.                                                      *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 

@@ -294,7 +294,8 @@ is read live.
 
 With several queues the bound does not hold under a live room, and the
 case `MCRNServerSendFairQueuesLiveSkip.cfg` records the code as it is (not a
-reversed witness; handed up as code-wrong under MM057). A slot held for its
+reversed witness; its fix is the roadmap entry
+`send-pass-hold-alternating-room`, MM057). A slot held for its
 queue before any frame of the flush was written does not hold the cursor
 (`rn_message_object_send_packets`, by design: a queue full for many updates
 would pin the rotation). TLC, 13 states, four slots, two queues of one
@@ -303,13 +304,15 @@ writes 0 and 1 and cuts at 2 with the cursor there; flush 2, the first
 queue's room 0, holds slot 2 with nothing written yet, writes slot 3 on the
 second queue and cuts at 0; flush 3 at full room writes 0 and 1 and cuts at
 2 again. Slot 2 has waited two counted flushes, and the pattern repeats
-while the first queue's room alternates. The comment above that loop ("One
-full queue ... starves none of its own") holds for a fixed capacity only.
+while the first queue's room alternates. The comment above that loop now
+claims no starvation only for a fixed capacity.
 
 | Case | Expected | Distinct | Seconds |
 |---|---|---:|---:|
 | `MCRNServerSendFairLive.cfg` (N 5, K 2, `RoomMin` 0) | pass | 218,836 | 23.4 |
 | `MCRNServerSendFairBrokenFixedWindow.cfg` (every flush counted) | `FairService` | 274,779 | 11.8 |
+| `MCRNServerSendFairBrokenLiveFromZero.cfg` (every flush starts at 0) | `FairService` | 112,610 | 23.7 |
+| `MCRNServerSendFairQueuesLiveSkip.cfg` (two queues; the code as it is) | `FairService` | 3,403 | 1.0 |
 
 Witness trace, read by hand (7 states): five slots, slot 4 with one frame
 of work. Each of three flushes begins with `room = 0`; the first visit finds
