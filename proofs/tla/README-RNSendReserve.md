@@ -47,9 +47,9 @@ Two modules:
 | `rpos`, `racc` | a sum read one line at a time: `started_sum`, or `tails_held` |
 | `seenS`, `seenO` | `queue_budget_now`'s first reads of the started sum and the own frames used |
 | `seenR` | its room read, and with it a ghost record: own frames taken, other fillers in flight, their holds, the lines' tails, and the frames claimed since (`a`) |
-| `roomy` | ghost: the decision that refused a single claim read room for it past every filler in flight |
+| `sawHeld` | ghost: another filler held frames (`OthersHeld`, by the fillers' own state) at some step of this filler's read of the lines |
 | `refused` (calls module) | the counter `SEND_RESERVE_REFUSED` |
-| `starved`, `unnamed` | ghosts: a refusal `NeverStarved` or `TailsNamed` forbids |
+| `starved`, `overnamed` | ghosts: a refusal `NeverStarved` or `TailsNamed` forbids |
 
 ## RNSendReserve: actions and the code they mirror
 
@@ -109,7 +109,7 @@ filler's own arithmetic on it. Six steps join two of the code's operations:
 |---|---|---|
 | `OwnClaim` | the add on `fill_own_frame[client]`, then the add on `fill_own_frames_left` | the frames left are read only by the capacity calls, which this module has none of; the model has no clients, so a start that finds the flag taken and puts its one back is not a step here (the calls module and the unit tests cover the flag) |
 | `Size` (from `idle`) | the last load of the line's word in `fill_claim`'s tail loop (its low half 0), then the guard's load of the budget | a grant to another filler on the same line between them would leave the code claiming while the line holds a tail, which the model's `Size` never does; with each filler on its own line no other filler writes the word, and on one shared line (`MCRNSendReserveSharedLine.cfg`) that window is not checked |
-| `Size` (from `sizing`) | the guard's load of the claims, then the add of the chunk claim to the line's high half | only `tails_held` reads the high half, on the refusal path; the join lets another filler's counter read see the chunk claim one step early, which can only name its refusal `SEND_RESERVE_REFUSED_TAILS_HELD`, so a `TailsNamed` that passes does not cover a refusal counted in that one-step window |
+| `Size` (from `sizing`) | the guard's load of the claims, then the add of the chunk claim to the line's high half | only `tails_held` reads the high half, on the refusal path; the join lets another filler's counter read see the chunk claim one step early, which can only name its refusal `SEND_RESERVE_REFUSED_TAILS_HELD`; `OthersHeld` counts the chunk claim from the same step, so `TailsNamed` judges it the same way and is not hiding anything there |
 | `Check`, `Decide` granting a chunk (`Grant`) | the test's load, then the add that moves the chunk's rest from the high half to the tail | the line's word reads `Chunk` more in the high half before the add and `Chunk - 1` more in the low half after it, so `tails_held` reads one less after it, and not zero on either side (`Chunk >= 2`): the counter it picks is the same; a filler on the same line may take a tail frame one step early here, where the code would send it to the guard |
 | `Decide` (the test) | the budget loaded after the max, then the claims loaded | the budget only rises within a phase, so the budget the code loaded is one of the values from the max's result (`ld`) to the budget now: the step grants when the claims now fit the budget now and refuses when they do not fit `ld`, every outcome the two loads allow |
 | `TakeBack` of a chunk | the claims' add of `-size` in `claim_frames`, then the add that drops the high half in `fill_claim` | between them the claims no longer hold the chunk while the line still shows it: a counter read there names `SEND_RESERVE_REFUSED_TAILS_HELD`, as with `Size`, and nothing else reads the high half |
@@ -165,22 +165,24 @@ RNSendReserve's assumption `MaxOwn <= Reserve` made a property of the open.
   never excused twice; the retest half can fail only on the witness
   NoRetry, as the code's retest compares the claims it loaded with the
   budget it loads next.
-- **`TailsNamed`**: a refusal the code counts as `SEND_RESERVE_REFUSED` (its
-  read of the lines found no tail and no chunk claim) had no room, at the
-  decision that refused it, for its frame past the reserve and every filler
-  in flight. That is the counter's documented meaning
-  (`sdk/rocketnet_counters.h`): the plain counter is a true full, and the
-  refusals that frames other threads held caused are counted apart. The
-  code breaks it (`MCRNSendReserveCodeTailsNamed`, a code defect handed up
-  under MM076): it reads the lines after the decision, when the frames held
-  may be on no line word (a tail a refused frame took and has not given
-  back, a tail frame taken and not yet staged) or already staged.
-  `MCRNSendReserve` and `MCRNSendReserveChunk` list it and pass, but neither
-  reaches a refusal while a tail or chunk claim is held (no tails with
-  single claims; the guard at two lines lets a chunk through only where no
-  claim of that phase is refused), so they check it only on refusals with
-  nothing held. It has no reversed witness: the instances where tails meet
-  refusals fail it on the code.
+- **`TailsNamed`**: the counter's settled meaning (row MM076): a refusal
+  counted `SEND_RESERVE_REFUSED_TAILS_HELD` had, while its read of the lines
+  ran (after its retest), another filler holding frames for its next
+  packets: a chunk claim in flight, or granted frames not yet taken. The
+  model judges that by the fillers' own state (`OthersHeld`), not by the
+  line words the code reads, so the property fails if the words ever show
+  a hold no other filler has (the refusing filler's own chunk claim not yet
+  dropped, say). The tails row is a lower bound on refusals made while
+  other threads held frames: a frame held at the decision but taken, staged
+  or given back before the read is not seen, and that refusal is counted
+  `SEND_RESERVE_REFUSED` (the three such paths are in the MM076 note). Every
+  refusal counts exactly one of the two rows, so together they are exact;
+  the model has that by construction, one counter picked per refusal. The
+  reversed witness `MCRNSendReserveBrokenNameAll` counts every refusal on
+  the tails row and fails on a refusal made with nothing held. The guarded
+  configs (`MCRNSendReserve`, `MCRNSendReserveChunk`) reach no refusal
+  while a tail or chunk claim is held; the unguarded and shared-line ones
+  (`ChunkNoGuard`, `CodeTailsNamed`, `SharedLine`) do, and pass.
 - **`OwnWithinReserve`** (RNSendReserveCalls): the own frames left and used
   on a queue are never more than the smallest queue's reserve.
 - **`NoHiddenRoom`** (RNSendReserveCalls): a client's capacity is never
@@ -200,9 +202,10 @@ Each filler is on its own line unless the row says one line.
 |---|---|---|
 | `MCRNSendReserve.cfg` | pass | the code with single claims: `TypeOK`, `ReserveKept`, `NeverStarved`, `TailsNamed` |
 | `MCRNSendReserveChunk.cfg` | pass | chunks of two with the guard at two lines, a reserve of 1 in a queue of 6: all four |
-| `MCRNSendReserveSharedLine.cfg` | pass | the Chunk instance on one line: both fillers take from one tail, and a refused frame gives back the tail the other filled; `TypeOK`, `ReserveKept`, `NeverStarved` |
-| `MCRNSendReserveChunkNoGuard.cfg` | pass | chunks of two with no guard, no own frame and one retire: no property rests on the guard; `TypeOK`, `ReserveKept`, `NeverStarved` |
-| `MCRNSendReserveCodeTailsNamed.cfg` | `TailsNamed` | the code with chunks of two and no guard: a refusal another filler's held frames caused is counted `SEND_RESERVE_REFUSED` while those frames are on no line word (MM076, handed up) |
+| `MCRNSendReserveSharedLine.cfg` | pass | the Chunk instance on one line: both fillers take from one tail, and a refused frame gives back the tail the other filled; all four |
+| `MCRNSendReserveChunkNoGuard.cfg` | pass | chunks of two with no guard, no own frame and one retire: no property rests on the guard; all four |
+| `MCRNSendReserveCodeTailsNamed.cfg` | pass | chunks of two with no guard at the full sizes (an own frame, two retires): `TypeOK`, `TailsNamed` |
+| `MCRNSendReserveBrokenNameAll.cfg` | `TailsNamed` | every refusal counted `SEND_RESERVE_REFUSED_TAILS_HELD`, so a refusal made with nothing held lands on the tails row |
 | `MCRNSendReserveBrokenRoomOnly.cfg` | `ReserveKept` | the budget is the whole room, with no reserve |
 | `MCRNSendReserveBrokenSplitClaim.cfg` | `ReserveKept` | the claim is a load then a store, so two threads take one index |
 | `MCRNSendReserveBrokenRoomFirst.cfg` | `ReserveKept` | the room is read before the counts, so a frame staged between is counted twice |

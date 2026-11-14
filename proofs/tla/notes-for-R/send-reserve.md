@@ -12,12 +12,15 @@ rules say:
 
 - `send-reserve-tails-named-implied` (MM076): settled. `TailsNamed` is
   restated on the code's own counter read (every line's word, one line a
-  step, after the take back and the retest), with a ghost for the room the
-  refusing decision read past every filler in flight; it no longer follows
-  from `NeverStarved` (they differ by the lines' tails and the other
-  fillers' holds), and `MCRNSendReserveBrokenNoTailReturn.cfg` now fails
-  `NeverStarved`. The code fails `TailsNamed`
-  (`MCRNSendReserveCodeTailsNamed.cfg`): handed up as code-wrong MM076.
+  step, after the take back and the retest), to the counter meaning settled
+  for MM076 (branch fix/v1.1.x/reserve-refusal-counter-wording): a refusal
+  counted SEND_RESERVE_REFUSED_TAILS_HELD had another filler holding frames
+  while the read ran, judged by the fillers' own state; the tails row is a
+  lower bound and the two rows together exact. It no longer follows from
+  `NeverStarved`; the code passes it (`MCRNSendReserveCodeTailsNamed.cfg`
+  and every passing control) and its reversed witness
+  `MCRNSendReserveBrokenNameAll.cfg` fails it. `MCRNSendReserveBrokenNoTailReturn.cfg`
+  now fails `NeverStarved`.
 - `send-reserve-multi-queue-capacity` (MM074): closed by send-queue-capacity
   17f32a979 (`CapacityTo`, `CapacityAll`, `NQ` queues, the Queues instance and
   `NoHiddenRoom`, trace seeds 3 and 4 on two queues).
@@ -37,7 +40,7 @@ Neither module is in the table. A line for it, after "server send loop and
 budgets":
 
 ```
-| protocol send reserve | `RNSendReserve`, `RNSendReserveCalls` | the game's packets never take the room the next update's protocol frames need (`ReserveKept`); a game start is never refused while the room it read had a frame for it past the reserve and every frame held (`NeverStarved`); several threads claim at the code's layout (fill lines, chunk claims, tails taken by compare-and-swap); per send queue, a client's capacity is its own queue's (`NoHiddenRoom`) and a reserve cut to half a small room grows back (`ReserveRestored`); the code is bound through `RNSendReserveCalls` (trace layer `sendreserve`). The counter split `TailsNamed` fails on the code (MM076, handed up) |
+| protocol send reserve | `RNSendReserve`, `RNSendReserveCalls` | the game's packets never take the room the next update's protocol frames need (`ReserveKept`); a game start is never refused while the room it read had a frame for it past the reserve and every frame held (`NeverStarved`); several threads claim at the code's layout (fill lines, chunk claims, tails taken by compare-and-swap); per send queue, a client's capacity is its own queue's (`NoHiddenRoom`) and a reserve cut to half a small room grows back (`ReserveRestored`); the code is bound through `RNSendReserveCalls` (trace layer `sendreserve`); a refusal counted on the tails row had another thread holding frames when it read the lines, so that row is a lower bound and the two refusal rows together exact (`TailsNamed`) |
 ```
 
 ## proofs/tla/README.md (the groups table)
@@ -91,9 +94,10 @@ Each is a comment only; the line numbers are at this branch's head and are given
   claim refused is counted SEND_RESERVE_REFUSED_TAILS_HELD when any line's
   word shows a tail or a chunk claim when it reads them, after the retest,
   else SEND_RESERVE_REFUSED. Frames held at the decision may by then be on
-  no line word or staged, and that refusal is counted plain (RNSendReserve
-  TailsNamed fails: MCRNSendReserveCodeTailsNamed.cfg)." Unless the code
-  owner's fix for MM076 lands first; then the fix's own text.
+  no line word or staged, and that refusal is counted plain: the tails row
+  is a lower bound, the two rows together exact (RNSendReserve
+  TailsNamed)." Unless fix/v1.1.x/reserve-refusal-counter-wording words
+  this comment itself; then its text.
 - `sdk/rocketnet_server_transport.cpp lines 1424-1428`: "proofs/tla/RNSendReserve.tla
   Stage, a queue with no room, and End: the transport refused the granted
   frame, so the run ends: the frame's claim and the line's tail go back in
