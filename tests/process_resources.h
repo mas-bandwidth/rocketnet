@@ -111,6 +111,14 @@
 #define PROCESS_RESOURCES_COUNT 3
 #endif // #if defined( _WIN32 )
 
+// THE WINSOCK THREAD HANDLES (Windows): a thread's first Winsock call leaves
+// ws2_32's copy of the thread's handle and mswsock's event open until the
+// thread exits, so each thread live at an end sample may hold this many
+// handles above a post-warmup sample. The one statement of it: tests/soak/soak.c
+// and tests/functional/windows_lifecycle_stress.cpp both size their handle
+// allowance from it.
+#define PROCESS_RESOURCES_WINSOCK_HANDLES_PER_THREAD 2
+
 struct process_resources_t
 {
     int64_t values[PROCESS_RESOURCES_COUNT];

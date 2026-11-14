@@ -37,8 +37,11 @@
     The run time is read from the performance counter directly, since
     rocketnet_platform_time restarts at rocketnet_init.
     Each case prints the before and after counts, every heap's allocated
-    bytes, SDK-owned resource identities and the run time. Process-wide
-    handle deltas remain unattributed unless ownership is proven separately.
+    bytes, SDK-owned resource identities and the run time. The process handle
+    count at the end may exceed the warm count only by THE WINSOCK THREAD
+    HANDLES (tests/process_resources.h, the allowance the soak takes) for each
+    SDK thread live at the end sample: 0 in the create/destroy cases, so one
+    handle left behind, once or per cycle, fails.
 
     The cells are the Windows server transports (portable, iocp, rio), each
     with the portable client, and each case is one function per cell:
@@ -113,6 +116,7 @@ static void windows_lifecycle_check_line( bool condition, const char * expressio
 struct windows_resource_counts_t
 {
     int64_t handles;
+    int64_t sdk_threads; // the SDK ledger's live Thread identities
     int64_t threads;
     int64_t heap_bytes;
     int64_t library_allocated_bytes;
@@ -260,6 +264,7 @@ static windows_resource_counts_t windows_read_counts()
 {
     windows_resource_counts_t counts;
     counts.handles = -1;
+    counts.sdk_threads = -1;
     counts.threads = -1;
     counts.heap_bytes = -1;
     counts.library_allocated_bytes = windows_library_accounting_failed.load( std::memory_order_relaxed )
@@ -276,6 +281,19 @@ static windows_resource_counts_t windows_read_counts()
     if ( GetProcessHandleCount( GetCurrentProcess(), &handles ) )
     {
         counts.handles = (int64_t) handles;
+    }
+
+    static rocketnet_lifecycle_resources_t ledger; // 16 KB: off the stack of the 1 ms settle poll
+    if ( rocketnet_lifecycle_track_read( &ledger ) )
+    {
+        counts.sdk_threads = 0;
+        for ( unsigned i = 0; i < ledger.live_count; ++i )
+        {
+            if ( ledger.live[i].kind == ROCKETNET_LIFECYCLE_THREAD )
+            {
+                counts.sdk_threads++;
+            }
+        }
     }
 
     counts.threads = windows_threads();
@@ -351,10 +369,18 @@ static bool windows_heap_summary_refused( const windows_resource_counts_t * coun
     return counts->verifier && counts->heap_bytes < 0;
 }
 
+// the handles the after count may hold above the before count: THE WINSOCK
+// THREAD HANDLES (tests/process_resources.h) for each SDK thread live at the
+// after sample, so 0 once a case has destroyed what it created
+static int64_t windows_handle_allowance( const windows_resource_counts_t * after )
+{
+    return (int64_t) PROCESS_RESOURCES_WINSOCK_HANDLES_PER_THREAD * after->sdk_threads;
+}
+
 static bool windows_counts_flat( const windows_resource_counts_t * before, const windows_resource_counts_t * after, double seconds )
 {
     const bool heap_refused = windows_heap_summary_refused( before ) && windows_heap_summary_refused( after );
-    if ( before->library_allocated_bytes < 0 || after->library_allocated_bytes < 0 ||
+    if ( before->library_allocated_bytes < 0 || after->library_allocated_bytes < 0 || after->sdk_threads < 0 ||
          before->handles < 0 || before->threads < 0 || ( before->heap_bytes < 0 && !heap_refused ) || before->private_bytes < 0 ||
          after->handles < 0 || after->threads < 0 || ( after->heap_bytes < 0 && !heap_refused ) || after->private_bytes < 0 )
     {
@@ -373,14 +399,15 @@ static bool windows_counts_flat( const windows_resource_counts_t * before, const
     const bool memory_flat = windows_private_bytes_diagnostic( before ) ||
                              after->private_bytes < before->private_bytes + windows_private_allowance_bytes();
     const bool heap_flat = heap_refused || after->heap_bytes <= before->heap_bytes + allowance;
-    return heap_flat && after->library_allocated_bytes <= before->library_allocated_bytes + allowance && memory_flat;
+    const bool handles_flat = after->handles <= before->handles + windows_handle_allowance( after );
+    return heap_flat && after->library_allocated_bytes <= before->library_allocated_bytes + allowance && memory_flat && handles_flat;
 }
 
 // A transport's threads are joined inside destroy, and a joined thread leaves
 // the Toolhelp list once the kernel has run it down. The after counts are
-// polled every millisecond until the checked thread and memory counts settle
+// polled every millisecond until the checked handle and memory counts settle
 // or WINDOWS_SETTLE_SECONDS has passed. SDK handle identities are checked by
-// the generation ledger below, independent of process-wide count changes.
+// the generation ledger below as well, identity by identity.
 static const double WINDOWS_SETTLE_SECONDS = 10.0;
 
 static windows_resource_counts_t windows_settled_counts( const windows_resource_counts_t * before, double seconds )
@@ -728,8 +755,9 @@ static bool windows_case_result( const char * case_name, const windows_cell_t * 
 {
     const bool flat = windows_counts_flat( before, after, seconds );
 
-    printf( "%s [%s]: handles %lld -> %lld, threads %lld -> %lld, library_heap_bytes %lld -> %lld (allowed +%lld)",
-            case_name, cell->name, (long long) before->handles, (long long) after->handles, (long long) before->threads,
+    printf( "%s [%s]: handles %lld -> %lld (allowed +%lld, %d per SDK thread, %lld live), threads %lld -> %lld, library_heap_bytes %lld -> %lld (allowed +%lld)",
+            case_name, cell->name, (long long) before->handles, (long long) after->handles, (long long) windows_handle_allowance( after ),
+            PROCESS_RESOURCES_WINSOCK_HANDLES_PER_THREAD, (long long) after->sdk_threads, (long long) before->threads,
             (long long) after->threads, (long long) before->heap_bytes, (long long) after->heap_bytes,
             (long long) windows_memory_allowance_bytes( seconds ) );
     if ( windows_heap_summary_refused( before ) || windows_heap_summary_refused( after ) )
@@ -797,7 +825,7 @@ static bool windows_case_result( const char * case_name, const windows_cell_t * 
         }
     }
 
-    printf( ", process_handle_delta %lld UNATTRIBUTED\n", (long long) ( after->handles - before->handles ) );
+    printf( "\n" );
     fflush( stdout );
 
     return flat;

@@ -1011,7 +1011,7 @@ static int soak_os_pool_settle( const struct process_resources_t * start, struct
 
 #define SOAK_IOCP_SEND_THREADS 1               // 16 clients make 1 send lane, so 1 send thread
 #define SOAK_IOCP_DEFAULT_COMPLETION_WORKERS 2 // rocketnet_network_threads.h ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS
-#define SOAK_WINSOCK_HANDLES_PER_THREAD 2      // ws2_32's copy of the thread's handle and mswsock's event
+// the handles per thread: PROCESS_RESOURCES_WINSOCK_HANDLES_PER_THREAD (tests/process_resources.h)
 
 #define SOAK_ENV_VALUE_BYTES 4096 // sdk/rocketnet_platform.h ROCKETNET_PLATFORM_GETENV_MAX_BYTES: the longest value the library reads, terminator included
 
@@ -1047,7 +1047,7 @@ static int64_t soak_winsock_handle_allowance( const char * server_transport_name
         return -1;
     }
     const int workers = configured_workers > 0 ? configured_workers : SOAK_IOCP_DEFAULT_COMPLETION_WORKERS;
-    return (int64_t) SOAK_WINSOCK_HANDLES_PER_THREAD * workers;
+    return (int64_t) PROCESS_RESOURCES_WINSOCK_HANDLES_PER_THREAD * workers;
 #else
     (void) server_transport_name;
     (void) configured_workers;
@@ -2231,7 +2231,7 @@ int main( int argc, char ** argv )
                 if ( allowance > 0 )
                 {
                     printf( "soak resources: handles allowance=%lld (iocp server: %d Winsock handles per completion worker, once; ceiling end<=%lld)\n",
-                            (long long) allowance, SOAK_WINSOCK_HANDLES_PER_THREAD, (long long) flat_start );
+                            (long long) allowance, PROCESS_RESOURCES_WINSOCK_HANDLES_PER_THREAD, (long long) flat_start );
                 }
             }
 
