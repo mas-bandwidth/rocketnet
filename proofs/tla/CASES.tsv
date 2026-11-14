@@ -988,6 +988,7 @@ MCRNResendTimingBrokenSilenceEarly.cfg	MCRNResendTiming.tla	invariant	NoEndBefor
 MCRNResendTimingBrokenSilenceLate.cfg	MCRNResendTiming.tla	invariant	SilenceEndsAtT	check	rnresendtiming	required	-
 MCRNClientSendCursorLayout.cfg	MCRNClientSendCursorLayout.tla	pass	-	check	rnclientsendcursorlayout	required	-
 MCRNClientSendCursorLayoutBrokenPlus.cfg	MCRNClientSendCursorLayout.tla	invariant	AtMostOnce	check	rnclientsendcursorlayout	required	-
+MCRNClientSendCursorLayoutBrokenDropKept.cfg	MCRNClientSendCursorLayout.tla	invariant	NoneLost	check	rnclientsendcursorlayout	required	-
 MCRNWindowLayoutBrokenWordShift.cfg	MCRNWindowLayout.tla	invariant	BitsAreReceived	check	rnwindowlayout	required	-
 MCRNCookieReplyLimits.cfg	MCRNCookieReplyLimits.tla	pass	-	check	rncookiereplylimits	required	-
 MCRNCookieReplyLimitsBrokenNoBit.cfg	MCRNCookieReplyLimits.tla	invariant	OneReplyPerSource	check	rncookiereplylimits	required	-
