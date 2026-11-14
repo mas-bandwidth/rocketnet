@@ -115,6 +115,16 @@ hand-off is LATE, then lets the cookie from IPv4 commit the race in an update
 whose connection request joins the same ring; before the rebind the request
 never left, and with it the request reaches IPv4 in that update.
 
+The no-reader-close trace is a commit, a stop, the reader's exit that
+closes nothing, the join and destroy, which closes the losing family
+(`closer = "destroy"`) and stutters: the old form of `LoserClosed`, over
+the handle alone, held on this trace. In the code that is a backend with no
+close operation, whose losing socket stays open until
+`rocketnet_client_race_destroy`; every built-in backend that races has one.
+The no-step-close trace is a commit and one reading step that loads it
+(`seen = 0`) and closes nothing, where `rocketnet_client_race_kept` closes
+the losing family's handles at its first sight of the commit.
+
 The no-keep trace is a send failure on family 0, a read (1), a commit
 to family 1, and a read before the reader's step: the kept family's count
 plus `closed_send_failures`, still 0, is 0.

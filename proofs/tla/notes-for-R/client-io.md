@@ -74,7 +74,8 @@ New cases (all in M8's existing groups):
 - rnclientiocp: MCRNClientIocpStalls.cfg (pass), MCRNClientIocpBrokenNoGiveUp.cfg
   (CloseEventuallyFrees), MCRNClientIocpBrokenNoGiveUpDrain.cfg (PostedDrainAfterClose)
 - rnclienttransportorder: MCRNClientTransportOrderBrokenBudgetOpens.cfg (NoSocketForRefusedPlan)
-- clientrace: MCRNClientRaceBrokenNoLiveCheck.cfg (FreedOnce)
+- clientrace: MCRNClientRaceBrokenNoLiveCheck.cfg (FreedOnce), MCRNClientRaceBrokenDestroyTwice.cfg (FreedOnce), MCRNClientRaceBrokenNoReaderClose.cfg (temporal, LoserClosed), MCRNClientRaceBrokenNoStepClose.cfg (StepClosesAtSight)
+- rnportabletx: MCRNPortableTxBrokenNoWrap.cfg replaced by MCRNPortableTxBrokenNoHeadMod.cfg and MCRNPortableTxBrokenNoTailMod.cfg (InBounds; MA011)
 - cryptosource: MCRNCryptoSourceBrokenInitNoLock.cfg (AtMostOneSource)
 - rnportablerx: MCRNPortableRxBsd.cfg (pass), MCRNPortableRxBsdBrokenNoTimeout.cfg
   (EveryDatagramDelivered)
@@ -90,6 +91,8 @@ Inventory line changes, one per module:
 - RNClientTransportOrder: the operator memory budget.
 - RNCryptoSource: rocketnet_init as an actor.
 - RNPortableRx: BSD's idle wait.
+- RNClientRace: LoserClosed stated over the reader's own close (ghost closer), StepClosesAtSight added (MA008).
+- RNPortableTx: the wrap witness split, one modulus each (MA011).
 
 ## Cross-family rows
 
