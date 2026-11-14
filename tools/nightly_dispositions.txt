@@ -31,7 +31,8 @@
 # 2026-11-13 22:00 UTC (v1.2.0 is being cut; these are recorded, not fixed).
 # Each cause names its docs/roadmap.sexp item; GUESS marks a class not yet
 # proven. Left without a row on purpose, because they are being fixed in
-# flight: nightly-toolchains v142 (sodium.c C4197), nightly-soak low-tick,
+# flight: nightly-soak low-tick (nightly-toolchains v142 was here; it has a
+# row since its fix was held out of v1.2.0),
 # nightly-ci macOS checks (fuzz seed drift), and nightly.yml macOS functional
 # (reply-opens). nightly-ci ubuntu 22.04 container and the 22.04 VM were the
 # gcc 11 warning fixed by 2b8c6106 and go green at their next scheduled run.
@@ -45,8 +46,9 @@ nightly-framework.yml	framework on rocketnet main	glenn	2026-11-14	FRAMEWORK_REA
 nightly-real-load.yml	1000 clients over the LAN	glenn	2026-11-14	no inventory file on the runner; roadmap nightly-runner-setup-gaps
 nightly-soak.yml	soak (main / windows)	glenn	2026-11-14	test_secrets_wiped_destroy_writes_only_keys waited 1800 s for the machine-wide commit lock (tests/suite_runner.h:1725); roadmap windows-commit-lock-machine-wide
 nightly-toolchains.yml	windows / v145	glenn	2026-11-14	Configure: MSVC 14.52 not installed on the runner the label picked; roadmap nightly-runner-setup-gaps
-nightly-toolchains.yml	windows / v143	glenn	2026-11-14	MSB8020: toolset v143 missing on the aws-win runner the label picked; roadmap nightly-runner-setup-gaps
-nightly-toolchains.yml	windows / v141	glenn	2026-11-14	MSB8020: toolset v141 missing on the aws-win runner the label picked (on captain v141 builds and hits rocketnet_platform.h __iso_volatile_load64, fixed elsewhere); roadmap nightly-runner-setup-gaps
+nightly-toolchains.yml	windows / v143	glenn	2026-11-14	MSB8020: toolset v143 missing on the runner the label picked (aws-win; captain has no v143 either); roadmap nightly-runner-setup-gaps
+nightly-toolchains.yml	windows / v142	glenn	2026-11-14	v142 (VS 2019) is not claimed by the docs and does not build under /WX: sodium.c C4197, then C4127, C4090 and C4706 in test sources; roadmap msvc-older-toolsets
+nightly-toolchains.yml	windows / v141	glenn	2026-11-14	v141 (VS 2017) is not claimed by the docs and does not build under /WX: rocketnet_platform.h __iso_volatile_load64 C3861, then C4307 in the loopback layout hash; on aws-win MSB8020, the toolset is missing; roadmap msvc-older-toolsets, nightly-runner-setup-gaps
 nightly-toolchains.yml	linux / clang-18	glenn	2026-11-14	exact delivery over real sockets under host load (rocketnet_functional_tests.cpp:9171 tag == num_seen; earlier 1201/1280 with SEND_FAILED=79); roadmap exact-delivery-asserts
 nightly-ubuntu-lts-vms.yml	ubuntu 24.04 vm	glenn	2026-11-14	gpg-agent fails in the cloud image verify step on the runner; roadmap nightly-runner-setup-gaps
 nightly-windows-sanitizers.yml	windows appverif	glenn	2026-11-14	APPVERIF-REFUSED: NETWORK SERVICE cannot write the HKLM IFEO key; roadmap nightly-runner-setup-gaps
