@@ -1,5 +1,13 @@
 # RNUringDriver: the io_uring server driver
 
+Historical design only: this models the one-ring io_uring driver that
+`sdk/rocketnet_server_uring_linux.cpp` was before the per-queue rewrite, where
+main submitted and reaped one ring. No code implements it now, and the code
+no longer names its actions. The current transport is a worker per queue,
+modelled by `RNUringQueueBankLayout`, `RNUringQueueSend`, `RNSendGatherLayout`,
+`RNUringQueueWorker`, `RNUringQueueReceive` and `RNUringQueueReceiveLayout`.
+The text below describes the old driver.
+
 `RNUringDriver.tla` models the io_uring server driver
 (`sdk/rocketnet_server_uring_linux.cpp`). The driver names the model's
 actions in its comments, and the `io-uring-driver` row in `COVERAGE.tsv`

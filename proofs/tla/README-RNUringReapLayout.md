@@ -1,5 +1,13 @@
 # RNUringReapLayout: the io_uring reap at the code's layout
 
+Historical design only: this models the one-ring io_uring driver that
+`sdk/rocketnet_server_uring_linux.cpp` was before the per-queue rewrite. The
+functions it names (`rocketnet_server_uring_reap_available`,
+`rocketnet_server_uring_receive_or_hold`, `rocketnet_server_uring_copy_held`)
+exist nowhere in `sdk/` now; the current transport's receive is modelled by
+`RNUringQueueWorker`, `RNUringQueueReceive` and `RNUringQueueReceiveLayout`.
+The text below describes the old driver.
+
 `RNUringReapLayout.tla` models the reap of the io_uring server transport
 (`sdk/rocketnet_server_uring_linux.cpp`) with the code's own index
 arithmetic: the completion ring the reap reads oldest first, each queue's

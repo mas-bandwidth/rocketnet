@@ -1,5 +1,10 @@
 --------------------------- MODULE RNUringReapLayout ---------------------------
 (***************************************************************************)
+(* HISTORICAL DESIGN ONLY: the one-ring io_uring driver before the         *)
+(* per-queue rewrite.  The functions named below exist nowhere in sdk/ now; *)
+(* the current transport is RNUringQueueWorker, RNUringQueueReceive and    *)
+(* RNUringQueueReceiveLayout (COVERAGE.tsv row io-uring-reap-layout).      *)
+(*                                                                         *)
 (* The io_uring server's reap at the code's layout                         *)
 (* (sdk/rocketnet_server_uring_linux.cpp rocketnet_server_uring_reap_available, *)
 (* rocketnet_server_uring_receive_or_hold, rocketnet_server_uring_copy_held). *)
