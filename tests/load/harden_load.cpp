@@ -4692,6 +4692,17 @@ int main( int argc, char ** argv )
     {
         harden_usage();
     }
-    rocketnet_term();
+    // term refuses while the library still holds an allocation (it returns
+    // LIVE_ALLOCATIONS and stays initialized): a role that leaked fails even
+    // when its verdict said PASS (TA022)
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+    {
+        fprintf( stderr, "harden_load: role=%s term_status=%s: the library still holds allocations at term\n", o.role.c_str(), rocketnet_status_name( term_status ) );
+        if ( result == 0 )
+        {
+            result = 1;
+        }
+    }
     return result;
 }

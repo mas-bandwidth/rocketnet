@@ -1132,7 +1132,13 @@ int main( int argc, char ** argv )
     rocketnet_server_acks_destroy( server.acks );
     rocketnet_network_simulator_destroy( simulator );
 
-    rocketnet_term();
+    // term refuses while the library still holds an allocation: a run that
+    // leaked fails (TA022)
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "soak_sim: FAILED term_status=%s: the library still holds allocations at term\n", rocketnet_status_name( term_status ) );
+    }
 
-    return ( failures || hangs || terminals || profile_refused || no_delivery ) ? 1 : 0;
+    return ( failures || hangs || terminals || profile_refused || no_delivery || term_status != ROCKETNET_STATUS_OK ) ? 1 : 0;
 }

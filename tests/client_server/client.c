@@ -1681,7 +1681,12 @@ static int print_dev_tokens( int argc, char ** argv )
         printf( "%s\n", connect_token );
     }
 
-    rocketnet_term();
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+    {
+        fprintf( stderr, "client: term_status=%s: the library still holds allocations at term\n", rocketnet_status_name( term_status ) );
+        return 1;
+    }
     return 0;
 }
 
@@ -1803,7 +1808,14 @@ int main( int argc, char ** argv )
 
     rn_native_client_transport_stop_and_destroy( client );
 
-    rocketnet_term();
+    // term refuses while the library still holds an allocation: a run that
+    // leaked fails (TA022)
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "client: term_status=%s: the library still holds allocations at term\n", rocketnet_status_name( term_status ) );
+        return 1;
+    }
 
     return 0;
 }
