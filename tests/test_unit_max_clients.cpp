@@ -338,18 +338,19 @@ REGISTER_UNIT_TEST( test_server_plan_follows_configured_max_clients );
 
 static void test_server_plan_grows_with_max_clients_on_every_transport()
 {
-    const char * transports[] = { "portable",
+    const char * transports[] = {
+        "portable",
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-                                  "gso",
+        "gso",
 #if defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING
-                                  "io_uring",
+        "io_uring",
 #endif // #if defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING
 #if ROCKETNET_XDP
-                                  "xdp",
+        "xdp",
 #endif // #if ROCKETNET_XDP
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-                                  "iocp",
+        "iocp",
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     };
     const int counts[] = { 1, 8, 64, 512, 1000 };
