@@ -2885,11 +2885,14 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             // the chunk, so the same call goes again once from the same
             // message, batched, as the sendmmsg paths do. A second pending
             // error at that message drops it, counted in send_failures, and
-            // the call goes on from the next one; no message is tried a third
-            // time. Nothing else is counted, and the pump stays batched. Had
-            // xnu delivered a prefix before the error, the call again repeats
-            // it: duplicates the receiver's replay protection eats, as for the
-            // replay below.
+            // the call goes on from the next one; no pending error gives a
+            // message a third try (a refusal after one takes the replay below,
+            // as any refusal does). Nothing else is counted, and the pump
+            // stays batched. This takes a pending error to mean the call sent
+            // nothing, as sosend's so_error check before it sends does; were
+            // a prefix delivered first, the call again would repeat it
+            // (duplicates the receiver's replay protection eats) and a drop
+            // could count a message that had arrived.
 
             if ( socket->connected && rocketnet_platform_send_error_is_pending( error ) )
             {
