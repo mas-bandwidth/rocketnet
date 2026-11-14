@@ -60,14 +60,12 @@ static bool rn_unreliable_member( const rn_send_descriptor_t * descriptor )
 // and a push that finds the ring full drops them all in one pass, at most
 // once per queue-many pushes.
 //
-// proofs/tla/RNChannelQueues.tla carries the same queue with an epoch per entry: an
-// entry's ticket is its epoch. EnqueueUnreliable is rn_unreliable_push, the
-// tail entry stamped with the descriptor's newest ticket. StaleEpoch is the
-// descriptor taking another ticket or leaving the queue, so the entry's ticket
-// is no longer current (rn_unreliable_entry_live). Expire is the entries of a
-// stale ticket dropped with the rest kept in order: the head skipping them in
-// rn_unreliable_sync, the full-ring pass in rn_unreliable_push, and every walk
-// passing them by.
+// The tail entry is stamped with the descriptor's newest ticket
+// (rn_unreliable_push); the descriptor taking another ticket or leaving the
+// queue makes the entry's ticket no longer current (rn_unreliable_entry_live),
+// and the entries of a stale ticket are dropped with the rest kept in order:
+// the head skipping them in rn_unreliable_sync, the full-ring pass in
+// rn_unreliable_push, and every walk passing them by.
 //
 // proofs/tla/RNUnreliableRingLayout.tla carries the ring at its layout with
 // tickets that wrap: Push (rn_unreliable_push, with rn_unreliable_renumber and
@@ -1493,7 +1491,7 @@ static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_ite
 }
 
 // the written records' room returns to the region (9.3 step 3): one forward
-// pass, not one scan per taken record (proofs/tla/RNChannelQueues.tla)
+// pass, not one scan per taken record (proofs/tla/RNUnreliableRingLayout.tla WalkBegin, WalkNext and Unlink)
 static void rn_endpoint_unreliable_unlink_taken( rn_endpoint_t * endpoint, const struct rn_endpoint_taken_t * taken )
 {
     rn_region_t * region = endpoint->region;
