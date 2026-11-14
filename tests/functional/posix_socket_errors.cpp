@@ -1442,6 +1442,12 @@ static void posix_connected_send_pending_icmp( int ipv6, const char * pump, int 
         {
             const uint64_t before = rocketnet_platform_socket_send_failures( socket );
 
+            // the loss gate's window opens before the sends: its evidence is
+            // what this process's sockets sent and lost after the begin, so a
+            // begin after the sends would never cover a datagram they lost
+            struct rocketnet_loss_gate_t gate;
+            rocketnet_loss_gate_begin( &gate, "posix_connected_send_pending_icmp" );
+
             rocketnet_platform_socket_fail_next_sends( socket, pending, error );
             int consumed = count;
             if ( call == 0 )
@@ -1480,8 +1486,6 @@ static void posix_connected_send_pending_icmp( int ipv6, const char * pump, int 
 
             if ( count - lost > 0 )
             {
-                struct rocketnet_loss_gate_t gate;
-                rocketnet_loss_gate_begin( &gate, "posix_connected_send_pending_icmp" );
                 posix_check( posix_receive_each( socket, &gate, sends + lost, count - lost ) == count - lost );
             }
             rocketnet_platform_sleep( 0.01 );

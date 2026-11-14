@@ -169,8 +169,9 @@ static inline uint64_t rocketnet_kernel_drops_table( const char * path, const un
 //
 // txpackets counts a datagram at udp_output, rxpackets when udp_input hands
 // it to the socket. A loopback datagram one of these sockets sent that none
-// of them received was lost between the two, where no other counter of the
-// kernel's sees it: measured on the studio, 2026-11-12, under six
+// of them received was lost between the two, where udps_fullsock and droptap
+// do not see it (lo0's drop count does, above): measured on the studio,
+// 2026-11-12, under six
 // functional_production suites at once, a 300-datagram burst lost 272
 // datagrams of 6000 with udps_fullsock and droptap's "DLIL burst limit
 // exceeded" unmoved, and sent minus received by these counts was exactly
