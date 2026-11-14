@@ -212,8 +212,13 @@ static void test_rio_transport_corrupt_queue_is_named_once()
 
 REGISTER_UNIT_TEST( test_rio_transport_corrupt_queue_is_named_once );
 
-// A lane worker whose pin the platform refuses counts it in RIO_PIN_REFUSALS
-// (read by value), and a lane that asked for no placement counts none.
+// A lane worker whose pin the platform refuses counts it in RIO_PIN_REFUSALS,
+// and a lane that asked for no placement counts none. What is read is that one
+// lane's count (rocketnet_rio_lane_counters, by value). The two roll-ups
+// above it, the sum over lanes (rocketnet_server_rio_counters) and the
+// server's copy of the row (rocketnet_server_transport_counters), are not read
+// here: the seam builds a lone lane, and a rio transport with lanes has no
+// unit seam (that takes an sdk seam; see the roadmap).
 static void test_rio_transport_pin_refusal_is_counted()
 {
     uint64_t not_asked = 99;
