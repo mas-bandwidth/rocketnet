@@ -78,7 +78,8 @@ enum rocketnet_receive_drop_t
 
     // never returned by the prefilter: counted by the transport itself for a
     // receive it completed but cannot read as a datagram (an error
-    // completion, a source address it cannot read). Feeds
+    // completion, a completion naming no provided buffer, a source address
+    // it cannot read). Feeds
     // ROCKETNET_COUNTER_RECEIVE_FAILED.
     ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED,
 

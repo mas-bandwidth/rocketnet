@@ -221,7 +221,7 @@ static void test_transport_results_client_batch_over_count_is_a_fault()
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
     rocketnet_unit_check( io.transport_faults == 1 );
 
-    rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
+    const rocketnet_client_io_received_t * received = rocketnet_client_io_rig_expose( transport_results_rig, &io );
     rocketnet_unit_check( received != NULL );
     rocketnet_unit_check( received->num_packets == lie.max_seen );
     rocketnet_unit_check( received->packet_bytes[0] == 4 );
@@ -245,7 +245,7 @@ static void test_transport_results_client_negative_byte_count_is_a_fault()
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_IDLE );
     rocketnet_unit_check( io.transport_faults == 1 );
-    rocketnet_unit_check( rocketnet_client_io_expose( &io ) == NULL );
+    rocketnet_unit_check( rocketnet_client_io_rig_expose( transport_results_rig, &io ) == NULL );
 
     transport_results_close_io( &transport, buffers );
 }
@@ -271,7 +271,7 @@ static void test_transport_results_client_batch_negative_total_is_a_fault()
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_IDLE );
     rocketnet_unit_check( lie.calls == 1 );
     rocketnet_unit_check( io.transport_faults == 1 );
-    rocketnet_unit_check( rocketnet_client_io_expose( &io ) == NULL );
+    rocketnet_unit_check( rocketnet_client_io_rig_expose( transport_results_rig, &io ) == NULL );
 
     transport_results_close_io( &transport, buffers );
 }
@@ -291,7 +291,7 @@ static void test_transport_results_client_oversized_byte_count_is_a_fault()
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_IDLE );
     rocketnet_unit_check( io.transport_faults == 1 );
-    rocketnet_unit_check( rocketnet_client_io_expose( &io ) == NULL );
+    rocketnet_unit_check( rocketnet_client_io_rig_expose( transport_results_rig, &io ) == NULL );
     rocketnet_unit_check( lie.max_seen == ROCKETNET_RECEIVE_PACKET_BYTES );
 
     transport_results_close_io( &transport, buffers );
@@ -316,7 +316,7 @@ static void test_transport_results_client_batch_refuses_a_bad_byte_count()
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
     rocketnet_unit_check( io.transport_faults == 1 );
 
-    rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
+    const rocketnet_client_io_received_t * received = rocketnet_client_io_rig_expose( transport_results_rig, &io );
     rocketnet_unit_check( received != NULL );
     rocketnet_unit_check( received->num_packets == 1 );
     rocketnet_unit_check( received->packet_bytes[0] == 4 );
@@ -343,7 +343,7 @@ static void test_transport_results_client_truncated_batch_copies_only_prefix()
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
     rocketnet_unit_check( io.transport_faults == 1 );
 
-    rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
+    const rocketnet_client_io_received_t * received = rocketnet_client_io_rig_expose( transport_results_rig, &io );
     rocketnet_unit_check( received != NULL );
     rocketnet_unit_check( received->num_packets == 2 );
     rocketnet_unit_check( received->packet_bytes[0] == ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES );
@@ -374,7 +374,7 @@ static void test_transport_results_client_batch_impossible_length_is_a_fault()
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
     rocketnet_unit_check( io.transport_faults == 1 );
 
-    rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
+    const rocketnet_client_io_received_t * received = rocketnet_client_io_rig_expose( transport_results_rig, &io );
     rocketnet_unit_check( received != NULL );
     rocketnet_unit_check( received->num_packets == 1 );
     rocketnet_unit_check( received->packet_bytes[0] == 4 );
@@ -408,7 +408,7 @@ static void test_transport_results_client_oversize_counts_at_the_fold()
         rocketnet_unit_check( io.transport_faults == 1 );
         rocketnet_unit_check( too_large == 0 );
 
-        rocketnet_client_io_expose( &io );
+        (void) rocketnet_client_io_rig_expose( transport_results_rig, &io );
         rocketnet_client_io_fold_counters( &io );
         rocketnet_unit_check( too_large == 1 );
 

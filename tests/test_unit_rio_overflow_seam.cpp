@@ -29,6 +29,7 @@ bool rocketnet_server_rio_test_stop_counts_stranded( uint64_t * stopped_out, voi
 extern const rocketnet_transport_backend_t rocketnet_rio_transport;
 bool rocketnet_server_rio_test_corrupt_queue( bool * stopped_out, uint64_t * corrupt_out );
 bool rocketnet_server_rio_test_pin_refusal( uint64_t * not_asked_out, uint64_t * refused_out, int * placement_out );
+bool rocketnet_server_rio_test_receive_source( uint16_t port, int * banked, uint64_t * failed );
 
 static void test_rio_transport_overflow_seam()
 {
@@ -183,8 +184,9 @@ static void test_rio_transport_create_failure_unposted_frees_the_lane()
 
 REGISTER_UNIT_TEST( test_rio_transport_create_failure_unposted_frees_the_lane );
 
-// At stop, three datagrams completed after the close, three in the fill
-// bank and two in a ready bank main never took: all eight are counted as
+// At stop, three datagrams completed after the close and five banked that
+// main never returned (the rest of the bank the worker left, of main's own
+// bank, and the worker's uncommitted ones): all eight are counted as
 // RECEIVE_DROP_STOPPED and no other reason moves (a fake kernel, no socket,
 // no worker thread, no clock).
 static void test_rio_transport_stop_counts_stranded_datagrams()
@@ -226,5 +228,26 @@ static void test_rio_transport_pin_refusal_is_counted()
 }
 
 REGISTER_UNIT_TEST( test_rio_transport_pin_refusal_is_counted );
+
+// A valid datagram from a native IPv4 source on an IPv4 lane, through the
+// production receive completion: from port 0 it is refused by the receive
+// rule (rocketnet_address_accept_received_source), counted in
+// RIO_RECEIVE_FAILED and never banked; from port 40000 it is banked.
+static void test_rio_transport_source_port_zero_refused()
+{
+    int banked = -1;
+    uint64_t failed = 99;
+    check( rocketnet_server_rio_test_receive_source( 0, &banked, &failed ) );
+    check( banked == 0 );
+    check( failed == 1 );
+
+    banked = -1;
+    failed = 99;
+    check( rocketnet_server_rio_test_receive_source( 40000, &banked, &failed ) );
+    check( banked == 1 );
+    check( failed == 0 );
+}
+
+REGISTER_UNIT_TEST( test_rio_transport_source_port_zero_refused );
 
 #endif // #if defined( _WIN32 )

@@ -182,6 +182,10 @@ void rocketnet_server_msgx_commit( struct rocketnet_server_msgx_t * msgx );
 // table's open client sockets (main thread).
 void rocketnet_server_msgx_test_fail_sends( struct rocketnet_server_msgx_t * msgx, int count, int error );
 int rocketnet_server_msgx_test_sockets_open( struct rocketnet_server_msgx_t * msgx );
+// receive_source drives one valid datagram from 127.0.0.1:port through the
+// production drain of an IPv4 transport with a fake recvmsg_x and no
+// socket: banked is what reached the worker bank, failed its RECEIVE_FAILED
+bool rocketnet_server_msgx_test_receive_source( uint16_t port, int * banked, uint64_t * failed );
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_MSGX_H

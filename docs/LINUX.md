@@ -120,7 +120,13 @@ The Linux server `auto` order in both builds is **xdp → gso → io_uring → p
 **gso → portable** (`sdk/rocketnet_drivers.inc`). The Linux portable transport
 batches with `sendmmsg`/`recvmmsg` and waits on an eventfd beside its socket
 (`sdk/rocketnet_driver_builtin.cpp`,
-`sdk/rocketnet_platform.cpp`).
+`sdk/rocketnet_platform.cpp`). Its server's two workers pin themselves as the
+`gso` workers do: the send worker to cpu `num_os_cpus`, the receive worker to
+`num_os_cpus + 1` (cpus 1 and 2 by default; cpus 0 and 1 with
+`portable_reserve_cpu_0` set to `ROCKETNET_CPU_0_NOT_RESERVED`). A refused pin
+is warned, counted in `PORTABLE_PIN_REFUSALS`, and the worker is confined to
+the cpus from `num_os_cpus` up when cpu 0 is reserved; the portable workers
+ask for no `SCHED_RR`. The `msgx` name on Linux is this server.
 
 Because `gso` ranks ahead of `io_uring`, `auto` grants `io_uring` only on a
 host where `gso` refuses. To run `io_uring`, pin it (section 3).
@@ -207,9 +213,13 @@ is refused at create, never clamped (`sdk/rocketnet_network_threads.h`).
 does all of its queue's kernel-facing work: it drains its socket's receives
 and sends its queue's staged packets. Worker `q` pins itself to cpu
 `num_os_cpus + q`, so with the default `num_os_cpus` of 1 the workers take
-cpus 1 .. `num_gso_workers` and cpu 0 stays the operating system's; a refused
-pin is warned, counted in `GSO_PIN_REFUSALS` and the worker is confined to the
-cpus from `num_os_cpus` up (`sdk/rocketnet_server_gso_linux.cpp`). Sends are
+cpus 1 .. `num_gso_workers` and cpu 0 stays the operating system's
+(`gso_reserve_cpu_0`, `ROCKETNET_SERVER_GSO_RESERVE_CPU_0`, set to
+`ROCKETNET_CPU_0_NOT_RESERVED` puts worker `q` on cpu `q` instead). A pinned
+worker runs `SCHED_RR` at the minimum priority; a refused pin is warned,
+counted in `GSO_PIN_REFUSALS`, asks for no `SCHED_RR`, and the worker is
+confined to the cpus from `num_os_cpus` up when cpu 0 is reserved
+(`sdk/rocketnet_server_gso_linux.cpp`). Sends are
 per queue as well: a destination hashes to one queue and is staged in that
 queue's three send banks of `ROCKETNET_GSO_SEND_QUEUE_SIZE` slots, so more
 workers add send room (`sdk/rocketnet_server_gso.h`). See
@@ -245,10 +255,12 @@ above that (`sdk/rocketnet_network_threads.h`). **Threads:** one worker
 thread per socket, and nothing else. Each worker owns its own ring and does
 all of its queue's kernel-facing send and receive; the main thread never
 touches a ring. Worker `q` pins itself to cpu `num_os_cpus + q` (cpus 1 ..
-`num_io_uring_workers` by default, cpu 0 left to the operating system) and
-runs `SCHED_RR` at the minimum priority, as the XDP threads do; a refused pin
-is warned, counted in `URING_PIN_REFUSALS` and the worker is confined to the
-cpus from `num_os_cpus` up (`sdk/rocketnet_server_uring.h`,
+`num_io_uring_workers` by default, cpu 0 left to the operating system;
+`io_uring_reserve_cpu_0` set to `ROCKETNET_CPU_0_NOT_RESERVED` puts it on cpu
+`q`) and runs `SCHED_RR` at the minimum priority, as the XDP threads do; a
+refused pin is warned, counted in `URING_PIN_REFUSALS`, asks for no
+`SCHED_RR`, and the worker is confined to the cpus from `num_os_cpus` up when
+cpu 0 is reserved (`sdk/rocketnet_server_uring.h`,
 `sdk/rocketnet_server_uring_linux.cpp`). A destination hashes to one queue
 and is staged in that queue's send banks, so more workers add send room. See
 [staging and drain bounds](TRANSPORT-INTERNALS.md#staging-and-drain-bounds)
@@ -282,17 +294,16 @@ bank to the worker and never waits on the kernel
 
 - liburing at build time (section 1). A build without it keeps the row with no
   platform, so the name is skipped (`TRANSPORTS.md`).
-- A kernel that accepts the ring, `SENDMSG`, `RECVMSG`, `ASYNC_CANCEL` and a
-  provided buffer ring. `rocketnet_server_uring_available()` probes this once
+- A kernel that accepts the ring, `SENDMSG`, `RECVMSG`, `ASYNC_CANCEL`, a
+  provided buffer ring and a multishot `RECVMSG` over it (Linux 6.0 or later).
+  `rocketnet_server_uring_available()` probes this once, arming a multishot
+  receive on an unbound socket and cancelling it
   (`sdk/rocketnet_server_uring_linux.cpp`); on no, create logs
-  `io_uring transport refused: this kernel does not accept the io_uring ring, opcodes or provided buffer ring the transport needs`
+  `io_uring transport refused: this kernel does not accept the io_uring ring, opcodes, provided buffer ring or multishot receive (Linux 6.0) the transport needs`
   and the next transport is tried (`sdk/rocketnet_server_uring_linux.cpp`).
-  Multishot receive must be in the liburing headers the build used
-  (`sdk/rocketnet_server_uring_linux.cpp`), and the running kernel must
-  accept a multishot `RECVMSG` (Linux 6.0 or later). The create probe does
-  not test that: on a kernel with provided buffer rings but no multishot
-  receive (5.19) the transport is created and receives nothing, so pin
-  another transport there.
+  A kernel with provided buffer rings but no multishot receive (5.19) is
+  refused this way. Multishot receive must also be in the liburing headers
+  the build used (`sdk/rocketnet_server_uring_linux.cpp`).
 - Kernel policy that permits this process to create rings. Where
   `/proc/sys/kernel/io_uring_disabled` exists, 0 permits all users, 1 permits
   processes with `CAP_SYS_ADMIN` or membership in `io_uring_group`, and 2

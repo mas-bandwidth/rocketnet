@@ -513,11 +513,10 @@ static uint64_t threaded_next_h( uint64_t received, bool oversize_every_97th )
     return received + received / 96;
 }
 
-static void threaded_check_buffer( threaded_rig_t * rig, const rocketnet_client_receive_buffer_t * buffer, bool oversize_every_97th )
+static void threaded_check_range( threaded_rig_t * rig, const rocketnet_client_receive_buffer_t * buffer, int first, int end, bool oversize_every_97th )
 {
-    threaded_check( buffer->num_packets > 0 );
-    threaded_check( buffer->num_packets <= ROCKETNET_NUM_CLIENT_PACKETS );
-    for ( int i = 0; i < buffer->num_packets; i++ )
+    threaded_check( first >= 0 && first < end && end <= ROCKETNET_NUM_CLIENT_PACKETS );
+    for ( int i = first; i < end; i++ )
     {
         const uint64_t h = threaded_next_h( rig->received, oversize_every_97th );
         const int bytes = threaded_receive_bytes( h );
@@ -538,13 +537,13 @@ static void threaded_check_buffer( threaded_rig_t * rig, const rocketnet_client_
     }
 }
 
-// exposes, checks and returns buffers until every pushed datagram within the
-// size limit has been seen. A NULL expose (nothing ready, or the I/O thread
-// holding the mutex) waits for the I/O thread's next wait entry, which comes
-// only after the drain and the publish (or owed publish) of its step. It
-// never waits for the inbound queue to empty: with a buffer ready and the
-// next one full, the I/O thread waits on the wake alone (FullWaitsOnWake)
-// until this thread's exchange takes the ready one.
+// exposes and checks records until every pushed datagram within the size
+// limit has been seen. An empty expose (nothing committed past what was read,
+// or the I/O thread holding the mutex) waits for the I/O thread's next wait
+// entry, which comes only after the drain and the commit of its step. It
+// never waits for the inbound queue to empty: with its buffer full and this
+// thread not yet started on it, the I/O thread waits on the wake alone
+// (FullWaitsOnWake) until this thread's expose starts on it.
 
 static void threaded_receive_all( threaded_rig_t * rig, bool oversize_every_97th )
 {
@@ -556,11 +555,13 @@ static void threaded_receive_all( threaded_rig_t * rig, bool oversize_every_97th
             waits_before = rig->fake.wait_entries;
         }
 
-        rocketnet_client_receive_buffer_t * buffer = rocketnet_client_io_expose( &rig->io );
-        if ( buffer )
+        struct rocketnet_client_receive_view_t view;
+        if ( rocketnet_client_io_expose( &rig->io, &view, ROCKETNET_NUM_CLIENT_PACKETS ) > 0 )
         {
-            threaded_check_buffer( rig, buffer, oversize_every_97th );
-            rocketnet_client_io_return( &rig->io );
+            for ( int r = 0; r < view.num_ranges; r++ )
+            {
+                threaded_check_range( rig, view.buffer[r], view.first[r], view.end[r], oversize_every_97th );
+            }
             continue;
         }
 

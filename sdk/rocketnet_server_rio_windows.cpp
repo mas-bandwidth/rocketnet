@@ -19,6 +19,11 @@
 #include "rocketnet_rio_layout.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_receive_prefilter.h"
+#include "rocketnet_read_write.h"
+#include "rocketnet_receive_handoff.h"
+#if ROCKETNET_DEV
+#include "rocketnet_receive_delivery_check.h"
+#endif // #if ROCKETNET_DEV
 #include <ws2tcpip.h>
 #include <mswsock.h>
 #include <mstcpip.h>
@@ -81,9 +86,10 @@ struct rocketnet_rio_bank_t
     int capacity;
 };
 
-// Receive banks: the worker's fill bank, the ready FIFO, the banks main
-// exposed last call and the free banks. Four, as the IOCP workers use.
-#define ROCKETNET_RIO_RECEIVE_BANKS 4
+// Receive banks: the three buffers of the receive handoff
+// (sdk/rocketnet_receive_handoff.h): the worker's, main's and its tail, or
+// the free one while main reads the worker's own.
+#define ROCKETNET_RIO_RECEIVE_BANKS ROCKETNET_RECEIVE_HANDOFF_BUFFERS
 
 // The send phase states, written only under the mutex (proofs/tla/RNRioWorker.tla):
 // FILL is open to fill threads, READY is handed to the worker, POSTED is the
@@ -100,9 +106,10 @@ struct rocketnet_rio_bank_t
 #pragma warning( disable : 4324 )
 #endif // #if defined( _MSC_VER )
 // where a lane's receive path waits, logged per lane at destroy: a worker pass
-// that found the fill bank full (no free bank), a pass that took a whole lane of
-// receive completions (the kernel had none posted), and a main receive call that
-// left a ready bank for the next update (the process view was full)
+// that found the worker's bank full (it could not move on), a pass that took a
+// whole lane of receive completions (the kernel had none posted), and a main
+// receive call that left banked datagrams for the next update (the process
+// view was full)
 enum
 {
     ROCKETNET_RIO_WAIT_RECEIVE_BANK,
@@ -196,22 +203,21 @@ struct rocketnet_rio_lane_t
     // send, worker only: deferred sends posted and not yet committed
     bool uncommitted = false;
 
-    // receive, under the mutex: the model's free and ready
-    int free_banks[ROCKETNET_RIO_RECEIVE_BANKS];
-    int free_count = 0;
-    int ready_banks[ROCKETNET_RIO_RECEIVE_BANKS];
-    int ready_head = 0;
-    int ready_count = 0;
-    // receive, main only: the banks process_packets exposes until the next call
-    int exposed_banks[ROCKETNET_RIO_RECEIVE_BANKS];
-    int exposed_count = 0;
+    // receive: the handoff over banks[] (sdk/rocketnet_receive_handoff.h).
+    // Its roles and committed counts move under the mutex; its cursors and
+    // limits are main's alone. The worker appends to banks[worker] and
+    // commits its count at the end of each pass; main reads the bank the
+    // worker left, then the worker's own up to the committed count.
+    // stopped_counted is main's: what the worker banked that main never
+    // returned is counted once, when main first finds the worker exited.
+    struct rocketnet_receive_handoff_t receive_handoff = {};
+    bool stopped_counted = false;
 
-    // receive, worker only: the model's fill bank and posted slices (atomic
-    // only so pending can read the count). A slice is posted, completed in
-    // the queue, or in the retry list after a refused re-post.
+    // receive, worker only: the posted slices (atomic only so pending can
+    // read the count). A slice is posted, completed in the queue, or in the
+    // retry list after a refused re-post.
     std::atomic<int> posted_receives{ 0 };
     rocketnet_rio_bank_t banks[ROCKETNET_RIO_RECEIVE_BANKS] = {};
-    int fill_bank = 0;
     int * retry_slices = NULL;                  // [receives]
     std::atomic<int> num_retry{ 0 };
 
@@ -429,7 +435,7 @@ static bool rocketnet_rio_address_read( const SOCKADDR_INET * in, bool dual_stac
     if ( in->si_family == AF_INET )
     {
         rocketnet_platform_sockaddr_in_to_address( &in->Ipv4, address );
-        return true;
+        return rocketnet_address_accept_received_source( address, dual_stack );
     }
 
     if ( in->si_family == AF_INET6 )
@@ -828,20 +834,61 @@ static void rocketnet_rio_lane_stop( rocketnet_rio_lane_t * rio )
     }
 }
 
-// proofs/tla/RNRioWorker.tla Poll: main polls stopped, which changes nothing.
-// The worker reports stopped only after its last drain pass. Before the
-// worker exists (create's failure path) the drain runs here, one pass a call.
+// proofs/tla/RNRioWorker.tla StopCount: main, once, when it first finds the
+// worker stopped (its acquire of exited), so main owns every bank. What the
+// worker banked that main never returned (the rest of the bank the worker
+// left, main's bank past its cursor, committed or not, and the worker's own
+// bank when it had moved on) is counted RECEIVE_DROP_STOPPED (the public row
+// RECEIVE_DROPPED_STOPPED), so a datagram the socket delivered that main never
+// took is counted there. Main takes nothing after stop
+// (rocketnet_rio_lane_receive_packets), and the count is made once.
+static void rocketnet_rio_count_stopped( rocketnet_rio_lane_t * rio )
+{
+    if ( rio->stopped_counted )
+    {
+        return;
+    }
+    rio->stopped_counted = true;
+
+    struct rocketnet_receive_handoff_t * handoff = &rio->receive_handoff;
+    uint64_t datagrams = handoff->tail_end - handoff->tail_cursor;
+    handoff->tail_cursor = handoff->tail_end;
+
+    rocketnet_rio_bank_t * held = &rio->banks[handoff->main];
+    if ( handoff->main_cursor < (uint32_t) held->num_packets )
+    {
+        datagrams += (uint32_t) held->num_packets - handoff->main_cursor;
+    }
+    handoff->main_cursor = (uint32_t) held->num_packets;
+    handoff->main_limit = handoff->main_cursor;
+
+    if ( handoff->worker != handoff->main )
+    {
+        datagrams += (uint64_t) rio->banks[handoff->worker].num_packets;
+    }
+
+    if ( datagrams )
+    {
+        rocketnet_receive_drop_tally_count( rio->drops, ROCKETNET_RECEIVE_DROP_STOPPED, datagrams );
+    }
+}
+
+// proofs/tla/RNRioWorker.tla Poll: main polls stopped, which changes nothing
+// but the one StopCount. The worker reports stopped only after its last drain
+// pass. Before the worker exists (create's failure path) the drain runs here,
+// one pass a call.
 static bool rocketnet_rio_lane_stopped( rocketnet_rio_lane_t * rio )
 {
     if ( !rio || !rio->stopping.load( std::memory_order_acquire ) )
     {
         return false;
     }
-    if ( rio->thread )
+    const bool stopped = rio->thread ? rio->exited.load( std::memory_order_acquire ) : rocketnet_rio_stop_pass( rio );
+    if ( stopped )
     {
-        return rio->exited.load( std::memory_order_acquire );
+        rocketnet_rio_count_stopped( rio );
     }
-    return rocketnet_rio_stop_pass( rio );
+    return stopped;
 }
 
 // proofs/tla/RNRioWorker.tla Destroy: the registered region is freed only after stopped.
@@ -946,7 +993,7 @@ static void rocketnet_rio_lane_destroy( rocketnet_rio_lane_t * rio )
 }
 
 // The carves of the transport's sized allocation for max_clients: the send
-// slots' bytes, the four receive banks, the retry list and the process view.
+// slots' bytes, the three receive banks, the retry list and the process view.
 // Create and the memory plan both take this layout.
 struct rocketnet_rio_sized_layout_t
 {
@@ -1011,10 +1058,9 @@ static void rocketnet_rio_sized_bind( rocketnet_rio_lane_t * rio, uint8_t * base
     rio->drops = new ( base + layout->drops ) rocketnet_receive_drop_tally_t();
     rocketnet_receive_drop_tally_reset( rio->drops );
 
-    // RNRioWorker Init: bank 0 fills, every other bank is free
-    // proofs/tla/RNBankFifoLayout.tla Init: the loop pushes banks 1 .. N - 1 on the free stack.
+    // RNRioWorker Init and proofs/tla/RNReceiveHandoff.tla Init: main and
+    // the worker share bank 0, bank 1 is free, bank 2 main's finished tail
 
-    rio->free_count = 0;
     for ( int i = 0; i < ROCKETNET_RIO_RECEIVE_BANKS; ++i )
     {
         rocketnet_rio_bank_t * bank = &rio->banks[i];
@@ -1023,11 +1069,9 @@ static void rocketnet_rio_sized_bind( rocketnet_rio_lane_t * rio, uint8_t * base
         bank->packet_bytes = (int *) ( base + layout->bank_packet_bytes[i] );
         bank->num_packets = 0;
         bank->capacity = layout->receives;
-        if ( i > 0 )
-        {
-            rio->free_banks[rio->free_count++] = i;
-        }
     }
+    rocketnet_receive_handoff_init( &rio->receive_handoff );
+    rio->stopped_counted = false;
 }
 
 // The transport: its lanes. Lane 0 binds first and its process view is the
@@ -1865,9 +1909,16 @@ static void rocketnet_rio_post_phase( rocketnet_rio_lane_t * rio, int phase, int
     rocketnet_rio_commit( rio );
 }
 
+// the bank the worker appends to: only the worker changes the handoff's
+// worker index (rocketnet_receive_handoff_commit, under the mutex)
+static rocketnet_rio_bank_t * rocketnet_rio_worker_bank( rocketnet_rio_lane_t * rio )
+{
+    return &rio->banks[rio->receive_handoff.worker];
+}
+
 // proofs/tla/RNRioWorker.tla WDequeue for one receive completion: a failed status counts
 // RECEIVE_FAILED; a datagram is checked against the size bounds and copied
-// into the fill bank (the dequeue never takes more completions than the bank
+// into the worker's bank (the dequeue never takes more completions than the bank
 // has room for); then the slice is re-posted, or waits in the retry list
 static void rocketnet_rio_complete_receive( rocketnet_rio_lane_t * rio, const RIORESULT * result )
 {
@@ -1907,7 +1958,7 @@ static void rocketnet_rio_complete_receive( rocketnet_rio_lane_t * rio, const RI
     {
         const int bytes = (int) result->BytesTransferred;
         rocketnet_address_t from;
-        rocketnet_rio_bank_t * bank = &rio->banks[rio->fill_bank];
+        rocketnet_rio_bank_t * bank = rocketnet_rio_worker_bank( rio );
 
         if ( bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES || bytes > ROCKETNET_RECEIVE_CEILING )
         {
@@ -1991,14 +2042,14 @@ static void rocketnet_rio_retry_receives( rocketnet_rio_lane_t * rio )
 }
 
 // proofs/tla/RNRioWorker.tla WDequeue, second half: every available receive completion up
-// to the fill bank's room, and at most one bank's worth of completions a pass
+// to the worker bank's room, and at most one bank's worth of completions a pass
 // (receives), so a flood the prefilter refuses cannot hold the worker from its
 // sends. A full bank leaves the rest in the queue with their slices unposted
 // (backpressure), never dropped. Returns the count.
 static int rocketnet_rio_dequeue_receive( rocketnet_rio_lane_t * rio )
 {
     int total = 0;
-    int room = rio->receives - rio->banks[rio->fill_bank].num_packets;
+    int room = rio->receives - rocketnet_rio_worker_bank( rio )->num_packets;
     int budget = rio->receives;
     if ( room == 0 )
     {
@@ -2026,7 +2077,7 @@ static int rocketnet_rio_dequeue_receive( rocketnet_rio_lane_t * rio )
         budget -= (int) count;
         // the room left is the bank's: a datagram the prefilter refused took
         // no slot, so a flood of them does not end the pass early
-        room = rio->receives - rio->banks[rio->fill_bank].num_packets;
+        room = rio->receives - rocketnet_rio_worker_bank( rio )->num_packets;
         if ( count < batch )
         {
             break;
@@ -2045,8 +2096,7 @@ static int rocketnet_rio_dequeue_receive( rocketnet_rio_lane_t * rio )
 // proofs/tla/RNRioWorker.tla WRetireFirst, WTake, WRetire and WPublish: one
 // worker pass, with WPost, WCommit and WDequeue in the calls it makes. True
 // when it did work.
-// proofs/tla/RNBankFifoLayout.tla Publish: the receive ready tail % ROCKETNET_RIO_RECEIVE_BANKS and the free
-// stack's top. proofs/tla/RNRioSendSlotLayout.tla TakeAndPost and Retire: the send_ready head % ROCKETNET_RIO_SEND_PHASES
+// proofs/tla/RNRioSendSlotLayout.tla TakeAndPost and Retire: the send_ready head % ROCKETNET_RIO_SEND_PHASES
 // and a drained posted phase idle again.
 static bool rocketnet_rio_worker_pass( rocketnet_rio_lane_t * rio )
 {
@@ -2119,18 +2169,19 @@ static bool rocketnet_rio_worker_pass( rocketnet_rio_lane_t * rio )
         progress = true;
     }
 
-    // WPublish: a non-empty fill bank for a free bank, and every drained
-    // posted phase back to main as idle
+    // WPublish (proofs/tla/RNReceiveHandoff.tla Commit): a bank holding
+    // datagrams has its count made visible to main, which reads it in place,
+    // and the worker moved to the free bank (main emptied it before freeing
+    // it) when main has started on its own; a full bank that cannot move
+    // keeps the rest in the queue (backpressure). An empty bank stays. Then
+    // every drained posted phase back to main as idle.
 
-    bool published = false;
+    const uint32_t banked = (uint32_t) rocketnet_rio_worker_bank( rio )->num_packets;
     rocketnet_platform_mutex_acquire( &rio->mutex );
 
-    if ( rio->banks[rio->fill_bank].num_packets > 0 && rio->free_count > 0 )
+    if ( banked > 0 )
     {
-        rio->ready_banks[( rio->ready_head + rio->ready_count ) % ROCKETNET_RIO_RECEIVE_BANKS] = rio->fill_bank;
-        rio->ready_count++;
-        rio->fill_bank = rio->free_banks[--rio->free_count];
-        published = true;
+        rocketnet_receive_handoff_commit( &rio->receive_handoff, banked );
     }
 
     for ( int p = 0; p < ROCKETNET_RIO_SEND_PHASES; ++p )
@@ -2141,15 +2192,11 @@ static bool rocketnet_rio_worker_pass( rocketnet_rio_lane_t * rio )
         }
     }
     rocketnet_platform_mutex_release( &rio->mutex );
-    if ( published )
-    {
-        rio->banks[rio->fill_bank].num_packets = 0;
-    }
     return progress;
 }
 
 // proofs/tla/RNRioWorker.tla WArm and WWait: nothing progressed. RIONotify on the receive
-// queue when the fill bank has room (a full bank waits for main's wake
+// queue when the worker's bank has room (a full bank waits for main's wake
 // alone), and on the send queue while sends are outstanding; RIONotify on a
 // non-empty queue sets the event at once. A refused commit or re-post waits
 // one millisecond and retries; otherwise the bounded wait tolerates a lost
@@ -2157,7 +2204,7 @@ static bool rocketnet_rio_worker_pass( rocketnet_rio_lane_t * rio )
 static void rocketnet_rio_idle_wait( rocketnet_rio_lane_t * rio )
 {
     const bool sends = rocketnet_rio_outstanding_sends( rio ) > 0;
-    if ( rio->banks[rio->fill_bank].num_packets < rio->receives )
+    if ( rocketnet_rio_worker_bank( rio )->num_packets < rio->receives )
     {
         rio->rio.RIONotify( rio->receive_cq );  // WSAEALREADY: an earlier notify is still armed
     }
@@ -2168,33 +2215,6 @@ static void rocketnet_rio_idle_wait( rocketnet_rio_lane_t * rio )
     const bool retry = rio->uncommitted || rio->num_retry.load( std::memory_order_relaxed ) > 0;
     HANDLE handles[2] = { rio->wake, rio->notify };
     WaitForMultipleObjects( 2, handles, FALSE, retry ? 1 : 50 );
-}
-
-// At the worker's exit, after its last stop pass: the datagrams banked but
-// never handed to main, in its fill bank and its ready banks (main's receive
-// takes nothing once stopping), are counted as RECEIVE_DROP_STOPPED (the public
-// row RECEIVE_DROPPED_STOPPED), so a datagram the socket delivered that main
-// never took is counted there. The banks
-// main was exposed were delivered. Each bank is emptied, so a count is never
-// taken twice; the banks keep their places (RNBankFifoLayout has no step
-// after stop).
-static void rocketnet_rio_drop_unread_banks( rocketnet_rio_lane_t * rio )
-{
-    uint64_t datagrams = 0;
-    rocketnet_platform_mutex_acquire( &rio->mutex );
-    datagrams += (uint64_t) rio->banks[rio->fill_bank].num_packets;
-    rio->banks[rio->fill_bank].num_packets = 0;
-    for ( int k = 0; k < rio->ready_count; ++k )
-    {
-        const int index = rio->ready_banks[( rio->ready_head + k ) % ROCKETNET_RIO_RECEIVE_BANKS];
-        datagrams += (uint64_t) rio->banks[index].num_packets;
-        rio->banks[index].num_packets = 0;
-    }
-    rocketnet_platform_mutex_release( &rio->mutex );
-    if ( datagrams )
-    {
-        rocketnet_receive_drop_tally_count( rio->drops, ROCKETNET_RECEIVE_DROP_STOPPED, datagrams );
-    }
 }
 
 #if ROCKETNET_DEV
@@ -2251,7 +2271,6 @@ static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument
         {
             if ( rocketnet_rio_stop_pass( rio ) )
             {
-                rocketnet_rio_drop_unread_banks( rio );
                 break;
             }
             WaitForSingleObject( rio->notify, 1 );
@@ -2267,14 +2286,31 @@ static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument
     rio->exited.store( true, std::memory_order_release );
 }
 
-// proofs/tla/RNRioWorker.tla ReceivePackets and TryFail, main: one try of the
-// mutex returns the banks exposed last call and exposes the ready banks that fit the process view,
-// oldest first; the views stay valid until the next call. A failed try
-// exposes nothing new and retains everything main owns. Main wakes the
-// worker when it returns banks to an empty free list (a worker with a full
-// fill bank may be waiting for one).
-// proofs/tla/RNBankFifoLayout.tla Release and Take: the exposed banks back on the free stack, then the
-// ready banks that fit from the ready head, MCRNBankFifoLayoutLifoExposed.cfg.
+// main's views of bank slots [*cursor, end) appended to the process view,
+// within the view's room
+static void rocketnet_rio_take_range( rocketnet_rio_lane_t * rio, const rocketnet_rio_bank_t * bank, uint32_t * cursor, uint32_t end )
+{
+    rocketnet_server_socket_process_packets_t * view = rio->view;
+    while ( *cursor < end && view->num_packets < view->capacity )
+    {
+        const uint32_t source = ( *cursor )++;
+        const int index = view->num_packets++;
+        view->from[index] = bank->from[source];
+        view->packet_bytes[index] = bank->packet_bytes[source];
+        view->packet_data[index] = bank->data[source];
+    }
+}
+
+// proofs/tla/RNRioWorker.tla ReceiveCall (ReceivePackets and TryFail), main, and
+// proofs/tla/RNReceiveHandoff.tla Call: the previous call's views have
+// expired, so a finished tail is emptied for the worker's later use; then one
+// try of the mutex brings main up to what the worker has committed
+// (rocketnet_receive_handoff_begin), and main returns the rest of the bank the
+// worker left, then the worker's own bank up to the committed count, as far
+// as the process view has room. The views stay valid until the next call. A
+// failed try leaves main returning what it already held; the next call
+// catches up. Main wakes the worker when it starts on a full bank the worker
+// could not leave (the worker then waits on the wake alone).
 // The lane appends to its view after what earlier lanes appended this call;
 // the caller empties the view first (rocketnet_server_rio_receive_packets).
 static void rocketnet_rio_lane_receive_packets( rocketnet_rio_lane_t * rio )
@@ -2283,56 +2319,35 @@ static void rocketnet_rio_lane_receive_packets( rocketnet_rio_lane_t * rio )
     {
         return;
     }
+
+    struct rocketnet_receive_handoff_t * handoff = &rio->receive_handoff;
+
+    if ( rocketnet_receive_handoff_tail_finished( handoff ) )
+    {
+        rio->banks[handoff->tail].num_packets = 0;
+    }
+
+    bool acquired = true;
 #if ROCKETNET_DEV
-    if ( rio->test_try_fails )
-    {
-        return;
-    }
+    acquired = !rio->test_try_fails;
 #endif // #if ROCKETNET_DEV
-    if ( !rocketnet_platform_mutex_try_acquire( &rio->mutex ) )
+    if ( acquired && rocketnet_platform_mutex_try_acquire( &rio->mutex ) )
     {
-        return;
-    }
-    const bool wake = rio->free_count == 0 && rio->exposed_count > 0;
-    for ( int j = 0; j < rio->exposed_count; ++j )
-    {
-        rio->free_banks[rio->free_count++] = rio->exposed_banks[j];
-    }
-    rio->exposed_count = 0;
-
-    int total = 0;
-
-    while ( rio->ready_count > 0 )
-    {
-        const int candidate = rio->ready_banks[rio->ready_head];
-        if ( rio->view->num_packets + total + rio->banks[candidate].num_packets > rio->view->capacity )
+        const int left = rocketnet_receive_handoff_begin( handoff );
+        rocketnet_platform_mutex_release( &rio->mutex );
+        if ( left >= 0 && handoff->main_limit >= (uint32_t) rio->receives )
         {
-            // the oldest ready bank waits for the next call: the process view
-            // (shared by the lanes, filled in lane order) has no room for it
-            rocketnet_rio_wait( rio, ROCKETNET_RIO_WAIT_RECEIVE_VIEW );
-            break;
+            SetEvent( rio->wake );
         }
-        rio->ready_head = ( rio->ready_head + 1 ) % ROCKETNET_RIO_RECEIVE_BANKS;
-        rio->ready_count--;
-        rio->exposed_banks[rio->exposed_count++] = candidate;
-        total += rio->banks[candidate].num_packets;
     }
 
-    rocketnet_platform_mutex_release( &rio->mutex );
-    if ( wake )
+    rocketnet_rio_take_range( rio, &rio->banks[handoff->tail], &handoff->tail_cursor, handoff->tail_end );
+    rocketnet_rio_take_range( rio, &rio->banks[handoff->main], &handoff->main_cursor, handoff->main_limit );
+    if ( handoff->tail_cursor < handoff->tail_end || handoff->main_cursor < handoff->main_limit )
     {
-        SetEvent( rio->wake );
-    }
-    for ( int j = 0; j < rio->exposed_count; ++j )
-    {
-        rocketnet_rio_bank_t * bank = &rio->banks[rio->exposed_banks[j]];
-        for ( int i = 0; i < bank->num_packets; ++i )
-        {
-            const int index = rio->view->num_packets++;
-            rio->view->from[index] = bank->from[i];
-            rio->view->packet_bytes[index] = bank->packet_bytes[i];
-            rio->view->packet_data[index] = bank->data[i];
-        }
+        // banked datagrams wait for the next call: the process view (shared
+        // by the lanes, filled in lane order) has no room for them
+        rocketnet_rio_wait( rio, ROCKETNET_RIO_WAIT_RECEIVE_VIEW );
     }
 }
 
@@ -2547,6 +2562,42 @@ bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * pack
     return true;
 }
 
+// One receive completion of a valid-size datagram from 127.0.0.1:port on an
+// IPv4 lane through the production completion step (rocketnet_rio_complete_receive):
+// banked is what reached the worker's bank of the receive handoff, failed the
+// lane's RIO_RECEIVE_FAILED.
+// The lane is stopping, so the slice is not re-posted and no kernel is asked.
+bool rocketnet_server_rio_test_receive_source( uint16_t port, int * banked, uint64_t * failed )
+{
+    if ( !banked || !failed )
+    {
+        return false;
+    }
+    rocketnet_rio_lane_t * rio = rocketnet_rio_test_fixture();
+    if ( !rio )
+    {
+        return false;
+    }
+
+    SOCKADDR_INET * address = (SOCKADDR_INET *) ( rio->region + rocketnet_rio_receive_address_offset( &rio->layout, 0 ) );
+    address->Ipv4.sin_port = htons( port );
+    rio->ipv6 = false;
+    rio->stopping.store( true, std::memory_order_release );
+
+    RIORESULT result;
+    memset( &result, 0, sizeof( result ) );
+    result.Status = 0;
+    result.BytesTransferred = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
+    result.RequestContext = (ULONGLONG) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, 0 );
+    rocketnet_rio_complete_receive( rio, &result );
+
+    *banked = rocketnet_rio_worker_bank( rio )->num_packets;
+    *failed = rio->counters[ROCKETNET_COUNTER_RIO_RECEIVE_FAILED - ROCKETNET_SERVER_RIO_FIRST_COUNTER].load( std::memory_order_relaxed );
+
+    rocketnet_rio_test_fixture_free( rio );
+    return true;
+}
+
 // The handoff seam's fake kernel: an endless receive queue that can be
 // paused, and a send queue whose deferred posts complete at commit.
 struct rocketnet_rio_handoff_test_state_t
@@ -2651,9 +2702,10 @@ static bool rocketnet_rio_test_woken( rocketnet_rio_lane_t * rio )
 }
 
 // The RNRioWorker transitions, forced in order on one thread with no socket
-// and no clock: receive backpressure with every bank full, a failed main try
-// that retains its exposed banks, the wake on a return to an empty free list,
-// and the send phase handoff that reopens a phase only when it is idle.
+// and no clock: receive backpressure with the worker's bank full and unable
+// to move, a failed main try that returns only what main held, the wake when
+// main starts on the full bank, and the send phase handoff that reopens a
+// phase only when it is idle.
 bool rocketnet_server_rio_test_worker_handoff()
 {
     rocketnet_rio_lane_t * rio = rocketnet_rio_test_fixture();
@@ -2675,58 +2727,60 @@ bool rocketnet_server_rio_test_worker_handoff()
 
     bool valid = true;
 
-    // Receive backpressure: each pass fills one bank and publishes it while a
-    // bank is free. The last bank fills with nothing free, and later passes
-    // dequeue nothing: completions stay queued, nothing is dropped.
+    // Receive backpressure (proofs/tla/RNReceiveHandoff.tla Commit): the
+    // first pass fills bank 0, which main shares at create, and moves to the
+    // free bank 1; the second fills bank 1, which cannot move while main has
+    // not started on it. Later passes dequeue nothing: completions stay
+    // queued, nothing is dropped.
 
-    for ( int pass = 0; pass < ROCKETNET_RIO_RECEIVE_BANKS; ++pass )
-    {
-        valid &= rocketnet_rio_worker_pass( rio );
-    }
-    valid &= rio->ready_count == ROCKETNET_RIO_RECEIVE_BANKS - 1 && rio->free_count == 0 &&
-             rio->banks[rio->fill_bank].num_packets == rio->receives;
+    const struct rocketnet_receive_handoff_t * handoff = &rio->receive_handoff;
+    const uint32_t receives = (uint32_t) rio->receives;
+    valid &= rocketnet_rio_worker_pass( rio );
+    valid &= rocketnet_rio_worker_pass( rio );
+    valid &= handoff->worker == 1 && handoff->main == 0 && handoff->committed[0] == receives &&
+             handoff->committed[1] == receives && rio->banks[1].num_packets == rio->receives;
     const int dequeues = state.receive_dequeues;
     valid &= !rocketnet_rio_worker_pass( rio ) && state.receive_dequeues == dequeues;
-    valid &= rio->posted_receives.load() == rio->receives && state.reposts == ROCKETNET_RIO_RECEIVE_BANKS * rio->receives;
+    valid &= rio->posted_receives.load() == rio->receives && state.reposts == 2 * rio->receives;
 
-    // Main exposes the ready banks that fit the process view, oldest first.
+    // Main returns the bank the worker left, then the worker's full bank, as
+    // far as the process view has room, and wakes the worker: it can now
+    // leave its full bank.
 
-    const int fit = rio->process.capacity / rio->receives < ROCKETNET_RIO_RECEIVE_BANKS - 1
-                        ? rio->process.capacity / rio->receives
-                        : ROCKETNET_RIO_RECEIVE_BANKS - 1;
-    const int oldest = rio->ready_banks[rio->ready_head];
+    const int both = 2 * rio->receives;
+    const int first = both < rio->process.capacity ? both : rio->process.capacity;
     rocketnet_rio_test_receive( rio );
-    valid &= rio->exposed_count == fit && rio->exposed_banks[0] == oldest &&
-             rio->process.num_packets == fit * rio->receives &&
-             rio->process.packet_data[0] == rio->banks[oldest].data[0] && !rocketnet_rio_test_woken( rio );
+    valid &= rio->process.num_packets == first && rio->process.packet_data[0] == rio->banks[0].data[0] &&
+             handoff->tail == 0 && handoff->main == 1 && rocketnet_rio_test_woken( rio );
 
-    // A failed try exposes nothing new and keeps the exposed banks main's.
+    // A failed try returns only what main already held and had not returned.
 
+    const int rest = both - first < rio->process.capacity ? both - first : rio->process.capacity;
     rio->test_try_fails = true;
     rocketnet_rio_test_receive( rio );
-    valid &= rio->process.num_packets == 0 && rio->exposed_count == fit && rio->free_count == 0;
+    valid &= rio->process.num_packets == rest && handoff->main == 1 && handoff->worker == 1;
     rio->test_try_fails = false;
 
-    // Returning banks to an empty free list wakes the worker. Its next pass
-    // publishes the full bank, and the pass after fills a free one.
+    // The woken worker's next pass commits its full bank and leaves it for
+    // the free one; the pass after fills that.
 
-    rocketnet_rio_test_receive( rio );
-    valid &= rocketnet_rio_test_woken( rio );
     rocketnet_rio_worker_pass( rio );
-    valid &= rio->ready_count == 1 && state.receive_dequeues == dequeues;
+    valid &= handoff->worker == 2 && state.receive_dequeues == dequeues;
     valid &= rocketnet_rio_worker_pass( rio ) && state.receive_dequeues > dequeues;
     state.receive_paused = true;
 
-    for ( int call = 0; call < ROCKETNET_RIO_RECEIVE_BANKS; ++call )
+    int returned = first + rest;
+    for ( int call = 0; call < 2 * ROCKETNET_RIO_RECEIVE_BANKS; ++call )
     {
         rocketnet_rio_worker_pass( rio );
         rocketnet_rio_test_receive( rio );
+        returned += rio->process.num_packets;
     }
 
     rocketnet_rio_test_receive( rio );
-    valid &= rio->ready_count == 0 && rio->exposed_count == 0 && rio->process.num_packets == 0;
+    valid &= rio->process.num_packets == 0 && returned == 3 * rio->receives;
     valid &= rio->counters[ROCKETNET_COUNTER_RIO_PACKETS_RECEIVED - ROCKETNET_SERVER_RIO_FIRST_COUNTER].load() ==
-             (uint64_t) ( ROCKETNET_RIO_RECEIVE_BANKS + 1 ) * (uint64_t) rio->receives;
+             (uint64_t) 3 * (uint64_t) rio->receives;
 
     // Send: each flush hands the fill phase and opens the next, idle phase.
 
@@ -2770,6 +2824,114 @@ bool rocketnet_server_rio_test_worker_handoff()
     rocketnet_rio_handoff_test_state = NULL;
     rocketnet_rio_test_fixture_free( rio );
 
+    return valid;
+}
+
+// The receive delivery rig (sdk/rocketnet_receive_delivery_check.h): a fake
+// kernel whose receive queue holds exactly the datagrams the script lets
+// arrive before a worker pass, each carrying its id in its first bytes.
+struct rocketnet_rio_delivery_test_t
+{
+    rocketnet_rio_lane_t * rio;
+    uint32_t first;
+    int count;
+};
+
+static rocketnet_rio_delivery_test_t * rocketnet_rio_delivery_test = NULL;
+
+static ULONG WINAPI rocketnet_rio_delivery_test_dequeue( RIO_CQ cq, PRIORESULT results, ULONG max_results )
+{
+    rocketnet_rio_delivery_test_t * fixture = rocketnet_rio_delivery_test;
+    if ( !fixture || cq != (RIO_CQ) (uintptr_t) 1 )
+    {
+        return 0;
+    }
+    rocketnet_rio_lane_t * rio = fixture->rio;
+    ULONG taken = 0;
+    while ( taken < max_results && fixture->count > 0 )
+    {
+        const uint32_t id = fixture->first++;
+        const int slice = (int) ( id % (uint32_t) rio->receives );
+        uint8_t * data = rio->region + rocketnet_rio_receive_slice_offset( &rio->layout, slice );
+        memset( data, 0, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+        uint8_t * stamp = data;
+        rocketnet_write_uint32( &stamp, id );
+        results[taken].Status = 0;
+        results[taken].BytesTransferred = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
+        results[taken].RequestContext = (ULONGLONG) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) slice );
+        fixture->count--;
+        taken++;
+    }
+    return taken;
+}
+
+static BOOL WINAPI rocketnet_rio_delivery_test_receive( RIO_RQ, PRIO_BUF, ULONG, PRIO_BUF, PRIO_BUF, PRIO_BUF, PRIO_BUF, DWORD, PVOID )
+{
+    return TRUE;
+}
+
+static const rocketnet_rio_test_function_table_t rocketnet_rio_delivery_test_functions = {
+    rocketnet_rio_delivery_test_dequeue,
+    rocketnet_rio_delivery_test_receive,
+    NULL,
+    NULL
+};
+
+// one worker pass that banks the datagrams first .. first + count - 1
+static bool rocketnet_rio_delivery_test_pass( void * user, uint32_t first, int count )
+{
+    rocketnet_rio_delivery_test_t * fixture = (rocketnet_rio_delivery_test_t *) user;
+    fixture->first = first;
+    fixture->count = count;
+    rocketnet_rio_worker_pass( fixture->rio );
+    return fixture->count == 0;
+}
+
+// one receive call of main over the lane
+static int rocketnet_rio_delivery_test_call( void * user, uint32_t * ids, int capacity )
+{
+    rocketnet_rio_delivery_test_t * fixture = (rocketnet_rio_delivery_test_t *) user;
+    rocketnet_rio_test_receive( fixture->rio );
+    const rocketnet_server_socket_process_packets_t * view = fixture->rio->view;
+    if ( view->num_packets > capacity )
+    {
+        return -1;
+    }
+    for ( int i = 0; i < view->num_packets; ++i )
+    {
+        const uint8_t * stamp = view->packet_data[i];
+        ids[i] = rocketnet_read_uint32( &stamp );
+    }
+    return view->num_packets;
+}
+
+static bool rocketnet_rio_delivery_test_reset( void * user )
+{
+    rocketnet_rio_delivery_test_t * fixture = (rocketnet_rio_delivery_test_t *) user;
+    if ( fixture->rio )
+    {
+        rocketnet_rio_test_fixture_free( fixture->rio );
+    }
+    fixture->rio = rocketnet_rio_test_fixture();
+    rocketnet_rio_test_functions = &rocketnet_rio_delivery_test_functions;
+    return fixture->rio != NULL;
+}
+
+// proofs/tla/RNReceiveHandoff.tla DeliveredByNextCall on the rio lane: every
+// receive call returns every datagram a worker pass banked before the call
+// began, stepped on this thread with a fake kernel (no socket, no worker
+// thread, no clock), over every shared script.
+bool rocketnet_server_rio_test_receive_delivery()
+{
+    rocketnet_rio_delivery_test_t fixture = { NULL, 0, 0 };
+    rocketnet_rio_delivery_test = &fixture;
+    const struct rocketnet_receive_delivery_rig_t rig = { &fixture, rocketnet_rio_delivery_test_pass, rocketnet_rio_delivery_test_call };
+    const bool valid = rocketnet_receive_delivery_check_all( &rig, "rio server", rocketnet_rio_delivery_test_reset );
+    if ( fixture.rio )
+    {
+        rocketnet_rio_test_fixture_free( fixture.rio );
+    }
+    rocketnet_rio_delivery_test = NULL;
     return valid;
 }
 
@@ -3070,10 +3232,11 @@ bool rocketnet_server_rio_test_create_failure_unposted( bool * stopped_out, int 
 }
 
 // The stop on one thread with a fake kernel: closesocket completes three
-// posted receives with a datagram and cancels the rest, three datagrams wait
-// in the fill bank and two in a ready bank main never took. The stop pass
-// counts the three completed and the worker's exit the five banked, all as
-// RECEIVE_DROP_STOPPED and nothing else; a second exit counts nothing more.
+// posted receives with a datagram and cancels the rest, and five banked
+// datagrams main never returned wait in the three banks. The stop pass counts
+// the three completed and main, when it first finds the lane stopped, the
+// five banked, all as RECEIVE_DROP_STOPPED and nothing else; a second poll
+// counts nothing more, and main's receive returns nothing after stop.
 bool rocketnet_server_rio_test_stop_counts_stranded( uint64_t * stopped_out, void ( *driver_totals )( void * transport, uint64_t * values ), uint64_t * driver_stopped_out )
 {
     rocketnet_rio_lane_t * rio = rocketnet_rio_test_fixture();
@@ -3096,17 +3259,32 @@ bool rocketnet_server_rio_test_stop_counts_stranded( uint64_t * stopped_out, voi
     rio->have_table = true;
     rio->socket = (SOCKET) 7;
 
-    const int ready = rio->fill_bank == 0 ? 1 : 0;
-    rio->banks[rio->fill_bank].num_packets = 3;
-    rio->banks[ready].num_packets = 2;
-    rio->ready_banks[rio->ready_head] = ready;
-    rio->ready_count = 1;
+    // main has returned three of the four datagrams of the bank the worker
+    // left (its tail) and two of the four committed in the bank it now reads;
+    // the worker has moved on and banked two more, not yet committed
+    struct rocketnet_receive_handoff_t * handoff = &rio->receive_handoff;
+    handoff->tail = 0;
+    handoff->main = 1;
+    handoff->worker = 2;
+    handoff->free = -1;
+    rio->banks[0].num_packets = 4;
+    handoff->committed[0] = 4;
+    handoff->tail_end = 4;
+    handoff->tail_cursor = 3;
+    rio->banks[1].num_packets = 4;
+    handoff->committed[1] = 4;
+    handoff->main_limit = 4;
+    handoff->main_cursor = 2;
+    rio->banks[2].num_packets = 2;
+    handoff->committed[2] = 0;
 
     rocketnet_rio_lane_stop( rio );
     bool valid = rocketnet_rio_stop_pass( rio );
     valid &= rio->drops->values[ROCKETNET_RECEIVE_DROP_STOPPED].load() == 3;
-    rocketnet_rio_drop_unread_banks( rio );
-    rocketnet_rio_drop_unread_banks( rio );
+    valid &= rocketnet_rio_lane_stopped( rio );
+    valid &= rocketnet_rio_lane_stopped( rio );
+    rocketnet_rio_lane_receive_packets( rio );
+    valid &= rio->process.num_packets == 0;
     *stopped_out = rio->drops->values[ROCKETNET_RECEIVE_DROP_STOPPED].load();
     for ( int i = 0; i < ROCKETNET_RECEIVE_NUM_DROPS; ++i )
     {
@@ -3126,7 +3304,6 @@ bool rocketnet_server_rio_test_stop_counts_stranded( uint64_t * stopped_out, voi
     }
     valid &= rio->posted_receives.load() == 0;
 
-    rio->ready_count = 0;
     rio->have_table = false;
     rocketnet_rio_stop_test_state = NULL;
     rocketnet_rio_test_fixture_free( rio );

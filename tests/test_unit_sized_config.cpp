@@ -573,6 +573,12 @@ static void test_sized_config_server_create_checks_the_config()
     SIZED_CONFIG_SERVER_CREATE( c.num_iocp_send_threads = ROCKETNET_IOCP_MAX_SEND_THREADS + 1, false );
     SIZED_CONFIG_SERVER_CREATE( c.num_msgx_transmit_workers = ROCKETNET_MSGX_MAX_TRANSMIT_WORKERS + 1, false );
     SIZED_CONFIG_SERVER_CREATE( c.num_msgx_transmit_workers = -1, false );
+    SIZED_CONFIG_SERVER_CREATE( c.gso_reserve_cpu_0 = -1, false );
+    SIZED_CONFIG_SERVER_CREATE( c.gso_reserve_cpu_0 = ROCKETNET_CPU_0_NOT_RESERVED + 1, false );
+    SIZED_CONFIG_SERVER_CREATE( c.io_uring_reserve_cpu_0 = -1, false );
+    SIZED_CONFIG_SERVER_CREATE( c.io_uring_reserve_cpu_0 = ROCKETNET_CPU_0_NOT_RESERVED + 1, false );
+    SIZED_CONFIG_SERVER_CREATE( c.portable_reserve_cpu_0 = -1, false );
+    SIZED_CONFIG_SERVER_CREATE( c.portable_reserve_cpu_0 = ROCKETNET_CPU_0_NOT_RESERVED + 1, false );
     SIZED_CONFIG_SERVER_CREATE( c.num_os_cpus = -1, false );
     SIZED_CONFIG_SERVER_CREATE( c.num_os_cpus = 257, false );
     SIZED_CONFIG_SERVER_CREATE( c.max_timeout_seconds = 0, false );
@@ -890,7 +896,7 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
     check( defaults.disconnect_packets_per_update == ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE );
     check( defaults.handshakes_per_update == ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE );
     check( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONFIG_BYTES_2 );
-    check( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3 && ROCKETNET_SERVER_CONFIG_BYTES_3 < ROCKETNET_SERVER_CONFIG_BYTES_4 && ROCKETNET_SERVER_CONFIG_BYTES_4 < ROCKETNET_SERVER_CONFIG_BYTES_5 && ROCKETNET_SERVER_CONFIG_BYTES_5 < ROCKETNET_SERVER_CONFIG_BYTES_6 && ROCKETNET_SERVER_CONFIG_BYTES_6 < ROCKETNET_SERVER_CONFIG_BYTES_7 && ROCKETNET_SERVER_CONFIG_BYTES_7 == sizeof( defaults ) );
+    check( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3 && ROCKETNET_SERVER_CONFIG_BYTES_3 < ROCKETNET_SERVER_CONFIG_BYTES_4 && ROCKETNET_SERVER_CONFIG_BYTES_4 < ROCKETNET_SERVER_CONFIG_BYTES_5 && ROCKETNET_SERVER_CONFIG_BYTES_5 < ROCKETNET_SERVER_CONFIG_BYTES_6 && ROCKETNET_SERVER_CONFIG_BYTES_6 < ROCKETNET_SERVER_CONFIG_BYTES_7 && ROCKETNET_SERVER_CONFIG_BYTES_7 < ROCKETNET_SERVER_CONFIG_BYTES_8 && ROCKETNET_SERVER_CONFIG_BYTES_8 == sizeof( defaults ) );
 
     struct rocketnet_server_config_t old_caller;
     memset( &old_caller, 0xCD, sizeof( old_caller ) );

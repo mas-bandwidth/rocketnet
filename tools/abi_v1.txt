@@ -297,6 +297,9 @@ fieldtype rocketnet_server_config_t num_rio_lanes int
 fieldtype rocketnet_server_config_t num_iocp_completion_workers int
 fieldtype rocketnet_server_config_t num_iocp_send_threads int
 fieldtype rocketnet_server_config_t num_msgx_transmit_workers int
+fieldtype rocketnet_server_config_t gso_reserve_cpu_0 int
+fieldtype rocketnet_server_config_t io_uring_reserve_cpu_0 int
+fieldtype rocketnet_server_config_t portable_reserve_cpu_0 int
 fieldtype rocketnet_receipt_t serial uint32_t
 fieldtype rocketnet_receipt_t status enum rocketnet_receipt_status_t
 fieldtype rocketnet_connect_token_config_t config_bytes size_t
@@ -406,7 +409,7 @@ field rocketnet_client_config_t loopback_hub 96 8
 field rocketnet_client_config_t time_callback 104 8
 field rocketnet_client_config_t step_driven 112 1
 field rocketnet_client_config_t token_epoch_unix_seconds 120 8
-struct rocketnet_server_config_t 240
+struct rocketnet_server_config_t 256
 field rocketnet_server_config_t config_bytes 0 8
 field rocketnet_server_config_t protocol_id 8 8
 field rocketnet_server_config_t max_clients 16 4
@@ -446,6 +449,9 @@ field rocketnet_server_config_t num_rio_lanes 224 4
 field rocketnet_server_config_t num_iocp_completion_workers 228 4
 field rocketnet_server_config_t num_iocp_send_threads 232 4
 field rocketnet_server_config_t num_msgx_transmit_workers 236 4
+field rocketnet_server_config_t gso_reserve_cpu_0 240 4
+field rocketnet_server_config_t io_uring_reserve_cpu_0 244 4
+field rocketnet_server_config_t portable_reserve_cpu_0 248 4
 struct rocketnet_receipt_t 8
 field rocketnet_receipt_t serial 0 4
 field rocketnet_receipt_t status 4 4
@@ -553,6 +559,8 @@ macro ROCKETNET_ALLOCATION_ALIGNMENT 64
 macro ROCKETNET_BACKEND_PUBLIC_KEY_BYTES 32
 macro ROCKETNET_BACKEND_SECRET_KEY_BYTES 64
 macro ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES 256
+macro ROCKETNET_CPU_0_NOT_RESERVED 2
+macro ROCKETNET_CPU_0_RESERVED 1
 macro ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS 1000
 macro ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS 10000
 macro ROCKETNET_FLOW_ID_BIT 9223372036854775808

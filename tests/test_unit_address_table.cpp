@@ -4,8 +4,8 @@
 */
 
 // The address acceptance and equality table: one row per (source form, socket
-// mode), checked against the receive edge's one rule for an ipv4-mapped
-// source, rocketnet_address_accept_received_source (sdk/rocketnet_address.h),
+// mode), checked against the receive edge's rule for an ipv4-mapped source
+// and a source port of 0, rocketnet_address_accept_received_source (sdk/rocketnet_address.h),
 // and against rocketnet_address_equal (sdk/rocketnet_address.cpp). Each row carries the accept decision, the canonical form the
 // address takes after acceptance, and which of the other table forms it is
 // equal to, so a mapped-versus-native mismatch or a wrong drop is a named row
@@ -18,7 +18,8 @@
 //     stack socket a mapped source is accepted and canonicalised to native
 //     ipv4; "anywhere the real ipv6 header is seen -- a raw or xdp ipv6 path,
 //     or an ipv6-only socket -- a mapped source never occurs legitimately
-//     (RFC 4291 2.5.5.2): it is spoofed, and dropped"; any other source
+//     (RFC 4291 2.5.5.2): it is spoofed, and dropped"; a source with port 0
+//     is dropped on every mode (no reply can reach it); any other source
 //     passes through unchanged.
 //   rocketnet_address_equal -- sdk/rocketnet_address.cpp: type, port and
 //     bytes are compared, and NONE equals nothing.
@@ -102,18 +103,20 @@ static const struct address_case_t k_cases[] = {
     { "[::ffff:1.2.3.4]:40000", SOCKET_V6_ONLY, false, NULL, -1, "accept_received_source; mapped dropped on v6-only" },
     { "[::ffff:1.2.3.4]:40000", SOCKET_RAW, false, NULL, -1, "accept_received_source; mapped dropped on raw" },
 
-    // the zero address, port 0: a real ipv4/ipv6 address, not NONE, and equal
-    // only to itself (rocketnet_address_equal, sdk/rocketnet_address.cpp, compares type, port and bytes).
-    { "0.0.0.0:0", SOCKET_V4_ONLY, true, "0.0.0.0", 2, "rocketnet_address_equal; zero ipv4 is an ipv4 endpoint" },
-    { "[::]:0", SOCKET_V6_ONLY, true, "::", 3, "rocketnet_address_equal; zero ipv6 is an ipv6 endpoint" },
+    // a source port of 0 is dropped on every mode: no reply can reach it
+    // (sdk/rocketnet_address.h (rocketnet_address_accept_received_source)).
+    // the zero address, port 0, is still a real ipv4/ipv6 address, not NONE,
+    // and equal only to itself (rocketnet_address_equal, sdk/rocketnet_address.cpp, compares type, port and bytes).
+    { "0.0.0.0:0", SOCKET_V4_ONLY, false, NULL, 2, "accept_received_source; port 0 dropped; zero ipv4 is an ipv4 endpoint" },
+    { "[::]:0", SOCKET_V6_ONLY, false, NULL, 3, "accept_received_source; port 0 dropped; zero ipv6 is an ipv6 endpoint" },
 
     // the port is part of the identity (rocketnet_address_equal): same address,
-    // port 0, is not the non-zero-port form. to_string omits a zero port.
-    { "1.2.3.4:0", SOCKET_DUAL_STACK, true, "1.2.3.4", 4, "rocketnet_address_equal; port is part of the key" },
+    // port 0, is not the non-zero-port form.
+    { "1.2.3.4:0", SOCKET_DUAL_STACK, false, NULL, 4, "accept_received_source; port 0 dropped; port is part of the key" },
 
-    // NONE is not a source and is not equal to itself or any other address
-    // (rocketnet_address_equal, sdk/rocketnet_address.cpp, returns false for a non-ipv4/ipv6 type).
-    { NULL, SOCKET_DUAL_STACK, true, "NONE", -1, "rocketnet_address_equal; NONE unequal to itself and all" }
+    // NONE is not a source (its port is 0, so it is dropped) and is not equal
+    // to itself or any other address (rocketnet_address_equal, sdk/rocketnet_address.cpp, returns false for a non-ipv4/ipv6 type).
+    { NULL, SOCKET_DUAL_STACK, false, NULL, -1, "rocketnet_address_equal; NONE unequal to itself and all" }
 };
 
 static const int k_case_count = (int) ( sizeof( k_cases ) / sizeof( k_cases[0] ) );
@@ -151,7 +154,10 @@ static void address_acceptance_table()
             check_row( rocketnet_address_parse( &from, row->source ), i, row->cite );
         }
 
-        const struct rocketnet_address_t before = from;
+        // a byte copy, padding included, so the memcmp below compares only
+        // what the rule could have written
+        struct rocketnet_address_t before;
+        memcpy( &before, &from, sizeof( before ) );
 
         const bool accepted = rocketnet_address_accept_received_source( &from, socket_mode_is_dual_stack( row->mode ) );
 
@@ -162,29 +168,28 @@ static void address_acceptance_table()
             char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
             const char * canonical = rocketnet_address_to_string( &from, buffer );
             check_row( strcmp( canonical, row->expected_canonical ) == 0, i, row->cite );
-
-            for ( int f = 0; f < k_native_form_count; ++f )
-            {
-                const bool want = ( f == row->expected_equal_form );
-                const bool got = rocketnet_address_equal( &from, &forms[f] );
-                check_row( got == want, i, row->cite );
-            }
-
-            if ( row->source == NULL )
-            {
-                // NONE equals nothing, not even itself
-                check_row( !rocketnet_address_equal( &from, &from ), i, row->cite );
-
-                struct rocketnet_address_t other;
-                memset( &other, 0, sizeof( other ) );
-                check_row( !rocketnet_address_equal( &from, &other ), i, row->cite );
-            }
         }
         else
         {
-            // dropped, not canonicalised: the mapped ipv6 form is unchanged
-            check_row( from.type == ROCKETNET_ADDRESS_IPV6, i, row->cite );
-            check_row( rocketnet_address_equal( &from, &before ), i, row->cite );
+            // dropped, not canonicalised: the source is unchanged
+            check_row( memcmp( &from, &before, sizeof( from ) ) == 0, i, row->cite );
+        }
+
+        for ( int f = 0; f < k_native_form_count; ++f )
+        {
+            const bool want = ( f == row->expected_equal_form );
+            const bool got = rocketnet_address_equal( &from, &forms[f] );
+            check_row( got == want, i, row->cite );
+        }
+
+        if ( row->source == NULL )
+        {
+            // NONE equals nothing, not even itself
+            check_row( !rocketnet_address_equal( &from, &from ), i, row->cite );
+
+            struct rocketnet_address_t other;
+            memset( &other, 0, sizeof( other ) );
+            check_row( !rocketnet_address_equal( &from, &other ), i, row->cite );
         }
     }
 }

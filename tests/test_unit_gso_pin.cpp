@@ -79,6 +79,34 @@ static void test_gso_pin_refused_worker_never_cpu_zero()
     check( rocketnet_gso_pin_fallback( allowed, 16, 2, 5 ) == 1 && allowed[0] == 0 && allowed[1] == 1 );
 }
 
+// a Linux transport's network thread placement (xdp, gso, io_uring,
+// portable), rocketnet_network_thread_cpu. Reserved (the default): thread q on
+// cpu num_os_cpus + q, never cpu 0, a num_os_cpus below 1 read as 1. Not
+// reserved (*_reserve_cpu_0 ROCKETNET_CPU_0_NOT_RESERVED): thread q on cpu q,
+// num_os_cpus not applied
+static void test_network_thread_cpu_reserved_and_not()
+{
+    // reserved: the owner's layout, the OS on cpu 0, the network threads next
+    check( rocketnet_network_thread_cpu( 0, 1, true ) == 1 );
+    check( rocketnet_network_thread_cpu( 1, 1, true ) == 2 );
+    check( rocketnet_network_thread_cpu( 0, 2, true ) == 2 );
+    check( rocketnet_network_thread_cpu( 3, 2, true ) == 5 );
+    check( rocketnet_network_thread_cpu( 0, 0, true ) == 1 );
+    check( rocketnet_network_thread_cpu( 1, -7, true ) == 2 );
+    for ( int worker = 0; worker < 64; worker++ )
+    {
+        check( rocketnet_network_thread_cpu( worker, 1, true ) == rocketnet_gso_pin_cpu( worker, 1 ) );
+        check( rocketnet_network_thread_cpu( worker, 1, true ) != 0 );
+    }
+    // not reserved: thread q on cpu q, whatever num_os_cpus says
+    check( rocketnet_network_thread_cpu( 0, 1, false ) == 0 );
+    check( rocketnet_network_thread_cpu( 1, 1, false ) == 1 );
+    check( rocketnet_network_thread_cpu( 0, 4, false ) == 0 );
+    check( rocketnet_network_thread_cpu( 3, 256, false ) == 3 );
+    check( rocketnet_network_thread_cpu( 2, 0, false ) == 2 );
+}
+
+REGISTER_UNIT_TEST( test_network_thread_cpu_reserved_and_not );
 REGISTER_UNIT_TEST( test_gso_pin_cpu_placement );
 REGISTER_UNIT_TEST( test_gso_pin_refused_worker_never_cpu_zero );
 REGISTER_UNIT_TEST( test_gso_pin_never_cpu_zero );

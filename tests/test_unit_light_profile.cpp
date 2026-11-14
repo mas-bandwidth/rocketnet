@@ -178,16 +178,25 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The send store's free stack (one u32 a chunk: finding W2-86) adds 4632
 // bytes a light connection, 4632000 at 1000 clients, and 4608 to the client:
 // computed from the Linux reading, not measured on Windows.
+// The receive handoff (sdk/rocketnet_receive_handoff.h) gives the IOCP
+// completion workers three receive banks where they had four, one bank of
+// the server's receive queue size a worker fewer: actual=1504678759, 23936056
+// below (aws-win-ci-2, MSVC, Release, DEV=ON), measured.
 // Together (integration/v1.1.55: the refused-token table and the send
 // store's free stack): actual=1533264287 and 15398892 (aws-win-ci-2, MSVC,
 // Debug, DEV=ON), measured.
+// With the receive handoff's three IOCP banks as well
+// (integration/v1.1.55-hot): actual=1509328231 and 15398892 (aws-win-ci-2,
+// MSVC, Debug, DEV=ON), measured.
 // The held index's per-connection home key (rn_region_t held_key_a and
 // held_key_b, 16 bytes; the struct is fixed-width fields and pointers, so the
 // same 16 on every 64-bit target) adds 16000 to the server (the regions are
 // one array, rounded once) and nothing to the client (its one region's 64-byte
-// rounding holds it, as on Linux): actual=1533280287 and 15398892
-// (integration/v1.1.56, MSVC, Debug, DEV=ON), measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1532231711 )
+// rounding holds it, as on Linux): 1533280287 and 15398892 on
+// integration/v1.1.56 (MSVC, Debug, DEV=ON), measured. Both together
+// (integration/v1.1.55-hot with v1.1.56 merged): actual=1509344231, derived
+// from the two measured figures, until a Windows build reads the merged tree.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1508295655 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350316 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
@@ -282,12 +291,17 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Together (integration/v1.1.55: the refused-token table and the send
 // store's free stack): actual=1665268659 and 15046410 (studio, Apple clang,
 // Debug, DEV=ON), measured.
+// With the placement branch's three *_reserve_cpu_0 config fields, the
+// send_capacity_to pointer and counter 291 (integration/v1.1.55-hot): 64
+// more to the server, the client unchanged: actual=1665268723 and 15046410
+// (studio, Apple clang, Debug, DEV=ON), measured.
 // The held index's per-connection home key (rn_region_t held_key_a and
 // held_key_b, 16 bytes, the same on every 64-bit target) adds 16000 to the
-// server and nothing to the client (the Windows note has the account):
-// actual=1665284659, derived from the measured macOS figure above and the
-// 16000 that Linux and Windows both measured, not measured on macOS.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664236083 )
+// server and nothing to the client (the Windows note has the account). Both
+// together (integration/v1.1.55-hot with v1.1.56 merged): actual=1665284723,
+// derived from the measured figure above and the 16000 that Linux and
+// Windows both measured, until a macOS build reads the merged tree.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664236147 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997834 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
@@ -439,7 +453,14 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // nothing to the server: actual=15190354 (hetzner1, gcc, Debug, DEV ON).
 // The appended counter IOCP_PIN_REFUSALS adds 64 more to the client (one more
 // 64-byte rounding): actual=15190418 (hetzner1, gcc, Debug, DEV ON).
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146450 )
+// The appended counter PORTABLE_PIN_REFUSALS adds 64 more to the client (one
+// more 64-byte rounding) and nothing to the server, with the three
+// *_reserve_cpu_0 fields appended to the transport config: actual=15190482
+// (amd-3, gcc, Debug, DEV ON).
+// Together (integration/v1.1.55-hot: the send store's free stack, the
+// refused-token table and PORTABLE_PIN_REFUSALS): actual=15195090 (aws-mut-3,
+// gcc, Debug and Release, DEV ON); the server reads its pin unchanged.
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146514 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

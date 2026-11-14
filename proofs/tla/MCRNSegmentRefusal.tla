@@ -18,4 +18,10 @@ SlotDistinct == CHOOSE f \in [Dests -> 0..(Cardinality(Dests) - 1)] :
 
 \* every destination in entry 0
 SlotShared == [d \in Dests |-> 0]
+
+\* every destination on one queue
+QueueOne == [d \in Dests |-> 0]
+
+\* destination "d1" on queue 0, the others on queue 1
+QueueSplit == [d \in Dests |-> IF d = "d1" THEN 0 ELSE 1]
 =============================================================================

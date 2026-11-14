@@ -1010,18 +1010,34 @@ static bool rn_message_link_splits_update( const struct rn_message_object_t * ob
 void rn_message_object_update_begin( struct rn_message_object_t * object, double time )
 {
     // the main thread's call: checked here for the begin of the update (the
-    // end is the main thread's too); an update call, which may finish an
-    // open update first
+    // end is the main thread's too); an update call, which may find an
+    // update open
     rocketnet_fill_phase_main_scope_t phase( object ? object->fill_phase : NULL, true );
     if ( !phase.entered )
     {
         return;
     }
+
+    // An update call made with the update in three calls still open (no update_finish, or a refused
+    // one) is API misuse, counted once. It finishes the open update and
+    // begins none: the deliveries that finish hands over wait for
+    // receive_messages, as after any finish, so no connection ends for
+    // messages the game never had the chance to receive (the check below
+    // runs at the next begin). Stage DONE carries the finish's result to
+    // this call's end (update) or to update_finish (update_receive), and
+    // the update's time is not taken. The rule is stated in
+    // proofs/tla/RNFillPhase.tla (KickedBy, NoKickOnOpenUpdate, the old
+    // order MCRNFillPhaseBrokenKickAll.cfg), which has no deliveries: it is
+    // bound to this code by test_wide_fill_split_update_open_update_call.
+
     if ( object->update_stage != RN_MESSAGE_UPDATE_CLOSED )
     {
         rocketnet_api_misuse_record();
         rocketnet_assert( object->update_stage == RN_MESSAGE_UPDATE_CLOSED && "end the update before the next begins" );
-        (void) rn_message_object_update_end( object );
+        const int finished = rn_message_object_update_end( object );
+        object->update_result = finished;
+        object->update_stage = RN_MESSAGE_UPDATE_DONE;
+        return;
     }
 
     int result = ROCKETNET_UPDATE_OK;
@@ -2174,6 +2190,29 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
     }
 }
 
+// proofs/tla/RNServerSendFair.tla, the queues (Hold, Cut): 1 when a frame to
+// connection i may start; 0 when no send queue takes one, which ends the
+// pass; -1 when i's own queue is full while another queue has room, so i is
+// held and the pass goes on. The second question is asked only when the
+// first says no. A link without send_capacity_to has one capacity for every
+// connection.
+static int rn_message_send_admit( const struct rn_message_object_t * object, int i )
+{
+    if ( object->link.send_capacity_to )
+    {
+        if ( object->link.send_capacity_to( object->link.transport, i ) > 0 )
+        {
+            return 1;
+        }
+        return object->link.send_capacity_to( object->link.transport, -1 ) > 0 ? -1 : 0;
+    }
+    if ( object->link.send_capacity_available && object->link.send_capacity_available( object->link.transport ) <= 0 )
+    {
+        return 0;
+    }
+    return 1;
+}
+
 // proofs/tla/RNSendRotation.tla BeginFlush and Visit: the first round over every connection, later rounds over the last round's writers, the capacity test, the cursor at i + 1.
 // proofs/tla/RNServerSendFair.tla BeginFlush, FirstVisit and LaterVisit: the same rounds at this loop's index arithmetic (send_writers, count, kept, previous, the stored cursors).
 // proofs/tla/RNWriterFinish.tla SendPackets: the main thread's walk finds no packet a writer left open, and takes what the writers queued or held as far as the capacity carries.
@@ -2220,12 +2259,29 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
     // visited, at a capacity cut to the cursor held before the cut
     // connection's visit, and at the end past the last connected connection.
 
+    //
+    // With several send queues the capacity tested is the connection's own
+    // queue's (rn_message_send_admit): a connection whose queue is full while
+    // another queue has room is held, its sends left for the next update,
+    // and the pass goes on to the rest; only no room in any queue cuts the
+    // pass. The cursor then names the first connection held after the pass's
+    // first frame, as the walk would hold it at a cut there, at a cut and at
+    // the end alike: every connection before it in the first round was
+    // visited, and every one after it either written or held too, so it is
+    // the first left unserved this update, and is served first next update.
+    // One full queue delays no connection of another queue and starves none
+    // of its own. A connection held before any frame was
+    // written does not hold the cursor: a queue full for many updates would
+    // pin the rotation there, and the clients of the other queues would be
+    // served in the same order every update.
+
     const int num_connections = object->num_connections;
     const int start = num_connections > 0 ? object->send_next_connection % num_connections : 0;
     int32_t one_connection[2] = { 0, 0 };
     int32_t * writers = object->send_writers ? object->send_writers : one_connection;
     int count = 0;
     int previous = -1;                                          // the connected connection visited last in the first round
+    int held = -1;                                              // the cursor before the first connection held for its queue, or -1
 
     for ( int offset = 0; offset < num_connections; offset++ )
     {
@@ -2242,10 +2298,24 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
         {
             continue;
         }
-        if ( object->link.send_capacity_available &&
-             object->link.send_capacity_available( object->link.transport ) <= 0 )
+        const int admit = rn_message_send_admit( object, i );
+        if ( admit == 0 )
         {
+            if ( held >= 0 )
+            {
+                object->send_next_connection = held;
+            }
             goto flush;
+        }
+        if ( admit < 0 )
+        {
+            if ( held < 0 && count > 0 )
+            {
+                held = object->send_next_connection % num_connections;
+            }
+            object->send_next_connection = ( i + 1 ) % num_connections;
+            previous = i;
+            continue;
         }
 
         if ( rn_message_connection_write( object, i ) )
@@ -2272,11 +2342,18 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
             {
                 continue;
             }
-            if ( object->link.send_capacity_available &&
-                 object->link.send_capacity_available( object->link.transport ) <= 0 )
+            const int admit = rn_message_send_admit( object, i );
+            if ( admit == 0 )
             {
-                object->send_next_connection = cursor;
+                object->send_next_connection = held >= 0 ? held : cursor;
                 goto flush;
+            }
+            if ( admit < 0 )
+            {
+                // served once this pass already: its queue is full now, so
+                // its pass ends here and the cursor stays where it is
+                object->send_next_connection = ( i + 1 ) % num_connections;
+                continue;
             }
 
             if ( rn_message_connection_write( object, i ) )
@@ -2295,6 +2372,10 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
     if ( previous >= 0 )
     {
         object->send_next_connection = ( previous + 1 ) % num_connections;
+    }
+    if ( held >= 0 )
+    {
+        object->send_next_connection = held;
     }
 flush:
     object->link.send_packets( object->link.transport );
@@ -2619,6 +2700,7 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->abort_packet = RN_LINK_FORWARD( rocketnet_server_transport_abort_packet )::call;
     link->send_packets = RN_LINK_FORWARD( rocketnet_server_transport_send_packets )::call;
     link->send_capacity_available = RN_LINK_FORWARD( rocketnet_server_transport_send_capacity_available )::call;
+    link->send_capacity_to = RN_LINK_FORWARD( rocketnet_server_transport_send_capacity_to )::call;
     link->send_connected_count = RN_LINK_FORWARD( rocketnet_server_transport_num_connected_clients )::call;
     link->send_buffered = RN_LINK_FORWARD( rocketnet_server_transport_send_buffered )::call_const;
     // P9a: the transport's id of the connection in the slot, 0 while it is
@@ -2813,6 +2895,21 @@ struct rocketnet_server_transport_t * rocketnet_message_server_transport( struct
     return server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call ? (rocketnet_server_transport_t *) server->object.link.transport : NULL;
 }
 
+// The window of the update in three calls follows the update's stage, set as
+// an update call's work ends (proofs/tla/RNFillPhase.tla MainEpoch,
+// UpdateWork, StageShut; MCRNFillPhaseBrokenShutOnEarly.cfg): open
+// while the update is open, whether or not the transport opened its own
+// (an update_receive whose first time is not finite, or whose transport is
+// not running, returns before the transport stores it), shut once it is
+// closed. The transport stores the same window for its own split calls.
+static void rn_message_window_follows_stage( struct rn_message_object_t * object )
+{
+    if ( object->fill_phase )
+    {
+        rocketnet_fill_phase_window( object->fill_phase, object->update_stage != RN_MESSAGE_UPDATE_CLOSED );
+    }
+}
+
 // proofs/tla/RNWriterFinish.tla BeginFill: after this main thread call the game threads may start and finish messages.
 int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time )
 {
@@ -2823,17 +2920,22 @@ int rocketnet_message_server_update( struct rocketnet_message_server_t * server,
     // one main-thread operation, checked before anything is written: a
     // refused update leaves the transport's update words as they were. An
     // update call: it may run with the update in three calls open, which it
-    // finishes first
+    // finishes, beginning none (rn_message_object_update_begin), so it opens
+    // no disconnect allowance: the open update's allowance is the one its
+    // finish spends
     rocketnet_fill_phase_main_scope_t phase( server->object.fill_phase, true );
     if ( !phase.entered )
     {
         return ROCKETNET_UPDATE_OK;
     }
-    if ( server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call )
+    if ( server->object.update_stage == RN_MESSAGE_UPDATE_CLOSED &&
+         server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call )
     {
         rocketnet_server_transport_begin_message_update( (rocketnet_server_transport_t *) server->object.link.transport );
     }
-    return rn_message_object_update( &server->object, time );
+    const int result = rn_message_object_update( &server->object, time );
+    rn_message_window_follows_stage( &server->object );
+    return result;
 }
 
 void rocketnet_message_server_update_receive( struct rocketnet_message_server_t * server, double time )
@@ -2844,17 +2946,21 @@ void rocketnet_message_server_update_receive( struct rocketnet_message_server_t 
     }
     // checked before anything is written, as update is: a refused
     // update_receive leaves the transport's disconnect allowance
-    // (disconnect_seals_left, disconnect_update_prepared) as it was
+    // (disconnect_seals_left, disconnect_update_prepared) as it was, and
+    // one that finds the update open finishes it and begins none, so it
+    // opens no second allowance either
     rocketnet_fill_phase_main_scope_t phase( server->object.fill_phase, true );
     if ( !phase.entered )
     {
         return;
     }
-    if ( server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call )
+    if ( server->object.update_stage == RN_MESSAGE_UPDATE_CLOSED &&
+         server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call )
     {
         rocketnet_server_transport_begin_message_update( (rocketnet_server_transport_t *) server->object.link.transport );
     }
     rn_message_object_update_begin( &server->object, time );
+    rn_message_window_follows_stage( &server->object );
 }
 
 int rocketnet_message_server_update_client_acks( struct rocketnet_message_server_t * server, int client_index )
@@ -2902,7 +3008,9 @@ int rocketnet_message_server_update_finish( struct rocketnet_message_server_t * 
     {
         return ROCKETNET_UPDATE_OK;
     }
-    return rn_message_object_update_end( &server->object );
+    const int result = rn_message_object_update_end( &server->object );
+    rn_message_window_follows_stage( &server->object );
+    return result;
 }
 
 void rocketnet_message_server_send_packets( struct rocketnet_message_server_t * server )
