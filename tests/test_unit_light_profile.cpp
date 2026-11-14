@@ -200,8 +200,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // integration/v1.1.56 (MSVC, Debug, DEV=ON), measured. Both together
 // (integration/v1.1.55-hot with v1.1.56 merged): actual=1509344231, derived
 // from the two measured figures, until a Windows build reads the merged tree.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1508295655 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350316 )
+// With counter 291 (XDP_KERNEL_DROPPED_NO_SESSION) as well
+// (integration/v1.1.58, 902e10754): 64 more to each, actual=1509344295 and
+// 15398956 (aws-win-ci-2, MSVC, Debug, DEV=ON), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1508295719 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350380 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -310,8 +313,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // for msgx, which takes replay marks: 24 bytes a client, 24000 at 1000
 // clients, on the msgx plan this pin is the peak of: actual=1665308723,
 // derived, not measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664260147 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997834 )
+// With counter 291 (XDP_KERNEL_DROPPED_NO_SESSION) as well
+// (integration/v1.1.58, 902e10754): 64 more to each, actual=1665308787 and
+// 15046474 (studio, Apple clang, Debug, DEV=ON), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664260211 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997898 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
