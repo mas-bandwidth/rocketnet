@@ -1718,6 +1718,23 @@ inline std::string suite_commit_text()
 // the lock and only prints it. Without it, two waiters failed after 1800 s
 // naming nobody (nightly-soak windows and Nightly CI windows unit, 2026-11-14).
 //
+// Every account that runs tests on the host shares the lock and the record:
+// the runner services (NETWORK SERVICE) and an Administrator over ssh or at the
+// console, all in session 0, where Local\ is the same namespace as Global\.
+// Created with the creator's default descriptor, the mutex admitted only the
+// creator's account, so the other account's CreateMutexW failed with access
+// denied under both names and every lock case failed with "could not open"
+// (aws-win-ci-3, Nightly CI windows Debug, Release ASan and functional nightly
+// tier, run 43624207256, 2026-11-14, while an Administrator run held it). So
+// both objects are created with a descriptor granting Authenticated Users only
+// the rights this code uses, and opened asking for only those rights:
+// SYNCHRONIZE and MUTEX_MODIFY_STATE on the mutex, query, read and write on
+// the record. Authenticated Users holds every logged-on account, the service
+// accounts and SYSTEM included; Everyone would add anonymous and guest logons
+// for nothing. An object left by a run built before this, under the old
+// default descriptor, still refuses another account; the open then fails by
+// name and says so.
+//
 // Holding the lock, the run then checks the case's planned commit (its
 // declared bound) against the commit available. A host whose whole limit is
 // below the plan fails the case by name at once; one that is short for now
@@ -1745,23 +1762,107 @@ inline suite_commit_holder_t *& suite_commit_holder_view()
     return view;
 }
 
+#if defined( _MSC_VER )
+#pragma comment( lib, "advapi32.lib" ) // the security descriptor calls
+#endif // #if defined( _MSC_VER )
+
+// why the open failed, for the case's red; empty while it has not
+inline std::string & suite_commit_lock_error()
+{
+    static std::string error;
+    return error;
+}
+
+// why the record could not be mapped (0 while it could)
+inline DWORD & suite_commit_record_error()
+{
+    static DWORD error = 0;
+    return error;
+}
+
+#define SUITE_COMMIT_MUTEX_ACCESS ( SYNCHRONIZE | MUTEX_MODIFY_STATE )
+#define SUITE_COMMIT_RECORD_ACCESS ( SECTION_QUERY | SECTION_MAP_READ | SECTION_MAP_WRITE )
+
+// a descriptor whose DACL allows Authenticated Users exactly `access`
+struct suite_commit_descriptor_t
+{
+    SID users;
+    DWORD acl[16]; // an ACL with one allow ACE for a one-authority SID; DWORDs keep it aligned
+    SECURITY_DESCRIPTOR descriptor;
+    SECURITY_ATTRIBUTES attributes;
+
+    explicit suite_commit_descriptor_t( DWORD access )
+    {
+        static_assert( sizeof( ACL ) + sizeof( ACCESS_ALLOWED_ACE ) + sizeof( SID ) <= sizeof( acl ), "acl buffer" );
+        const SID_IDENTIFIER_AUTHORITY nt = SECURITY_NT_AUTHORITY;
+        memset( &users, 0, sizeof( users ) );
+        users.Revision = SID_REVISION;
+        users.SubAuthorityCount = 1;
+        users.IdentifierAuthority = nt;
+        users.SubAuthority[0] = SECURITY_AUTHENTICATED_USER_RID;
+        memset( &attributes, 0, sizeof( attributes ) );
+        attributes.nLength = sizeof( attributes );
+        attributes.bInheritHandle = FALSE;
+        // a step that fails leaves lpSecurityDescriptor NULL: the creator's default, as before
+        if ( InitializeAcl( (ACL *) acl, sizeof( acl ), ACL_REVISION ) && AddAccessAllowedAce( (ACL *) acl, ACL_REVISION, access, &users ) &&
+             InitializeSecurityDescriptor( &descriptor, SECURITY_DESCRIPTOR_REVISION ) && SetSecurityDescriptorDacl( &descriptor, TRUE, (ACL *) acl, FALSE ) )
+        {
+            attributes.lpSecurityDescriptor = &descriptor;
+        }
+    }
+};
+
+// open the record, or create it; a run that loses the race to create it opens the winner's
+inline HANDLE suite_commit_record_open( const wchar_t * name, suite_commit_descriptor_t & descriptor )
+{
+    HANDLE mapping = OpenFileMappingW( SUITE_COMMIT_RECORD_ACCESS, FALSE, name );
+    if ( !mapping && GetLastError() == ERROR_FILE_NOT_FOUND )
+    {
+        mapping = CreateFileMappingW( INVALID_HANDLE_VALUE, &descriptor.attributes, PAGE_READWRITE, 0, (DWORD) sizeof( suite_commit_holder_t ), name );
+        if ( !mapping && GetLastError() == ERROR_ACCESS_DENIED )
+        {
+            mapping = OpenFileMappingW( SUITE_COMMIT_RECORD_ACCESS, FALSE, name );
+        }
+    }
+    return mapping;
+}
+
 inline HANDLE suite_commit_lock_open()
 {
+    suite_commit_descriptor_t mutex_descriptor( SUITE_COMMIT_MUTEX_ACCESS );
+    suite_commit_descriptor_t record_descriptor( SUITE_COMMIT_RECORD_ACCESS );
     const wchar_t * record = L"Global\\rocketnet-test-commit-bound-holder";
-    HANDLE lock = CreateMutexW( NULL, FALSE, L"Global\\rocketnet-test-commit-bound" );
+    HANDLE lock = CreateMutexExW( &mutex_descriptor.attributes, L"Global\\rocketnet-test-commit-bound", 0, SUITE_COMMIT_MUTEX_ACCESS );
+    const DWORD global_error = lock ? 0 : GetLastError();
     if ( !lock )
     {
-        lock = CreateMutexW( NULL, FALSE, L"Local\\rocketnet-test-commit-bound" );
+        lock = CreateMutexExW( &mutex_descriptor.attributes, L"Local\\rocketnet-test-commit-bound", 0, SUITE_COMMIT_MUTEX_ACCESS );
         record = L"Local\\rocketnet-test-commit-bound-holder";
+    }
+    if ( !lock )
+    {
+        const DWORD local_error = GetLastError();
+        char text[400];
+        snprintf( text, sizeof( text ), "Global\\rocketnet-test-commit-bound error %lu, Local\\rocketnet-test-commit-bound error %lu%s",
+                  (unsigned long) global_error, (unsigned long) local_error,
+                  local_error == ERROR_ACCESS_DENIED ? " (access denied: the lock exists, created by another account with a restrictive descriptor, "
+                                                       "a run built before the lock granted every account; end that run)"
+                                                     : "" );
+        suite_commit_lock_error() = text;
+        return NULL;
     }
     // The record lives as long as any run has it open, so it outlives each
     // holder; the first creator's pages start zeroed (nobody). A run that
     // cannot map it still takes the lock, and its waiters print the holder
-    // as unrecorded.
-    HANDLE mapping = CreateFileMappingW( INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, (DWORD) sizeof( suite_commit_holder_t ), record );
+    // as unrecorded, with the error.
+    HANDLE mapping = suite_commit_record_open( record, record_descriptor );
     if ( mapping )
     {
-        suite_commit_holder_view() = (suite_commit_holder_t *) MapViewOfFile( mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof( suite_commit_holder_t ) );
+        suite_commit_holder_view() = (suite_commit_holder_t *) MapViewOfFile( mapping, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, sizeof( suite_commit_holder_t ) );
+    }
+    if ( !suite_commit_holder_view() )
+    {
+        suite_commit_record_error() = GetLastError();
     }
     return lock;
 }
@@ -1771,7 +1872,9 @@ inline std::string suite_commit_holder_text()
     suite_commit_holder_t holder;
     if ( !suite_commit_holder_view() )
     {
-        return "a holder this run cannot name (no holder record)";
+        char text[96];
+        snprintf( text, sizeof( text ), "a holder this run cannot name (no holder record, error %lu)", (unsigned long) suite_commit_record_error() );
+        return text;
     }
     memcpy( &holder, suite_commit_holder_view(), sizeof( holder ) );
     holder.name[sizeof( holder.name ) - 1] = '\0';
@@ -1832,7 +1935,7 @@ inline bool suite_commit_lock_take( HANDLE lock, const std::string & name, long 
 {
     if ( !lock )
     {
-        detail = name + " could not open the machine-wide commit lock";
+        detail = name + " could not open the machine-wide commit lock: " + suite_commit_lock_error();
         return false;
     }
 
