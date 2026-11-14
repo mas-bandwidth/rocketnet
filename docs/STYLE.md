@@ -51,13 +51,13 @@ sdk/rocketnet_address.cpp:281      address->data.ipv6[0] = 0x0000;
 ```
 
 ```
-sdk/rocketnet_platform.cpp:4413      s->context = context;
-sdk/rocketnet_platform.cpp:4414      s->send_failures = 0;
-sdk/rocketnet_platform.cpp:4415      s->send_replay_failures = 0;
-sdk/rocketnet_platform.cpp:4416      s->connected = false;
-sdk/rocketnet_platform.cpp:4417  
-sdk/rocketnet_platform.cpp:4418      rocketnet_assert( address );
-sdk/rocketnet_platform.cpp:4419      rocketnet_assert( address->type != ROCKETNET_ADDRESS_NONE );
+sdk/rocketnet_platform.cpp:4509      s->context = context;
+sdk/rocketnet_platform.cpp:4510      s->send_failures = 0;
+sdk/rocketnet_platform.cpp:4511      s->send_replay_failures = 0;
+sdk/rocketnet_platform.cpp:4512      s->connected = false;
+sdk/rocketnet_platform.cpp:4513  
+sdk/rocketnet_platform.cpp:4514      rocketnet_assert( address );
+sdk/rocketnet_platform.cpp:4515      rocketnet_assert( address->type != ROCKETNET_ADDRESS_NONE );
 ```
 
 Never two blank lines in a row inside a function.
@@ -107,9 +107,9 @@ sdk/rocketnet_address.cpp:46      return true;
   `rocketnet_error` that reports the failure and the clean-up after it.
 
 ```
-sdk/rocketnet_platform.cpp:4439          rocketnet_error( "failed to create socket" );
-sdk/rocketnet_platform.cpp:4440          rocketnet_free( context, s );
-sdk/rocketnet_platform.cpp:4441          return NULL;
+sdk/rocketnet_platform.cpp:4535          rocketnet_error( "failed to create socket: %s", rocketnet_platform_socket_error_text( rocketnet_platform_socket_error() ).text );
+sdk/rocketnet_platform.cpp:4536          rocketnet_free( context, s );
+sdk/rocketnet_platform.cpp:4537          return NULL;
 ```
 
 *By hand* (`KeepEmptyLinesAtTheStartOfBlocks: true` keeps a blank line after
@@ -125,17 +125,17 @@ by one blank line, then the code it introduces.
   to port", "set ipv6 sockets as dual stack".
 
 ```
-sdk/rocketnet_platform.cpp:4420  
-sdk/rocketnet_platform.cpp:4421      // create socket
-sdk/rocketnet_platform.cpp:4422  
-sdk/rocketnet_platform.cpp:4423      s->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
+sdk/rocketnet_platform.cpp:4516  
+sdk/rocketnet_platform.cpp:4517      // create socket
+sdk/rocketnet_platform.cpp:4518  
+sdk/rocketnet_platform.cpp:4519      s->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
 ```
 
 ```
-sdk/rocketnet_platform.cpp:4492  
-sdk/rocketnet_platform.cpp:4493      // bind to port
-sdk/rocketnet_platform.cpp:4494  
-sdk/rocketnet_platform.cpp:4495      if ( address->type == ROCKETNET_ADDRESS_IPV6 )
+sdk/rocketnet_platform.cpp:4588  
+sdk/rocketnet_platform.cpp:4589      // bind to port
+sdk/rocketnet_platform.cpp:4590  
+sdk/rocketnet_platform.cpp:4591      if ( address->type == ROCKETNET_ADDRESS_IPV6 )
 ```
 
 ```
@@ -158,32 +158,32 @@ Three cases:
   the label sitting on the code. Keep what the surrounding function does.
 
 ```
-sdk/rocketnet_platform.cpp:4446  
-sdk/rocketnet_platform.cpp:4447      // IMPORTANT: tell windows we don't want to receive any connection or network
-sdk/rocketnet_platform.cpp:4448      // reset reports for this socket, otherwise a receive errors out after a remote endpoint
-sdk/rocketnet_platform.cpp:4449      // disconnects hard and its ICMP port unreachable comes back
-sdk/rocketnet_platform.cpp:4450      rocketnet_platform_socket_disable_udp_resets( (uintptr_t) s->handle );
+sdk/rocketnet_platform.cpp:4542  
+sdk/rocketnet_platform.cpp:4543      // IMPORTANT: tell windows we don't want to receive any connection or network
+sdk/rocketnet_platform.cpp:4544      // reset reports for this socket, otherwise a receive errors out after a remote endpoint
+sdk/rocketnet_platform.cpp:4545      // disconnects hard and its ICMP port unreachable comes back
+sdk/rocketnet_platform.cpp:4546      rocketnet_platform_socket_disable_udp_resets( (uintptr_t) s->handle );
 ```
 
 ```
-sdk/rocketnet_server_transport.cpp:2931  
-sdk/rocketnet_server_transport.cpp:2932      // setup next stats frame
-sdk/rocketnet_server_transport.cpp:2933      {
+sdk/rocketnet_server_transport.cpp:4044  
+sdk/rocketnet_server_transport.cpp:4045      // setup next stats frame
+sdk/rocketnet_server_transport.cpp:4046      {
 ```
 
 ```
-sdk/rocketnet_endpoint.cpp:811      if ( type == ROCKETNET_RELIABILITY_UNRELIABLE )
-sdk/rocketnet_endpoint.cpp:812      {
-sdk/rocketnet_endpoint.cpp:813          // the SINGLE form: the message at the payload root, the form byte after it
-sdk/rocketnet_endpoint.cpp:814  
-sdk/rocketnet_endpoint.cpp:815          length = rocketnet_message_single_finish( payload, capacity, bytes );
+sdk/rocketnet_endpoint.cpp:814      if ( type == ROCKETNET_RELIABILITY_UNRELIABLE )
+sdk/rocketnet_endpoint.cpp:815      {
+sdk/rocketnet_endpoint.cpp:816          // the SINGLE form: the message at the payload root, the form byte after it
+sdk/rocketnet_endpoint.cpp:817  
+sdk/rocketnet_endpoint.cpp:818          length = rocketnet_message_single_finish( payload, capacity, bytes );
 ```
 
 ```
-sdk/rocketnet_channel.cpp:774      if ( !descriptor )
-sdk/rocketnet_channel.cpp:775      {
-sdk/rocketnet_channel.cpp:776          // the slot is live for another number (check 10, SLOT_COLLISION)
-sdk/rocketnet_channel.cpp:777          rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION );
+sdk/rocketnet_channel.cpp:787      if ( !descriptor )
+sdk/rocketnet_channel.cpp:788      {
+sdk/rocketnet_channel.cpp:789          // the slot is live for another number (check 10, SLOT_COLLISION)
+sdk/rocketnet_channel.cpp:790          rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION );
 ```
 
 A comment does not follow code with no blank line between.
@@ -213,15 +213,15 @@ A comment does not follow code with no blank line between.
   comment above it.
 
 ```
-sdk/rocketnet_platform.cpp:3891  // init
-sdk/rocketnet_platform.cpp:3892  
-sdk/rocketnet_platform.cpp:3893  bool rocketnet_platform_init()
+sdk/rocketnet_platform.cpp:3974  // init
+sdk/rocketnet_platform.cpp:3975  
+sdk/rocketnet_platform.cpp:3976  bool rocketnet_platform_init()
 ```
 
 ```
-sdk/rocketnet_platform.cpp:4285  // sockets
-sdk/rocketnet_platform.cpp:4286  
-sdk/rocketnet_platform.cpp:4287  bool rocketnet_platform_client_dual_stack()
+sdk/rocketnet_platform.cpp:4381  // sockets
+sdk/rocketnet_platform.cpp:4382  
+sdk/rocketnet_platform.cpp:4383  bool rocketnet_platform_client_dual_stack()
 ```
 
 - **`#endif` names its condition, repeating the directive that opened it**:
@@ -241,8 +241,8 @@ sdk/rocketnet_address.cpp:5
 ```
 
 ```
-sdk/rocketnet_layers.h:68  /** @brief Capacity in bytes of transport address strings, including the terminating NUL. */
-sdk/rocketnet_layers.h:69  #define ROCKETNET_MAX_ADDRESS_STRING_LENGTH                256
+sdk/rocketnet_layers.h:70  /** @brief Capacity in bytes of transport address strings, including the terminating NUL. */
+sdk/rocketnet_layers.h:71  #define ROCKETNET_MAX_ADDRESS_STRING_LENGTH                256
 ```
 
 ```
@@ -250,9 +250,9 @@ sdk/rocketnet_base64.cpp:26          return -1; // integer overflow
 ```
 
 ```
-sdk/rocketnet.cpp:37  #else
-sdk/rocketnet.cpp:38  #error "asserts not supported on this platform!"
-sdk/rocketnet.cpp:39  #endif // #if defined( _MSC_VER )
+sdk/rocketnet.cpp:38  #else
+sdk/rocketnet.cpp:39  #error "asserts not supported on this platform!"
+sdk/rocketnet.cpp:40  #endif // #if defined( _MSC_VER )
 ```
 
 ```
@@ -346,19 +346,19 @@ sdk/rocketnet_address.cpp:21  static bool rocketnet_address_parse_port( const ch
 ```
 
 ```
-sdk/rocketnet.cpp:22  #include <condition_variable>
-sdk/rocketnet.cpp:23  
-sdk/rocketnet.cpp:24  // -------------------------------------------------
-sdk/rocketnet.cpp:25  
-sdk/rocketnet.cpp:26  static void default_assert_function( const char * condition, const char * function, const char * file, int line )
+sdk/rocketnet.cpp:23  #include <condition_variable>
+sdk/rocketnet.cpp:24  
+sdk/rocketnet.cpp:25  // -------------------------------------------------
+sdk/rocketnet.cpp:26  
+sdk/rocketnet.cpp:27  static void default_assert_function( const char * condition, const char * function, const char * file, int line )
 ```
 
 ```
-sdk/rocketnet.cpp:54  }
-sdk/rocketnet.cpp:55  
-sdk/rocketnet.cpp:56  // -------------------------------------------------------------
-sdk/rocketnet.cpp:57  
-sdk/rocketnet.cpp:58  static std::atomic<bool> log_quiet{ false };
+sdk/rocketnet.cpp:55  }
+sdk/rocketnet.cpp:56  
+sdk/rocketnet.cpp:57  // -------------------------------------------------------------
+sdk/rocketnet.cpp:58  
+sdk/rocketnet.cpp:59  static std::atomic<bool> log_quiet{ false };
 ```
 
 *By hand* (`SeparateDefinitionBlocks` is `Leave` by default and not set in
@@ -387,11 +387,11 @@ sdk/rocketnet_address.cpp:49  bool rocketnet_address_parse( rocketnet_address_t 
 ```
 
 ```
-sdk/rocketnet_layers.h:672  struct rocketnet_address_t
+sdk/rocketnet_layers.h:710  struct rocketnet_address_t
 ```
 
 ```
-sdk/rocketnet_layers.h:69  #define ROCKETNET_MAX_ADDRESS_STRING_LENGTH                256
+sdk/rocketnet_layers.h:71  #define ROCKETNET_MAX_ADDRESS_STRING_LENGTH                256
 ```
 
 ```

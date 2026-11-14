@@ -13,7 +13,10 @@ released id moved.
   window is refused and counted as `MAIN_THREAD_CALL_OVERLAP`, in every build.
   `update_finish` takes the main thread scope, and `update_receive` arms the
   check and takes its scope before it writes anything. The one-call
-  `rocketnet_server_update` is unchanged.
+  `rocketnet_server_update` is unchanged. (Correction: the calls that only
+  read the server, and `rocketnet_server_destroy`, are not checked: one made
+  in the window is not refused or counted, and is not safe. See
+  `rocketnet_server_t` in `sdk/rocketnet.h`.)
 - Development builds only: the refused-datagram sampler's index saturates
   instead of wrapping, so a flood of refused datagrams can no longer write
   past its array.

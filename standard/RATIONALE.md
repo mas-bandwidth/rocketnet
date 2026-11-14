@@ -125,7 +125,8 @@ test keys, is `b7 59 01 00`.**
 
 [RN-1 t5 Prefilter header](TRANSPORT.md#t5)
 **The magic is 16 bytes**, SipHash-2-4's key length. Packet type is the single type
-byte, and packet length is the UDP payload length as a little-endian uint16. **The four
+byte, and packet length is the length of the whole packet in bytes as a little-endian
+uint16. **The four
 bytes following the header are taken uniformly for every packet type**, with no per-type
 case: for sealed packets they are the sequence number, for a connection request the
 first four bytes of the return cookie field, and for a connection cookie the first four
@@ -626,15 +627,15 @@ timeout.
 [RN-1 t11 Handshake: client](TRANSPORT.md#t11)
 **The ordering is load-bearing, not cosmetic.** The handshake is exactly the range
 `state > disconnected && state < connected`, so any rule that applies "while connecting"
-is one range check that stays correct as states are added between. The rule below relies
-on it.
+is one range check that stays correct as states are added between. The total connect
+deadline below uses the part of that range before _sending connection response_ (3).
 
 [RN-1 t11 Handshake: client](TRANSPORT.md#t11)
 **A total connect deadline bounds the client, as the handshake deadline bounds the
 server.** Per-state timeouts alone are not enough on either side: a client that keeps
 making just enough progress could walk between states indefinitely, and per-state timers
-would never fire. So while the client is in the handshake range it must abandon the
-attempt once the token's lifetime — `expire - create`, measured from the start of the
+would never fire. So while the client is in the handshake range before _sending connection response_
+(3) it must abandon the attempt once the token's lifetime — `expire - create`, measured from the start of the
 attempt — has elapsed, transitioning to _connect token expired_ (-7). The deadline is
 measured as a duration from the attempt's start rather than against the absolute expire
 timestamp, so that a client whose clock disagrees with the backend's still gives up
@@ -1022,9 +1023,10 @@ identifier so the server need not trial-decrypt against every connected client, 
 followed by the same cookie round trip to the new address that the connection made at
 connect time, so a connection cannot be redirected to an address that never answered.
 Cost on ordinary packets: nothing. Cost when it fires: one round trip, rarely. **Packet
-types 9 through 255 are reserved and must be ignored by a conforming receiver**, so a
-later implementation adding migration degrades gracefully against an earlier one: the
-packet is ignored and the client reconnects, which is exactly today's behavior.
+types 9 through 255 are reserved, and a conforming receiver drops them and counts
+`RESERVED_TYPE`**, so a later implementation adding migration degrades gracefully against
+an earlier one: the packet is dropped and the client reconnects, which is exactly today's
+behavior.
 
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
 **RocketNet 1.0 endpoints are IP addresses, and nothing else.** The address encoding
@@ -1166,25 +1168,26 @@ suppress every keep-alive to it, purely from answering that client's own inbound
 
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
 **An invariant the confirmation test depends on — stated here so it cannot be broken
-silently.** The test above is exact only because *an authentically opened keep-alive
-always reaches its state transition at the client*. That is not self-evident, because
-two checks stand between opening a packet and acting on it — the ack block's validity
-check and the type's opened-size check — and [RN-1 t10 Receive processing](TRANSPORT.md#t10) requires the replay
-window to be marked **before** both. A packet's sequence therefore enters the client's
-outgoing ack block earlier than the point at which the packet is acted on. If either
-check were reachable for an authentic keep-alive, a *correct* client could acknowledge a
-keep-alive it never acted on — its block naming a sequence it did open, so breaking no
-rule — and the server would read that as a claim to an index the client does not hold.
+silently.** The test above is exact only because *a keep-alive the client acknowledges is one it
+acted on*. That is not self-evident, because two checks stand between opening a packet
+and acting on it — the ack block's validity check and the type's opened-size check — and
+[RN-1 t10 Receive processing](TRANSPORT.md#t10) requires the replay window to be marked
+**before** both. The replay window is not what a block reports: a block is built from the
+separate acknowledgement-eligible history of
+[RN-1 t15.3 Building and processing](TRANSPORT.md#t15.3), which a packet enters only after
+its ack block and type data pass validation, so a keep-alive that fails either check is
+replay-marked and never acknowledged. If a packet entered that history before those
+checks, a *correct* client could acknowledge a keep-alive it never acted on, and the
+server would read that as a claim to an index the client does not hold.
 The stranding this section exists to prevent would return, and it would return for
 conformant clients, which is the failure mode the acknowledgment test was chosen to rule
 out.
 
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
 **This is a required property, not a happy accident.** Any change to the ack block's
-encoding or validity rules, to the keep-alive's type data or size, or to the order in
-which the replay window is marked relative to those checks, must preserve it. A change
-that makes either check reachable for an authentic keep-alive breaks the reasoning
-above, and the [RN-1 t13.1 Keep-alive generation](TRANSPORT.md#t13.1) confirmation test must then be re-derived rather
+encoding or validity rules, to the keep-alive's type data or size, or to the point at which a packet enters the acknowledgement-eligible history relative
+to those checks, must preserve it. A change that lets a packet enter that history before
+either check breaks the reasoning above, and the [RN-1 t13.1 Keep-alive generation](TRANSPORT.md#t13.1) confirmation test must then be re-derived rather
 than assumed to still hold.
 
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
@@ -1262,7 +1265,11 @@ promise that an API object, worker, or backing memory is immediately destroyed.
 **Slot reset.** Releasing a slot clears the client id, the user data, the confirmed flag
 and the mapping reference, and destroys the associated encryption mapping — which zeroes
 its keys and its sequence and replay state, the mapping being their only home. A
-released slot is immediately available for reuse. An implementation must zero the key
+released slot is given out again no sooner than the update after the first update that
+ends with it free, so the application reads every end before the slot changes hands; a
+connection response that finds only such slots is ignored, not denied, and its client's
+next response takes a slot. Both that ignore and a real denial count
+`CONNECTION_RESPONSE_NO_SLOTS`. An implementation must zero the key
 material rather than merely marking the slot free.
 
 [RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
@@ -1360,11 +1367,14 @@ first range.**
 are never acked; a handshake proves its own delivery by progressing.
 
 [RN-1 t15 Acknowledgement](TRANSPORT.md#t15)
-**Blocks report opened packets; elicitation decides only when a block must be sent, and
-the two are deliberately not the same set.** A block's contents are built from every
-opened session sequence, all four types — one received state, the same one replay
-protection already maintains, with no second high-water mark and no holes manufactured
-by exemptions. Received session packets of types 4, 5 and 6 **elicit**
+**Blocks report accepted packets; elicitation decides only when a block must be sent,
+and the two are deliberately not the same set.** A block's contents are built from the
+acknowledgement-eligible history of [RN-1 t15.3 Building and processing](TRANSPORT.md#t15.3),
+all four types, kept apart from the replay window: replay protection marks a packet when it
+opens, but a packet becomes eligible only once its ack block and type data pass
+validation, and a payload only once the message layer has processed the whole of it. A
+block therefore never reports a packet the receiver dropped, so a sender can take an
+acknowledged payload as delivered. Received session packets of types 4, 5 and 6 **elicit**
 acknowledgment: they add to the ack debt that obliges a block to go out. **Type 8 does
 not elicit.** A standalone ack is opened, replay-marked and reported like any session
 packet, but receiving one never obliges an ack in return, because a quiet client and
@@ -1627,7 +1637,8 @@ recall them. It also bounds how large a used-token history must be to be useful.
 **Clamp the timeout.** `timeout seconds` is signed, and only a positive value is valid.
 It is inside the signed data so a client cannot forge it, but a backend bug or a leaked
 token could otherwise produce a connection that never times out and never frees its
-slot. A server should hold a configured maximum and clamp the token's value to it.
+slot. A server holds a configured maximum, `server max_timeout_seconds`, and must clamp the
+token's value to it ([RN-1 t13.2 Timeout](TRANSPORT.md#t13.2)).
 **Zero and negative are invalid at both ends: a server must ignore a request whose token
 carries one, and a client must refuse such a token before it sends anything.** An
 earlier draft let a negative value disable the timeout for development behind a server
@@ -1750,11 +1761,14 @@ attempt does; the challenge is the type 2 sealed vector above in its full framin
 sequence 1.
 
 [RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta)
-**The frozen connect token** is reproducible byte-for-byte from its published minting
-inputs, including the fixed ephemeral secret that replaces the random draw ([RN-1 t6.5 Token string and published vectors](TRANSPORT.md#t6.5) rule 5), and a conforming
-server-side implementation also verifies its signature against the test backend public
-key, opens its sealed block with the test server keypair, and recovers the private
-fields listed in the fixed inputs. The token identifier printed above is the 16-byte
+**The frozen connect token** is a fixed known answer. Its seal's ephemeral key was a
+random draw that is not published, so its sealed block is checked by opening it, not by
+minting it again; byte-for-byte minting from published inputs, the ephemeral secret
+included, is what the version 1 connect token vector file covers ([RN-1 t6.5 Token string and published vectors](TRANSPORT.md#t6.5) rule 5). A conforming
+server-side implementation verifies the frozen token's signature against the development
+backend public key, opens its sealed block with the development server keypair
+([RN-1 t19.2 Development keys](TRANSPORT.md#t19.2)), and recovers the private fields
+listed in its inputs. The token identifier printed above is the 16-byte
 unkeyed `crypto_generichash` of its first 576 bytes and is deterministic.
 
 <a id="tc"></a>
@@ -1840,7 +1854,9 @@ which that window was measured to survive an outage of one second less than the
 timeout; at 1000 ms it did not. The recovery bound counts the keep-alive that reopens
 the path, one round trip, an update, one resend delay and the backlog at the usable
 budget rate, which the 100 ms bucket depth caps for an endpoint that updates less often
-than ten times a second.
+than ten times a second. The budget is not the only rate: a small `packets_per_update`,
+the 16-record and one-fragment limits of a packet, or the window can drain a backlog
+more slowly, and then the bound is taken at that rate.
 
 <a id="m2"></a>
 ## m2. Payload forms and sender size rules
@@ -2093,7 +2109,8 @@ It differs from the text shipped with v1.0.0 in these places:
   [RN-1 t19.1 Amplification](TRANSPORT.md#t19.1): a server sends at most one connection
   cookie to each source address and port per update, held in a bitmap under a keyed hash
   of at least 16 bits for each connection request one update can process; a request owed
-  a cookie past it is ignored, counted only by its cookie's reason as before, and the limit
+  a cookie past it is ignored, counted by its cookie's reason as before and also as
+  `CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD`, outside the request family, and the limit
   does not spend the handshake work budget.
 - [RN-1 t17 Timing and defaults](TRANSPORT.md#t17), item 12: a request whose signature
   verifies and is then refused for a sealed block that does not open, sealed fields that

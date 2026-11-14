@@ -1,8 +1,8 @@
 config	budget_s	measured_s	slowest_s	slowest_host
-MCRNSecurityTables.cfg	360	71.833	154.2	bench-nyc-3
+MCRNSecurityTables.cfg	360	75.824	154.2	bench-nyc-3
 MCRNChannel.cfg	480	109.799	209.2	bench-nyc-3
 MCRNChannelSafety.cfg	540	104.885	237.3	bench-nyc-3
-MCServerSessionTwoClients.cfg	240	77.598	110.0	vision
+MCServerSessionTwoClients.cfg	240	75.202	110.0	vision
 MCServerStopSpreadLive.cfg	200	66.166	97.145	hetzner2
 MCServerConnectionTwoSlots.cfg	200	91.002	91.002	record
 MCRNSendReserveChunkNoGuard.cfg	240	85.301	105.241	vision

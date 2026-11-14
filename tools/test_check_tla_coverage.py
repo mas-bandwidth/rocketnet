@@ -558,10 +558,66 @@ Next == ActionA \/ ActionB \/ EnvStep
                      "\n"
                      "// proofs/tla/MCActMod.tla EnvStep\n")
         root = self.plant_action_repo(code_text)
+        # the wrapper exists (a citation of a missing module fails on its own)
+        (root / "proofs" / "tla" / "MCActMod.tla").write_text(
+            "---- MODULE MCActMod ----\nEXTENDS ActMod\n====\n")
         code, out = run_check(root, ["--actions-strict"])
         self.assertNotEqual(code, 0, out)
         self.assertIn("ActMod EnvStep: sdk/act.c", out)
         self.assertIn("ACTIONS UNCITED 1", out)
+
+    def test_model_citation_reads_a_wrapped_extends_list(self):
+        # an EXTENDS list that wraps after a comma extends every module named
+        # on its later lines too (Astra, gates review of 1b98c9bb6)
+        code_text = ("// proofs/tla/ActMod.tla ActionA ActionB EnvStep\n"
+                     "// proofs/tla/MCActMod.tla ExtraStep\n")
+        root = self.plant_action_repo(code_text)
+        (root / "proofs" / "tla" / "Extra.tla").write_text("---- MODULE Extra ----\nExtraStep == TRUE\n====\n")
+        (root / "proofs" / "tla" / "MCActMod.tla").write_text(
+            "---- MODULE MCActMod ----\nEXTENDS Naturals,\n        ActMod,\n        Extra\n====\n")
+        code, out = run_check(root)
+        self.assertEqual(code, 0, out)
+
+    def test_model_citation_of_a_missing_module_fails(self):
+        # the code cited proofs/tla/RNMessageOpen.tla, which was never written (FG-A4)
+        code_text = ("// proofs/tla/ActMod.tla ActionA ActionB EnvStep\n"
+                     "// one open per connection (proofs/tla/NeverWritten.tla)\n")
+        root = self.plant_action_repo(code_text)
+        code, out = run_check(root)
+        self.assertEqual(code, 1, out)
+        self.assertIn("sdk/act.c:2: cites proofs/tla/NeverWritten.tla, which is not a model in proofs/tla", out)
+
+    def test_model_citation_of_an_undeclared_operator_fails(self):
+        for cited in ("ActMod.tla ActionGone", "proofs/tla/ActMod.tla's ActionA, ActionGone",
+                      "proofs/tla/ActMod.tla ActionA and ActionGone"):
+            code_text = "// proofs/tla/ActMod.tla ActionA ActionB EnvStep\n// (" + cited + ")\n"
+            root = self.plant_action_repo(code_text)
+            code, out = run_check(root)
+            self.assertEqual(code, 1, (cited, out))
+            self.assertIn("cites ActMod.tla ActionGone, which ActMod does not declare", out)
+            self.tearDown()
+            self.setUp()
+
+    def test_model_citation_of_operators_constants_and_prose_passes(self):
+        module = ("---- MODULE ActMod ----\nCONSTANTS Cap,\n    BrokenFlag\nVARIABLES x\n"
+                  "Init == x = 0\nActionA == x' = x + 1\nActionB == x' = x\nEnvStep == x' = 0\n"
+                  "Next == ActionA \\/ ActionB \\/ EnvStep\n====\n")
+        (Path(self.tmp.name) / "proofs" / "tla").mkdir(parents=True)
+        (Path(self.tmp.name) / "proofs" / "tla" / "Other.tla").write_text(
+            "---- MODULE Other ----\nOtherStep == TRUE\n====\n")
+        code_text = ("// proofs/tla/ActMod.tla ActionA ActionB EnvStep\n"
+                     "// proofs/tla/ActMod.tla BrokenFlag TRUE, Cap 3\n"
+                     "// proofs/tla/ActMod.tla The counter moves once\n"
+                     "// proofs/tla/ActMod.tla ActionA, Other.tla OtherStep\n"
+                     "// (proofs/tla/ActMod.tla Init, MCActMod.cfg)\n")
+        root = Path(self.tmp.name)
+        (root / "sdk").mkdir()
+        (root / "proofs" / "tla" / "ActMod.tla").write_text(module)
+        (root / "sdk" / "act.c").write_text(code_text)
+        write_row(root, {"machine": "rn-act", "code": "sdk/act.c", "module": "ActMod", "status": "current",
+                         "owed_by": "-", "note": self.ACTION_NOTE})
+        code, out = run_check(root)
+        self.assertNotIn("cites", out)
 
     def test_actions_trailing_comment_cites(self):
         code_text = ("int x = 0;    // proofs/tla/ActMod.tla ActionA\n"

@@ -13900,6 +13900,10 @@ extern void rocketnet_test_cpp_transports_connect_over_loopback();
 extern void live_message_matrix_loopback();
 #if ROCKETNET_DEV
 extern void live_message_matrix_late_probes();
+#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+// the loopback client woken by a send, not polling (tests/functional/loopback_latency.cpp)
+extern void rocketnet_test_loopback_client_woken_by_send();
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
 #endif // #if ROCKETNET_DEV
 extern void rocketnet_test_server_async_delivery_with_max_clients();
 
@@ -16082,6 +16086,9 @@ extern void rocketnet_test_platform_wake_wait_writable();
 extern void rocketnet_test_bundled_rng_closes_and_reopens_on_mac();
 extern void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac();
 #endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#if !defined( _WIN32 ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
+extern void rocketnet_test_sodium_crit_leave_unlocks_only_on_the_owner();
+#endif // #if !defined( _WIN32 ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
 extern void rocketnet_test_connect_token_mint_concurrent();
 extern void rocketnet_test_ack_endpoints_independent_across_threads();
 extern void rocketnet_test_platform_spin_lock_acquire_release_under_contention();
@@ -16472,6 +16479,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_bundled_rng_closes_and_reopens_on_mac", rocketnet_test_bundled_rng_closes_and_reopens_on_mac, NULL },
     { "test_bundled_rng_opens_once_under_concurrent_keygen_on_mac", rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac, NULL },
 #endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#if !defined( _WIN32 ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
+    { "test_sodium_crit_leave_unlocks_only_on_the_owner", rocketnet_test_sodium_crit_leave_unlocks_only_on_the_owner, NULL },
+#endif // #if !defined( _WIN32 ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
     { "test_pcapng_corpus_replay", test_pcapng_corpus_replay, NULL },
     { "test_pcapng_corpus_witness_unread_packet_goes_red", test_pcapng_corpus_witness_unread_packet_goes_red, NULL },
     { "test_pcapng_corpus_covers_control_packet_types", test_pcapng_corpus_covers_control_packet_types, NULL },
@@ -16485,6 +16495,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #endif // #if ROCKETNET_DEV
 #if ROCKETNET_DEV
     { "test_loopback_hub_two_shared_objects", test_loopback_hub_two_shared_objects, rocketnet_test_no_transport_pin_is_set },
+#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+    { "test_loopback_client_woken_by_send", rocketnet_test_loopback_client_woken_by_send, rocketnet_test_no_transport_pin_is_set },
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
 #endif // #if ROCKETNET_DEV
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_platform_spin_lock_acquire_release_under_contention", rocketnet_test_platform_spin_lock_acquire_release_under_contention, NULL },

@@ -201,6 +201,17 @@ def paged(api, path, key, params=None, max_pages=30):
     raise ApiError(f"GET {path}: more than {max_pages} pages")
 
 
+def newest_version_tag(api, repo):
+    """The highest vMAJOR.MINOR.PATCH[-PRERELEASE] tag in the repository by
+    version order, or None when there is none; other tags are ignored."""
+    refs = api.get(f"/repos/{repo}/git/matching-refs/tags/v")
+    if not isinstance(refs, list):
+        raise ApiError(f"GET /repos/{repo}/git/matching-refs/tags/v: not a list")
+    names = [r.get("ref", "").rsplit("/", 1)[-1] for r in refs]
+    versions = [n for n in names if VERSION.match(n)]
+    return max(versions, key=version_key) if versions else None
+
+
 def file_at(api, repo, path, ref):
     """Text of a file at a ref, or None when the file is not there."""
     try:
@@ -556,6 +567,12 @@ def judge_release(api, repo, version, ref, out, stage="pre", gates=None, now=Non
     if not VERSION.match(version):
         say(False, f"version {version!r} is not vMAJOR.MINOR.PATCH[-PRERELEASE]")
         return False, None, None
+    _, minor, patch = version_key(version)[:3]
+    # ROCKETNET_VERSION is major * 10000 + minor * 100 + patch (sdk/rocketnet.h):
+    # one-to-one only while minor and patch are below 100 (v1.0.100 and v1.1.0
+    # would both be 10100), so such a version is refused, never released
+    say(minor < 100 and patch < 100, f"{version}'s minor and patch are below 100, so ROCKETNET_VERSION "
+                                     f"(major * 10000 + minor * 100 + patch) names it alone")
     try:
         sha = resolve(api, repo, ref)
     except NotFound:
@@ -584,8 +601,20 @@ def judge_release(api, repo, version, ref, out, stage="pre", gates=None, now=Non
                       f"--resume waits for its Release Check and publishes)", file=out)
         except NotFound:
             say(True, f"tag {version} does not exist yet")
+        # a stable release is published as latest: one below a version
+        # already tagged would take latest from it. A prerelease is not made
+        # latest and is held to the same order. The tags are read here, before
+        # the tag is pushed: a higher tag pushed in between is not seen
+        newest = newest_version_tag(api, repo)
+        if newest is not None:
+            say(version_key(version) >= version_key(newest),
+                f"version {version} is not below the newest version tag {newest}")
 
     contexts = required_contexts(api, repo, sha)
+    if contexts is None:
+        # fail closed, by name: with no ruleset at the commit the required
+        # job names could not be judged, and a skipped check is not a pass
+        say(False, f"{RULESET_PATH} is not at the commit: no list of required job names to hold it to")
     point = is_point_release(version)
     verdicts, not_in_force = evaluate(ctx, gates, ("push",) if point else ("push", "nightly"), version, contexts,
                                       f"{RULESET_PATH} at the commit", light=point)

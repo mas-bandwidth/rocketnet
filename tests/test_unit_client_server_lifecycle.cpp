@@ -828,6 +828,63 @@ static void test_client_disconnect_clears_denied_state()
 }
 REGISTER_UNIT_TEST( test_client_disconnect_clears_denied_state );
 
+// The rule docs/SESSION.md and docs/USAGE.md follow (rocketnet.h,
+// rocketnet_client_disconnected): after a timeout the client is not
+// disconnected, however long the caller polls, until a disconnect or the next
+// connect. Polling it before reconnecting from a negative state never ends:
+// connect directly, or disconnect and then wait.
+
+static void test_client_negative_state_is_not_disconnected()
+{
+    // connect straight from the timed out state
+
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 1 );
+
+    rocketnet_client_t * client = world.clients[0];
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( world.server, 1, &world.identity, 0x1601, 1, token );
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 100 && rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED; i++ )
+    {
+        lifecycle_pump( &world, 0.1 );
+    }
+    const int ended = rocketnet_client_state( client );
+    check( ended == ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT );
+
+    for ( int i = 0; i < 200; i++ )
+    {
+        lifecycle_pump( &world, 0.1 );
+        check( !rocketnet_client_disconnected( client ) );
+        check( rocketnet_client_state( client ) == ended );
+    }
+
+    lifecycle_connect( &world, 0, 0x1602 );
+    lifecycle_world_destroy( &world );
+
+    // disconnect from the timed out state, then the poll ends
+
+    lifecycle_world_create( &world, 1, 1 );
+
+    client = world.clients[0];
+    lifecycle_token( world.server, 1, &world.identity, 0x1603, 1, token );
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 100 && rocketnet_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED; i++ )
+    {
+        lifecycle_pump( &world, 0.1 );
+    }
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT );
+    check( !rocketnet_client_disconnected( client ) );
+
+    rocketnet_client_disconnect( client );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    rn_test_client_wait_disconnected( client );
+    check( rocketnet_client_disconnected( client ) );
+    lifecycle_connect( &world, 0, 0x1604 );
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_client_negative_state_is_not_disconnected );
+
 static int lifecycle_finish_assertions = 0;
 
 static void lifecycle_finish_assert_hook( const char * condition, const char * function, const char * file, int line )
