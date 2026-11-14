@@ -37,7 +37,9 @@ static const int budget_custom_candidate = ROCKETNET_TRANSPORT_RIO + 1;
 // every built-in row is built in, and the id past the last of them is custom
 static void test_transport_budget_custom_is_past_the_built_in_rows()
 {
-    for ( int transport = 0; transport < ROCKETNET_NUM_TRANSPORTS; ++transport )
+    // up to the last built-in row only: a build with a registry header has its
+    // custom rows below ROCKETNET_NUM_TRANSPORTS
+    for ( int transport = 0; transport <= ROCKETNET_TRANSPORT_RIO; ++transport )
     {
         check( !rocketnet_transport_custom( transport ) );
     }
