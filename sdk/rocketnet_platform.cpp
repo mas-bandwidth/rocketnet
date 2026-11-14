@@ -3820,19 +3820,23 @@ static_assert( sizeof( void * ) == 8, "rocketnet on Windows needs a 64-bit build
 
 #if ROCKETNET_RED_ZONES
 // sdk/rocketnet_memory.h rocketnet_red_zone_unpoison: VirtualQuery reads the
-// state of the shadow page without touching it, and a run of shadow pages not
-// committed is skipped whole, back to the application addresses it shadows
-uintptr_t rocketnet_red_zone_uncommitted_end( uintptr_t at )
+// state of the shadow page without touching it, and the run of shadow pages
+// in that state that holds it ends where the region it reports ends, given
+// back as the application addresses it shadows. A query that fails is a run
+// not known: at, committed, so one span is asked and the next is queried.
+uintptr_t rocketnet_red_zone_shadow_run( void *, uintptr_t at, bool * committed )
 {
+    *committed = true;
     size_t scale = 0;
     size_t offset = 0;
     __asan_get_shadow_mapping( &scale, &offset );
     const uintptr_t shadow = ( at >> scale ) + (uintptr_t) offset;
     MEMORY_BASIC_INFORMATION info;
-    if ( VirtualQuery( (const void *) shadow, &info, sizeof( info ) ) == 0 || info.State == MEM_COMMIT )
+    if ( VirtualQuery( (const void *) shadow, &info, sizeof( info ) ) == 0 )
     {
         return at;
     }
+    *committed = info.State == MEM_COMMIT;
     const uintptr_t shadow_end = (uintptr_t) info.BaseAddress + (uintptr_t) info.RegionSize;
     return ( shadow_end - (uintptr_t) offset ) << scale;
 }
