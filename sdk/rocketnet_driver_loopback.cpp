@@ -78,11 +78,16 @@ ROCKETNET_STATIC_ASSERT( offsetof( rocketnet_loopback_hub_t, header ) == 0, "the
 // the layout id: the sizes and offsets two copies of the library must agree on
 // to share a hub. A copy built with another layout refuses the hub
 // (rocketnet_loopback_hub_check), so a mismatch is caught at its first use
-// instead of read through.
+// instead of read through. Each step multiplies in 64 bits and keeps the low
+// 32: the same value as the 32-bit wrap, which VS 2017 refuses in a constant
+// (C4307). The pin below holds the function to the values it has always made.
 static constexpr uint32_t loopback_layout_hash( const uint64_t * values, int count, uint32_t hash )
 {
-    return count == 0 ? hash : loopback_layout_hash( values + 1, count - 1, ( hash ^ (uint32_t) ( values[0] ^ ( values[0] >> 32 ) ) ) * 16777619u );
+    return count == 0 ? hash : loopback_layout_hash( values + 1, count - 1, (uint32_t) ( (uint64_t) ( hash ^ (uint32_t) ( values[0] ^ ( values[0] >> 32 ) ) ) * 16777619u ) );
 }
+
+static constexpr uint64_t ROCKETNET_LOOPBACK_LAYOUT_HASH_PIN[] = { 1, 0xFFFFFFFFFFFFFFFFULL, 0x123456789ABCDEF0ULL };
+ROCKETNET_STATIC_ASSERT( loopback_layout_hash( ROCKETNET_LOOPBACK_LAYOUT_HASH_PIN, 3, 2166136261u ) == 0x52A00284u, "the layout hash makes the values it always has" );
 
 static constexpr uint64_t ROCKETNET_LOOPBACK_HUB_LAYOUT_VALUES[] = {
     sizeof( rocketnet_loopback_hub_t ),
