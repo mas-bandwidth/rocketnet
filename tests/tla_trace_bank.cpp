@@ -414,8 +414,13 @@ static int trace_bank( uint64_t seed, int steps, const char * out )
             const int k = random.below( 2 * BANK_MAX_SKEW + 1 ) - BANK_MAX_SKEW;
             const bool abort = random.below( 4 ) == 0;
             const char * act = bank_finish( walk, t, k, abort, 1 + random.below( ROCKETNET_RECEIVE_CEILING ) );
+            std::vector<std::string> args = { tla_int( t ), tla_int( k ) };
+            if ( strcmp( act, "Finish" ) == 0 )
+            {
+                args.push_back( tla_bool( !abort ) );
+            }
             report.act( act );
-            records.push_back( tla_step( abort ? "abort" : "finish", act, tla_sequence( { tla_int( t ), tla_int( k ), tla_bool( !abort ) } ), bank_record( walk ) ) );
+            records.push_back( tla_step( abort ? "abort" : "finish", act, tla_sequence( args ), bank_record( walk ) ) );
         }
         else
         {
