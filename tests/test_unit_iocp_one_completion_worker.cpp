@@ -64,7 +64,7 @@ static void test_iocp_memory_plan_counts_workers_and_send_threads()
     rocketnet_unit_check( plan.sockets == 1 );
     config.bind_ipv4_address[0] = '\0';
 
-    // 1000 clients is 8 lanes: the 2 send threads; one send thread asked is one
+    // 1000 clients is 16 lanes: the 2 send threads; one send thread asked is one
     config.num_iocp_completion_workers = 1;
     config.max_clients = 1000;
     rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "iocp", plan ) );
@@ -77,7 +77,9 @@ static void test_iocp_memory_plan_counts_workers_and_send_threads()
     rocketnet_unit_check( plan.worker_threads == 1 + 8 );
 
     // the plan refuses what create refuses: send threads past the lanes,
-    // workers past the transport's
+    // workers past the transport's (512 clients is 8 lanes)
+    config.max_clients = 512;
+    rocketnet_unit_check( rocketnet_server_iocp_send_lanes( 512 ) == 8 );
     config.num_iocp_send_threads = 9;
     rocketnet_unit_check( !rocketnet_builtin_server_memory_plan( &config, "iocp", plan ) );
     config.num_iocp_send_threads = 0;

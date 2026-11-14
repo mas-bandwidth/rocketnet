@@ -203,7 +203,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // With counter 291 (XDP_KERNEL_DROPPED_NO_SESSION) as well
 // (integration/v1.1.58, 902e10754): 64 more to each, actual=1509344295 and
 // 15398956 (aws-win-ci-2, MSVC, Debug, DEV=ON), measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1508295719 )
+// IOCP at 64 send operations a client (16 lanes of 4096 at 1000 clients, 8
+// before) adds 68947128 to the server, the iocp memory plan's growth, and
+// nothing to the client: actual=1578291423 (AWS m7i.16xlarge, MSVC, Release
+// and Debug, DEV=ON, 2026-11-14), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1577242847 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350380 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.

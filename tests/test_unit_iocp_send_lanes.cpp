@@ -127,13 +127,13 @@ REGISTER_UNIT_TEST( test_iocp_send_lane_spreads_players );
 // The lane sizing at every client count a build can size: a lane holds every
 // client slot plus the headroom, so the protocol reserve (which counts each
 // slot not connected in every lane) always leaves it fill; the lanes'
-// operations fit the packet handle's sixteen index bits; 1000 clients is 8
+// operations fit the packet handle's sixteen index bits; 1000 clients is 16
 // lanes of 4096. Before the floor, a lane of 4096 at 5000 clients was all
 // reserve.
 
 static void test_iocp_send_lane_sizing_holds_the_reserve()
 {
-    rocketnet_unit_check( rocketnet_server_iocp_lanes_for( 1000 ) == 8 );
+    rocketnet_unit_check( rocketnet_server_iocp_lanes_for( 1000 ) == 16 );
     rocketnet_unit_check( rocketnet_server_iocp_lane_size_for( 1000 ) == 4096 );
     rocketnet_unit_check( rocketnet_server_iocp_lanes_for( 10000 ) == 4 );
     rocketnet_unit_check( rocketnet_server_iocp_lane_size_for( 10000 ) == 16384 );
@@ -196,7 +196,7 @@ static void test_iocp_send_thread_owns_lanes_by_modulo()
         }
     }
 
-    // by value at the measured layout: 8 lanes, thread 0 takes 0 2 4 6, thread 1 takes 1 3 5 7
+    // by value at 8 lanes (512 clients): thread 0 takes 0 2 4 6, thread 1 takes 1 3 5 7
     const int expected_lanes[2][4] = { { 0, 2, 4, 6 }, { 1, 3, 5, 7 } };
     for ( int t = 0; t < 2; ++t )
     {
