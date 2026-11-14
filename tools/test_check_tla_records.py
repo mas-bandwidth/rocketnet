@@ -256,6 +256,23 @@ class CheckTlaRecordsTest(unittest.TestCase):
         code, text = self.delivery_fixture(witness=False, fairness=fairness)
         self.assertEqual(code, 0, text)
 
+    def test_indented_definitions_still_need_a_witness(self):
+        # top-level definitions may be indented: an indented Fairness root and
+        # an indented named assumption still ask for the witness
+        indented = "".join("  " + line + "\n" for line in self.NAMED_FAIRNESS.splitlines())
+        code, text = self.delivery_fixture(witness=False, fairness=indented)
+        self.assertEqual(code, 1)
+        self.assertIn("MCPass.cfg", text)
+        code, text = self.delivery_fixture(fairness=indented)
+        self.assertEqual(code, 0, text)
+        # controls: a LET-local definition named Fairness... is no root, and an
+        # indented THEOREM ends the definition above it
+        local = ("Other ==\n  LET FairnessLocal == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)\n  IN TRUE\n"
+                 "  Fairness == WF_vars(Send)\n"
+                 "  THEOREM ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)\n")
+        code, text = self.delivery_fixture(witness=False, fairness=local)
+        self.assertEqual(code, 0, text)
+
     def test_unnamed_implication_needs_no_witness(self):
         # the control for following names: an implication in a definition no
         # Fairness... reaches (a PROPERTY of its own) asks for nothing
@@ -356,6 +373,14 @@ class CheckTlaRecordsTest(unittest.TestCase):
         self.assertIn("MCD.cfg: in DEADLOCK_OWED but its cfg and its deadlock column agree", errors[0])
         errors = self.deadlock_fixture("CHECK_DEADLOCK FALSE\n", "check", frozenset({"MCD.cfg", "MCGone.cfg"}))
         self.assertEqual(errors, ["MCGone.cfg: in DEADLOCK_OWED but not a case in CASES.tsv; remove it from DEADLOCK_OWED"])
+
+    def test_deadlock_owed_excuses_only_its_debt(self):
+        # the owed debt is FALSE under check; the inverse mismatch on an owed
+        # name is refused like any other
+        errors = self.deadlock_fixture("CHECK_DEADLOCK TRUE\n", "ignore-terminal", frozenset({"MCD.cfg"}))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("MCD.cfg: the cfg sets CHECK_DEADLOCK TRUE but CASES.tsv declares deadlock = ignore-terminal",
+                      errors[0])
 
     def test_committed_deadlock_owed_is_exactly_the_debt(self):
         with check_tla_records.DEFAULT_CASES.open(encoding="utf-8", newline="") as handle:

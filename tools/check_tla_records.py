@@ -245,12 +245,15 @@ def cfg_properties(config_path):
             if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", prop)]
 
 
-DEFINITION_RE = re.compile(r"^(?:LOCAL\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\))?\s*==", re.ASCII)
+# a definition head, indented or not ("==" only ever defines in TLA+); one
+# inside an open LET is local to the definition around it
+DEFINITION_RE = re.compile(r"^\s*(?:LOCAL\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\))?\s*==", re.ASCII)
 DELIVERY_ASSUMPTION_RE = re.compile(r"\[\]\s*<>.{0,400}?=>.{0,400}?\[\]\s*<>", re.DOTALL)
-# a line starting with one of these ends the definition above it
+# a line starting with one of these ends the definition above it (INSTANCE
+# and the rest only at the margin: X ==\n    INSTANCE M is one definition)
 UNIT_START_RE = re.compile(
-    r"^(?:THEOREM|LEMMA|PROPOSITION|COROLLARY|AXIOM|ASSUME|ASSUMPTION|CONSTANTS?|VARIABLES?|"
-    r"RECURSIVE|LOCAL|INSTANCE|EXTENDS|USE|HIDE)\b")
+    r"^\s*(?:THEOREM|LEMMA|PROPOSITION|COROLLARY|AXIOM|ASSUME|ASSUMPTION|CONSTANTS?|VARIABLES?|RECURSIVE)\b"
+    r"|^(?:LOCAL|INSTANCE|EXTENDS|USE|HIDE)\b")
 # X!N, L(i)!N and K!W!N: the instance path, then the name
 QUALIFIED_RE = re.compile(
     r"(?<![A-Za-z0-9_!])((?:[A-Za-z_][A-Za-z0-9_]*(?:\([^()]*\))?!)+)([A-Za-z_][A-Za-z0-9_]*)")
@@ -258,16 +261,19 @@ QUALIFIED_RE = re.compile(
 
 def module_definitions(text):
     """{name: body} of a module's definitions that start a line (comments blanked)."""
-    definitions, name, body = {}, None, []
+    definitions, name, body, open_lets = {}, None, [], 0
     for line in strip_comments(text).splitlines():
-        start = DEFINITION_RE.match(line)
+        start = DEFINITION_RE.match(line) if open_lets <= 0 else None
         if (start or MODULE_END_RE.match(line) or re.match(r"^\s*-{4,}\s*$", line)
                 or UNIT_START_RE.match(line)):
             if name is not None:
                 definitions[name] = "\n".join(body)
             name, body = (start.group(1), [line]) if start else (None, [])
+            open_lets = 0
         elif name is not None:
             body.append(line)
+        if name is not None:
+            open_lets += len(re.findall(r"\bLET\b", line)) - len(re.findall(r"\bIN\b", line))
     if name is not None:
         definitions[name] = "\n".join(body)
     return definitions
@@ -515,8 +521,9 @@ def check_deadlock_directives(cases, tla_dir, owed=DEADLOCK_OWED):
         if declared not in ("check", "ignore-terminal"):
             errors.append(f"{cfg}: deadlock column {declared!r}, not check or ignore-terminal")
             continue
-        disagrees = (directive is False and declared == "check") or (directive is True and declared == "ignore-terminal")
-        if disagrees and cfg not in owed:
+        owed_debt = directive is False and declared == "check"  # the one combination DEADLOCK_OWED excuses
+        disagrees = owed_debt or (directive is True and declared == "ignore-terminal")
+        if disagrees and not (owed_debt and cfg in owed):
             errors.append(
                 f"{cfg}: the cfg sets CHECK_DEADLOCK {'FALSE' if directive is False else 'TRUE'} but CASES.tsv "
                 f"declares deadlock = {declared}; the record would claim a check TLC did not run (or skip one "
