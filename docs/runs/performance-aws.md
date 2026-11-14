@@ -185,7 +185,7 @@ At 2 workers, peak with half game load passes 3 of 3. This is the workload that 
 | gso | 2 | Peak with half game load, 3 of 3 (the only workload run) | Nothing |
 
 The measurement record includes server and client logs, reconciliation output,
-NIC, qdisc, UDP and thread snapshots held by the measurement owner. Those raw
+NIC, qdisc, UDP and thread records held by the measurement owner. Those raw
 receipts are not published here. This table is a reported result record, not
 an independent rerun of the build. `SERVER_IP`, `CLIENT_IP`, `T` and `K` in
 the command templates denote the two private addresses, shared end time and

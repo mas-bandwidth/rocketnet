@@ -191,7 +191,7 @@ The measured io_uring rows reach the offered rate with a low late-input share
 (0.17–0.41%), consistent with no regular extra-update hold while retaining
 the reported tail. At peak with half game, fq_codel drops
 whole 15-packet GSO skbs as sojourn drops. 7 of 9 fq_codel rows lost 15-210 s2c messages (at most
-0.0004% of the 54M sent). In one qdisc-test run the NIC snapshot was missed, so its Gb/s is not in
+0.0004% of the 54M sent). In one qdisc-test run the NIC capture was missed, so its Gb/s is not in
 the range. The pfifo comparison is pending (QDISC2).
 
 The row owner reports failing reconciliation chains for GSO and io_uring,
