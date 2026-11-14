@@ -229,7 +229,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnloopbackbindlayout` | The loopback hub's bound table and ephemeral port search at the code's layout, three records and ports 0..5 with the range 2..5, with the range 4..5 so every port can be held, and with 4..5 lowered by the sizing to hold every record (README-RNLoopbackBindLayout.md). |
 | `rnclientslotslayout` | The client slots' LIFO free stack and owner generations at the code's layout, three slots, two ids and five generations (README-RNClientSlotsLayout.md). |
 | `rnsimulatorstorelayout` | The development link simulator's slot store and destination index at the code's layout, three slots, two shards and three destinations (README-RNSimulatorStoreLayout.md). |
-| `rnserverpayloadringlayout` | The portable server transport's payload ring at the code's layout (README-RNServerPayloadRingLayout.md). |
+| `rnserverpayloadringlayout` | The portable server transport's payload ring at the code's layout, one slot per fetch-add; the code's chunk take is not modelled (README-RNServerPayloadRingLayout.md). |
 | `clientgrocarry` | The gso client's GRO receive at the code's layout, rooms 1 to 4, a read threshold of three segments and messages of up to five (README-RNClientGroCarry.md). |
 | `serverstopspread` | The disconnect ring's layout and the stop spread across steps within the send room (README-ServerStopSpread.md). |
 | `rnserverlinkstop` | The stop's drain of the packets the development link simulator holds, judged by each packet's own send queue, one and two queues (README-RNServerLinkStop.md). |
