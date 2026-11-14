@@ -305,6 +305,13 @@ between start and finish.
   the two are within 2^31. The walk also hands the sink `highest_opened`, a
   64-bit count, cast to the 32-bit mark (`sdk/rocketnet_server_replay_marks.cpp`,
   `(uint32_t) highest_opened`); the truncation is left out with the wrap.
+  A zero mark is an entry in the model as in the code (`KernelFilter` tests
+  for `NoEntry`, as `server_xdp.c` tests the lookup for NULL). With naturals
+  it drops nothing; the code's `(int32_t)(0 - sequence)` drops sequences from
+  2^31 + 1 to 2^32 - W, which a session starting at 1 does not reach while
+  the zero mark stands. Only the development seam
+  `ROCKETNET_DEV_SESSION_SEQUENCE_START` can start a session there; it is
+  left out with the wrap.
 - **The byte layout.** The key (family, pad, port, address) and value
   (`high_water`, pad) structs in `sdk/rocketnet_wire.h`, the little-endian
   sequence after the 6-byte prefilter header, and the packet type list are
@@ -317,13 +324,14 @@ between start and finish.
   walk sees that slot first, `~seen[a]` after the old slot's forget was
   queued, and the fake-map regression covers both slots). Not covered: a
   slot reused at another address while its old address's forget is still
-  owed (a full pending buffer refused it). The code's walk skips that slot
-  and takes no mark for the new address, so the new session's greeting is
-  not held by its zero mark and an older entry for the new address can
-  stand. The model cannot express it (slot and address are one here), and
-  the trace's walk steers clear of it (`rp_owed_slot`). `RNServerReplaySlots`
-  keys by slot but has no greeting or freshness property, so that harm is
-  checked by no model.
+  owed (a full pending buffer refused it). The model cannot express it
+  (slot and address are one here), and the trace's walk steers clear of it
+  (`rp_owed_slot`). At this branch's code the walk skips that slot with no
+  mark for the new address; that is closed by
+  `fix/v1.1.x/hostile-input-cost` db2dd94c1 (in review), whose skip asks the
+  sink for a zero mark at the new address and records it as the slot's skip
+  mark, modelled slot-keyed in `RNServerReplaySlots` on that head
+  (`MarkWhileSkipped`, `RecordSkip`, `KeepSkipOwner`, `GreetedSlotHasEntry`).
 - **A disconnect before the first keep-alive.** A client that gives up while
   still sending its connection response sends a disconnect burst, session
   packets, before it is greeted; the kernel may drop that burst against an

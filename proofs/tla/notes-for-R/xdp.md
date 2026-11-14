@@ -84,9 +84,25 @@ prints []. A later merge of the same heads should take the same records.
    :title "XDP receive ring: a defective descriptor naming a held receive frame"
    :text "rocketnet_xdp_fill_return checks the receive region only, so a driver or kernel defect naming a receive frame already on the fill ring or in the RX ring is handed back again and sits on the fill ring twice. RNXdpReceiveRing leaves it out (KernelMisdeliver names only a send frame) and the trace never posts one. Decide whether an ownership check is worth its cost; model it if it is added."
    :date "2026-11-13" :origin "models review MM174; proofs/tla/RNXdpReceiveRing.tla; sdk/rocketnet_xdp_frame.h")
-
-  (item "xdp-replay-slot-reuse-model" :group "proof-debt" :area "proofs"
-   :title "Replay greeting and freshness keyed by slot"
-   :text "RNXdpReplay identifies a slot with its address, and RNServerReplaySlots keys by slot but has no greeting or freshness property. A slot reused at another address while its old forget is owed (the mark pass skips it; handed up as code-wrong, MM162) is checked by no model. With the code fix, extend a slot-keyed model with NewSessionNeverDroppedByOldMark and the greeting hold, and let the xdp-replay walk reuse slots."
-   :date "2026-11-13" :origin "models review MM162; proofs/tla/RNXdpReplay.tla; proofs/tla/RNServerReplaySlots.tla; sdk/rocketnet_server_replay_marks.cpp")
 ```
+
+MM162 needs no roadmap entry: Rowan ruled it closed by
+fix/v1.1.x/hostile-input-cost db2dd94c1 (in review), whose skip asks the
+sink for a zero mark at the new address and whose RNServerReplaySlots
+carries MarkWhileSkipped and GreetedSlotHasEntry. RNXdpReplay, its README
+and COVERAGE rows 32 and 257 say so on this branch. When db2dd94c1 merges,
+it edits RNXdpReplay.tla, its README, MCRNXdpReplay*.cfg (it adds its own
+MCRNXdpReplayInFlight.cfg) and tests/tla_trace_xdp_replay.cpp: expect
+conflicts with this branch there.
+
+## MA001: the COVERAGE.tsv line for R
+
+COVERAGE.tsv row xdp-replay-high-water (row 32) says "the model's integer
+difference becomes modulo 2^32 there, and the model's hw = 0 stands for no
+entry." Replace with: "the model's integer difference becomes modulo 2^32
+there; a zero mark is an entry in both (KernelFilter tests NoEntry, the
+code tests the lookup for NULL), and it drops nothing while the session's
+sequences stay below 2^31, which a session starting at 1 does not leave
+while the zero mark stands (ROCKETNET_DEV_SESSION_SEQUENCE_START can start
+one past it; left out with the wrap)." The same row's "keep-alive, payload,
+disconnect, ack, fragment" is MA004, R's.

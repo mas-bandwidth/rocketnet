@@ -22,14 +22,15 @@
 (* A client slot is identified with its address here: one live session    *)
 (* per address, a reconnect from the same address being a new session     *)
 (* whose sequences restart at 1.  A slot whose mapping changes address is  *)
-(* the same forget as a release, for the old address.  Left out: a slot    *)
-(* reused at another address while its old address's forget is still owed *)
-(* (refused by a full pending buffer).  The code's walk skips such a slot  *)
-(* and takes no mark for the new address (sdk/rocketnet_server_replay_     *)
-(* marks.cpp, the seen-address test), so the new session's greeting is not *)
-(* held by its zero mark; nothing here can express it.  RNServerReplaySlots *)
-(* keys by slot but has no greeting or freshness property, so that harm is *)
-(* checked by no model.                                                    *)
+(* the same forget as a release, for the old address.  A slot reused at   *)
+(* another address while its old address's forget is still owed (refused  *)
+(* by a full pending buffer) is a slot, not an address, and this model     *)
+(* cannot express it.  At this branch's code the walk skips such a slot    *)
+(* with no mark for the new address; that is closed by                     *)
+(* fix/v1.1.x/hostile-input-cost db2dd94c1 (in review), whose skip asks    *)
+(* the sink for a zero mark at the new address and records it as the       *)
+(* slot's skip mark, modelled slot-keyed in RNServerReplaySlots there      *)
+(* (MarkWhileSkipped, RecordSkip, KeepSkipOwner, GreetedSlotHasEntry).     *)
 (*                                                                         *)
 (* A reconnect may come before the old session's forget is queued or       *)
 (* while the kernel refuses it.  The new session's client sends no session *)
@@ -38,8 +39,14 @@
 (* it (sdk/rocketnet_server_transport.cpp, the replay walk and commit come *)
 (* before the update's send flush): greeted[a].  That commit carries the   *)
 (* new session's first mark, zero when nothing has opened, which replaces  *)
-(* whatever the kernel held for the address; a high_water of 0 drops       *)
-(* nothing.  A disconnect burst a client sends before its first keep-alive *)
+(* whatever the kernel held for the address.  A zero mark is an entry, as  *)
+(* in the code (the map lookup, not the value, tells no entry apart): with *)
+(* naturals it drops nothing, and in the code's 32-bit compare             *)
+(* (int32_t)(0 - sequence) it drops only sequences from 2^31 + 1 to        *)
+(* 2^32 - W, which a session whose sequences start at 1 does not reach     *)
+(* while the zero mark stands (the development seam                        *)
+(* ROCKETNET_DEV_SESSION_SEQUENCE_START can start one there; left out,     *)
+(* with the wrap).  A disconnect burst a client sends before its first keep-alive *)
 (* is left out: a dropped one costs the server a timeout, not the session. *)
 (*                                                                         *)
 (* Sequences are naturals: the 32-bit wrap of (int32_t)(high_water -       *)
@@ -347,7 +354,8 @@ Duplicate(p) ==
 (* KernelFilter(p): THE KERNEL RULE.  With an entry for the source, drop   *)
 (* when (high_water - sequence) >= KernelWindow, counting                  *)
 (* DROPPED_REPLAYED; a genuine drop is recorded with the session of the    *)
-(* mark it was dropped against.                                            *)
+(* mark it was dropped against.  An entry is any value but NoEntry, a     *)
+(* zero mark included (server_xdp.c tests the lookup for NULL).            *)
 (* With no entry, or a sequence inside or ahead of the window, the packet  *)
 (* goes on to userspace.  The kernel runs beside the update, so it is      *)
 (* enabled in every phase.  The design never writes kmap here; the broken  *)
@@ -356,7 +364,7 @@ Duplicate(p) ==
 KernelFilter(p) ==
     /\ p.stage = "wire"
     /\ LET e == kmap[p.addr]
-       IN  IF e.hw # 0 /\ e.hw - p.seq >= KernelWindow
+       IN  IF e # NoEntry /\ e.hw - p.seq >= KernelWindow
              THEN /\ net' = net \ {p}
                   /\ dropped' = IF p.genuine
                                   THEN dropped \cup {[addr |-> p.addr,
