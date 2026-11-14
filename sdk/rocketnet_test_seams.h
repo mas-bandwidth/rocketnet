@@ -62,6 +62,33 @@ void rocketnet_dev_session_sequence_taken( uint64_t sequence );
 typedef int rocketnet_dev_link_stop_wait_hold_function_t( void * context );
 
 void rocketnet_dev_set_link_stop_wait_hold_hook( rocketnet_dev_link_stop_wait_hold_function_t * function, void * context );
+
+// The server transport's failed-create stop hold. While set, the unwind of a
+// failed server transport create (rocketnet_server_transport_abort_create in
+// sdk/rocketnet_server_transport.cpp) treats the transport as not stopped
+// and calls this once per poll, with the transport, instead of sleeping on
+// the platform clock: its 1 s deadline runs on a counter clock each poll
+// advances by 1 ms. Return 1 to keep polling, 0 when the worker has stopped.
+// A transport kept at the deadline goes to the create's owner (a server
+// start keeps it in the server): while this hook is set it also answers
+// rocketnet_server_transport_failed_create_stopped, so the server reports
+// not stopped until the hook says 0 or is cleared. NULL is the transport's
+// own stopped(). Per process, null by default.
+
+struct rocketnet_server_transport_t;
+
+typedef int rocketnet_dev_server_abort_create_hold_function_t( void * context, struct rocketnet_server_transport_t * transport );
+
+void rocketnet_dev_set_server_abort_create_hold_hook( rocketnet_dev_server_abort_create_hold_function_t * function, void * context );
+
+// The POSIX wake create failure seam: while nonzero, every
+// rocketnet_platform_wake_create fails at its kernel object (the kqueue, the
+// eventfd or the pipe) as if the call had set errno to this value, so a unit
+// case reaches the create's failure status without exhausting the kernel.
+// Per process, 0 by default. Defined in sdk/rocketnet_platform.cpp (POSIX).
+
+void rocketnet_dev_fail_wake_create( int error );
+
 // The server keygen failure seam: while set, rocketnet_server_create fails
 // its X25519 key generation / derivation step as if
 // rocketnet_generate_server_keypair / crypto_scalarmult_base had failed, so
@@ -69,6 +96,16 @@ void rocketnet_dev_set_link_stop_wait_hold_hook( rocketnet_dev_link_stop_wait_ho
 // Per process, false by default. Defined in sdk/rocketnet_api.cpp.
 
 void rocketnet_dev_set_server_keygen_failure( bool fail );
+
+// The crypto source failure seam: while set, opening sodium's random source
+// fails (rocketnet_crypto_open_locked in sdk/rocketnet.cpp, under the crypto
+// mutex), so rocketnet_crypto_acquire returns false and every caller takes
+// its real failure branch: rocketnet_generate_server_keypair answers
+// CRYPTO_INIT_FAILED, and so does the generated-pair step of
+// rocketnet_server_create. Per process, false by default. Defined in
+// sdk/rocketnet.cpp.
+
+void rocketnet_dev_set_crypto_source_failure( bool fail );
 // The hash-key seed seam: the client slots, the token tables and the
 // encryption map draw their SipHash keys from OS entropy at create. A unit
 // case that depends on a table's layout sets a nonzero seed here, and every
@@ -100,6 +137,25 @@ void rocketnet_dev_seed_hash_key( uint8_t * key, size_t key_bytes, int table_kin
 // sdk/rocketnet_server_transport.cpp.
 
 void rocketnet_dev_fail_disconnect_sealed_writes( int count );
+
+// The client I/O stop-wait hold. While set, the I/O core's exit
+// (rocketnet_client_io_discard_at_stop, sdk/rocketnet_client_io.h) calls this once per
+// poll of its stop_woken wait instead of sleeping, so a unit case can run the
+// exit inside stop's wake call on one thread and see that no close happens
+// while the wake is still to return. The wait ends only when stop_woken is
+// stored, and the hook replaces the sleep, so every function set here must
+// store stop_woken itself within a bounded number of polls (and fail its
+// case at that ceiling); one that never does spins forever. So the wait does
+// not sleep and cannot hang the suite. NULL, the default, leaves the sleep.
+// Per process. Defined in sdk/rocketnet_client_transport.cpp.
+
+typedef void rocketnet_dev_client_io_stop_wait_function_t( void * context );
+
+void rocketnet_dev_set_client_io_stop_wait_hook( rocketnet_dev_client_io_stop_wait_function_t * function, void * context );
+
+// called by the wait: runs the hook and returns true when one is set, else
+// returns false and the wait sleeps
+bool rocketnet_dev_client_io_stop_wait_poll( void );
 
 #endif // #if ROCKETNET_DEV
 

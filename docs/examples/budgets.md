@@ -27,8 +27,12 @@ the connection stays up.
 
 An environment variable can override a budget at create:
 `ROCKETNET_CLIENT_SEND_KBPS` for the client,
-`ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS` for the server. The runtime
-set-send-kbps call wins over both.
+`ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS` for the server. The config (or that
+variable) sets each connection's starting rate. A runtime
+`rocketnet_client_set_send_kbps` or `rocketnet_server_set_send_kbps` call
+changes the rate of one connected client's connection, for the rest of that
+connection only: in any other state it changes nothing, and the next
+connection starts at the config's rate again.
 
 ## Run it
 
@@ -47,7 +51,8 @@ inside sixty seconds and prints `PASS` as its last line; any failure prints one
 The program prints the two header defaults, the configured client rate, the
 name of the status from `rocketnet_client_set_send_kbps`, the final
 `messages_dropped_over_budget` value, and the reliable arrival count. A successful runtime
-change prints `OK`, the name `rocketnet_status_name` gives `ROCKETNET_STATUS_OK`. The drop
+change prints `runtime set-send-kbps returned OK`: `OK` is the text
+`rocketnet_status_name` returns for the status `ROCKETNET_STATUS_OK`. The drop
 count is run-dependent but must be nonzero, while the reliable arrival line
 must report every queued reliable message.
 

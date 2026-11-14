@@ -35,8 +35,10 @@
 /// ROCKETNET_DEV_BACKEND_PUBLIC_KEY, and accept the published development
 /// keys and the test packet filter. Production builds
 /// define ROCKETNET_DEV 0 (CMake: -DROCKETNET_DEV=OFF), which compiles all of
-/// that out and refuses at create the development keys and tokens and the
-/// test packet filter. Portable clients and servers are available in both modes.
+/// that out. A production build refuses the development keys at server start
+/// and at connect token creation, a token sealed to the development server
+/// key at client connect, and the test packet filter at create. Portable
+/// clients and servers are available in both modes.
 
 #if !defined( ROCKETNET_DEV )
     #define ROCKETNET_DEV 1
@@ -47,7 +49,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.54"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.56"
 
     /// The major component of the SDK version.
 
@@ -59,7 +61,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        54
+    #define ROCKETNET_VERSION_PATCH                        56
 
 #else // !ROCKETNET_DEV
 
@@ -213,6 +215,20 @@
 
 #define ROCKETNET_SEND_KBPS_UNLIMITED                      0x7fffffff
 
+/// The values of the server config's gso_reserve_cpu_0,
+/// io_uring_reserve_cpu_0 and portable_reserve_cpu_0. Zero, the default,
+/// reads as ROCKETNET_CPU_0_RESERVED.
+
+/// Cpu 0 is kept for the operating system: network thread q runs on cpu
+/// num_os_cpus + q.
+
+#define ROCKETNET_CPU_0_RESERVED                           1
+
+/// Cpu 0 is not reserved: network thread q runs on cpu q, cpu 0 included,
+/// and num_os_cpus is not applied to that transport.
+
+#define ROCKETNET_CPU_0_NOT_RESERVED                       2
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -330,16 +346,26 @@ enum rocketnet_status_t
     /// No transport found: every transport this server or client was allowed
     /// to try failed to start, including any over the
     /// ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES or
-    /// ROCKETNET_SERVER_MEMORY_BUDGET_BYTES budget, and they failed for
-    /// different reasons. When they all failed for one reason, the status
-    /// names it instead (TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_NOT_BUILT,
-    /// TRANSPORT_PORT_ZERO_UNSUPPORTED). Set the log level to
+    /// ROCKETNET_SERVER_MEMORY_BUDGET_BYTES budget. A client returns this
+    /// whatever the reasons. A server start returns it when the transports it
+    /// opened failed for different reasons, or when none was opened; when
+    /// every open failed for one reason, the status names it instead
+    /// (TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_NOT_BUILT, INVALID_ADDRESS),
+    /// a transport skipped for the budget not counting as an open. A server
+    /// start that opened nothing because the port-zero rule refused returns
+    /// TRANSPORT_PORT_ZERO_UNSUPPORTED, and one where at least one transport
+    /// was refused its bind and every other refusal was the xdp transport's
+    /// returns TRANSPORT_BIND_REFUSED. Set the log level to
     /// ROCKETNET_LOG_LEVEL_WARN to read why each one failed.
 
     ROCKETNET_STATUS_NO_TRANSPORT_FOUND = -18,
 
     /// An allocation the operation needs failed. Nothing it allocated stays
-    /// live. Free memory or lower the config's sizes, then retry.
+    /// live, except a server start's transport whose worker had not exited a
+    /// second after the stop: the server holds it, reports not stopped, and
+    /// frees it at the next start or destroy once the worker has exited
+    /// (rocketnet_server_start). Free memory or lower the config's sizes,
+    /// then retry.
 
     ROCKETNET_STATUS_OUT_OF_MEMORY = -19,
 
@@ -566,8 +592,9 @@ enum rocketnet_receipt_status_t
 
     /// The connection layer acknowledged the send that carried the message.
     /// The receiver's message layer may still have dropped the message
-    /// (counted MESSAGE_UNRELIABLE_DELIVERY_FULL or by the sequenced drop
-    /// counters), and its application may not have read it.
+    /// (counted by the SDK-internal counter MESSAGE_UNRELIABLE_DELIVERY_FULL
+    /// or the sequenced drop counters, which no call in this header reads),
+    /// and its application may not have read it.
 
     ROCKETNET_RECEIPT_STATUS_ACKED = 1
 };
@@ -706,6 +733,12 @@ enum rocketnet_client_state_t
 
     ROCKETNET_CLIENT_STATE_CONNECTED = 4
 };
+
+// Counter names in this header written in capitals, such as
+// MESSAGE_NOT_RECEIVED or SEND_RESERVE_REFUSED, are the SDK's internal
+// counters, the registry of the standard's error handling section. No call
+// in this header reads them: an application sees their effect through the
+// stats structs below, the client state and the disconnect reason.
 
 /// rocketnet_client_stats fills this struct.
 /// Packet, byte, payload, resend, duplicate, receipt and budget counts are
@@ -1056,9 +1089,10 @@ struct rocketnet_client_t;
 ///   for one client index comes from one thread, so a message is finished or
 ///   aborted by the thread that started it. (rocketnet_server_finish_message
 ///   and rocketnet_server_abort_message, the calls of a server used one
-///   thread at a time, may come from another thread: they count as a main
-///   thread call first.) Different clients may be sent to
-///   from different threads at the same time. The thread that sends to a
+///   thread at a time, may come from another thread: once the check has
+///   begun they always count as a main thread call.) Different clients may
+///   be sent to from different threads at the same time. The thread that
+///   sends to a
 ///   client may change after a main thread call that is checked (below);
 ///   messages two threads write to one client between two
 ///   rocketnet_server_send_packets calls may then leave in either order.
@@ -1255,8 +1289,12 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// - Create runs before rocketnet_init, or init refuses its allocator: one
 ///   function NULL, live allocations, or a library already initialized with
 ///   another allocator.
-/// - Update receives a non-finite time or a time that goes backwards, with or
-///   without a connection. The last good time is kept, and the call logs.
+/// - Update receives a non-finite time, a negative time (every one, not only
+///   the first), a time above 2^52 seconds, or a time below the time before
+///   it, with or without a connection. The last good time is kept, and the
+///   call logs. A negative time or one above 2^52 seconds never moves the
+///   clock; later times move it on by the caller's
+///   steps.
 /// - A started message stays open at update or send_packets. On the server
 ///   every open message is aborted there. On the client an in-place start is
 ///   aborted there (an unreliable message of at most
@@ -1354,12 +1392,24 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 ///
 /// Create allocates the hub as one block through the configured allocator:
 /// one server endpoint and max_clients client endpoints, each with its full
-/// datagram queue. Each client endpoint's queue is 2048 slots of 1476 bytes,
-/// 2048 * 1476 bytes. At max_clients 1000 the block is about 3.05 GB. It sits
+/// datagram queue. A slot is 1476 bytes: the largest datagram the library
+/// receives (1452 bytes, a 1500-byte link less the IPv6 and UDP headers)
+/// with its source address and length. Each client endpoint's queue is 2048
+/// slots. The server endpoint's queue is 16 slots for each client,
+/// rounded up to a power of two and never fewer than a client's 2048 (16384
+/// slots at max_clients 1000). At
+/// max_clients 1000 the block is about 3.05 GB, nearly all of it the client
+/// queues. It sits
 /// outside rocketnet_client_required_memory and
-/// rocketnet_server_required_memory. Server start and client connect register
-/// an endpoint and allocate nothing; stop, disconnect and destroy unregister
-/// it. Traffic never allocates. A server or client past the hub's capacity is
+/// rocketnet_server_required_memory. The endpoint records and queues are
+/// preallocated there: server start registers an endpoint and allocates
+/// nothing. Client connect registers one too, and also creates the client's
+/// own wake (a small allocation through the configured allocator and, on
+/// platforms with one, an operating-system event), which its I/O thread
+/// sleeps on until a datagram is queued for it; the wake is counted in
+/// rocketnet_client_required_memory. Stop, disconnect and destroy unregister
+/// the endpoint, and a client's destroy frees its wake. Traffic never
+/// allocates. A server or client past the hub's capacity is
 /// refused at start or connect. Create it once rocketnet_init has run, and
 /// destroy it with the same library copy that created it, after every server
 /// and client that uses it is destroyed and before rocketnet_term.
@@ -1533,9 +1583,16 @@ struct rocketnet_client_config_t
 
     /// ROCKETNET_CLIENT_PACKETS_IN_FLIGHT sets the sent map: the
     /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
-    /// and at least reliable_messages_in_flight, so a window sent
-    /// one number to a packet never evicts an entry before its ack lands.
-    /// Default is 1024.
+    /// and at least reliable_messages_in_flight. Packets with reliable
+    /// messages and packets with only unreliable receipt sends share it.
+    /// No entry is evicted before its ack lands while it holds every tracked
+    /// packet, of both kinds and resends included, sent from any packet's
+    /// send, that packet included, until the processing of its ack: the
+    /// packets_in_flight-th tracked packet sent after an entry evicts it
+    /// unless its ack was processed first. Past that the
+    /// oldest entry can be evicted with its ack on the way: the late ack is
+    /// ignored, a reliable entry's messages are resent, and a receipt-only
+    /// entry's unreliable receipts report LOSS early. Default is 1024.
 
     int packets_in_flight;
 
@@ -1687,22 +1744,31 @@ struct rocketnet_server_config_t
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
 
     /// ROCKETNET_SERVER_NUM_XDP_THREADS sets the xdp transport's network
-    /// threads: one XDP thread per NIC queue. Default is 1 (zero selects it):
-    /// the count that held 1000 players at 60 Hz and 10 Gb/s out on an Intel
-    /// X710 pair (2026-11-13, main 59890655d). Range is 1 .. 1024. The NIC's
+    /// threads: one XDP thread per NIC queue. Default is 1 (zero selects it).
+    /// At that count the server held 1000 players at 60 Hz, about 900,000
+    /// messages a second at peak (an estimated 9.39 Gb/s), on the machine
+    /// PERFORMANCE.md records. Range is 1 .. 1024. The NIC's
     /// combined queue count must equal it: otherwise the xdp pre-flight
     /// refuses, with a warning naming both counts and both fixes, and start
     /// takes the next transport in the list (with xdp alone,
     /// ROCKETNET_STATUS_NO_TRANSPORT_FOUND). Set the NIC with
     /// scripts/rocketnet-provision, which reads this same variable. Thread q
-    /// runs on cpu num_os_cpus + q, never cpu 0. Each server transport has its
-    /// own count; this one is read by xdp only.
+    /// runs on cpu num_os_cpus + q, never cpu 0: its provisioning keeps cpu 0
+    /// for the OS and the interrupts (xdp has no reserve_cpu_0 setting). Each
+    /// server transport has its own count; this one is read by xdp only.
 
     int num_xdp_threads;
 
-    /// ROCKETNET_SERVER_NUM_OS_CPUS applies to xdp. It sets cores left for
-    /// the operating system. Zero, the default, selects the transport's own.
-    /// Range is 1 .. 256.
+    /// ROCKETNET_SERVER_NUM_OS_CPUS sets the cpus left for the operating
+    /// system on Linux, from cpu 0: the xdp, gso and io_uring transports'
+    /// network thread q runs on cpu num_os_cpus + q, and the portable
+    /// transport's send and receive workers on cpus num_os_cpus and
+    /// num_os_cpus + 1 (the msgx name runs the portable server on Linux). Zero,
+    /// the default, reads as 1. Range is 1 .. 256. Start the game's own
+    /// threads, the main thread first, past the network threads. A gso,
+    /// io_uring or portable transport whose reserve_cpu_0 setting below is
+    /// ROCKETNET_CPU_0_NOT_RESERVED does not apply it. Windows and macOS do
+    /// not read it.
 
     int num_os_cpus;
 
@@ -1779,9 +1845,16 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_PACKETS_IN_FLIGHT sets the sent map per client: the
     /// unacknowledged packets tracked for their acks. Range is 64 .. 1048576
-    /// and at least reliable_messages_in_flight, so a window sent
-    /// one number to a packet never evicts an entry before its ack lands.
-    /// Default is 1024.
+    /// and at least reliable_messages_in_flight. Packets with reliable
+    /// messages and packets with only unreliable receipt sends share it.
+    /// No entry is evicted before its ack lands while it holds every tracked
+    /// packet, of both kinds and resends included, sent from any packet's
+    /// send, that packet included, until the processing of its ack: the
+    /// packets_in_flight-th tracked packet sent after an entry evicts it
+    /// unless its ack was processed first. Past that the
+    /// oldest entry can be evicted with its ack on the way: the late ack is
+    /// ignored, a reliable entry's messages are resent, and a receipt-only
+    /// entry's unreliable receipts report LOSS early. Default is 1024.
 
     int packets_in_flight;
 
@@ -1941,29 +2014,32 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_NUM_GSO_WORKERS sets the gso transport's network
     /// threads: queue workers, each with its own socket on the port. Default
-    /// is 1 (zero selects it): the count that held 1000 players at 60 Hz and
-    /// 10 Gb/s out on an Intel X710 pair and on AWS c8gn.8xlarge (2026-11-13,
-    /// main 3218cf5f6). Range is 1 .. 32. Worker q runs on cpu num_os_cpus +
-    /// q, never cpu 0. No machine setting has to match it.
+    /// is 1 (zero selects it). At that count the server held 1000 players at
+    /// 60 Hz, about 900,000 messages a second at peak (an estimated 9.39
+    /// Gb/s), on the machine PERFORMANCE.md records.
+    /// Range is 1 .. 32. Worker q runs on cpu num_os_cpus +
+    /// q, so not on cpu 0 by default (gso_reserve_cpu_0). No machine setting
+    /// has to match it.
 
     int num_gso_workers;
 
     /// ROCKETNET_SERVER_NUM_IO_URING_WORKERS sets the io_uring transport's
     /// network threads: workers, each with its own ring and socket. Default
-    /// is 2 (zero selects it): AWS c6in.8xlarge needed 2 for 1000 players at
-    /// 60 Hz and 10 Gb/s out with a game load (2026-11-13, c154d7971; 1 ran
-    /// at 51 frames a second) and an Intel X710 pair passed at 2 (main
-    /// 3afea2aed). Range is 1 .. 32. Worker q runs on cpu num_os_cpus + q,
-    /// never cpu 0. No machine setting has to match it.
+    /// is 2 (zero selects it). At that count the server held 1000 players at
+    /// 60 Hz, about 900,000 messages a second at peak (an estimated 9.39
+    /// Gb/s), on the machine PERFORMANCE.md records.
+    /// Range is 1 .. 32. Worker q runs on cpu num_os_cpus + q,
+    /// so not on cpu 0 by default (io_uring_reserve_cpu_0). No machine
+    /// setting has to match it.
 
     int num_io_uring_workers;
 
     /// ROCKETNET_SERVER_NUM_RIO_LANES sets the Windows rio transport's
     /// network threads: lanes, each a socket, a registered region and an I/O
-    /// worker. Default is 5 (zero selects it): the smallest count that held
-    /// 1000 players at peak and average, with and without a game load, on AWS
-    /// m7i.16xlarge (2026-11-13, 3218cf5f6; 4 lanes fell short of the peak
-    /// rate, 545k of 900k a second). Range is 1 .. 32. More
+    /// worker. Default is 5 (zero selects it). At that count the server held
+    /// 1000 players at 60 Hz, about 900,000 messages a second at peak (an
+    /// estimated 9.39 Gb/s), on the machine PERFORMANCE.md records.
+    /// Range is 1 .. 32. More
     /// than one lane needs a specific local address in bind_ipv4_address or
     /// bind_ipv6_address: the sockets share the port, one per processor, and
     /// Windows has no exclusive form of that sharing (a process that asks for
@@ -1977,9 +2053,10 @@ struct rocketnet_server_config_t
     /// ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS sets the Windows iocp
     /// transport's receive threads: completion workers, each with its own
     /// socket and completion port. Default is 2 (zero selects it), with 2
-    /// send threads below: the counts that held 1000 players at 60 Hz and 10
-    /// Gb/s out on AWS m7i.16xlarge (2026-11-13, 1afaabe69; 1 worker with 2
-    /// send threads ran at 57.6 frames a second). Range is 1 .. 32. More than
+    /// send threads below. At those counts the server held 1000 players at
+    /// 60 Hz, about 900,000 messages a second at peak (an estimated 9.39
+    /// Gb/s), on the machine PERFORMANCE.md records.
+    /// Range is 1 .. 32. More than
     /// one worker needs a specific local address, as num_rio_lanes: on the
     /// wildcard with this field and its variable unset, iocp runs one worker
     /// and logs a warning saying so; a value above 1 on the wildcard is
@@ -1988,28 +2065,67 @@ struct rocketnet_server_config_t
     int num_iocp_completion_workers;
 
     /// ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS sets the Windows iocp
-    /// transport's send threads. Default is 2 (zero selects it; 2 workers
-    /// with 1 send thread ran at 47 frames a second), or the send lanes when
-    /// there are fewer. Range is 1 .. 16, and at most the send lanes
-    /// max_clients gives (8 at 1000 clients, fewer for a smaller server): a
-    /// larger value is refused at start with
-    /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
+    /// transport's send threads. Default is 2 (zero selects it), or the send
+    /// lanes when there are fewer. Range is 1 .. 16, and at most the send
+    /// lanes max_clients gives (8 at 1000 clients, fewer for a smaller
+    /// server): with a larger value the iocp transport refuses at start, with
+    /// a warning naming the limit, and start takes the next transport in the
+    /// list (with iocp alone, ROCKETNET_STATUS_NO_TRANSPORT_FOUND).
 
     int num_iocp_send_threads;
 
     /// ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS sets the macOS msgx
     /// transport's send threads: transmit workers, each sending with
     /// sendmsg_x; one receive worker beside them is fixed. Default is 3 (zero
-    /// selects it): measured 2026-11-13 (5366e4f13) with players on Linux over
-    /// 10 GbE, an M5 Pro Mac mini server sends the whole peak, 900k a second,
-    /// to 1000 players at 3. An M3 Ultra server tops out near 694k a second
-    /// at 2 and sends less as workers are added, each near fully busy in the
-    /// kernel's send path. Range is 1 .. 16.
+    /// selects it). Measure the count on your server: PERFORMANCE.md
+    /// has no macOS record yet. Range is 1 .. 16.
     ///
     /// The portable transport has no count to choose: one send and one
     /// receive thread.
 
     int num_msgx_transmit_workers;
+
+    /// ROCKETNET_SERVER_GSO_RESERVE_CPU_0 keeps cpu 0 for the operating
+    /// system on the gso transport (Linux), the recommended layout: the OS on
+    /// cpu 0, the network threads next, then the game's threads with the main
+    /// thread first. Zero, the default, and ROCKETNET_CPU_0_RESERVED reserve
+    /// it: worker q runs on cpu num_os_cpus + q. ROCKETNET_CPU_0_NOT_RESERVED
+    /// lets the workers use cpu 0: worker q runs on cpu q, num_os_cpus is not
+    /// applied to gso (an info line at start says so when it is set), and a
+    /// worker whose pin is refused stays on the cpus it was created on. Any
+    /// other value is refused at create with
+    /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE. Where a reserved placement cannot
+    /// be kept (a cpuset or permissions refuse the pin), the server still
+    /// runs: the worker is warned about, counted in GSO_PIN_REFUSALS, and asks
+    /// for no real-time priority.
+    ///
+    /// Only the Linux transports whose threads the library places from cpu 0
+    /// up have this setting. xdp has none: its provisioning
+    /// (scripts/rocketnet-provision) keeps cpu 0 as the housekeeping and
+    /// interrupt cpu and isolates the cpus its threads run on. Windows (rio,
+    /// iocp) has none: lane or worker i runs on core i to match the NIC's
+    /// receive-side scaling, cpu 0 included. macOS (msgx) has none: the OS
+    /// places the threads.
+
+    int gso_reserve_cpu_0;
+
+    /// ROCKETNET_SERVER_IO_URING_RESERVE_CPU_0 is gso_reserve_cpu_0 for the
+    /// io_uring transport (Linux): zero, the default, and
+    /// ROCKETNET_CPU_0_RESERVED put worker q on cpu num_os_cpus + q;
+    /// ROCKETNET_CPU_0_NOT_RESERVED on cpu q. A refused pin is counted in
+    /// URING_PIN_REFUSALS.
+
+    int io_uring_reserve_cpu_0;
+
+    /// ROCKETNET_SERVER_PORTABLE_RESERVE_CPU_0 is gso_reserve_cpu_0 for the
+    /// portable transport on Linux, which is also the server behind the msgx
+    /// name there: zero, the default, and ROCKETNET_CPU_0_RESERVED put its
+    /// send worker on cpu num_os_cpus and its receive worker on cpu
+    /// num_os_cpus + 1; ROCKETNET_CPU_0_NOT_RESERVED on cpus 0 and 1. A
+    /// refused pin is counted in PORTABLE_PIN_REFUSALS. Other platforms do not
+    /// place the portable workers and do not read it.
+
+    int portable_reserve_cpu_0;
 };
 
 /// Messages
@@ -2643,17 +2759,22 @@ ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * clie
 /// Every message delivered by the previous update must already be taken:
 /// loop rocketnet_client_receive_messages until it returns NULL before the
 /// next update. A message still in the receive queue at update is API
-/// misuse: it asserts in a debug build, counts MESSAGE_NOT_RECEIVED, and the
-/// connection ends in ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED.
+/// misuse: it asserts in a debug build, counts the SDK-internal counter
+/// MESSAGE_NOT_RECEIVED, and the connection ends in the client state of
+/// that name, ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED.
 ///
 /// Callable in every client state. Before the first connect it only checks
 /// the time; after disconnect it steps the old attempt's shutdown. Thread: not
 /// thread-safe; the caller owns the client one thread at a time.
 ///
 /// @param client The client. NULL counts as API misuse and does nothing.
-/// @param time The game clock in seconds, the same clock on every call. A
-/// time that is not finite or goes backwards is clamped to the last good time
-/// and counted as API misuse.
+/// @param time The game clock in seconds, the same clock on every call,
+/// finite, non-negative and at most 2^52 seconds (about 143 million years).
+/// A time that is not finite, a negative time (every one, not only the
+/// first), a time above 2^52 seconds, or a time below the time before it is
+/// clamped to the last good time and counted as API misuse. A negative time
+/// or one above 2^52 seconds never moves the clock: the first valid time
+/// starts it.
 
 ROCKETNET_EXPORT void rocketnet_client_update( struct rocketnet_client_t * client, double time );
 
@@ -2816,9 +2937,9 @@ ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t 
 /// (rocketnet_conditions_t send_refused), and the game decides what to do.
 ///
 /// For valid arguments, changes no state, counts nothing and allocates nothing.
-/// Usually constant time; a message that needs a send store chunk scans that
-/// size class for a free one, so its worst case grows with the chunks in the
-/// class. It does not reserve wire bandwidth or guarantee immediate
+/// Constant time: a message that needs a send store chunk is answered from
+/// the free stack of that size class or its next unused chunk, however many
+/// chunks are held. It does not reserve wire bandwidth or guarantee immediate
 /// transmission.
 /// A false answer may be pessimistic for a small unreliable message: start
 /// can write it straight into a transport frame without message memory.
@@ -2857,10 +2978,19 @@ ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_client_recei
 /// LOSS comes only from unreliable receipt messages. Reliable ones, including
 /// unreliable sends that became reliable, report ACKED only; ending a
 /// connection produces no LOSS for them.
-/// The outcomes recorded for a connection remain readable after that
-/// connection ends, until its next update. A receipt-bearing send, reliable
-/// or UNRELIABLE_WITH_ACK_RECEIPT, that is still in flight when its
-/// connection ends gets no terminal outcome.
+/// A connection ended by rocketnet_client_disconnect, or by the message
+/// layer at the end of an update or between updates (a reliable timeout, a
+/// protocol violation, a CONFIG mismatch, memory exhausted), keeps the
+/// outcomes recorded for it readable until the next update or until a
+/// connect ends it, whichever comes first; a connect refused with
+/// ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED, or for a token string that does
+/// not decode, leaves them. A connection the transport ends inside an update
+/// (timed out, disconnected by the server), or that an update ends because a
+/// delivered message was not received, reports no outcomes from that update
+/// on: outcomes recorded since the previous update are dropped. A
+/// receipt-bearing send, reliable or
+/// UNRELIABLE_WITH_ACK_RECEIPT, that is still in flight when its connection
+/// ends gets no terminal outcome.
 ///
 /// Read receipts after update. They remain until the next update.
 /// Reading does not consume them. Repeated reads copy the same first entries.
@@ -3031,10 +3161,12 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// Either may be NULL. That family is then not served. Both NULL is refused.
 /// With both, the two share one port.
 /// The given addresses are the advertised addresses that connect tokens are
-/// checked against. Every transport except xdp binds the wildcard address of the family
-/// (0.0.0.0 or [::], or [::] for both families) on the given port, so a
-/// specific IP is not a bind restriction. xdp attaches to the interface that
-/// carries the given address.
+/// checked against, not the addresses the server binds. By default every
+/// transport except xdp binds the wildcard address of the family (0.0.0.0
+/// or [::], or [::] for both families) on the given port. To bind one local
+/// address instead, set bind_ipv4_address or bind_ipv6_address in the
+/// config, on a server that serves one family. xdp attaches to the
+/// interface that carries the given address.
 /// ROCKETNET_SERVER_IPV4_ADDRESS overrides ipv4_address.
 /// ROCKETNET_SERVER_IPV6_ADDRESS overrides ipv6_address.
 /// Port 0 requests an ephemeral port. Read it after start with
@@ -3076,7 +3208,13 @@ ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * con
 /// Returns ROCKETNET_STATUS_OK on success.
 /// A running or still-stopping server returns ROCKETNET_STATUS_SERVER_NOT_STOPPED.
 /// Once stopped is true, start synchronously finalizes the old run before binding.
-/// Other failures return their status and leave the server stopped.
+/// Other failures return their status and leave the server stopped, with
+/// one exception: a failure after the transport's worker started, when that
+/// worker has not exited a second after it was told to stop, leaves the
+/// server stopping. The server keeps that transport, never freeing it under
+/// its worker: rocketnet_server_stopped is false and start returns
+/// ROCKETNET_STATUS_SERVER_NOT_STOPPED until the worker exits, and the next
+/// start or destroy then frees it.
 ///
 /// Needs a stopped server. Thread: not thread-safe; the caller owns the
 /// server one thread at a time.
@@ -3137,7 +3275,8 @@ ROCKETNET_EXPORT void rocketnet_server_stop( struct rocketnet_server_t * server 
 ///
 /// @param server The server.
 /// @return True when the server is stopped and its workers have exited,
-/// including a server never started. False while running or stopping, and
+/// including a server never started. False while running or stopping (a
+/// failed start whose transport's worker has not exited is stopping), and
 /// for a NULL server, which counts as API misuse.
 ROCKETNET_EXPORT bool rocketnet_server_stopped( const struct rocketnet_server_t * server );
 
@@ -3155,7 +3294,10 @@ ROCKETNET_EXPORT bool rocketnet_server_running( const struct rocketnet_server_t 
 /// As rocketnet_client_destroy, with rocketnet_server_stopped and stop in place
 /// of disconnected and disconnect. Freeing also wipes the server's keys.
 ///
-/// Call it once rocketnet_server_stopped is true. Thread: not thread-safe;
+/// Call it once rocketnet_server_stopped is true. After a failed start that
+/// left the server stopping (rocketnet_server_start), destroy is not misuse:
+/// it waits up to a second for that worker, then frees, or keeps the server
+/// (logged) if the worker still has not exited. Thread: not thread-safe;
 /// the caller owns the server one thread at a time.
 ///
 /// @param server The server, or NULL to do nothing.
@@ -3168,17 +3310,21 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 /// Every message delivered by the previous update must already be taken:
 /// loop rocketnet_server_receive_messages until it returns NULL before the
 /// next update. A message still in the receive queue at update is API
-/// misuse: it asserts in a debug build, counts MESSAGE_NOT_RECEIVED, and the
-/// sending client's slot is disconnected with
+/// misuse: it asserts in a debug build, counts the SDK-internal counter
+/// MESSAGE_NOT_RECEIVED, and the sending client's slot is disconnected with
 /// ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED.
 ///
 /// Needs a running server; stopped or stopping it does nothing. Thread: not
 /// thread-safe; the caller owns the server one thread at a time.
 ///
 /// @param server The server. NULL counts as API misuse and does nothing.
-/// @param time The game clock in seconds, the same clock on every call. A
-/// time that is not finite or goes backwards is clamped to the last good time
-/// and counted as API misuse.
+/// @param time The game clock in seconds, the same clock on every call,
+/// finite, non-negative and at most 2^52 seconds (about 143 million years).
+/// A time that is not finite, a negative time (every one, not only the
+/// first), a time above 2^52 seconds, or a time below the time before it is
+/// clamped to the last good time and counted as API misuse. A negative time
+/// or one above 2^52 seconds never moves the clock: the first valid time
+/// starts it.
 
 ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
@@ -3211,8 +3357,14 @@ ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * serve
 /// MAIN_THREAD_CALL_OVERLAP; so are rocketnet_server_update_client during a
 /// main thread call, and rocketnet_server_update_finish while a game thread
 /// is still in rocketnet_server_update_client. rocketnet_server_update or
-/// rocketnet_server_update_receive called again inside the update is not
-/// refused: it counts as API misuse and finishes the open update first.
+/// rocketnet_server_update_receive called while the update is open (no
+/// rocketnet_server_update_finish, or a refused one) is not refused: it
+/// counts as API misuse once, finishes the open update and begins none.
+/// Nobody is disconnected: the messages that finish delivers wait for
+/// rocketnet_server_receive_messages, and the call's time is not taken. A
+/// rocketnet_server_update_receive that finished the open update this way
+/// is followed by the game's update_client and update_finish calls as
+/// usual: update_client finds nothing, and update_finish returns.
 ///
 /// @param server The server. NULL counts as API misuse and does nothing.
 /// @param time As rocketnet_server_update's.
@@ -3242,7 +3394,7 @@ ROCKETNET_EXPORT void rocketnet_server_update_finish( struct rocketnet_server_t 
 
 /// Sends each client's queued messages in packets under its send budget.
 ///
-/// The gso, io_uring, xdp, iocp and rio server transports hold what they send
+/// The gso, io_uring, xdp, iocp, rio and msgx server transports hold what they send
 /// in a send room of fixed size. Part of that room is kept each update for
 /// the library's own traffic: connection replies, keep-alives and
 /// disconnects. The part kept is the config's handshakes_per_update plus
@@ -3252,11 +3404,10 @@ ROCKETNET_EXPORT void rocketnet_server_update_finish( struct rocketnet_server_t 
 /// keep-alive is given one place an update out of the kept part. A message
 /// that would take more is not lost by that: it waits in its queue, as a
 /// message does when the transport is full, and goes out in a later call
-/// once the transport has sent what it holds. The counter
-/// SEND_RESERVE_REFUSED counts the sends held back this way. Before this
-/// rule a send was held back only when the whole room was spent, which
-/// SEND_RING_FULL counted; SEND_RING_FULL still counts a send room that is
-/// full. The portable and loopback transports keep nothing back.
+/// once the transport has sent what it holds. The SDK-internal counter
+/// SEND_RESERVE_REFUSED counts the sends held back this way, and
+/// SEND_RING_FULL counts a send room that is full. The portable and loopback
+/// transports keep nothing back.
 ///
 /// Needs a running server; stopped or stopping it does nothing. Thread: not
 /// thread-safe; the caller owns the server one thread at a time.
@@ -3537,10 +3688,12 @@ ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_serv
 /// server, whichever thread started it. With more than one open it cannot
 /// tell which is meant: that counts as API misuse, asserts in a debug build
 /// and returns 0 in a release build. Thread: not thread-safe; the caller owns
-/// the server one thread at a time. When the message was started on another
-/// thread the call counts as a main thread call first (see
-/// rocketnet_server_t), so no other thread may be inside a server call.
-/// Game threads use rocketnet_server_finish_client_message.
+/// the server one thread at a time. Once the check has begun (see
+/// rocketnet_server_t) it always counts as a main thread call, wherever the
+/// message was started: no other thread may be inside a server call, and
+/// between rocketnet_server_update_receive and
+/// rocketnet_server_update_finish it is refused. Game threads use
+/// rocketnet_server_finish_client_message.
 ///
 /// @param server The server. NULL counts as API misuse and returns 0.
 /// @param bytes_written The bytes written into the open message.
@@ -3556,8 +3709,8 @@ ROCKETNET_EXPORT uint32_t rocketnet_server_finish_message( struct rocketnet_serv
 /// and does nothing.
 ///
 /// Callable running or stopped. Thread: not thread-safe; the caller owns the
-/// server one thread at a time. When the message was started on another
-/// thread the call counts as a main thread call first, as
+/// server one thread at a time. Once the check has begun (see
+/// rocketnet_server_t) it always counts as a main thread call, as
 /// rocketnet_server_finish_message. Game threads use
 /// rocketnet_server_abort_client_message.
 ///
@@ -3574,7 +3727,7 @@ ROCKETNET_EXPORT void rocketnet_server_abort_message( struct rocketnet_server_t 
 /// One difference: an unreliable message small enough to fit in one packet
 /// is sent alone from this call, on the calling thread, rather than waiting
 /// for rocketnet_server_send_packets to pack it with others. If the update's send limits leave no room to send it, the call
-/// returns 0, the message is dropped and
+/// returns 0, the message is dropped and the SDK-internal counter
 /// ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY counts it. Every
 /// other message is queued as by rocketnet_server_finish_message: a larger
 /// one, a reliable one, one that must keep its order behind a message already
@@ -3643,10 +3796,16 @@ ROCKETNET_EXPORT bool rocketnet_server_can_send_message( const struct rocketnet_
 ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_server_receive_messages( struct rocketnet_server_t * server );
 
 /// Copies receipts for the client in this slot.
-/// Uses the same rules as rocketnet_client_receipts. For a slot whose
-/// connection has ended, the outcomes recorded for it remain readable
-/// until that slot's next update; a receipt-bearing send still in flight
-/// at the end gets no terminal outcome.
+/// Uses the same rules as rocketnet_client_receipts. For a slot kicked by
+/// rocketnet_server_disconnect_client, or by the message layer at the end of
+/// an update or between updates (a reliable timeout, a protocol violation, a
+/// CONFIG mismatch, memory exhausted), the outcomes recorded for it remain
+/// readable until that slot's next update. A slot whose connection the
+/// transport ends inside an update (timed out, disconnected by the client),
+/// or that an update ends because a delivered message was not received,
+/// reports no outcomes from that update on: outcomes recorded since the
+/// previous update are dropped. A receipt-bearing send still in flight at the end gets no
+/// terminal outcome.
 ///
 /// Callable running or stopped; 0 while stopped. Thread: not thread-safe; the caller owns the
 /// server one thread at a time.

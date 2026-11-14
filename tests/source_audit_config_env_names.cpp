@@ -321,6 +321,11 @@ static std::vector<std::string> env_names_set_candidates()
     }
     env_names_setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "2" );
     set.push_back( "ROCKETNET_SERVER_NUM_OS_CPUS" );
+    for ( const char * name : { "ROCKETNET_SERVER_GSO_RESERVE_CPU_0", "ROCKETNET_SERVER_IO_URING_RESERVE_CPU_0", "ROCKETNET_SERVER_PORTABLE_RESERVE_CPU_0" } )
+    {
+        env_names_setenv( name, "2" );
+        set.push_back( name );
+    }
     env_names_setenv( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES", "1200" );
     set.push_back( "ROCKETNET_SERVER_MAX_PAYLOAD_BYTES" );
     env_names_setenv( "ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS", "30" );
@@ -603,7 +608,7 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_BIND_IPV4_ADDRESS" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_BIND_IPV6_ADDRESS" ) );
-    check( documented.size() == ( ROCKETNET_DEV ? 76u : 74u ) );
+    check( documented.size() == ( ROCKETNET_DEV ? 79u : 77u ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_NUM_XDP_QUEUES" ) );          // retired: read only to warn (rocketnet_config_warn_retired_server_env)
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );

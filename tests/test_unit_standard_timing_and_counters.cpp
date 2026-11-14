@@ -185,7 +185,8 @@ static const rn_standard_vector_t standard_timing_and_counters_table[] = {
                         "11006a39000000"
                         "2a898522000000"
                         "8b6394cc000000"
-                        "dd5b1fd0010000" ),
+                        "dd5b1fd0010000"
+                        "4a275c44000000" ),
 };
 
 static void test_standard_timing_and_counters_vectors()
@@ -386,6 +387,56 @@ static void timing_check_family_sums( const struct rocketnet_counters_t * counte
     }
 }
 
+// t17 rule 1: a send interval counts as elapsed one microsecond early, so a
+// clock summed from a fixed step is not pushed to the next update on every
+// interval; two microseconds early is still inside the interval
+
+static void test_standard_t17_send_interval_tolerance()
+{
+    double summed = 0.0;
+    for ( int i = 0; i < 6; i++ )
+    {
+        summed += 1.0 / 60.0;
+    }
+    rocketnet_unit_check( summed < 0.1 );
+    rocketnet_unit_check( summed > 0.1 - 1.0e-6 );
+
+    struct rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+
+    struct rocketnet_client_protocol_t client;
+    rocketnet_client_protocol_init( &client, &counters );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    timing_mint_token( token_data, ROCKETNET_TEST_CLIENT_ID );
+
+    const double t0 = 100.0;
+    rocketnet_unit_check( rocketnet_client_protocol_connect( &client, token_data, t0, ROCKETNET_TEST_CREATE_TS ) );
+    rocketnet_unit_check( client.send_rate == ROCKETNET_DEFAULT_SEND_RATE );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+
+    rocketnet_client_protocol_update( &client, t0, packet, &packet_bytes );
+    rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
+
+    const double interval = 1.0 / client.send_rate;
+
+    rocketnet_client_protocol_update( &client, t0 + interval - 2.0e-6, packet, &packet_bytes );
+    rocketnet_unit_check( packet_bytes == 0 );
+
+    rocketnet_client_protocol_update( &client, t0 + interval - 0.5e-6, packet, &packet_bytes );
+    rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
+
+    const double t1 = t0 + interval - 0.5e-6;
+
+    rocketnet_client_protocol_update( &client, t1 + interval - 2.0e-6, packet, &packet_bytes );
+    rocketnet_unit_check( packet_bytes == 0 );
+
+    rocketnet_client_protocol_update( &client, t1 + interval, packet, &packet_bytes );
+    rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
+}
+
 static void test_standard_t17_handshake_retransmits_at_send_rate()
 {
     struct timing_server_fixture_t test;
@@ -431,8 +482,10 @@ static void test_standard_t17_handshake_retransmits_at_send_rate()
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
     rocketnet_unit_check( packet[0] == ROCKETNET_CONNECTION_REQUEST_PACKET );
 
-    // the cookie moves the client to sending connection request; a request
-    // inside the interval is suppressed, and at the interval it is retransmitted
+    // the cookie moves the client to sending connection request; the advance
+    // brings the request forward to the next update, once (t11 rule 7), and
+    // the interval runs from that send: a request inside it is suppressed,
+    // and at the interval it is retransmitted
 
     rocketnet_unit_check( timing_server_process( &test, packet, packet_bytes, t0 + 0.101,
                                                  response, &response_bytes,
@@ -442,36 +495,37 @@ static void test_standard_t17_handshake_retransmits_at_send_rate()
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
 
     rocketnet_client_protocol_update( &client, t0 + 0.152, packet, &packet_bytes );
-    rocketnet_unit_check( packet_bytes == 0 );
-    rocketnet_client_protocol_update( &client, t0 + 0.203, packet, &packet_bytes );
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
-    rocketnet_client_protocol_update( &client, t0 + 0.254, packet, &packet_bytes );
+    rocketnet_client_protocol_update( &client, t0 + 0.203, packet, &packet_bytes );
     rocketnet_unit_check( packet_bytes == 0 );
-    rocketnet_client_protocol_update( &client, t0 + 0.305, packet, &packet_bytes );
+    rocketnet_client_protocol_update( &client, t0 + 0.253, packet, &packet_bytes );
+    rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
+    rocketnet_client_protocol_update( &client, t0 + 0.304, packet, &packet_bytes );
+    rocketnet_unit_check( packet_bytes == 0 );
+    rocketnet_client_protocol_update( &client, t0 + 0.354, packet, &packet_bytes );
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
 
     // the challenge moves the client to sending connection response; the
-    // stored response is retransmitted at the same send rate, byte-identical
+    // advance brings the stored response forward to the next update, once,
+    // and it is retransmitted at the same send rate from there, byte-identical
 
-    rocketnet_unit_check( timing_server_process( &test, packet, packet_bytes, t0 + 0.305,
+    rocketnet_unit_check( timing_server_process( &test, packet, packet_bytes, t0 + 0.354,
                                                  response, &response_bytes,
                                                  payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
-    rocketnet_unit_check( rocketnet_client_protocol_process_packet( &client, response, response_bytes, t0 + 0.305,
+    rocketnet_unit_check( rocketnet_client_protocol_process_packet( &client, response, response_bytes, t0 + 0.354,
                                                                     payload, sizeof( payload ), &payload_bytes ) == 1 );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
 
-    rocketnet_client_protocol_update( &client, t0 + 0.356, packet, &packet_bytes );
-    rocketnet_unit_check( packet_bytes == 0 );
-    rocketnet_client_protocol_update( &client, t0 + 0.407, packet, &packet_bytes );
+    rocketnet_client_protocol_update( &client, t0 + 0.405, packet, &packet_bytes );
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
     rocketnet_unit_check( packet[0] == ROCKETNET_CONNECTION_RESPONSE_PACKET );
 
     uint8_t first_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
     memcpy( first_response, packet, sizeof( first_response ) );
 
-    rocketnet_client_protocol_update( &client, t0 + 0.458, packet, &packet_bytes );
+    rocketnet_client_protocol_update( &client, t0 + 0.456, packet, &packet_bytes );
     rocketnet_unit_check( packet_bytes == 0 );
-    rocketnet_client_protocol_update( &client, t0 + 0.509, packet, &packet_bytes );
+    rocketnet_client_protocol_update( &client, t0 + 0.506, packet, &packet_bytes );
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
     rocketnet_unit_check( memcmp( first_response, packet, sizeof( first_response ) ) == 0 );
 
@@ -608,5 +662,6 @@ static void test_standard_t18_received_equals_family_outcomes()
 
 REGISTER_UNIT_TEST( test_standard_timing_and_counters_vectors );
 REGISTER_UNIT_TEST( test_standard_t17_handshake_retransmits_at_send_rate );
+REGISTER_UNIT_TEST( test_standard_t17_send_interval_tolerance );
 REGISTER_UNIT_TEST( test_standard_t17_handshake_deadline_is_not_refreshed );
 REGISTER_UNIT_TEST( test_standard_t18_received_equals_family_outcomes );

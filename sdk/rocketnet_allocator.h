@@ -116,7 +116,7 @@ struct rn_receive_descriptor_t          // 32 bytes: the receiver's descriptors,
 
 struct rn_held_entry_t                  // 16 bytes: the held-ordered index, 2W open-addressed entries (6.1)
 {
-    uint64_t key;                       // channel << 32 | ordering
+    uint64_t key;                       // ( channel & 0x1FFFF ) << 24 | ordering, 41 bits (rn_held_key)
     uint32_t number;                    // the low 32 bits of the held descriptor's number: its slot (number % W) and its identity
     uint32_t used;
 };
@@ -316,18 +316,21 @@ const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * n
 // larger message takes a span of the send spans, never the store. A class's
 // part of S holds its chunks, then one u32 of metadata per chunk (the class's
 // meta array): a live bit and the slot's generation tag, bumped on every take
-// of the chunk and never 0 on a live chunk. No chunk stores a reference to
-// another, and no byte outside S is spent on them. The live bit makes a
-// double free a refusal, never a corrupted pool.
+// of the chunk and never 0 on a live chunk; then one u32 per chunk for the
+// class's free stack. No chunk stores a reference to another, and no byte
+// outside S is spent on them. The live bit makes a double free a refusal,
+// never a corrupted pool.
 //
 // A handle is the class in its top two bits and the chunk index below.
 //
 // The pool is lazy (proofs/tla/RNSendStoreLayout.tla): chunks [0, fresh)
 // have been taken at least once since the init and are free or held; chunks
 // [fresh, num_chunks) were never taken, and neither their meta nor their
-// bytes are written or read until they are. free_head is at or below every
-// free chunk and at or below fresh, so a take scans the meta array's live
-// bits from free_head up and the first free chunk it meets is the lowest.
+// bytes are written or read until they are. The free stack holds exactly the
+// free chunks below fresh, each once, in entries [0, free_top); entries at or
+// past free_top are never read. A take pops the stack, or takes fresh when the
+// stack is empty, and a free pushes: both O(1), and the choice never reads a
+// held chunk's meta, whichever chunks the receiver's acks have freed.
 
 #define RN_META_LIVE            0x80000000u     // the chunk is held
 #define RN_META_GENERATION      0x7FFFFFFFu     // the chunk's generation tag: 1 on its first take, skipping 0 when it wraps
@@ -336,9 +339,10 @@ struct rn_store_class_t
 {
     uint8_t * data;
     uint32_t * meta;                    // one u32 per chunk, after the class's chunks
+    uint32_t * free_stack;              // one u32 per chunk, after the meta: the free chunks below fresh in [0, free_top)
     uint32_t chunk_bytes;
     uint32_t num_chunks;
-    uint32_t free_head;                 // the scan cursor: no free chunk lies below it, and it is at most fresh
+    uint32_t free_top;                  // the free stack's depth: the free chunks below fresh
     uint32_t free_count;
     uint32_t fresh;                     // chunks [0, fresh) have been taken since the init
 };
@@ -376,6 +380,16 @@ uint32_t rn_send_store_total_chunks( const rn_send_store_t * store, int class_in
 // the chunk slot's current generation tag, or 0 for a handle the store did
 // not issue
 uint32_t rn_send_store_chunk_generation( const rn_send_store_t * store, uint32_t handle );
+
+// Present only in the unit-test library; counts the entries the store
+// examines to choose a chunk (rn_send_store_find, so every allocation and
+// every room query), never production state.
+struct rn_store_cost_t
+{
+    uint64_t choice_visits;
+};
+void rn_store_cost_reset();
+rn_store_cost_t rn_store_cost_read();
 #endif // #if ROCKETNET_DEV
 
 // ----------------------------------------------------------------
@@ -447,6 +461,9 @@ struct rn_region_t
     int32_t exhausted_reason;           // ROCKETNET_DISCONNECT_REASON_*: NONE, or MESSAGE_MEMORY_EXHAUSTED
 
     uint32_t send_room_armed;           // 1 until the send room watch reports a crossing, 1 again below half (rn_region_send_room_watch)
+
+    uint64_t held_key_a;                // the held index's home key (rn_held_home): drawn at every carve, never logged or sent
+    uint64_t held_key_b;
 };
 
 // The next enqueue ticket on this connection. 0 is never issued.
@@ -500,7 +517,9 @@ rn_span_cost_t rn_span_cost_read();
 // emptied (the descriptor pool and the store's classes are lazy,
 // proofs/tla/RNLazyPool.tla) and the exhausted state cleared, in the region's own
 // memory. Allocates nothing. The ring's, the store's and the pools' bytes
-// are not cleared: nothing reads them before writing them.
+// are not cleared: nothing reads them before writing them. The held index's
+// home key is drawn fresh (randombytes_buf), so no connection's key tells a
+// sender the next one's.
 void rn_region_carve( rn_region_t * region );
 
 // the slot's region when its connection ends and before the slot is reused
@@ -621,11 +640,10 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes );
 // (rocketnet_client_can_send_message, rocketnet_server_can_send_message)
 // reads it, so the query and the send never disagree. Pure and
 // allocation-free. Checked in the allocation's order: the size, then the sticky
-// exhaustion, then a free descriptor, then the chunk or the span. The first
-// three checks are O(1), and so is the span placement of
-// rn_region_send_fit_span; rn_region_send_fit_store is not: it scans the chosen
-// class's meta array from its cursor for a free chunk (rn_send_store_find),
-// O(chunks in the class) in the worst case.
+// exhaustion, then a free descriptor, then the chunk or the span. Every check
+// is O(1): the span placement of rn_region_send_fit_span, and the chunk of
+// rn_region_send_fit_store, which is the chosen class's free stack top or its
+// first fresh chunk (rn_send_store_find), whichever chunks are held.
 #define RN_SEND_FIT_OK              0   // room: the allocation takes it
 #define RN_SEND_FIT_REFUSED         1   // bytes outside the pool's range: the caller's refusal, not exhaustion
 #define RN_SEND_FIT_EXHAUSTED       2   // the region is already exhausted (sticky until reset)

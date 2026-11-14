@@ -13,6 +13,7 @@
 #include "../sdk/rocketnet_internal.h"
 #include "../sdk/rocketnet_layers.h"
 
+#include <float.h>
 #include <math.h>
 
 static int update_clock_asserts = 0;
@@ -138,3 +139,188 @@ static void test_update_clock_catch_up_steps_from_the_callers_last_time()
 }
 
 REGISTER_UNIT_TEST( test_update_clock_catch_up_steps_from_the_callers_last_time );
+
+// Every negative time is refused before the clock reads it, the way a
+// non-finite one is: it changes neither the raw time nor the offset and
+// counts one misuse, the first and each one after it. A later negative above
+// an earlier one is not a forward step from it, so the clock does not start
+// on negatives, and the first small valid time starts it at that time.
+
+static void update_clock_negatives_then_start( double first, double second )
+{
+    double last_good = 0.0;
+    double raw_time = 0.0;
+    double time_offset = 0.0;
+
+    const uint64_t before = rocketnet_api_misuse_count();
+
+    bool clamped = false;
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, first, &clamped );
+    rocketnet_unit_check( last_good == 0.0 );
+    rocketnet_unit_check( clamped );
+    rocketnet_unit_check( raw_time == 0.0 );
+    rocketnet_unit_check( time_offset == 0.0 );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == before + 1 );
+
+    clamped = false;
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, second, &clamped );
+    rocketnet_unit_check( last_good == 0.0 );
+    rocketnet_unit_check( clamped );
+    rocketnet_unit_check( raw_time == 0.0 );
+    rocketnet_unit_check( time_offset == 0.0 );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == before + 2 );
+
+    // the first small valid time: the clock starts there, not at the
+    // distance the negatives covered added to it
+
+    clamped = true;
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, 0.5, &clamped );
+    rocketnet_unit_check( last_good == 0.5 );
+    rocketnet_unit_check( !clamped );
+    rocketnet_unit_check( raw_time == 0.5 );
+    rocketnet_unit_check( time_offset == 0.0 );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == before + 2 );
+}
+
+static void test_update_clock_refuses_every_negative_time()
+{
+    rocketnet_quiet( true );
+
+    // repeated, then increasing, negatives
+
+    update_clock_negatives_then_start( -5.0, -5.0 );
+    update_clock_negatives_then_start( -5.0, -4.0 );
+
+    // on a running clock a negative is refused the same way, and the valid
+    // backwards step after it still records its distance from the caller's
+    // last good time, not from the negative
+
+    double last_good = 10.0;
+    double raw_time = 10.0;
+    double time_offset = 0.0;
+    bool clamped = false;
+
+    const uint64_t before = rocketnet_api_misuse_count();
+
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, -1.0, &clamped );
+    rocketnet_unit_check( last_good == 10.0 );
+    rocketnet_unit_check( clamped );
+    rocketnet_unit_check( raw_time == 10.0 );
+    rocketnet_unit_check( time_offset == 0.0 );
+
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, 8.0, &clamped );
+    rocketnet_unit_check( last_good == 10.0 );
+    rocketnet_unit_check( clamped );
+    rocketnet_unit_check( raw_time == 8.0 );
+    rocketnet_unit_check( time_offset == 2.0 );
+
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, 9.0, &clamped );
+    rocketnet_unit_check( last_good == 11.0 );
+    rocketnet_unit_check( !clamped );
+
+    rocketnet_unit_check( rocketnet_api_misuse_count() == before + 2 );
+}
+
+REGISTER_UNIT_TEST( test_update_clock_refuses_every_negative_time );
+
+// A time above ROCKETNET_UPDATE_TIME_MAX_SECONDS (2^52 seconds) is refused
+// like a negative one: it changes neither the raw time nor the offset and
+// counts one misuse. Before the ceiling, the finite times DBL_MAX, then 0,
+// then 0.75 * DBL_MAX left the clock at +inf: DBL_MAX became the raw time, 0
+// a backwards step of DBL_MAX, and the catch-up step added 0.75 * DBL_MAX to
+// a last good time of DBL_MAX, unflagged and uncounted, and every later call
+// returned +inf. The ceiling itself is a valid time, and a catch-up step of
+// almost the ceiling from a last good time of the ceiling stays finite.
+
+static void test_update_clock_refuses_a_time_above_the_ceiling()
+{
+    rocketnet_quiet( true );
+
+    double last_good = 0.0;
+    double raw_time = 0.0;
+    double time_offset = 0.0;
+    bool clamped = false;
+
+    const uint64_t before = rocketnet_api_misuse_count();
+
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, DBL_MAX, &clamped );
+    rocketnet_unit_check( clamped );
+    rocketnet_unit_check( last_good == 0.0 );
+    rocketnet_unit_check( raw_time == 0.0 );
+    rocketnet_unit_check( time_offset == 0.0 );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == before + 1 );
+
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, 0.0, &clamped );
+    rocketnet_unit_check( !clamped );
+    rocketnet_unit_check( last_good == 0.0 );
+
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, 0.75 * DBL_MAX, &clamped );
+    rocketnet_unit_check( clamped );
+    rocketnet_unit_check( isfinite( last_good ) );
+    rocketnet_unit_check( last_good == 0.0 );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == before + 2 );
+
+    // just above the ceiling is refused; the ceiling is accepted
+
+    const double ceiling = ROCKETNET_UPDATE_TIME_MAX_SECONDS;
+
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, nextafter( ceiling, DBL_MAX ), &clamped );
+    rocketnet_unit_check( clamped );
+    rocketnet_unit_check( last_good == 0.0 );
+
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, ceiling, &clamped );
+    rocketnet_unit_check( !clamped );
+    rocketnet_unit_check( last_good == ceiling );
+
+    // a backwards step of the whole ceiling, then a catch-up step of almost it
+
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, 0.0, &clamped );
+    rocketnet_unit_check( clamped );
+    rocketnet_unit_check( time_offset == ceiling );
+
+    const double below = nextafter( ceiling, 0.0 );
+    last_good = rocketnet_update_clock_advance( last_good, &raw_time, &time_offset, below, &clamped );
+    rocketnet_unit_check( !clamped );
+    rocketnet_unit_check( isfinite( last_good ) );
+    rocketnet_unit_check( last_good == ceiling + below );
+
+    rocketnet_unit_check( rocketnet_api_misuse_count() == before + 4 );
+}
+
+REGISTER_UNIT_TEST( test_update_clock_refuses_a_time_above_the_ceiling );
+
+// rocketnet_update_clock_follow, the transport's clock taking its message
+// object's clock: a time above the ceiling is taken (the object's clock
+// passes it after a backwards step), and a non-finite or negative time is
+// still refused and counted
+
+static void test_update_clock_follow_takes_a_time_above_the_ceiling()
+{
+    rocketnet_quiet( true );
+
+    double last_good = 0.0;
+    double raw_time = 0.0;
+    double time_offset = 0.0;
+    bool clamped = false;
+
+    const uint64_t before = rocketnet_api_misuse_count();
+    const double ceiling = ROCKETNET_UPDATE_TIME_MAX_SECONDS;
+
+    last_good = rocketnet_update_clock_follow( last_good, &raw_time, &time_offset, ceiling + 2000.0, &clamped );
+    rocketnet_unit_check( !clamped );
+    rocketnet_unit_check( last_good == ceiling + 2000.0 );
+    rocketnet_unit_check( raw_time == ceiling + 2000.0 );
+
+    last_good = rocketnet_update_clock_follow( last_good, &raw_time, &time_offset, (double) NAN, &clamped );
+    rocketnet_unit_check( clamped );
+    rocketnet_unit_check( last_good == ceiling + 2000.0 );
+
+    last_good = rocketnet_update_clock_follow( last_good, &raw_time, &time_offset, -1.0, &clamped );
+    rocketnet_unit_check( clamped );
+    rocketnet_unit_check( last_good == ceiling + 2000.0 );
+    rocketnet_unit_check( time_offset == 0.0 );
+
+    rocketnet_unit_check( rocketnet_api_misuse_count() == before + 2 );
+}
+
+REGISTER_UNIT_TEST( test_update_clock_follow_takes_a_time_above_the_ceiling );

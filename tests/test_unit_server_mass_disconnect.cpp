@@ -162,7 +162,7 @@ static rocketnet_server_t * mass_disconnect_server_create( const mass_disconnect
     config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_resolved( NULL, "127.0.0.1:0", &config, 0, &status );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_resolved( NULL, "127.0.0.1:0", &config, 0, &status, NULL );
     if ( transport == NULL || status != ROCKETNET_STATUS_OK )
     {
         mass_disconnect_refused( "rocketnet_server_transport_create_resolved", &status );
@@ -242,6 +242,23 @@ static rocketnet_client_t * mass_disconnect_client_create( const mass_disconnect
 static rocketnet_server_transport_t * mass_disconnect_server_transport( rocketnet_server_t * server )
 {
     return rocketnet_message_server_transport( rocketnet_server_message_server( server ) );
+}
+
+// the datagrams the hub refused at the server's loopback endpoint for want of
+// room (rocketnet_loopback_endpoint_dropped): the endpoint is read by swapping
+// the transport's I/O out and straight back, so call it only between server
+// updates (no send or receive is running then)
+static uint64_t mass_disconnect_server_endpoint_dropped( rocketnet_server_t * server )
+{
+    rocketnet_server_transport_t * transport = mass_disconnect_server_transport( server );
+    const struct rocketnet_server_transport_io_operations_t * operations = NULL;
+    void * instance = NULL;
+    rocketnet_server_transport_swap_io_for_test( transport, &operations, &instance );
+    const struct rocketnet_server_transport_io_operations_t * restore = operations;
+    void * restore_instance = instance;
+    rocketnet_server_transport_swap_io_for_test( transport, &restore, &restore_instance );
+    check( instance != NULL );
+    return instance ? rocketnet_loopback_endpoint_dropped( instance ) : 0;
 }
 
 static const uint64_t * mass_disconnect_server_counters( rocketnet_server_t * server )
@@ -362,7 +379,7 @@ static long mass_disconnect_rss_bound_mb()
     return suite_rss_bound_mb( planned, 32 );
 }
 
-SUITE_CASE_RSS_BOUND( test_server_disconnect_all_1000_real_time, mass_disconnect_rss_bound_mb );
+SUITE_CASE_RSS_BOUND( test_server_disconnect_all_1000_bounded_per_update, mass_disconnect_rss_bound_mb );
 SUITE_CASE_RSS_BOUND( test_clients_disconnect_together_server_count_exact, mass_disconnect_rss_bound_mb );
 SUITE_CASE_RSS_BOUND( test_server_disconnect_full_queue_never_bypasses_budget, mass_disconnect_rss_bound_mb );
 SUITE_CASE_RSS_BOUND( test_server_disconnect_prelink_kicks_share_update_allowance, mass_disconnect_rss_bound_mb );
@@ -575,7 +592,7 @@ REGISTER_UNIT_TEST( test_server_disconnect_prelink_kicks_share_update_allowance 
 // disconnect packets, so no
 // call's work grows with the population, and every client still receives the
 // server's disconnect and ends SERVER_DISCONNECTED, never on its timeout.
-static void test_server_disconnect_all_1000_real_time()
+static void test_server_disconnect_all_1000_bounded_per_update()
 {
 #if ROCKETNET_DEV
     mass_disconnect_env_guard_t env_guard;
@@ -653,7 +670,7 @@ static void test_server_disconnect_all_1000_real_time()
     mass_disconnect_destroy_all( &population );
 }
 
-REGISTER_UNIT_TEST( test_server_disconnect_all_1000_real_time );
+REGISTER_UNIT_TEST( test_server_disconnect_all_1000_bounded_per_update );
 
 #if ROCKETNET_DEV
 bool rocketnet_server_transport_seat_clients_for_test( struct rocketnet_server_transport_t * server, int clients );
@@ -736,6 +753,7 @@ static void test_clients_disconnect_together_server_count_exact()
     const uint64_t * counters = mass_disconnect_server_counters( server );
     const uint64_t timed_out_before = counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT];
     const uint64_t accepted_before = counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED];
+    const uint64_t dropped_before = mass_disconnect_server_endpoint_dropped( server );
 
     for ( int i = 0; i < MASS_DISCONNECT_CLIENTS; i++ )
     {
@@ -760,6 +778,10 @@ static void test_clients_disconnect_together_server_count_exact()
     check( rocketnet_server_num_connected_clients( server ) == 0 );
     check( counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == timed_out_before );
     check( counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED] - accepted_before == (uint64_t) MASS_DISCONNECT_CLIENTS );
+
+    // every copy of every burst fitted: the hub refused nothing at the server's
+    // endpoint (one copy per client would end every slot just the same)
+    check( mass_disconnect_server_endpoint_dropped( server ) == dropped_before );
 
     mass_disconnect_destroy_all( &population );
 }

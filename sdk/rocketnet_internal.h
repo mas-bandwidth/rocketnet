@@ -301,6 +301,13 @@ static inline bool rocketnet_api_null_guard( const void * p )
 void * rocketnet_default_malloc_function( void * context, size_t bytes );
 void rocketnet_default_free_function( void * context, void * p );
 
+// The largest update time the clock accepts: 2^52 seconds, about 143 million
+// years. The raw time stays at or below it, so each call moves the clamped
+// time by at most about 2^52 (the step, rounded once): past about 2^106 a
+// step no longer changes the sum, so every value the clock makes is finite
+// (proofs/tla/RNUpdateClock.tla ClampedStepBounded, in integers).
+#define ROCKETNET_UPDATE_TIME_MAX_SECONDS 4503599627370496.0
+
 /**
  * @brief Advances one owner's update clock by the caller's raw step. Internal
  * to the SDK: the client and server transport updates, the message server's
@@ -310,7 +317,8 @@ void rocketnet_default_free_function( void * context, void * p );
  * clamped time it hands out; this helper keeps them in step: a forward raw
  * step of d advances the clamped time by exactly d, a backwards raw step
  * returns the last good time and records the new raw time, and a non-finite
- * sample changes neither value. While no backwards step has happened the
+ * sample, a negative one or one above ROCKETNET_UPDATE_TIME_MAX_SECONDS
+ * changes neither value. While no backwards step has happened the
  * returned time is the caller's time, bit for bit, so every caller that reads
  * an exact time still reads it.
  * @param last_good The clamped time the owner keeps.
@@ -321,10 +329,29 @@ void rocketnet_default_free_function( void * context, void * p );
  * @param time The caller's new raw time.
  * @param clamped Optional output set true when the sample was rejected; NULL
  * is allowed.
- * @return The owner's new clamped time. A non-finite or backwards sample
- * counts one misuse and logs one error, in every build; it never asserts.
+ * @return The owner's new clamped time. A non-finite, negative, too large or
+ * backwards sample counts one misuse and logs one error, in every build; it
+ * never asserts.
  */
 double rocketnet_update_clock_advance( double last_good, double * raw_time, double * time_offset, double time, bool * clamped );
+
+/**
+ * @brief Advances a transport's clock by the time its message object hands
+ * down: the object's clock, already advanced from the caller's samples.
+ *
+ * As rocketnet_update_clock_advance, but a time above
+ * ROCKETNET_UPDATE_TIME_MAX_SECONDS is taken: the ceiling bounds the caller's
+ * raw samples, and the object's clock can pass it after a backwards step.
+ */
+double rocketnet_update_clock_follow( double last_good, double * raw_time, double * time_offset, double time, bool * clamped );
+
+// the transports' updates as the message links call them
+// (rn_message_client_link, rn_message_server_link): the time is the object's
+// clock, so the transport takes it through rocketnet_update_clock_follow. A
+// caller of the transport layer itself calls the public updates.
+void rocketnet_client_transport_update_from_layer( struct rocketnet_client_transport_t * client_transport, double time );
+void rocketnet_server_transport_update_from_layer( struct rocketnet_server_transport_t * server_transport, double time );
+void rocketnet_server_transport_update_receive_from_layer( struct rocketnet_server_transport_t * server_transport, double time );
 
 #ifdef __cplusplus
 
@@ -499,6 +526,12 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 
 #define ROCKETNET_DEFAULT_SEND_RATE            10.0
 
+// the client's scheduled send is due this much before the interval has
+// elapsed exactly: the rounding of a fixed step summed in floating point,
+// and nothing more (RN-1 t17 rule 1)
+
+#define ROCKETNET_SEND_INTERVAL_TOLERANCE_SECONDS 1.0e-6
+
 // the handshake work budget (handshakes_per_update): the most connection
 // requests one server update takes to the signature verify, each one Ed25519 verify
 // and, when it verifies, the sealed-block open, a keypair and the key
@@ -557,10 +590,21 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    num_iocp_send_threads,       0,                         1, ROCKETNET_IOCP_MAX_SEND_THREADS,                  ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    num_msgx_transmit_workers,   0,                         1, ROCKETNET_MSGX_MAX_TRANSMIT_WORKERS,              ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT )
 
+// revision 8: whether each Linux transport that places its network threads
+// from cpu 0 up keeps cpu 0 for the OS. Zero is the default (reserved);
+// ROCKETNET_CPU_0_RESERVED (1) and ROCKETNET_CPU_0_NOT_RESERVED (2) are the
+// range, anything else refused at create. xdp, rio, iocp and msgx have none
+// (rocketnet.h, gso_reserve_cpu_0)
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V4( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                    \
+    INT_FIELD(    gso_reserve_cpu_0,           0,                         ROCKETNET_CPU_0_RESERVED, ROCKETNET_CPU_0_NOT_RESERVED, ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    io_uring_reserve_cpu_0,      0,                         ROCKETNET_CPU_0_RESERVED, ROCKETNET_CPU_0_NOT_RESERVED, ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
+    INT_FIELD(    portable_reserve_cpu_0,      0,                         ROCKETNET_CPU_0_RESERVED, ROCKETNET_CPU_0_NOT_RESERVED, ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT )
+
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V1( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                        \
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V2( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                        \
-    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V3( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V3( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                        \
+    ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V4( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )
 
 /** @brief Size in bytes of the server transport config before token_epoch_unix_seconds. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
@@ -580,8 +624,10 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, bind_ipv6_address ) + ROCKETNET_MAX_ADDRESS_STRING_LENGTH, sizeof( uint64_t ) )
 /** @brief Server transport config revision 7, in bytes: each server transport's network thread count, appended. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_7 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, num_msgx_transmit_workers ) + sizeof( int ), sizeof( uint64_t ) )
+/** @brief Server transport config revision 8, in bytes: each Linux transport's cpu 0 reservation, appended. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_8 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, portable_reserve_cpu_0 ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Known server transport config sizes, in bytes. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_7
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_7, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_8
 
 // the largest build-specific channel count: a WIDE record carries a u16 channel
 

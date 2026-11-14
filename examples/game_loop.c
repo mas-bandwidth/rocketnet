@@ -7,9 +7,9 @@
     receive, simulate, queue, then send last.
 
     The server's frame runs one of two ways. By default (--game-threads 1)
-    every server call is made on the main thread, one thread at a time: take
-    in what arrived, queue every client's state update, send_packets, then
-    update. With --game-threads N the server's frame runs the way a game
+    every server call is made on the main thread, one thread at a time:
+    update, receive what arrived, queue every client's state update, then
+    send_packets last. With --game-threads N the server's frame runs the way a game
     server runs it: the main thread joins last frame's network half, reads
     the messages the last update left, does the world update, then splits off
     the second half of the network update to run in parallel with the main
@@ -49,6 +49,7 @@ struct latency_t
 };
 
 static struct latency_t to_server, to_client;
+static uint64_t malformed;                  // received messages of the wrong size, dropped unread
 static uint32_t bins[BINS + 1], count;      // the client frame costs
 static double max_us;
 static double main_sum_us, main_max_us;         // the server's main thread in rocketnet: the join and the receive, and the whole network half when it runs there
@@ -111,8 +112,16 @@ static int write_message( uint8_t * p, uint32_t frame )
     return MESSAGE_BYTES;
 }
 
-static void read_message( struct latency_t * l, uint32_t frame, const uint8_t * data )
+// the sender's bytes are checked before they are read: a message of any other
+// size is dropped and counted, never read past its end
+static void read_message( struct latency_t * l, uint32_t frame, const uint8_t * data, int bytes )
 {
+    if ( bytes != MESSAGE_BYTES )
+    {
+        malformed++;
+        return;
+    }
+
     const uint32_t queued = read_u32( data );
 
     const uint32_t frames = frame - queued;     // 0 is the frame it was queued in
@@ -470,7 +479,7 @@ int main( int argc, char ** argv )
             {
                 for ( int m = 0; m < batch->num_messages; m++ )
                 {
-                    read_message( &to_client, frame, batch->data[m] );
+                    read_message( &to_client, frame, batch->data[m], batch->bytes[m] );
                 }
             }
 
@@ -558,7 +567,7 @@ int main( int argc, char ** argv )
         {
             for ( int m = 0; m < batch->num_messages; m++ )
             {
-                read_message( &to_server, frame, batch->data[m] );
+                read_message( &to_server, frame, batch->data[m], batch->bytes[m] );
                 events_received += batch->channel[m] == 1;
             }
         }
@@ -652,6 +661,12 @@ int main( int argc, char ** argv )
     // one; telling it apart exactly would need same-frame delivery, which the
     // handoff does not promise, so the check is the minimum and the printed
     // latency shows the rest
+
+    if ( !failure && malformed != 0 )
+    {
+        printf( "malformed messages dropped: %llu\n", (unsigned long long) malformed );
+        failure = "a message of the wrong size arrived";
+    }
 
     if ( !failure && ( to_server.count == 0 || to_client.count == 0 ) )
     {

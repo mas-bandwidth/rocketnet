@@ -101,7 +101,8 @@ example uses that default. A deployment that needs a stable server identity
 can instead supply `config.server_secret_key` at create; it has no environment
 variable. Wipe the caller's copy after create. The server keeps its key across
 stop/start, and destroy wipes its copy. See [Keys](KEYS.md#where-each-key-lives). After `rocketnet_server_start` succeeds, the server
-exports its bound UDP address and 32-byte X25519 public key. The complete
+exports its advertised UDP address, with the port it bound, and its 32-byte
+X25519 public key. The complete
 [backend server example](../examples/backend_server.c) checks create and start
 separately, calls `rocketnet_server_ipv4_address` and
 `rocketnet_server_public_key`, and writes the public registration fields to
@@ -111,7 +112,7 @@ in this local example is reachable only from the same host.
 
 The create/start failure branch below is an excerpt, with `config`, `address`,
 and the example shutdown helper already defined. From
-[examples/backend_server.c](../examples/backend_server.c), lines 237 to 256:
+[examples/backend_server.c](../examples/backend_server.c), lines 238 to 257:
 
 ```c
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
@@ -229,11 +230,10 @@ client must finish within its token's `timeout_seconds` (default 10).
 The rule: the server can process at most `handshakes_per_update` times its
 update rate connection requests each second, for example 16 x 60 = 960 a
 second at 60 updates a second. Issue tokens to one server at a rate below that,
-spread evenly, and the requests are processed as they arrive. Measured at the
-defaults with a 100 Hz server update: 1000 clients whose requests were spread
-across the send interval all connected in about 1.6 seconds, while 1000 clients
-sending in the same instant did not all connect inside a 10-second token
-timeout (912 did).
+spread evenly, and the requests are processed as they arrive. Requests past
+the budget are dropped and resent, and a later update takes them, so a large
+burst can outlast the token's `timeout_seconds`. Measure join time at your own update
+rate and client count.
 
 The example backends mint one token for each `GET /match/{clientID}` as it
 arrives and do not pace the issue; a backend serving many joins at once adds

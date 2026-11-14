@@ -20,6 +20,6 @@ MCLiveSpec == LiveSpec
 \* variables forget, and without the view the control does not finish in
 \* the 110 s budget)
 MCSafetyView == <<producer, ready, worker, free, num, st, dest, pkt, runs, cq, pend,
-                  status, nextId, eagains, demand, flushes, kernelWrite>>
+                  status, nextId, eagains, demand, flushes, kernelWrite, locked, mainWaits>>
 
 =============================================================================

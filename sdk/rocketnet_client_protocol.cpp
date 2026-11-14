@@ -423,7 +423,19 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
     return bytes;
 }
 
-// proofs/tla/ClientConnection.tla ClientSend
+// The scheduled send is due once the send interval has elapsed. The clock is
+// the caller's, and a game loop often adds up a fixed step in floating point:
+// six steps of 1/60 s sum to just under 0.1 s, so an exact comparison waits a
+// whole extra frame for every interval at 60 Hz and 30 Hz. The microsecond of
+// tolerance takes that rounding out and nothing else: no real clock schedules
+// an update within a microsecond of the boundary on purpose (TRANSPORT.md t17).
+
+static bool rocketnet_client_send_due( const struct rocketnet_client_protocol_t * client, double current_time )
+{
+    return current_time - client->last_send_time >= 1.0 / client->send_rate - ROCKETNET_SEND_INTERVAL_TOLERANCE_SECONDS;
+}
+
+// proofs/tla/ClientConnection.tla ClientSend and ClientEarlySend
 
 void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * client,
                                        double current_time,
@@ -443,11 +455,27 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
         return;
     }
 
+    // proofs/tla/ClientConnection.tla ClientEarlySend (TRANSPORT.md t11 rule 7):
+    // a reply that advanced the handshake this update -- the first cookie
+    // moved requesting cookie to sending connection request, the challenge
+    // moved sending connection request to sending connection response --
+    // armed one send of the new state's packet, and it goes now instead of
+    // waiting out the tick. The advance alone arms it, at most once per
+    // advance, and this update spends it whether or not it sends: nothing
+    // that arrives later, a forged cookie included, can arm a second one.
+    // Retries of the same state stay on the tick, and nothing is sent from
+    // the receive path itself.
+
+    const bool early_send = client->handshake_early_send &&
+                            ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST ||
+                              client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+    client->handshake_early_send = 0;
+
     // proofs/tla/RNEndpoint.tla WriteAck: sends a packet that carries only the owed acks.
     // An owed ack goes out on this update, outside the scheduled send rate.
     // Type 8 does not add debt, so the ack cannot ping-pong.
 
-    if ( current_time - client->last_send_time < 1.0 / client->send_rate )
+    if ( !early_send && !rocketnet_client_send_due( client, current_time ) )
     {
         if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              client->ack.ack_debt >= ROCKETNET_ACK_DEBT_THRESHOLD )
@@ -593,7 +621,9 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
     // moves backwards on no packet that does not open under the attempt's
     // keys (proofs/tla/ClientConnection.tla HandshakeNeverRewinds). a genuine fresh
     // cookie, after the kept one expired, still goes out on every second
-    // request. nothing is sent because this arrived.
+    // request. nothing is sent from here: the advance below arms the one
+    // early request the next protocol update sends (ClientEarlySend), and a
+    // cookie that advances nothing arms nothing.
 
     const uint8_t * cookie_field = packet_data + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES;
 
@@ -620,6 +650,7 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
     {
         client->state_first_send_time = -1.0;
         rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+        client->handshake_early_send = 1;
     }
 
     return 1;
@@ -757,6 +788,10 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
 
+    // the advance arms the one early response (ClientEarlySend)
+
+    client->handshake_early_send = 1;
+
     return 1;
 }
 
@@ -890,7 +925,8 @@ typedef int ( *rocketnet_client_type_data_validator_t )( struct rocketnet_client
 // server's first payloads, and a payload delivered before connected let the
 // application reply on a connection that could not yet send. The server's
 // resend carries a reliable message again after the keep-alive
-// (proofs/tla/ClientConnection.tla PayloadBeforeKeepAlive).
+// (proofs/tla/ClientConnection.tla PayloadOnlyWhenConnected; ClientRecvEarlyPayload
+// under SpecEarlyPayload is the delivery before connected that it refuses).
 
 static bool rocketnet_client_session_state_accepts( const struct rocketnet_client_protocol_t * client, uint8_t packet_type )
 {
@@ -1112,13 +1148,17 @@ static int rocketnet_client_open_session( struct rocketnet_client_protocol_t * c
 }
 
 // The keep-alive's eight type bytes name the client index and the slot
-// count: the client is in slot x of y. The slot count is at least 1 and the
-// index is below it; the client has no opinion about the server's slot
-// count, which the server alone decides. Checked here, as the open's
-// type-data validator, so a keep-alive whose index is invalid is refused
-// before the open commits: per the reading order it then keeps only its
-// replay-window mark and does not refresh the idle timeout or feed the
-// trackers. The refusal keeps its existing counter.
+// count: the client is in slot x of y. The slot count is at least 1 and at
+// most ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT, the most clients any server can be
+// built with, and the index is below it; within that the client has no
+// opinion about the server's slot count, so a client of any build connects
+// to a server of any build. Checked here, as the open's type-data validator,
+// so a keep-alive whose index or count is invalid is refused before the open
+// commits: per the reading order it then keeps only its replay-window mark
+// and does not refresh the idle timeout or feed the trackers. The refusal
+// keeps its existing counter.
+
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_MAX_CLIENTS <= ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT, "every build's slot count fits a keep-alive" );
 
 static int rocketnet_client_validate_keep_alive( struct rocketnet_client_protocol_t * client,
                                                  const uint8_t * type_data,
@@ -1126,15 +1166,16 @@ static int rocketnet_client_validate_keep_alive( struct rocketnet_client_protoco
 {
     (void) type_data_bytes;         // the open sized the eight type bytes
 
-    // both fields are u32 (t10 step 17, t13.1): the index below the slot
-    // count, which is then at least 1; compared as read, so a value with the
-    // top bit set is no negative int
+    // both fields are u32 (t10 step 17, t13.1), compared as read, before the
+    // client stores them as int: the count at most the build ceiling, the
+    // index below the count, which is then at least 1. Neither can then be a
+    // negative int.
 
     const uint8_t * p = type_data;
     const uint32_t client_index = rocketnet_read_uint32( &p );
     const uint32_t max_clients = rocketnet_read_uint32( &p );
 
-    if ( client_index >= max_clients )
+    if ( max_clients > ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT || client_index >= max_clients )
     {
         rocketnet_spam( "client rejected keep-alive. invalid index" );
 
@@ -1396,10 +1437,18 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
 // drains datagrams into its buffer, runs the cheap replay check and the AEAD,
 // tagging each record opened, replay, forged or raw.
 // proofs/tla/RNClientIoDecrypt.tla IoPublish, IoOwe, IoWait, IoWake and IoClearWake:
-// the I/O thread publishes its filled buffer or records the owed publish, waits
-// on the wake, and burns a wake it does not need.
-// proofs/tla/RNClientIoDecrypt.tla Expose, Return and Done: update exposes the ready
-// buffer at its start, returns it at its end, and the behaviour ends drained.
+// the I/O thread makes its records visible to update, waits on the wake, and
+// burns a wake it does not need. The model keeps the two-buffer handshake of
+// RNClientIo as an abstraction of the receive handoff: IoPublish stands for
+// the commit of rocketnet_receive_handoff_commit (records become visible to
+// update only there, each opened before it), and IoOwe has no step in the code
+// now, since the commit never owes a publish: it always makes the count
+// visible, and a full buffer update has not started on waits on the wake
+// (proofs/tla/RNReceiveHandoff.tla is the handoff itself).
+// proofs/tla/RNClientIoDecrypt.tla Expose, Return and Done: update takes the
+// committed records at its start (Expose stands for the begin of the receive
+// handoff's Call); Return has no step in the code now, since update hands no
+// buffer back; the behaviour ends drained.
 // proofs/tla/RNClientIoDecrypt.tla Tag: each step records its thread as the writer,
 // which the SingleWriter invariant reads.
 

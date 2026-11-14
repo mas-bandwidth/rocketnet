@@ -89,6 +89,7 @@ struct ep_side_t
     uint32_t next_index;                    // the next message index to send
     int kind_of[EP_MESSAGES];               // what each sent message was
     int channel_of[EP_MESSAGES];
+    int bytes_of[EP_MESSAGES];              // and its length: a delivery is the whole message or a failure
     int sent[EP_MESSAGES];
     int delivered[EP_MESSAGES];             // of the other side's messages
     uint32_t ordered_next[EP_ORDERED_CHANNELS];  // per channel: how many ordered messages were delivered
@@ -154,6 +155,7 @@ static void ep_side_create( ep_side_t * side, const rocketnet_message_config_t *
     side->next_index = 0;
     memset( side->kind_of, 0, sizeof( side->kind_of ) );
     memset( side->channel_of, 0, sizeof( side->channel_of ) );
+    memset( side->bytes_of, 0, sizeof( side->bytes_of ) );
     memset( side->sent, 0, sizeof( side->sent ) );
     memset( side->delivered, 0, sizeof( side->delivered ) );
     memset( side->ordered_next, 0, sizeof( side->ordered_next ) );
@@ -204,6 +206,7 @@ static bool ep_send_next( ep_side_t * from, ep_side_t * to, uint64_t * random )
     check( rn_endpoint_error( &from->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
     from->kind_of[index] = kind;
     from->channel_of[index] = channel;
+    from->bytes_of[index] = bytes;
     from->sent[index] = 1;
     if ( kind == EP_KIND_ORDERED )
     {
@@ -222,6 +225,10 @@ static void ep_deliver( ep_side_t * side, ep_side_t * remote, const rn_delivery_
     memcpy( &index, delivery->data, 4 );
     check( index < EP_MESSAGES );
     check( remote->sent[index] );                                 // only what the other side sent
+
+    // the whole message, by the sender's ledger: a delivery of the right
+    // index and a correct prefix but the wrong length fails here
+    check( delivery->bytes == remote->bytes_of[index] );
 
     const int kind = delivery->data[4];
     check( kind == remote->kind_of[index] );
@@ -675,8 +682,10 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
 
 // R6 (standard/MESSAGES.md m9.4; proofs/tla/RNSendBudget.tla UncappedNeverDropsOrWaits):
 // an uncapped endpoint's large sequenced state, larger than one packet, is
-// written whole and never touches the bucket: no charge, no settle, no
-// refusal, no drop. Simulated time from 1000.0; no transport but this loop.
+// promoted at start to its reliable twin and fragmented across ordinary
+// bounded packets (no packet larger than one), and never touches the
+// bucket: no charge, no settle, no refusal, no drop. Simulated time from
+// 1000.0; no transport but this loop.
 
 static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
 {
@@ -721,7 +730,6 @@ static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
 
     static uint8_t frame[4 * ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint64_t packet_id = 1;
-    int large_written = 0;
     int bounded_packets_written = 0;
 
     for ( int i = 0; i < 16; i++ )
@@ -733,31 +741,20 @@ static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
         }
         check( request > 0 && request <= (int) sizeof( frame ) );
 
+        // an oversized code-1 send has been promoted and fragmented across
+        // ordinary bounded reliable packets: no packet is wider than one, even
+        // into a frame four packets wide; uncapped budget still charges none
+
         const int written = rn_endpoint_write_packet( &endpoint, frame, (int) sizeof( frame ), packet_id, now );
-        if ( written > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
-        {
-            large_written++;
-        }
-        else if ( written > 0 )
+        check( written <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+        if ( written > 0 )
         {
             bounded_packets_written++;
-        }
-
-        // an oversized code-1 send has been promoted and fragmented across
-        // ordinary bounded reliable packets; uncapped budget still charges none
-
-        if ( written > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
-        {
-            rn_endpoint_packet_sent( &endpoint, packet_id, written + 64, now );
-        }
-        else if ( written > 0 )
-        {
             rn_endpoint_packet_sent( &endpoint, packet_id, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, written ), now );
         }
         packet_id++;
     }
 
-    check( large_written == 0 );
     check( bounded_packets_written > 1 );                              // reliable fragmentation, not a wide unreliable record
     check( endpoint.unreliable_count == 0 );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == 0 );
@@ -2300,6 +2297,146 @@ UNIT_TEST_SKIPPED_UNLESS( test_endpoint_reused_slot_writes_what_a_fresh_slot_wri
 REGISTER_UNIT_TEST( test_endpoint_start_refusals_count_their_own_counter );
 REGISTER_UNIT_TEST( test_endpoint_in_place_over_budget_finish_is_a_written_packet );
 REGISTER_UNIT_TEST( test_endpoint_write_refuses_a_frame_smaller_than_planned );
+
+// The ack pattern of finding W2-86, end to end through the sender endpoint:
+// the receiver acknowledges packets by id, and its choice of ids frees the
+// chunks of the messages they carried, whatever their order. It holds the
+// packets of a run of reliable messages inside the window and acknowledges
+// the first and the newest; each update the sender starts two messages, which
+// take the two freed chunks (the stack is LIFO: the newest's first, then the
+// low one); neither start nor the room query before it may examine the held
+// run (rn_store_cost_t counts the
+// entries each choice examines; time is an argument, nothing is timed).
+
+#if ROCKETNET_DEV
+static uint64_t ep_scan_start( rn_endpoint_t * endpoint, int max_payload_bytes, uint8_t fill )
+{
+    rn_store_cost_reset();
+    uint8_t * message = rn_endpoint_start( endpoint, 0, ROCKETNET_RELIABILITY_RELIABLE, 10, max_payload_bytes );
+    const uint64_t visits = rn_store_cost_read().choice_visits;
+    check( message != NULL );
+    if ( message )
+    {
+        memset( message, fill, 10 );
+        check( rn_endpoint_finish( endpoint, 10, 0 ) != 0 );
+    }
+    return visits;
+}
+
+static void ep_scan_flush( rn_endpoint_t * endpoint, double now, uint64_t * packet_id, std::vector<uint64_t> * written )
+{
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    written->clear();
+    rn_endpoint_begin_update( endpoint );
+    rn_endpoint_begin_flush( endpoint );
+    while ( rn_endpoint_next_packet_bytes( endpoint, now ) > 0 )
+    {
+        const int bytes = rn_endpoint_write_packet( endpoint, frame, sizeof( frame ), *packet_id, now );
+        if ( bytes <= 0 )
+        {
+            break;
+        }
+        rn_endpoint_packet_sent( endpoint, *packet_id, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, bytes ), now );
+        written->push_back( ( *packet_id )++ );
+    }
+}
+
+static void test_endpoint_selective_acks_never_make_a_start_walk_the_store()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    check( rocketnet_message_validate_config( &config ) );
+
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    const int max_payload = endpoint_config.max_payload_bytes;
+
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, region, &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+
+    const uint32_t total = rn_send_store_total_chunks( &region->store, RN_STORE_SMALL );
+    const uint32_t held = (uint32_t) config.reliable_messages_in_flight / 2;
+    check( total > held + 64 );
+
+    // messages 0 .. held + 1, one to an update and each in its own packet;
+    // time moves by a microsecond an update, so nothing is resent
+
+    double now = 1000.0;
+    uint64_t packet_id = 1;
+    std::vector<uint64_t> written;
+    std::vector<uint64_t> first_packets;
+    std::vector<uint64_t> newest_packets;
+
+    for ( uint32_t i = 0; i < held + 2; i++ )
+    {
+        ep_scan_start( &endpoint, max_payload, (uint8_t) i );
+        ep_scan_flush( &endpoint, now, &packet_id, &written );
+        check( written.size() == 1 );
+        if ( i == 0 )
+        {
+            first_packets = written;
+        }
+        newest_packets = written;
+        now += 0.000001;
+    }
+
+    // the receiver acknowledges the first and the newest and holds the run
+    // between them: their chunks come back, the run stays held
+
+    for ( uint64_t id : first_packets )
+    {
+        rn_endpoint_on_acked( &endpoint, id, now );
+    }
+    for ( uint64_t id : newest_packets )
+    {
+        rn_endpoint_on_acked( &endpoint, id, now );
+    }
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_SMALL ) == total - held );
+
+    uint64_t worst_start = 0;
+    uint64_t worst_room = 0;
+
+    for ( int round = 0; round < 16; round++ )
+    {
+        for ( int send = 0; send < 2; send++ )
+        {
+            rn_store_cost_reset();
+            check( rn_endpoint_send_room( &endpoint, 0, ROCKETNET_RELIABILITY_RELIABLE, 10, max_payload ) );
+            const uint64_t room = rn_store_cost_read().choice_visits;
+            worst_room = room > worst_room ? room : worst_room;
+
+            const uint64_t start = ep_scan_start( &endpoint, max_payload, (uint8_t) round );
+            worst_start = start > worst_start ? start : worst_start;
+        }
+
+        ep_scan_flush( &endpoint, now, &packet_id, &written );
+        check( !written.empty() );
+        for ( uint64_t id : written )
+        {
+            rn_endpoint_on_acked( &endpoint, id, now );
+        }
+        check( rn_send_store_free_chunks( &region->store, RN_STORE_SMALL ) == total - held );
+        now += 0.000001;
+    }
+
+    printf( "endpoint store choice: chunks=%u held=%u worst_start_visits=%llu worst_room_visits=%llu\n",
+            total, held, (unsigned long long) worst_start, (unsigned long long) worst_room );
+    fflush( stdout );
+
+    check( worst_start <= 1 );
+    check( worst_room <= 1 );
+
+    rn_arena_destroy( arena );
+}
+REGISTER_UNIT_TEST( test_endpoint_selective_acks_never_make_a_start_walk_the_store );
+#endif // #if ROCKETNET_DEV
 
 // The cases above that take ep_config's timeout, rerun opted in at 600000
 // (no probe pacing, no round-trip filter: the v1.0 resend rule), in one

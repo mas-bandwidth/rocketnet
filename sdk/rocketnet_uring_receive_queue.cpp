@@ -337,6 +337,8 @@ struct rocketnet_uring_receive_queue_t * rocketnet_uring_receive_queue_create( v
     {
         memset( base + layout.buf_ring, 0, (size_t) config->buffers * sizeof( struct io_uring_buf ) );
     }
+    // ASan builds: poison the red zones between the carves, once the zeroing is done; the kernel writes the provided buffers, never a pad (sdk/rocketnet_memory.h)
+    ROCKETNET_RED_ZONE_CARVE( base, rocketnet_uring_receive_queue_layout( config, ring == NULL, &layout ) );
 
     struct rocketnet_uring_receive_queue_t * queue = new ( base ) rocketnet_uring_receive_queue_t();
     queue->context = context;
@@ -795,9 +797,14 @@ void rocketnet_uring_receive_queue_drops( const struct rocketnet_uring_receive_q
     rocketnet_receive_drop_tally_sum( &queue->tally, 1, totals );
 
     // a completion the kernel refused (a negative result other than ENOBUFS
-    // or ECANCELED) is a receive the transport could not complete: the
-    // server's RECEIVE_FAILED, so a refused receive never reads as silence
-    totals[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] += queue->counters[ROCKETNET_URING_RECEIVE_COUNTER_ERRORS].load( std::memory_order_relaxed );
+    // or ECANCELED), one that names no buffer of the ring, and a datagram
+    // whose source cannot be read are each a receive the transport could
+    // not complete: the server's RECEIVE_FAILED (standard/TRANSPORT.md, the
+    // alias table: URING_RECEIVE_DROPPED_SOURCE and _NO_BUFFER), so none
+    // reads as silence
+    totals[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED] += queue->counters[ROCKETNET_URING_RECEIVE_COUNTER_ERRORS].load( std::memory_order_relaxed ) +
+                                                     queue->counters[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_NO_BUFFER].load( std::memory_order_relaxed ) +
+                                                     queue->counters[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SOURCE].load( std::memory_order_relaxed );
 }
 
 #if ROCKETNET_DEV

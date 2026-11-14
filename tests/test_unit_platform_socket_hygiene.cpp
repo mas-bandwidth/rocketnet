@@ -199,6 +199,56 @@ static void test_platform_socket_hygiene_refused_source_reads_next()
     rocketnet_unit_check( from.data.ipv6[7] == 1 );
 }
 
+// native IPv4 sources through the same seam: the first from port 0, which
+// the receive rule refuses (rocketnet_address_accept_received_source), the
+// second from 127.0.0.1:40001
+static int platform_socket_hygiene_ipv4_port_zero_receive( void * user, void * packet_data, int max_packet_size, struct sockaddr_storage * from )
+{
+    int * calls = (int *) user;
+    const int index = ( *calls )++;
+    if ( index >= 2 )
+    {
+        return -1;
+    }
+    struct sockaddr_in * in4 = (struct sockaddr_in *) from;
+    in4->sin_family = AF_INET;
+    in4->sin_port = htons( (uint16_t) ( index == 0 ? 0 : 40001 ) );
+    in4->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    const char * payload = index == 0 ? "zero" : "good";
+    rocketnet_unit_check( max_packet_size >= 4 );
+    memcpy( packet_data, payload, 4 );
+    return 4;
+}
+
+static void test_platform_socket_hygiene_source_port_zero_reads_next()
+{
+    // the platform converter (rocketnet_platform_sockaddr_to_address), which
+    // the portable, IOCP and gso client receives share, refuses a native
+    // IPv4 source from port 0 and reads on to the next datagram
+
+    struct rocketnet_platform_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    socket.ipv6 = false;
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    socket.handle = INVALID_SOCKET;
+#else
+    socket.handle = -1;
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    int calls = 0;
+    rocketnet_platform_socket_set_receive_hook( &socket, platform_socket_hygiene_ipv4_port_zero_receive, &calls );
+    struct rocketnet_address_t from;
+    memset( &from, 0, sizeof( from ) );
+    uint8_t packet[64];
+    const int bytes = rocketnet_platform_socket_receive_packet( &socket, &from, packet, (int) sizeof( packet ) );
+    rocketnet_platform_socket_set_receive_hook( &socket, NULL, NULL );
+
+    rocketnet_unit_check( bytes == 4 );
+    rocketnet_unit_check( memcmp( packet, "good", 4 ) == 0 );
+    rocketnet_unit_check( calls == 2 );
+    rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV4 );
+    rocketnet_unit_check( from.port == 40001 );
+}
+
 static void test_platform_socket_hygiene_refused_source_then_drained()
 {
     // only refused datagrams queued: the receive drops each, then reports
@@ -549,6 +599,37 @@ REGISTER_UNIT_TEST( test_platform_socket_hygiene_wake_is_close_on_exec );
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
 
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
+
+// EMSGSIZE on a POSIX receive is weather: a connected client socket gets it
+// from an ICMP fragmentation-needed or packet-too-big naming its 4-tuple,
+// returned before any datagram is dequeued, never from a long datagram (the
+// receive reports the true size). The drain skips it and reads on, spending
+// its whole budget of ROCKETNET_PLATFORM_RECEIVE_READS (64) on a repeat; the
+// socket has no descriptor and nothing is opened.
+
+static void test_platform_receive_emsgsize_is_weather()
+{
+    struct rocketnet_platform_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    socket.handle = -1;
+
+    struct rocketnet_address_t from;
+    uint8_t packet_data[64];
+    rocketnet_platform_inject_receive_errno_repeat_for_testing( EMSGSIZE, 1000 );
+
+    const int received = rocketnet_platform_socket_receive_packet( &socket, &from, packet_data, (int) sizeof( packet_data ) );
+    const int remaining = rocketnet_platform_receive_errno_remaining_for_testing();
+    rocketnet_platform_inject_receive_errno_for_testing( 0 );
+
+    rocketnet_unit_check( received == 0 );
+    rocketnet_unit_check( remaining == 1000 - 64 );
+}
+
+REGISTER_UNIT_TEST( test_platform_receive_emsgsize_is_weather );
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
+
 #if defined( __APPLE__ )
 static void test_platform_socket_hygiene_msgx_chaff_drain_is_bounded()
 {
@@ -676,10 +757,10 @@ static void test_platform_socket_hygiene_dual_stack_sets_both_dont_fragment()
     rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_DONTFRAGMENT && ipv6_options.values[1] == 1 );
 #elif defined( __linux__ )
     rocketnet_unit_check( ipv4_options.count == 1 );
-    rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_MTU_DISCOVER && ipv4_options.values[0] == IP_PMTUDISC_DO );
+    rocketnet_unit_check( ipv4_options.levels[0] == IPPROTO_IP && ipv4_options.names[0] == IP_MTU_DISCOVER && ipv4_options.values[0] == IP_PMTUDISC_PROBE );
     rocketnet_unit_check( ipv6_options.count == 2 );
-    rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == IPV6_MTU_DISCOVER && ipv6_options.values[0] == IPV6_PMTUDISC_DO );
-    rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_MTU_DISCOVER && ipv6_options.values[1] == IP_PMTUDISC_DO );
+    rocketnet_unit_check( ipv6_options.levels[0] == IPPROTO_IPV6 && ipv6_options.names[0] == IPV6_MTU_DISCOVER && ipv6_options.values[0] == IPV6_PMTUDISC_PROBE );
+    rocketnet_unit_check( ipv6_options.levels[1] == IPPROTO_IP && ipv6_options.names[1] == IP_MTU_DISCOVER && ipv6_options.values[1] == IP_PMTUDISC_PROBE );
 #elif defined( __APPLE__ )
     // darwin refuses IP_DONTFRAG on an AF_INET6 socket (EINVAL), and
     // IPV6_DONTFRAG keeps its v4-mapped datagrams whole, so it is asked alone
@@ -702,6 +783,7 @@ REGISTER_UNIT_TEST( test_platform_socket_hygiene_descriptor_valid );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_reads_next );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_then_drained );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_dual_stack_accepts_mapped );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_source_port_zero_reads_next );
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_platform_receive_weather_drain_is_bounded );

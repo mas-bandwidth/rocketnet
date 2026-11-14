@@ -67,11 +67,11 @@ struct rocketnet_server_msgx_t;
 // the receive worker's bank and its recvmsg_x batch. One bank holds one
 // update's whole receive budget at the most clients a build allows
 // (rocketnet_server_receive_packets_per_update, 16000 at 1000 clients), as
-// the io_uring transport's does, so main takes an update's budget in one
-// claim. The worker reads only into room (sdk/rocketnet_msgx_receive_fill.h):
-// with its bank full and the last one not yet taken by main it stops reading,
-// the kernel's socket buffers hold the rest, and it sleeps HOLD_SECONDS
-// before it looks again
+// the io_uring transport's does, so one bank holds an update's budget. The
+// worker reads only into room (sdk/rocketnet_msgx_receive_fill.h): with its
+// bank full and main not yet started on it, it stops reading, the kernel's
+// socket buffers hold the rest, and it sleeps HOLD_SECONDS before it looks
+// again
 #define ROCKETNET_MSGX_RECV_QUEUE_SIZE                                ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
 #define ROCKETNET_MSGX_RECV_BATCH                                       32
 #define ROCKETNET_MSGX_RECV_EVENTS                                     256
@@ -182,6 +182,10 @@ void rocketnet_server_msgx_commit( struct rocketnet_server_msgx_t * msgx );
 // table's open client sockets (main thread).
 void rocketnet_server_msgx_test_fail_sends( struct rocketnet_server_msgx_t * msgx, int count, int error );
 int rocketnet_server_msgx_test_sockets_open( struct rocketnet_server_msgx_t * msgx );
+// receive_source drives one valid datagram from 127.0.0.1:port through the
+// production drain of an IPv4 transport with a fake recvmsg_x and no
+// socket: banked is what reached the worker bank, failed its RECEIVE_FAILED
+bool rocketnet_server_msgx_test_receive_source( uint16_t port, int * banked, uint64_t * failed );
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_MSGX_H

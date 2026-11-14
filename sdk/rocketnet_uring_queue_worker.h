@@ -30,9 +30,10 @@
 //
 // begin_shutdown (the server's stop, before its last disconnect batches)
 // stores shutdown and wakes the worker. From then on each wait a full answer
-// starts counts; a run done (sent or failed) or a new bank claimed starts
-// the count again, and past ROCKETNET_URING_SEND_RETRIES_AFTER_QUIT waits
-// what still waits of the bank is abandoned (counted), so a socket that
+// starts counts as it begins; a run done (sent or failed) or a new bank
+// claimed starts the count again, and once ROCKETNET_URING_SEND_RETRIES_AFTER_QUIT
+// waits have begun what still waits of the bank is abandoned (counted): at
+// the start of the last wait, not after its timer, so a socket that
 // stays full cannot keep send_idle false: the server asks the stop only once
 // it is true. Stop stores shutdown and quit and wakes the worker: it cancels
 // its receive and its wake read, keeps sending what is published with the
@@ -40,6 +41,15 @@
 // no run, no receive, no wake read, no timer (a cancel itself holds nothing:
 // its completion may come after, and the ring is torn down after the join).
 // Main joins it after.
+//
+// A multishot receive that ends refused (a negative result other than
+// -ECANCELED: no provided buffer free, or a kernel that refuses the receive)
+// is armed again at once the first time: a burst that took every buffer gives
+// them back as its completions are reaped. From the second refused end in a
+// row with no datagram between, each arm waits for the receive's own retry
+// timer (the same period), so a receive the kernel keeps refusing is armed
+// once a period and never at completion speed: no core spins on it. The
+// receive module counts every refusal (RECEIVE_FAILED, RECEIVE_NO_BUFFERS).
 //
 // SENDMSG goes with MSG_DONTWAIT: without it io_uring waits inside the
 // kernel for room and never answers -EAGAIN. The wake eventfd must be
@@ -73,7 +83,11 @@ struct rocketnet_uring_queue_send_t;
 // the kinds of the worker's own submissions, beside ROCKETNET_URING_TAG_SEND,
 // _RECV and _CANCEL (rocketnet_uring_codec.h)
 #define ROCKETNET_URING_TAG_WAKE                                             4      // the eventfd READ
-#define ROCKETNET_URING_TAG_TIMER                                            5      // the retry timer after a full answer
+#define ROCKETNET_URING_TAG_TIMER                                            5      // a retry timer: its tag's index says whose
+
+// whose a retry timer is, its tag's index
+#define ROCKETNET_URING_TIMER_SEND                                           0      // a run answered full waits for it
+#define ROCKETNET_URING_TIMER_RECV                                           1      // a receive refused again waits for it before its arm
 
 // what a cancel names, its tag's index
 #define ROCKETNET_URING_CANCEL_RECV                                          0
@@ -111,6 +125,7 @@ struct rocketnet_uring_queue_send_t;
 #define ROCKETNET_URING_WORKER_STEP_ARM_WAKE                                12
 #define ROCKETNET_URING_WORKER_STEP_CANCEL_RECV                             13
 #define ROCKETNET_URING_WORKER_STEP_CANCEL_WAKE                             14
+#define ROCKETNET_URING_WORKER_STEP_ARM_RECV_TIMER                          15
 
 // the worker's counters, one writer, the worker
 #define ROCKETNET_URING_WORKER_COUNTER_SUBMITS                               0      // io_uring_enter calls: submits and waits
@@ -169,7 +184,7 @@ struct rocketnet_uring_queue_worker_config_t
     bool ipv6;                                      // the socket is ipv6 (dual stack)
     int wake_fd;                                    // the eventfd main writes, -1 for none (the unit suite posts wake completions itself)
     int max_in_kernel;                              // runs in the kernel at once: the ring's room for them
-    int max_retry;                                  // ROCKETNET_URING_SEND_RETRIES_AFTER_QUIT, smaller in the unit suite: waits after shutdown
+    int max_retry;                                  // ROCKETNET_URING_SEND_RETRIES_AFTER_QUIT, smaller in the unit suite: waits begun after shutdown
     bool segment;                                   // UDP_SEGMENT is on: runs may carry more than one packet
     struct rocketnet_uring_queue_send_t * send;     // the banks' handoff; not owned
     struct rocketnet_uring_queue_worker_receive_t receive;  // context NULL: no receive
@@ -199,13 +214,16 @@ struct rocketnet_uring_queue_worker_t
     bool blocked;                                   // blocked: a run came back full, no submit until the timer fires (or main's wake, before shutdown)
     bool starved;                                   // this pass found the submission queue full (not a model variable)
     bool timer_armed;                               // timer # "none"
+    bool recv_timer_armed;                          // recvTimer # "none"
+    bool recv_waiting;                              // recvWait: the receive's next arm waits for its timer
+    int recv_refused;                               // recvStreak: refused ends in a row since a datagram, up to 2
     bool wake_armed;                                // wakeRead # "none"
     bool cancelled_recv;
     bool cancelled_wake;
     int in_kernel;                                  // k
     int last_send_class;                            // the class (ROCKETNET_URING_QUEUE_SEND_CLASS_*) of the last send completion reaped, 0 before one: what the trace check reads, never its own rule
     int cancels;                                    // cancels in the kernel
-    int agains;                                     // agains: waits after shutdown since a run was done or a bank claimed, up to max_retry
+    int agains;                                     // agains: waits begun after shutdown since a run was done or a bank claimed, up to max_retry
     uint64_t wake_value;                            // the READ's destination
     struct rocketnet_segment_refused_t refused;     // the destinations that refused a segmented send
     std::atomic<uint64_t> counters[ROCKETNET_URING_WORKER_NUM_COUNTERS];

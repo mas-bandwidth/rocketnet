@@ -233,7 +233,8 @@ REGISTER_UNIT_TEST( test_client_io_stop_counts_and_closes_what_is_queued );
 // once stop_woken says it has (RNClientIoShutdown NoWakeAfterClose, found by
 // ThreadSanitizer as a write to the closed eventfd). Here the wake call sees
 // stop_woken still clear and the handle still open, stop then stores it, and
-// the exit that follows closes once.
+// the exit that follows closes once. This order alone does not show the exit
+// waiting; the development case after it does.
 
 static rocketnet_client_io_t * client_io_stop_wake_io = NULL;
 static int client_io_stop_wake_saw_woken = -1;
@@ -283,6 +284,112 @@ static void test_client_io_stop_wakes_before_the_exit_closes()
     rocketnet_client_io_rig_destroy( rig );
 }
 REGISTER_UNIT_TEST( test_client_io_stop_wakes_before_the_exit_closes );
+
+#if ROCKETNET_DEV
+// The interleaving itself, run on one thread: the wake call itself runs the I/O
+// core's step, so the exit runs while that call is held, exactly where a
+// worker thread can be. The exit then waits on stop_woken; the DEV stop-wait
+// hold (rocketnet_dev_set_client_io_stop_wait_hook) answers each poll instead
+// of a sleep, records whether the handle was closed by then, and on its third
+// poll stores stop_woken as stop's return would. So the case sees the exit
+// wait (polls), close nothing while the wake is held, and close once after
+// the store. Without the wait the exit closes inside the wake call and the
+// hold is never polled.
+
+#define CLIENT_IO_STOP_WAKE_RELEASE_POLL 3
+#define CLIENT_IO_STOP_WAKE_POLL_CEILING 1000
+
+struct client_io_stop_wake_hold_t
+{
+    rocketnet_client_io_t * io;
+    rocketnet_fake_client_transport_io_t * fake;
+    int polls;
+    int closes_while_held;
+    int wake_saw_woken;
+    int step_result;
+    int closes_after_step;
+};
+
+static client_io_stop_wake_hold_t * client_io_stop_wake_hold = NULL;
+
+static void client_io_stop_test_wait_poll( void * context )
+{
+    client_io_stop_wake_hold_t * hold = (client_io_stop_wake_hold_t *) context;
+    hold->polls++;
+    hold->closes_while_held += hold->fake->close_calls;
+    rocketnet_unit_check( hold->polls < CLIENT_IO_STOP_WAKE_POLL_CEILING );
+    if ( hold->polls >= CLIENT_IO_STOP_WAKE_RELEASE_POLL )
+    {
+        hold->io->stop_woken.store( true, std::memory_order_release );
+    }
+}
+
+static void client_io_stop_test_wake_runs_exit( void * transport )
+{
+    rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
+    client_io_stop_wake_hold_t * hold = client_io_stop_wake_hold;
+    fake->wake_calls++;
+    fake->wake = true;
+    hold->wake_saw_woken = hold->io->stop_woken.load( std::memory_order_acquire ) ? 1 : 0;
+    hold->step_result = rocketnet_client_io_step( hold->io, false );
+    hold->closes_after_step = fake->close_calls;
+}
+
+static void test_client_io_stop_exit_waits_for_the_held_wake()
+{
+    rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_batch;
+    operations.close = rocketnet_fake_client_close;
+    operations.wake = client_io_stop_test_wake_runs_exit;
+
+    rocketnet_fake_client_transport_io_t fake = {};
+    rocketnet_client_transport_io_t transport = {};
+    client_io_stop_test_open( &fake, &operations, &transport );
+
+    rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+    client_io_stop_test_clock_t clock = { 1000.0 };
+    rocketnet_client_io_t io = {};
+    rocketnet_client_io_rig_init( rig, &io, &transport, client_io_stop_test_time, &clock );
+
+    client_io_stop_wake_hold_t hold = {};
+    hold.io = &io;
+    hold.fake = &fake;
+    hold.wake_saw_woken = -1;
+    hold.step_result = -1;
+    hold.closes_after_step = -1;
+    client_io_stop_wake_hold = &hold;
+    rocketnet_dev_set_client_io_stop_wait_hook( client_io_stop_test_wait_poll, &hold );
+
+    rocketnet_unit_check( !io.stop_woken.load( std::memory_order_acquire ) );
+
+    rocketnet_address_t from = {};
+    rocketnet_address_load_ipv4( &from, 0x7f000001, 9160 );
+    rocketnet_client_io_stop( &io, 0, &from );
+
+    rocketnet_dev_set_client_io_stop_wait_hook( NULL, NULL );
+    client_io_stop_wake_hold = NULL;
+
+    // the exit ran inside the held wake call, waited, closed nothing while
+    // held, and closed once when stop_woken was stored
+
+    rocketnet_unit_check( fake.wake_calls == 1 );
+    rocketnet_unit_check( hold.wake_saw_woken == 0 );
+    rocketnet_unit_check( hold.step_result == ROCKETNET_CLIENT_IO_EXITED );
+    rocketnet_unit_check( hold.polls == CLIENT_IO_STOP_WAKE_RELEASE_POLL );
+    rocketnet_unit_check( hold.closes_while_held == 0 );
+    rocketnet_unit_check( hold.closes_after_step == 1 );
+    rocketnet_unit_check( io.stopped.load( std::memory_order_acquire ) );
+    rocketnet_unit_check( io.stop_woken.load( std::memory_order_acquire ) );
+
+    // a step after the exit closes nothing again
+
+    rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_EXITED );
+    rocketnet_unit_check( fake.close_calls == 1 );
+
+    rocketnet_client_transport_io_close( &transport );
+    rocketnet_client_io_rig_destroy( rig );
+}
+REGISTER_UNIT_TEST( test_client_io_stop_exit_waits_for_the_held_wake );
+#endif // #if ROCKETNET_DEV
 
 // A late hand-off after worker exit asserts in Debug and is refused even when
 // the assertion hook returns or assertions are compiled out. It cannot bind
@@ -556,16 +663,15 @@ static void test_client_io_destroy_requires_completed_stop()
 }
 REGISTER_UNIT_TEST( test_client_io_destroy_requires_completed_stop );
 
-// Create fails after the transport worker is up. The hold seam keeps that
-// worker not-stopped and counts polls; the wait is the build's own loop, run
-// on a counter clock its sleep advances. Its 1 s deadline at 1 ms steps ends
-// it after two polls a step (one before the transport's update, one after):
-// past the ceiling the case fails, so a wait with no deadline does not hang
-// and does not sleep. On the deadline the wait logs once and the transport,
-// still owned by its worker, is kept: destroy is not called on it. No socket.
+// The hold seam keeps the transport worker not-stopped and counts polls; the
+// wait is the build's own loop, run on a counter clock its sleep advances,
+// two polls a 1 ms step (one before the transport's update, one after). The
+// hold answers "stopped" from poll `release` on (0: never) and fails the case past
+// `ceiling`, so no wait here hangs or sleeps. No socket.
 struct link_stop_wait_hold_t
 {
     int polls;
+    int release;
     int ceiling;
     int destroyed;
     int logged;
@@ -579,12 +685,18 @@ static int link_stop_wait_hold( void * context )
     {
         rocketnet_unit_check( 0 );
     }
-    return 1;
+    return hold->release == 0 || hold->polls < hold->release ? 1 : 0;
 }
 
 static void link_stop_wait_destroy( void * transport )
 {
     ( (link_stop_wait_hold_t *) transport )->destroyed++;
+}
+
+static bool link_stop_wait_not_stopped( const void * transport )
+{
+    (void) transport;
+    return false;
 }
 
 static void link_stop_wait_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t )
@@ -595,10 +707,17 @@ static void link_stop_wait_log( void * context, enum rocketnet_log_level_t level
     }
 }
 
-static void test_message_link_stop_and_wait_bounds_held_worker()
+// Create fails after the transport worker is up. The create returns no
+// handle, so nothing else can own the transport: the unwind waits for the
+// worker with no deadline (proofs/tla/RNCreateUnwind.tla UnwindWaits), here
+// three times the 1 s budget, then destroys the transport once. Mutation that
+// must bite: the 1 s deadline on this wait returns after about 2000 polls
+// and keeps the transport with no owner (destroyed 0, logged 1).
+static void test_message_create_unwind_waits_for_held_worker()
 {
     link_stop_wait_hold_t hold = {};
-    hold.ceiling = 2 * 1000 + 4;
+    hold.release = 3 * 2 * 1000;
+    hold.ceiling = hold.release + 1;
 
     rocketnet_dev_set_link_stop_wait_hold_hook( link_stop_wait_hold, &hold );
     rocketnet_log_function( link_stop_wait_log, &hold );
@@ -614,9 +733,41 @@ static void test_message_link_stop_and_wait_bounds_held_worker()
     rocketnet_dev_set_link_stop_wait_hold_hook( NULL, NULL );
 
     rocketnet_unit_check( object == NULL );
+    rocketnet_unit_check( hold.destroyed == 1 );
+    rocketnet_unit_check( hold.logged == 0 );
+    rocketnet_unit_check( hold.polls >= hold.release );
+}
+REGISTER_UNIT_TEST( test_message_create_unwind_waits_for_held_worker );
+
+// Destroy before the transport stopped is a misuse the object finishes
+// itself; that wait keeps its 1 s budget. On the deadline it logs once and
+// the transport, still owned by its worker, is kept: destroy is not called
+// on it. The hold never answers "stopped".
+static void test_message_destroy_misuse_wait_is_bounded()
+{
+    rn_message_link_t link;
+    memset( &link, 0, sizeof( link ) );
+    link_stop_wait_hold_t hold = {};
+    link.transport = &hold;
+    link.destroy = link_stop_wait_destroy;
+    link.stopped = link_stop_wait_not_stopped;
+
+    rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0, 1, 1000.0, false );
+    rocketnet_unit_check( object != NULL );
+
+    hold.release = 0;
+    hold.ceiling = 2 * 1000 + 4;
+    rocketnet_dev_set_link_stop_wait_hold_hook( link_stop_wait_hold, &hold );
+    rocketnet_log_function( link_stop_wait_log, &hold );
+
+    rn_message_object_destroy( object );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_dev_set_link_stop_wait_hold_hook( NULL, NULL );
+
     rocketnet_unit_check( hold.destroyed == 0 );
     rocketnet_unit_check( hold.logged == 1 );
     rocketnet_unit_check( hold.polls >= 2 * 1000 );
 }
-REGISTER_UNIT_TEST( test_message_link_stop_and_wait_bounds_held_worker );
+REGISTER_UNIT_TEST( test_message_destroy_misuse_wait_is_bounded );
 #endif // #if ROCKETNET_DEV

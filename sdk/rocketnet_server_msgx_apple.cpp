@@ -277,7 +277,7 @@ static bool rocketnet_server_msgx_sockaddr_to_address( const struct sockaddr_sto
     if ( input->ss_family == AF_INET )
     {
         rocketnet_platform_sockaddr_in_to_address( (const struct sockaddr_in *) input, out );
-        return true;
+        return rocketnet_address_accept_received_source( out, socket_ipv6 );
     }
     return false;
 }
@@ -1103,6 +1103,82 @@ static bool rocketnet_server_msgx_drain( struct rocketnet_server_msgx_t * msgx, 
     io.failed = rocketnet_server_msgx_fill_failed;
     return rocketnet_msgx_receive_drain( &io, fd, ROCKETNET_MSGX_RECV_QUEUE_SIZE, ROCKETNET_MSGX_RECV_BATCH, ROCKETNET_MSGX_RECV_SOCKET_BUDGET );
 }
+
+#if ROCKETNET_DEV
+// rocketnet_server_msgx_test_receive_source: the fake recvmsg_x answers one
+// batch of one valid keep-alive from 127.0.0.1:port, then EAGAIN
+static uint16_t rocketnet_server_msgx_test_source_port = 0;
+static int rocketnet_server_msgx_test_source_left = 0;
+static const uint8_t rocketnet_server_msgx_test_source_filter[ROCKETNET_FILTER_VALUE_BYTES] = { 0x5A, 0x17, 0xC3, 0x08 };
+
+static ssize_t rocketnet_server_msgx_test_source_receive( int, struct rocketnet_server_msgx_msghdr_x_t * messages, u_int count, int )
+{
+    if ( rocketnet_server_msgx_test_source_left <= 0 || count < 1 )
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+    rocketnet_server_msgx_test_source_left--;
+
+    struct sockaddr_in * in4 = (struct sockaddr_in *) messages[0].msg_name;
+    memset( in4, 0, sizeof( struct sockaddr_storage ) );
+    in4->sin_family = AF_INET;
+    in4->sin_port = htons( rocketnet_server_msgx_test_source_port );
+    in4->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
+    messages[0].msg_namelen = sizeof( struct sockaddr_in );
+
+    uint8_t * data = (uint8_t *) messages[0].msg_iov[0].iov_base;
+    memset( data, 'k', ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
+    uint8_t * p = data;
+    rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, rocketnet_server_msgx_test_source_filter );
+    messages[0].msg_datalen = ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES;
+    messages[0].msg_flags = 0;
+    return 1;
+}
+
+// One valid keep-alive from 127.0.0.1:port through the production drain
+// (rocketnet_server_msgx_drain) of an IPv4 transport with no socket: banked
+// is what reached the worker bank, failed the drain's RECEIVE_FAILED.
+bool rocketnet_server_msgx_test_receive_source( uint16_t port, int * banked, uint64_t * failed )
+{
+    if ( !banked || !failed )
+    {
+        return false;
+    }
+    void * msgx_storage = rocketnet_malloc( NULL, sizeof( struct rocketnet_server_msgx_t ) );
+    void * receiver_storage = rocketnet_malloc( NULL, sizeof( struct rocketnet_server_msgx_receiver_t ) );
+    if ( !msgx_storage || !receiver_storage )
+    {
+        rocketnet_free( NULL, msgx_storage );
+        rocketnet_free( NULL, receiver_storage );
+        return false;
+    }
+    memset( msgx_storage, 0, sizeof( struct rocketnet_server_msgx_t ) );
+    memset( receiver_storage, 0, sizeof( struct rocketnet_server_msgx_receiver_t ) );
+    struct rocketnet_server_msgx_t * msgx = new ( msgx_storage ) rocketnet_server_msgx_t();
+    struct rocketnet_server_msgx_receiver_t * receiver = new ( receiver_storage ) rocketnet_server_msgx_receiver_t();
+
+    msgx->ipv6 = false;
+    memcpy( msgx->packet_filter, rocketnet_server_msgx_test_source_filter, sizeof( rocketnet_server_msgx_test_source_filter ) );
+    msgx->recvmsg_x = rocketnet_server_msgx_test_source_receive;
+    msgx->receiver = receiver;
+    rocketnet_receive_handoff_init( &receiver->hand );
+    rocketnet_receive_drop_tally_reset( &receiver->tally );
+
+    rocketnet_server_msgx_test_source_port = port;
+    rocketnet_server_msgx_test_source_left = 1;
+    const bool done = rocketnet_server_msgx_drain( msgx, receiver, -1, -1, 0 );
+
+    *banked = done ? (int) rocketnet_server_msgx_worker_bank( receiver )->num_packets : -1;
+    *failed = receiver->tally.values[ROCKETNET_RECEIVE_DROP_RECEIVE_FAILED].load( std::memory_order_relaxed );
+
+    receiver->~rocketnet_server_msgx_receiver_t();
+    msgx->~rocketnet_server_msgx_t();
+    rocketnet_free( NULL, receiver_storage );
+    rocketnet_free( NULL, msgx_storage );
+    return true;
+}
+#endif // #if ROCKETNET_DEV
 
 static void rocketnet_server_msgx_receive_worker( rocketnet_platform_thread_t *, void * context )
 {

@@ -298,7 +298,7 @@ static void test_client_io_hand_off_never_waits_for_the_mutex()
     rocketnet_platform_mutex_acquire( &rig->mutex );
     rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &to ) == ROCKETNET_CLIENT_RINGS_LATE );
     rocketnet_unit_check( io.send_fill == 0 && io.send.ready_count == 0 );
-    rocketnet_unit_check( rocketnet_client_io_expose( &io ) == NULL );
+    rocketnet_unit_check( rocketnet_client_io_rig_expose( rig, &io ) == NULL );
     rocketnet_unit_check( fake.wake_calls == 0 );
     rocketnet_platform_mutex_release( &rig->mutex );
 
@@ -338,14 +338,13 @@ static void test_client_io_receive_time_from_callback()
     clock.now = 1000.25;
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
 
-    rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
+    const rocketnet_client_io_received_t * received = rocketnet_client_io_rig_expose( rig, &io );
     rocketnet_unit_check( received != NULL );
     rocketnet_unit_check( received->num_packets == 1 );
     rocketnet_unit_check( received->receive_time[0] == 1000.25 );
     rocketnet_unit_check( received->packet_bytes[0] == 32 );
     rocketnet_unit_check( memcmp( received->packet_data[0], datagram, 32 ) == 0 );
     rocketnet_unit_check( rocketnet_address_equal( &received->from[0], &from ) );
-    rocketnet_client_io_return( &io );
 
     rocketnet_client_transport_io_close( &transport );
     rocketnet_client_io_rig_destroy( rig );
@@ -353,9 +352,8 @@ static void test_client_io_receive_time_from_callback()
 REGISTER_UNIT_TEST( test_client_io_receive_time_from_callback );
 
 // Two datagrams, one under the size prefilter: the expose delivers both, the
-// runt as a record for the main thread's prefilter to refuse and count; after
-// its return a later datagram reaches the next expose. RNClientIo
-// IoReceive, IoPublish, Expose, Return.
+// runt as a record for the main thread's prefilter to refuse and count; a
+// later datagram reaches the next expose. RNReceiveHandoff Bank, Commit, Call.
 
 static void test_client_io_step_publishes_received()
 {
@@ -383,34 +381,38 @@ static void test_client_io_step_publishes_received()
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
 
-    rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
+    const rocketnet_client_io_received_t * received = rocketnet_client_io_rig_expose( rig, &io );
     rocketnet_unit_check( received != NULL );
     rocketnet_unit_check( received->num_packets == 2 );
     rocketnet_unit_check( received->packet_bytes[0] == 4 );
     rocketnet_unit_check( memcmp( received->packet_data[0], short_datagram, 4 ) == 0 );
     rocketnet_unit_check( received->packet_bytes[1] == 16 );
     rocketnet_unit_check( memcmp( received->packet_data[1], datagram, 16 ) == 0 );
-    rocketnet_client_io_return( &io );
 
     rocketnet_fake_client_push( &fake, &from, datagram, 8 );
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
 
-    received = rocketnet_client_io_expose( &io );
+    received = rocketnet_client_io_rig_expose( rig, &io );
     rocketnet_unit_check( received != NULL );
     rocketnet_unit_check( received->num_packets == 1 );
     rocketnet_unit_check( received->packet_bytes[0] == 8 );
     rocketnet_unit_check( memcmp( received->packet_data[0], datagram, 8 ) == 0 );
-    rocketnet_client_io_return( &io );
 
     rocketnet_client_transport_io_close( &transport );
     rocketnet_client_io_rig_destroy( rig );
 }
 REGISTER_UNIT_TEST( test_client_io_step_publishes_received );
 
-// With a buffer already waiting ready, later datagrams join the I/O thread's
-// own buffer instead of queueing a second one, so update's next expose takes
-// everything published in one buffer and the rest in the next. RNBufferHandoff
-// receive triple buffer (MaxReady 1), InOrder.
+// Three datagrams committed in three steps across two of the three buffers:
+// update's next expose returns all three, in arrival order, and needs no wake.
+// This test asserted the rule before the receive handoff fix: with a buffer
+// already waiting ready, later datagrams stayed in the I/O thread's own buffer
+// and update's expose returned only the first, the other two a whole update
+// later. Update now reads the I/O thread's buffer in place up to the
+// committed count (sdk/rocketnet_receive_handoff.h), so the expose returns
+// every datagram committed before it (RNReceiveHandoff DeliveredByNextCall,
+// InOrder), and the rotation goes on: a fourth datagram reaches the next
+// expose.
 
 static void test_client_io_step_receive_triple_buffer()
 {
@@ -435,22 +437,25 @@ static void test_client_io_step_receive_triple_buffer()
         rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
     }
 
-    rocketnet_unit_check( io.receive.ready_count == 1 );
-    rocketnet_unit_check( io.receive.owed );
+    // the first commit found update sharing the I/O thread's buffer and moved
+    // the I/O thread to the free one, which holds the other two
 
-    // the exchange that takes the ready buffer reports the owed publish
+    rocketnet_unit_check( io.receive.main != io.receive.worker );
+    rocketnet_unit_check( io.receive.committed[io.receive.main] == 1 && io.receive.committed[io.receive.worker] == 2 );
 
     const int wakes = fake.wake_calls;
-    rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
-    rocketnet_unit_check( fake.wake_calls == wakes + 1 );
-    rocketnet_unit_check( received != NULL && received->num_packets == 1 && received->packet_data[0][0] == 0x10 );
-    rocketnet_client_io_return( &io );
+    const rocketnet_client_io_received_t * received = rocketnet_client_io_rig_expose( rig, &io );
+    rocketnet_unit_check( fake.wake_calls == wakes );
+    rocketnet_unit_check( received != NULL && received->num_packets == 3 );
+    rocketnet_unit_check( received != NULL && received->packet_data[0][0] == 0x10 && received->packet_data[1][0] == 0x11 &&
+                          received->packet_data[2][0] == 0x12 );
 
+    datagram[0] = 0x13;
+    rocketnet_fake_client_push( &fake, &from, datagram, 8 );
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
-    received = rocketnet_client_io_expose( &io );
-    rocketnet_unit_check( received != NULL && received->num_packets == 2 );
-    rocketnet_unit_check( received->packet_data[0][0] == 0x11 && received->packet_data[1][0] == 0x12 );
-    rocketnet_client_io_return( &io );
+    received = rocketnet_client_io_rig_expose( rig, &io );
+    rocketnet_unit_check( received != NULL && received->num_packets == 1 && received->packet_data[0][0] == 0x13 );
+    rocketnet_unit_check( rocketnet_client_io_rig_expose( rig, &io ) == NULL );
 
     rocketnet_client_transport_io_close( &transport );
     rocketnet_client_io_rig_destroy( rig );
@@ -491,11 +496,12 @@ static void test_client_io_step_waits_only_when_idle()
 }
 REGISTER_UNIT_TEST( test_client_io_step_waits_only_when_idle );
 
-// A full I/O buffer with one buffer ready and update holding the third: the
-// next step leaves the datagram in the fake, waits with readable false, and
-// does not wake; update's next exchange wakes the I/O thread exactly once,
-// and the step after that publishes. RNClientIo FullWaitsOnWake,
-// RNBufferHandoff ArrivedDelivered (the owed wake).
+// A full I/O buffer update has not started on: the next step leaves the
+// datagram in the fake, waits with readable false, and does not wake;
+// update's next expose starts on the full buffer and wakes the I/O thread
+// exactly once, and the I/O thread then moves to the free buffer and reads
+// the datagram that waited. RNClientIo FullWaitsOnWake, RNReceiveHandoff
+// Commit (the move once update has started on the buffer).
 
 static void test_client_io_step_full_buffer_waits_on_wake_only()
 {
@@ -517,26 +523,23 @@ static void test_client_io_step_full_buffer_waits_on_wake_only()
     rocketnet_address_t from = {};
     rocketnet_address_load_ipv4( &from, 0x7f000001, 9400 );
 
-    // update holds one buffer
+    // update starts on the buffer the I/O thread fills: one datagram,
+    // committed, then exposed
 
     rocketnet_fake_client_push( &fake, &from, datagram, 16 );
     rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_WORKED );
 
-    rocketnet_client_receive_buffer_t * held = rocketnet_client_io_expose( &io );
-    rocketnet_unit_check( held != NULL );
-    rocketnet_unit_check( held->num_packets == 1 );
+    const rocketnet_client_io_received_t * received = rocketnet_client_io_rig_expose( rig, &io );
+    rocketnet_unit_check( received != NULL && received->num_packets == 1 );
 
-    // one buffer published and waiting ready
+    // the I/O thread's first batch finds update sharing its buffer, so it
+    // moves to the free buffer, and its later batches fill that one to the
+    // brim
 
-    rocketnet_fake_client_push( &fake, &from, datagram, 16 );
-    rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_WORKED );
-    rocketnet_unit_check( io.receive.ready_count == 1 );
-
-    // the I/O thread's own buffer fills to the brim
-
-    for ( int batch = 0; batch < ROCKETNET_NUM_CLIENT_PACKETS / ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS; batch++ )
+    const int batch = ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS;
+    for ( int b = 0; b <= ROCKETNET_NUM_CLIENT_PACKETS / batch; b++ )
     {
-        for ( int i = 0; i < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS; i++ )
+        for ( int i = 0; i < batch; i++ )
         {
             rocketnet_fake_client_push( &fake, &from, datagram, 16 );
         }
@@ -544,7 +547,8 @@ static void test_client_io_step_full_buffer_waits_on_wake_only()
     }
 
     rocketnet_unit_check( io.fill_slots == ROCKETNET_NUM_CLIENT_PACKETS );
-    rocketnet_unit_check( io.buffer[io.receive_fill]->num_packets == ROCKETNET_NUM_CLIENT_PACKETS );
+    rocketnet_unit_check( io.buffer[io.receive.worker]->num_packets == ROCKETNET_NUM_CLIENT_PACKETS );
+    rocketnet_unit_check( io.receive.main != io.receive.worker );
 
     const int wait_calls = fake.wait_calls;
     const int wake_calls = fake.wake_calls;
@@ -557,23 +561,27 @@ static void test_client_io_step_full_buffer_waits_on_wake_only()
     rocketnet_unit_check( !fake.last_wait_readable );
     rocketnet_unit_check( fake.wake_calls == wake_calls );
 
-    // update's next frame: it gives back the held buffer and takes the ready
-    // one, reads the owed publish and wakes the I/O thread once
+    // update's next expose starts on the full buffer and wakes the I/O thread
+    // once; it returns the first batch and as much of the full buffer as its
+    // budget leaves
 
-    rocketnet_client_io_return( &io );
+    received = rocketnet_client_io_rig_expose( rig, &io );
     rocketnet_unit_check( fake.wake_calls == wake_calls + 1 );
+    rocketnet_unit_check( received != NULL && received->num_packets == ROCKETNET_NUM_CLIENT_PACKETS );
 
-    rocketnet_client_receive_buffer_t * ready = rocketnet_client_io_expose( &io );
-    rocketnet_unit_check( ready != NULL && ready->num_packets == 1 );
+    // woken, the I/O thread moves to the free buffer, then reads the datagram
+    // that waited
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_WORKED );
-    rocketnet_client_io_return( &io );
+    rocketnet_unit_check( io.receive.main != io.receive.worker );
+    rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_WORKED );
+    rocketnet_unit_check( fake.inbound_count == 0 );
 
-    rocketnet_client_receive_buffer_t * published = rocketnet_client_io_expose( &io );
-    rocketnet_unit_check( published != NULL );
-    rocketnet_unit_check( published->num_packets == ROCKETNET_NUM_CLIENT_PACKETS );
+    // the next expose returns the rest of the full buffer, then that datagram
 
-    rocketnet_client_io_return( &io );
+    received = rocketnet_client_io_rig_expose( rig, &io );
+    rocketnet_unit_check( received != NULL && received->num_packets == batch + 1 );
+
     rocketnet_client_transport_io_close( &transport );
     rocketnet_client_io_rig_destroy( rig );
 }

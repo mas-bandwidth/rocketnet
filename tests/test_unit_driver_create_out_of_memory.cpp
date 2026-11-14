@@ -13,8 +13,11 @@
 //     at each with nothing live, and a create that refuses without a failed
 //     allocation leaves the status untouched;
 //   * test_transport_create_server_order_stops_on_out_of_memory: the loopback
-//     transport under rocketnet_server_transport_create_internal, pinned and as the
-//     first of two candidates;
+//     transport under rocketnet_server_transport_create_internal, pinned as
+//     the one candidate. A list that fell through to the next candidate on a
+//     failed allocation would end NO_TRANSPORT_FOUND here, not OUT_OF_MEMORY;
+//     a second candidate is not walked, since every other transport would
+//     open a socket;
 //   * test_transport_create_client_order_stops_on_out_of_memory: the same for
 //     rocketnet_client_transport_create_internal;
 //   * test_platform_init_survives_a_refusing_allocator: rocketnet_init_internal under an
@@ -38,6 +41,9 @@
 #include "portable_crt.h"
 
 #include "rocketnet_internal.h"
+#include "rocketnet_test_seams.h"
+
+#include <errno.h>
 #include "rocketnet_connect_token.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_driver_loopback.h"
@@ -550,3 +556,39 @@ static void test_create_status_out_of_memory_is_kept()
 }
 
 REGISTER_UNIT_TEST( test_create_status_out_of_memory_is_kept );
+
+#if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC )
+// A POSIX wake create that fails at its kernel object (the kqueue on macOS,
+// the eventfd on Linux) for want of memory reports OUT_OF_MEMORY, as the
+// Windows wake maps its errors (rocketnet_platform_windows_create_status), so
+// the transport list ends the create there; any other errno leaves the
+// status for the caller's refusal. The failure seam stands in for the kernel:
+// no descriptor is exhausted.
+
+static void test_wake_create_kernel_failure_status()
+{
+    const int errors[2] = { ENOMEM, ENOBUFS };
+    for ( int i = 0; i < 2; i++ )
+    {
+        int status = ROCKETNET_STATUS_OK;
+        rocketnet_dev_fail_wake_create( errors[i] );
+        check( rocketnet_platform_wake_create( NULL, NULL, &status ) == NULL );
+        rocketnet_dev_fail_wake_create( 0 );
+        check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+    }
+
+    int status = ROCKETNET_STATUS_OK;
+    rocketnet_dev_fail_wake_create( EMFILE );
+    check( rocketnet_platform_wake_create( NULL, NULL, &status ) == NULL );
+    rocketnet_dev_fail_wake_create( 0 );
+    check( status == ROCKETNET_STATUS_OK );
+
+    // the seam off: the wake creates
+    rocketnet_platform_wake_t * wake = rocketnet_platform_wake_create( NULL, NULL, &status );
+    check( wake != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+    rocketnet_platform_wake_destroy( wake );
+}
+
+REGISTER_UNIT_TEST( test_wake_create_kernel_failure_status );
+#endif // #if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC )

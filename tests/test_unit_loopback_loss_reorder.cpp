@@ -271,10 +271,18 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 }
 
 // The fixed traces: every eliciting packet gets a standalone ACK on the next
-// update, and simulator latency adds two connected steps (24 without it, 26
-// with it). The hashes cover every counter of the registry in index order.
-static const struct loopback_trace_t loopback_base_trace_simulator_off = { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0xcf3bac441dd0c267 ), UINT64_C( 0x5f1f8fdfa4992a85 ), 24 };
-static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x6352d7401922e2a7 ), UINT64_C( 0x5f1f8fdfa4992a85 ), 26 };
+// update, and simulator latency adds connected steps (4 without it, 10 with
+// it). The handshake sends the next packet in the step a reply advances the
+// client (TRANSPORT.md t11 rule 7); before that it waited out the send
+// interval, and the steps were 24 and 26 with the same packets and counters.
+// The hashes cover every counter of the registry in index order.
+// Without the simulator the client reads a datagram at the update after it
+// was received, not the one after that (sdk/rocketnet_receive_handoff.h), so
+// within the run's last step it receives one datagram more and answers it:
+// one more each way than the trace recorded before the receive handoff fix
+// ({ 67, 66, 5954, 4320, 67, 66, 4389, 5889, ... }).
+static const struct loopback_trace_t loopback_base_trace_simulator_off = { 68, 67, 6023, 4389, 67, 67, 4389, 5962, UINT64_C( 0x6129c5a354299546 ), UINT64_C( 0x36508f2436a42384 ), 4 };
+static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x1f38e3d272ec7d87 ), UINT64_C( 0x6632b9bd6233ed25 ), 10 };
 
 static void test_loopback_transport_patterns_off_same_trace()
 {
@@ -293,6 +301,60 @@ REGISTER_UNIT_TEST( test_loopback_transport_patterns_off_same_trace );
 
 // ---- the pattern cases (they need the config fields) ------------------------
 
+#define LOOPBACK_DROP_PAYLOADS 56
+
+// Each payload carries its number (1..56, four bytes); a delivery of any other
+// shape, of a number not sent, or of one already delivered fails, and the
+// number is marked delivered.
+static void loopback_drop_take( const uint8_t * data, int bytes, int * delivered )
+{
+    check( bytes == 4 );
+    if ( bytes != 4 )
+    {
+        return;
+    }
+    uint32_t seq = 0;
+    memcpy( &seq, data, sizeof( seq ) );
+    check( seq >= 1 && seq <= LOOPBACK_DROP_PAYLOADS );
+    if ( seq < 1 || seq > LOOPBACK_DROP_PAYLOADS )
+    {
+        return;
+    }
+    check( delivered[seq] == 0 );
+    delivered[seq]++;
+}
+
+// what one server update delivered: its payload list, which holds that
+// update's payloads until the next server update, so it is read once per
+// server update
+static void loopback_drop_collect_server( struct loopback_transport_pair_t * pair, int * server_delivered )
+{
+    const int * indices = NULL;
+    uint8_t * const * data = NULL;
+    const int * bytes = NULL;
+    const int count = rocketnet_server_transport_payloads( pair->server, &indices, &data, &bytes );
+    for ( int i = 0; i < count; i++ )
+    {
+        check( indices[i] == 0 );
+        loopback_drop_take( data[i], bytes[i], server_delivered );
+    }
+}
+
+// what one client update delivered: every payload it queued, drained
+static void loopback_drop_collect_client( struct loopback_transport_pair_t * pair, int * client_delivered )
+{
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    for ( ;; )
+    {
+        const int got = rocketnet_client_transport_receive_packet( pair->client, packet, (int) sizeof( packet ) );
+        if ( got <= 0 )
+        {
+            break;
+        }
+        loopback_drop_take( packet, got, client_delivered );
+    }
+}
+
 static void test_loopback_transport_drop_every_nth()
 {
     struct loopback_pattern_t client_pattern = { 7, 0, 0 };
@@ -307,8 +369,17 @@ static void test_loopback_transport_drop_every_nth()
     // every datagram the client sends, handshake included, is counted from
     // its first send: the 7th, 14th, ... are lost and the server counts the
     // others; the server's own sends, counted the same way, lose 5th, 10th, ...
+    // So which payloads arrive is known from each one's datagram number
+    // alone, and the ledgers below are held to exactly that set.
 
-    for ( int i = 0; i < 56; i++ )
+    int server_delivered[LOOPBACK_DROP_PAYLOADS + 1] = { 0 };
+    int client_delivered[LOOPBACK_DROP_PAYLOADS + 1] = { 0 };
+    bool server_owed[LOOPBACK_DROP_PAYLOADS + 1] = { false };
+    bool client_owed[LOOPBACK_DROP_PAYLOADS + 1] = { false };
+    int client_lost = 0;
+    int server_lost = 0;
+
+    for ( int i = 0; i < LOOPBACK_DROP_PAYLOADS; i++ )
     {
         rocketnet_client_transport_stats( pair.client, &cstats );
         rocketnet_server_transport_stats( pair.server, &sstats );
@@ -332,31 +403,48 @@ static void test_loopback_transport_drop_every_nth()
         check( client_number == client_sent_before + 1 );
         check( server_number == server_sent_before + 1 );
 
+        const int seq_index = (int) seq;
+        server_owed[seq_index] = ( client_number % 7 ) != 0;
+        client_owed[seq_index] = ( server_number % 5 ) != 0;
+        client_lost += server_owed[seq_index] ? 0 : 1;
+        server_lost += client_owed[seq_index] ? 0 : 1;
+
+        // Next-update ACKs may add datagrams during either update; each
+        // update's deliveries are collected right after it
+
         pair.time += 0.001;
         loopback_loss_reorder_clock = pair.time;
-        rocketnet_client_transport_update( pair.client, pair.time );
-        rocketnet_server_transport_update( pair.server, pair.time );
-        rocketnet_client_transport_update( pair.client, pair.time );
-        rocketnet_server_transport_update( pair.server, pair.time );
-        rocketnet_client_transport_stats( pair.client, &cstats );
-        rocketnet_server_transport_stats( pair.server, &sstats );
-
-        // Next-update ACKs may add datagrams during either update. Check the
-        // exact cumulative simulator loss after both client and server have had that update.
-
-        rocketnet_client_transport_stats( pair.client, &cstats );
-        rocketnet_server_transport_stats( pair.server, &sstats );
+        for ( int pass = 0; pass < 2; pass++ )
+        {
+            rocketnet_client_transport_update( pair.client, pair.time );
+            loopback_drop_collect_client( &pair, client_delivered );
+            rocketnet_server_transport_update( pair.server, pair.time );
+            loopback_drop_collect_server( &pair, server_delivered );
+        }
     }
 
     // drain the standalone ACKs generated by the final data update before
     // checking the exact periodic-drop accounting for every transport send
 
     rocketnet_client_transport_update( pair.client, pair.time );
+    loopback_drop_collect_client( &pair, client_delivered );
     rocketnet_server_transport_update( pair.server, pair.time );
+    loopback_drop_collect_server( &pair, server_delivered );
     rocketnet_client_transport_stats( pair.client, &cstats );
     rocketnet_server_transport_stats( pair.server, &sstats );
     check( sstats.packets_received == cstats.packets_sent - cstats.packets_sent / 7 );
     check( cstats.packets_received == sstats.packets_sent - sstats.packets_sent / 5 );
+
+    // exactly the payloads whose datagram number escapes the pattern
+    // arrived, each once; both patterns took some (56 sends span both)
+
+    for ( int seq = 1; seq <= LOOPBACK_DROP_PAYLOADS; seq++ )
+    {
+        check( server_delivered[seq] == ( server_owed[seq] ? 1 : 0 ) );
+        check( client_delivered[seq] == ( client_owed[seq] ? 1 : 0 ) );
+    }
+    check( client_lost > 0 );
+    check( server_lost > 0 );
 
     loopback_transport_pair_teardown( &pair );
 }

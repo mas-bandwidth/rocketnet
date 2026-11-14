@@ -42,6 +42,15 @@
 (* is the gso transport's: the run is resent plain and nothing is          *)
 (* remembered, and Threshold refusals with no accepted segmented send      *)
 (* between them turn segmentation off for every destination.               *)
+(*                                                                         *)
+(* Queues: each destination's sends go through one queue (Queue, the       *)
+(* io_uring worker or gso lane of rocketnet_send_queue_of), and each queue *)
+(* keeps its own table, count and segment flag.  Whether a segmented send  *)
+(* was ever accepted is the transport's (AcceptedRule "transport": the     *)
+(* shared segment_accepted the refusal reads), so a queue whose own        *)
+(* destinations all refuse keeps segmenting once another queue's           *)
+(* segmented send was accepted.  AcceptedRule "queue" is the io_uring code *)
+(* before: the flag was the queue's alone (OtherDestinationUnaffected).   *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -51,7 +60,9 @@ CONSTANTS Dests,            \* the destinations
           Threshold,        \* ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD
           MaxRuns,          \* bound on runs
           Mode,             \* "perdest" (the code), "fillcount", "transport" or "consecutive"
-          Slot              \* each destination's entry (rocketnet_segment_refused_entry)
+          Slot,             \* each destination's entry (rocketnet_segment_refused_entry)
+          Queue,            \* each destination's queue (rocketnet_send_queue_of)
+          AcceptedRule      \* "transport" (the code) or "queue"
 
 ASSUME Refusing \subseteq Dests
 ASSUME KernelSegments \in BOOLEAN
@@ -59,39 +70,49 @@ ASSUME Threshold \in Nat \ {0}
 ASSUME MaxRuns \in Nat
 ASSUME Mode \in {"perdest", "fillcount", "transport", "consecutive"}
 ASSUME Slot \in [Dests -> Nat]
+ASSUME Queue \in [Dests -> Nat]
+ASSUME AcceptedRule \in {"transport", "queue"}
 
 NoDest == "none"
 Entries == {Slot[d] : d \in Dests}
+Queues == {Queue[d] : d \in Dests}
 
-VARIABLES segOn,        \* the transport's FEATURE_SEGMENT bit
-          table,        \* the table: each entry's destination, or NoDest
-          count,        \* segment_refused.destinations
+VARIABLES segOn,        \* each queue's FEATURE_SEGMENT bit
+          table,        \* each queue's table: each entry's destination, or NoDest
+          count,        \* each queue's segment_refused.destinations
           everRefused,  \* destinations that ever refused (not code state: the property's measure)
-          accepted,     \* a segmented send was accepted since create
+          accepted,     \* a segmented send was accepted since create, on any queue (segment_accepted)
+          qAccepted,    \* each queue's own segment_refused.accepted ("queue")
           streak,       \* refusals since the last accepted segmented send ("consecutive")
           refusals,     \* refusals each destination paid
           wronglyPlain, \* destinations that accept segmentation and sent a run plain after one was accepted
+          offAccepted,  \* a queue turned segmentation off after a segmented send was accepted (not code state)
           dropped,      \* a refused run was dropped
           runs          \* runs sent
 
-vars == <<segOn, table, count, everRefused, accepted, streak, refusals, wronglyPlain, dropped, runs>>
+vars == <<segOn, table, count, everRefused, accepted, qAccepted, streak, refusals, wronglyPlain, offAccepted, dropped, runs>>
 
 Refuses(d) == ~KernelSegments \/ d \in Refusing
 
-\* rocketnet_segment_refused_contains: the entry holds this destination
-Remembered(d) == table[Slot[d]] = d
+\* rocketnet_segment_refused_contains: the entry of d's queue holds d
+Remembered(d) == table[Queue[d]][Slot[d]] = d
 
-Segmented(d) == segOn /\ ~Remembered(d)
+Segmented(d) == segOn[Queue[d]] /\ ~Remembered(d)
+
+\* what a refusal on queue q reads as accepted
+Accepted(q) == IF AcceptedRule = "transport" THEN accepted ELSE qAccepted[q]
 
 Init ==
-    /\ segOn = TRUE
-    /\ table = [e \in Entries |-> NoDest]
-    /\ count = 0
+    /\ segOn = [q \in Queues |-> TRUE]
+    /\ table = [q \in Queues |-> [e \in Entries |-> NoDest]]
+    /\ count = [q \in Queues |-> 0]
     /\ everRefused = {}
     /\ accepted = FALSE
+    /\ qAccepted = [q \in Queues |-> FALSE]
     /\ streak = 0
     /\ refusals = [d \in Dests |-> 0]
     /\ wronglyPlain = {}
+    /\ offAccepted = FALSE
     /\ dropped = FALSE
     /\ runs = 0
 
@@ -102,19 +123,21 @@ Run(d) ==
     /\ ~(Segmented(d) /\ Refuses(d))
     /\ IF Segmented(d)
        THEN /\ accepted' = TRUE
+            /\ qAccepted' = [qAccepted EXCEPT ![Queue[d]] = TRUE]
             /\ streak' = 0
             /\ UNCHANGED wronglyPlain
        ELSE /\ wronglyPlain' = IF accepted /\ ~Refuses(d) THEN wronglyPlain \cup {d} ELSE wronglyPlain
-            /\ UNCHANGED <<accepted, streak>>
-    /\ UNCHANGED <<segOn, table, count, everRefused, refusals, dropped>>
+            /\ UNCHANGED <<accepted, qAccepted, streak>>
+    /\ UNCHANGED <<segOn, table, count, everRefused, refusals, offAccepted, dropped>>
 
 \* rocketnet_segment_refused_add: every refusal of a destination the table
-\* did not hold counts, saturating at Threshold; "fillcount" counted only a
-\* refusal that filled an empty entry
+\* of d's queue did not hold counts, saturating at Threshold; "fillcount"
+\* counted only a refusal that filled an empty entry
 Counted(d) ==
+    LET q == Queue[d] IN
     IF Mode = "fillcount"
-    THEN IF table[Slot[d]] = NoDest THEN count + 1 ELSE count
-    ELSE IF count < Threshold THEN count + 1 ELSE count
+    THEN IF table[q][Slot[d]] = NoDest THEN count[q] + 1 ELSE count[q]
+    ELSE IF count[q] < Threshold THEN count[q] + 1 ELSE count[q]
 
 \* a segmented run to d is refused (the kernel's EINVAL, EIO or EOPNOTSUPP)
 Refuse(d) ==
@@ -124,19 +147,20 @@ Refuse(d) ==
     /\ refusals' = [refusals EXCEPT ![d] = @ + 1]
     /\ everRefused' = everRefused \cup {d}
     /\ CASE Mode \in {"perdest", "fillcount"} ->
-              /\ table' = [table EXCEPT ![Slot[d]] = d]
-              /\ count' = Counted(d)
-              /\ segOn' = ~(~accepted /\ Counted(d) >= Threshold)
+              /\ table' = [table EXCEPT ![Queue[d]][Slot[d]] = d]
+              /\ count' = [count EXCEPT ![Queue[d]] = Counted(d)]
+              /\ segOn' = [segOn EXCEPT ![Queue[d]] = @ /\ ~(~Accepted(Queue[d]) /\ Counted(d) >= Threshold)]
               /\ UNCHANGED <<streak, dropped>>
          [] Mode = "transport" ->
-              /\ segOn' = FALSE
+              /\ segOn' = [q \in Queues |-> FALSE]
               /\ dropped' = TRUE
               /\ UNCHANGED <<table, count, streak>>
          [] Mode = "consecutive" ->
               /\ streak' = streak + 1
-              /\ segOn' = (streak + 1 < Threshold)
+              /\ segOn' = [q \in Queues |-> streak + 1 < Threshold]
               /\ UNCHANGED <<table, count, dropped>>
-    /\ UNCHANGED <<accepted, wronglyPlain>>
+    /\ offAccepted' = (offAccepted \/ (accepted /\ \E q \in Queues : segOn[q] /\ ~segOn'[q]))
+    /\ UNCHANGED <<accepted, qAccepted, wronglyPlain>>
 
 \* the bound on runs is reached
 Done ==
@@ -153,14 +177,16 @@ Spec == Init /\ [][Next]_vars
 -----------------------------------------------------------------------------
 
 TypeOK ==
-    /\ segOn \in BOOLEAN
-    /\ table \in [Entries -> Dests \cup {NoDest}]
-    /\ count \in 0..MaxRuns
+    /\ segOn \in [Queues -> BOOLEAN]
+    /\ table \in [Queues -> [Entries -> Dests \cup {NoDest}]]
+    /\ count \in [Queues -> 0..MaxRuns]
     /\ everRefused \subseteq Dests
     /\ accepted \in BOOLEAN
+    /\ qAccepted \in [Queues -> BOOLEAN]
     /\ streak \in 0..MaxRuns
     /\ refusals \in [Dests -> 0..MaxRuns]
     /\ wronglyPlain \subseteq Dests
+    /\ offAccepted \in BOOLEAN
     /\ dropped \in BOOLEAN
     /\ runs \in 0..MaxRuns
 
@@ -170,6 +196,12 @@ TypeOK ==
 OtherDestinationUnaffected ==
     wronglyPlain = {}
 
+\* t2.4 rule 7 for the transport: once a segmented send was accepted on any
+\* queue, no queue's refusals turn its segmentation off (a fallback taken
+\* before any was accepted stays, as the rule allows)
+NoFallbackAfterAccepted ==
+    ~offAccepted
+
 \* a refused run is resent plain, never dropped
 NothingDropped ==
     ~dropped
@@ -178,9 +210,12 @@ NothingDropped ==
 RefusedOnce ==
     \A d \in Dests : refusals[d] <= 1
 
-\* a kernel that cannot segment turns segmentation off once Threshold
-\* distinct destinations refused, however they share entries
+\* a kernel that cannot segment turns segmentation off for a queue once
+\* Threshold distinct destinations of that queue refused, however they share
+\* entries
 KernelFallback ==
-    (Mode \in {"perdest", "fillcount"} /\ ~KernelSegments /\ Cardinality(everRefused) >= Threshold) => ~segOn
+    \A q \in Queues :
+        (Mode \in {"perdest", "fillcount"} /\ ~KernelSegments
+         /\ Cardinality({d \in everRefused : Queue[d] = q}) >= Threshold) => ~segOn[q]
 
 =============================================================================

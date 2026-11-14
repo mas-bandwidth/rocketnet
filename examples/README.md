@@ -45,8 +45,10 @@ python3 tools/run_examples.py --build build
 ```
 
 `tools/check_examples.py` refuses an include that is not `rocketnet.h`,
-`dev_keys.h`, `shutdown.h`, or an allowed C standard header, and a `rocketnet_` name that `sdk/rocketnet.h` does not
-declare. `tools/run_examples.py` runs every example under a 120-second
+`dev_keys.h`, `shutdown.h`, `thread.h`, or an allowed C standard header
+(`soak.c`, `config_env.c` and `thread.h` itself may also include the few
+platform headers the checker names for each), and a `rocketnet_` name that
+`sdk/rocketnet.h` does not declare. `tools/run_examples.py` runs every example under a 120-second
 timeout and requires `PASS` as the last output line. It runs each pair in its
 own temporary working directory on a free UDP port it picks and passes through
 `ROCKETNET_EXAMPLE_PORT`, retrying on a new port at most three times when the

@@ -18,8 +18,9 @@ environment value refused.
 
 The C standard library cannot set an environment variable in-process, and the
 header offers no config-read call taking an explicit environment, so the
-example spawns children with `system()` and the variable set; its own
-environment is never changed.
+example runs itself again as a child process with the variable set. The child
+is spawned directly (`posix_spawnp`, or `CreateProcessW` on Windows), never
+through a shell; the parent's own environment is never changed.
 
 ## Run it
 

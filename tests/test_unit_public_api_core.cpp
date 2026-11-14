@@ -18,8 +18,9 @@
 //     in a development build, the two network simulator calls counts one
 //     misuse, fires one assert and returns false or does nothing;
 //   * test_public_server_keygen_failure_leaves_the_block_unwritten: a create
-//     refused because the key cannot be made frees its block without writing
-//     it, so a default server does not touch the pages of its whole plan.
+//     refused because the key cannot be made (the crypto source seam fails
+//     the real key generation) frees its block without writing it, so a
+//     default server does not touch the pages of its whole plan.
 //
 // The loopback transport carries packets in memory; callers provide every
 // time, and no case sleeps or opens a socket.
@@ -212,13 +213,15 @@ REGISTER_UNIT_TEST( test_public_null_lifecycle_and_simulator_calls_count_misuse 
 
 #if ROCKETNET_DEV
 
+#include "../sdk/rocketnet_memory.h"
 #include "../sdk/rocketnet_test_seams.h"
 
 // --- a refused key leaves the server block unwritten --------------------------------
 
 // an allocator that fills every block with a pattern and, while watching,
-// records whether the largest block it frees still holds the pattern in its
-// middle: create's block is the largest thing a failed create frees
+// records whether the largest block it frees still holds the pattern in
+// every byte but rocketnet_malloc's own header: create's block is the
+// largest thing a failed create frees
 
 struct api_core_block_allocator_t
 {
@@ -258,7 +261,34 @@ static void api_core_block_release( void * context, void * pointer )
     if ( state->watching && bytes > state->largest )
     {
         state->largest = bytes;
-        state->largest_intact = ( (const uint8_t *) pointer )[bytes / 2] == 0xA5 && ( (const uint8_t *) pointer )[bytes - 1] == 0xA5;
+
+        // Every byte of the block is read. rocketnet_malloc's own header
+        // (sdk/rocketnet.cpp: base, context, free function, and the block
+        // size in a red-zone build) sits just before the pointer it hands
+        // out, inside the first rocketnet_allocation_overhead() bytes of this
+        // block; it is the only write allowed. So the written bytes must lie
+        // in that first stretch, within one header's width of each other, and
+        // every byte after the stretch must hold the pattern: a write
+        // anywhere in create's block, its first byte included, fails one of
+        // the two.
+        const uint8_t * block = (const uint8_t *) pointer;
+        const size_t overhead = (size_t) rocketnet_allocation_overhead();
+        const size_t header_bytes = overhead - ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) - ROCKETNET_RED_ZONE_BYTES;
+        size_t first_written = bytes;
+        size_t last_written = 0;
+        for ( size_t i = 0; i < bytes; i++ )
+        {
+            if ( block[i] != 0xA5 )
+            {
+                if ( first_written == bytes )
+                {
+                    first_written = i;
+                }
+                last_written = i;
+            }
+        }
+        state->largest_intact = first_written == bytes ||
+                                ( last_written < overhead && last_written - first_written + 1 <= header_bytes );
     }
 
     --state->live;
@@ -281,10 +311,10 @@ static void test_public_server_keygen_failure_leaves_the_block_unwritten()
     api_core_server_config( &config );
 
     state.watching = true;
-    rocketnet_dev_set_server_keygen_failure( true );
+    rocketnet_dev_set_crypto_source_failure( true );
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     rocketnet_server_t * server = rocketnet_server_create( &state, "127.0.0.1:0", NULL, &config, &status );
-    rocketnet_dev_set_server_keygen_failure( false );
+    rocketnet_dev_set_crypto_source_failure( false );
     state.watching = false;
 
     check( server == NULL );

@@ -7,8 +7,10 @@
 // create allocates exactly rocketnet_network_simulator_memory_bytes, refuses
 // what that plan refuses before any allocation, and frees everything when an
 // allocation fails; a reverse window the allocator refuses leaves the patterns
-// off; deliver_packets and send refuse a size outside 1 .. the receive
-// ceiling, a NULL packet and a full wire. No socket, thread or clock: time is
+// off; deliver_packets refuses a size outside 1 .. the receive ceiling and a
+// NULL packet, and both deliver_packets and send drop at a full wire. send
+// only asserts its size and pointers (a caller error, never a refusal), so no
+// case here sends a bad size through it. No socket, thread or clock: time is
 // an argument, and the lock-contention case holds the mutex on this thread.
 
 #include "test_unit_registry.h"
@@ -228,7 +230,8 @@ static void test_network_simulator_refused_window_leaves_patterns_off()
 
 // deliver_packets skips a NULL packet and a size outside 1 .. the receive
 // ceiling, takes the rest in list order, and drops what a full wire cannot
-// hold; send at a full wire drops too
+// hold; send at a full wire drops too (send's size and pointers are asserted,
+// not refused)
 
 static void test_network_simulator_refuses_bad_sizes_and_a_full_wire()
 {

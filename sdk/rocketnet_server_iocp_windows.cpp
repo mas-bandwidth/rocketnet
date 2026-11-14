@@ -291,7 +291,7 @@ static uint64_t rocketnet_iocp_filter_state( const uint8_t * packet_filter )
 // datagram main would refuse on its stateless rungs never takes a slot; only
 // a datagram it accepts (or every datagram, before the filter is published)
 // meets the capacity check. ACCEPT means the caller banks it at num_packets.
-// proofs/tla/RNIocpReceiveAdmit.tla Arrive: Refuse, then Bank or Full.
+// proofs/tla/RNIocpReceiveAdmit.tla Arrived: Refuse, then Bank or Full.
 static rocketnet_receive_drop_t rocketnet_iocp_receive_admit( uint64_t filter_state, const uint8_t * packet_data, int packet_bytes,
                                                               int num_packets, int capacity )
 {
@@ -433,21 +433,35 @@ struct rocketnet_server_iocp_test_lanes_t
 {
     int lanes;
     int send_queue_size;
-    rocketnet_iocp_ref_cell_t * cells;
+    uint8_t * storage; // raw cell storage: rocketnet_iocp_queue_initialize constructs the cells, as create's carve does
     rocketnet_iocp_ref_queue_t queues[ROCKETNET_IOCP_MAX_LANES];
 };
+
+static_assert( alignof( rocketnet_iocp_ref_cell_t ) <= alignof( max_align_t ), "new uint8_t[] storage is aligned for the cells" );
 
 rocketnet_server_iocp_test_lanes_t * rocketnet_server_iocp_test_lanes_create( int lanes, int send_queue_size )
 {
     rocketnet_assert( lanes >= 1 && lanes <= ROCKETNET_IOCP_MAX_LANES );
     rocketnet_assert( send_queue_size > 0 && ( send_queue_size & ( send_queue_size - 1 ) ) == 0 );
-    rocketnet_server_iocp_test_lanes_t * test = new rocketnet_server_iocp_test_lanes_t();
+    // nothrow, so a failed allocation takes the NULL return the caller checks
+    // and the first allocation is freed when the second fails
+    rocketnet_server_iocp_test_lanes_t * test = new ( std::nothrow ) rocketnet_server_iocp_test_lanes_t();
+    if ( !test )
+    {
+        return NULL;
+    }
     test->lanes = lanes;
     test->send_queue_size = send_queue_size;
-    test->cells = new rocketnet_iocp_ref_cell_t[(size_t) lanes * (size_t) send_queue_size];
+    const size_t lane_bytes = (size_t) send_queue_size * sizeof( rocketnet_iocp_ref_cell_t );
+    test->storage = new ( std::nothrow ) uint8_t[(size_t) lanes * lane_bytes];
+    if ( !test->storage )
+    {
+        delete test;
+        return NULL;
+    }
     for ( int l = 0; l < lanes; ++l )
     {
-        rocketnet_iocp_queue_initialize( &test->queues[l], test->cells + (size_t) l * (size_t) send_queue_size, (uint64_t) send_queue_size );
+        rocketnet_iocp_queue_initialize( &test->queues[l], test->storage + (size_t) l * lane_bytes, (uint64_t) send_queue_size );
     }
     for ( int i = 0; i < lanes * send_queue_size; ++i )
     {
@@ -464,7 +478,7 @@ rocketnet_server_iocp_test_lanes_t * rocketnet_server_iocp_test_lanes_create( in
 
 void rocketnet_server_iocp_test_lanes_destroy( rocketnet_server_iocp_test_lanes_t * test )
 {
-    delete[] test->cells;
+    delete[] test->storage;
     delete test;
 }
 
@@ -1402,7 +1416,7 @@ static rocketnet_iocp_receive_buffer_t * rocketnet_iocp_receive_bank( rocketnet_
 
 // A completed datagram's bank admission (rocketnet_iocp_receive_admit),
 // counted: banked and RECEIVE_COMPLETED, or RECEIVE_DROPPED with its reason
-// in the worker's drop tally. proofs/tla/RNIocpReceiveAdmit.tla Arrive: Bank, or the
+// in the worker's drop tally. proofs/tla/RNIocpReceiveAdmit.tla Arrived: Bank, or the
 // count of Refuse and Full (EveryDropCounted).
 static void rocketnet_iocp_bank_datagram( rocketnet_iocp_batch_t * batch, const rocketnet_address_t & from, const uint8_t * packet_data, int packet_bytes )
 {

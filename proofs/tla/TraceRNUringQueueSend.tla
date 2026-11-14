@@ -39,13 +39,14 @@ VarsRec ==
      num |-> num, st |-> st, dest |-> dest, pkt |-> pkt, runs |-> runs, cq |-> cq,
      pend |-> pend, status |-> status, nextId |-> nextId, eagains |-> eagains,
      demand |-> demand, flushes |-> flushes, kernelWrite |-> kernelWrite,
-     pids |-> pids]
+     pids |-> pids, locked |-> locked, mainWaits |-> mainWaits]
 
 \* the actions each operation of the code can be
 OpActs == [stage |-> {"Stage", "StageFull"}, publish |-> {"Publish", "PublishKept"},
            claim |-> {"WorkerClaim"}, submit |-> {"WorkerSubmit"},
            post |-> {"KernelComplete"}, reap |-> {"WorkerReap"},
-           retire |-> {"WorkerRetire", "WorkerRetireRefused"}]
+           retire |-> {"WorkerRetire", "WorkerRetireRefused"},
+           lock |-> {"WorkerLocks"}, unlock |-> {"WorkerUnlocks"}]
 
 \* the action a record names, with the record's arguments; a name this CASE
 \* lacks stops TLC with an error
@@ -59,6 +60,8 @@ Act(a, x) == CASE a = "Stage" -> Stage(x[1], x[2], x[3], x[4])
                [] a = "WorkerReap" -> WorkerReap(x[1])
                [] a = "WorkerRetire" -> WorkerRetire
                [] a = "WorkerRetireRefused" -> WorkerRetireRefused
+               [] a = "WorkerLocks" -> WorkerLocks
+               [] a = "WorkerUnlocks" -> WorkerUnlocks
 
 TraceInit ==
     /\ Init
@@ -96,8 +99,13 @@ TraceConsistent == ~rejected
 
 \* the row's reach predicates: some clean trace fills the producer, so the
 \* next start is refused (Full), and has an eagain completion posted, so a
-\* reap hands its run back to be submitted again (AgainPosted)
+\* reap hands its run back to be submitted again (AgainPosted), and has
+\* reached a state where a publish would be kept (the worker holds the
+\* handoff mutex after a flush, with a staged producer and a free bank: the
+\* opportunity, which the walk likely but not surely takes; the refused
+\* publish itself is tests/test_unit_uring_queue_send.cpp's) (KeptLocked)
 Full == num[producer] = S
 AgainPosted == \E i \in 1..Len(cq) : cq[i].res = "eagain"
+KeptLocked == locked /\ num[producer] # 0 /\ free # <<>> /\ flushes > 0
 
 =============================================================================

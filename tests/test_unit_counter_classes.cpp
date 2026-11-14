@@ -9,11 +9,11 @@
 // sdk/rocketnet_counters.h, and the tests here keep the rows honest -- every
 // index has a class, no outcome sits in two families, conservation reports
 // the first family that does not balance, the exact-delta helper catches a
-// move nobody named, and every counter is named by a test.
+// move nobody named, and the internal-error counter witnesses stay
+// registered. That every counter is driven and read by a test is not checked
+// here: it is tools/check_counter_observed.py, a source audit run by CI.
 //
-// Every case runs in memory. The one file access is the source audit, which
-// reads the repository's own test and sdk sources named by the build (no
-// directory walk, no network, no clock).
+// Every case runs in memory, with no file access, network or clock.
 
 #include "test_unit_registry.h"
 
@@ -350,6 +350,7 @@ static const char * const counters_appended_names[] = {
     "URING_PIN_REFUSALS",
     "URING_RECEIVE_DROPPED_SOCKET",
     "RECEIVE_DROPPED_RETIRED",
+    "PORTABLE_PIN_REFUSALS",
 };
 #endif // #if ROCKETNET_DEV
 
@@ -559,6 +560,7 @@ static void test_counters_every_counter_has_a_class()
         { "URING_PIN_REFUSALS", ROCKETNET_COUNTER_CLASS_REFUSAL },
         { "URING_RECEIVE_DROPPED_SOCKET", ROCKETNET_COUNTER_CLASS_REFUSAL },
         { "RECEIVE_DROPPED_RETIRED", ROCKETNET_COUNTER_CLASS_EXPECTED },
+        { "PORTABLE_PIN_REFUSALS", ROCKETNET_COUNTER_CLASS_REFUSAL },
     };
     for ( size_t row = 0; row < sizeof( counter_classes_by_name ) / sizeof( counter_classes_by_name[0] ); ++row )
     {

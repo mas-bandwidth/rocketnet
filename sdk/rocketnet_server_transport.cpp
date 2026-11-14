@@ -39,7 +39,7 @@ static_assert( ROCKETNET_DEFAULT_COOKIE_ROTATION_SECONDS > ROCKETNET_DEFAULT_COO
 #include "rocketnet_network_simulator.h"
 #include "rocketnet_memory.h"
 
-static void rocketnet_server_transport_abort_create( struct rocketnet_server_transport_t * transport );
+static void rocketnet_server_transport_abort_create( struct rocketnet_server_transport_t * transport, struct rocketnet_server_transport_t ** retained );
 
 bool rocketnet_server_transport_io_receive_drops( const struct rocketnet_server_transport_io_operations_t * operations,
                                                   void * transport, uint64_t * too_short, uint64_t * too_large );
@@ -2729,7 +2729,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                                                                                      const char * public_address_string,
                                                                                      const struct rocketnet_server_transport_config_t * config,
                                                                                      double time, int * status,
-                                                                                     const uint64_t * resolved_memory_budget = NULL );
+                                                                                     const uint64_t * resolved_memory_budget = NULL,
+                                                                                     struct rocketnet_server_transport_t ** retained = NULL );
 
 // The config staging seam, compiled into the development library only: each
 // stack copy of a server config, which carries server_secret_key, is wiped on
@@ -2764,10 +2765,11 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved( void * context, const char * address,
                                                                                   const struct rocketnet_server_transport_config_t * config,
-                                                                                  uint64_t memory_budget_bytes, int * status )
+                                                                                  uint64_t memory_budget_bytes, int * status,
+                                                                                  struct rocketnet_server_transport_t ** retained )
 {
     rocketnet_assert( config );
-    return rocketnet_server_transport_create_impl( context, address, config, 0.0, status, &memory_budget_bytes );
+    return rocketnet_server_transport_create_impl( context, address, config, 0.0, status, &memory_budget_bytes, retained );
 }
 
 // The inputs a server create starts from, resolved before anything is
@@ -3453,8 +3455,10 @@ static int rocketnet_server_transport_open_in_order( struct rocketnet_server_tra
         // reported -- on the fall it stays a warn, because a fall is not a
         // failure and an error line would be a lie about the outcome.
 
-        if ( port_zero_refused_names[0] != '\0' )
+        if ( port_zero_refused_names[0] != '\0' && open_refusals == 0 )
         {
+            // only when the port-zero rule is the whole story: a transport
+            // that discovers its port and was tried has its own reason.
             // the remedy does NOT point at the per-rung warns: this error
             // exists precisely because the reader is at ERROR level, where
             // those warns are invisible. it has to stand alone.
@@ -3463,9 +3467,16 @@ static int rocketnet_server_transport_open_in_order( struct rocketnet_server_tra
                              port_zero_refused_names, rocketnet_transport_discovering_names() );
         }
 
+        // TRANSPORT_PORT_ZERO_UNSUPPORTED says no listed transport can report
+        // the port it was granted, so it is the status only when no candidate
+        // was opened at all. A port-reporting transport that was tried and
+        // refused names its own reason below (a refused bind is
+        // TRANSPORT_BIND_REFUSED), and refusals for different reasons are
+        // NO_TRANSPORT_FOUND.
+
         if ( status )
         {
-            if ( port_zero_refused_names[0] != '\0' )
+            if ( port_zero_refused_names[0] != '\0' && open_refusals == 0 )
             {
                 *status = ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED;
             }
@@ -3507,7 +3518,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
                                                                                        const struct rocketnet_server_transport_config_t * config,
                                                                                        double time, int * status,
                                                                                        const uint64_t * resolved_memory_budget,
-                                                                                       struct rocketnet_server_transport_resolved_t & resolved )
+                                                                                       struct rocketnet_server_transport_resolved_t & resolved,
+                                                                                       struct rocketnet_server_transport_t ** retained )
 {
     // docs/ERRORS-AND-LOGGING.md 2.1: a NULL required argument is a logged
     // INVALID_ARGUMENT and a NULL return in debug and release
@@ -3603,7 +3615,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
             *status = ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION;
         }
         rocketnet_error( "development keys in a production build (ROCKETNET_DEV=0); refusing to start" );
-        rocketnet_server_transport_abort_create( server_transport );
+        rocketnet_server_transport_abort_create( server_transport, retained );
         return NULL;
 #endif // #if ROCKETNET_DEV
     }
@@ -3611,7 +3623,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     const int granted_transport = rocketnet_server_transport_open_in_order( server_transport, context, &resolved, &bind_address, status );
     if ( granted_transport < 0 )
     {
-        rocketnet_server_transport_abort_create( server_transport );
+        rocketnet_server_transport_abort_create( server_transport, retained );
         return NULL;
     }
 
@@ -3665,7 +3677,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
             {
                 *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
             }
-            rocketnet_server_transport_abort_create( server_transport );
+            rocketnet_server_transport_abort_create( server_transport, retained );
             return NULL;
         }
 
@@ -3677,7 +3689,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
             }
             rocketnet_network_simulator_destroy( server_transport->link_simulator );
             server_transport->link_simulator = NULL;
-            rocketnet_server_transport_abort_create( server_transport );
+            rocketnet_server_transport_abort_create( server_transport, retained );
             return NULL;
         }
 
@@ -3694,7 +3706,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
             {
                 *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
             }
-            rocketnet_server_transport_abort_create( server_transport );
+            rocketnet_server_transport_abort_create( server_transport, retained );
             return NULL;
         }
     }
@@ -3834,7 +3846,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
             *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
         }
         rocketnet_error( "server transport create: could not allocate protocol storage" );
-        rocketnet_server_transport_abort_create( server_transport );
+        rocketnet_server_transport_abort_create( server_transport, retained );
         return NULL;
     }
 
@@ -3852,10 +3864,11 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                                                                                      const char * public_address_string,
                                                                                      const struct rocketnet_server_transport_config_t * config,
                                                                                      double time, int * status,
-                                                                                     const uint64_t * resolved_memory_budget )
+                                                                                     const uint64_t * resolved_memory_budget,
+                                                                                     struct rocketnet_server_transport_t ** retained )
 {
     struct rocketnet_server_transport_resolved_t resolved;
-    struct rocketnet_server_transport_t * server_transport = rocketnet_server_transport_create_staged( context, public_address_string, config, time, status, resolved_memory_budget, resolved );
+    struct rocketnet_server_transport_t * server_transport = rocketnet_server_transport_create_staged( context, public_address_string, config, time, status, resolved_memory_budget, resolved, retained );
     sodium_memzero( &resolved, sizeof( resolved ) );
     ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_SEEN( resolved.config.server_secret_key, ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_CREATE );
     return server_transport;
@@ -4119,18 +4132,110 @@ bool rocketnet_server_transport_stopped( const struct rocketnet_server_transport
     return transport->io_stop_requested && rocketnet_server_transport_io_stopped( &transport->io );
 }
 
+#if ROCKETNET_DEV
+// rocketnet_dev_set_server_abort_create_hold_hook (sdk/rocketnet_test_seams.h)
+static rocketnet_dev_server_abort_create_hold_function_t * rn_server_abort_create_hold;
+static void * rn_server_abort_create_hold_context;
+
+void rocketnet_dev_set_server_abort_create_hold_hook( rocketnet_dev_server_abort_create_hold_function_t * function, void * context )
+{
+    rn_server_abort_create_hold = function;
+    rn_server_abort_create_hold_context = context;
+}
+#endif // #if ROCKETNET_DEV
+
+// True once a transport a failed create handed to its retained owner has
+// stopped: its workers exited, so it can be destroyed (rocketnet_config.h).
+// The development hold above, while set, answers for it.
+bool rocketnet_server_transport_failed_create_stopped( struct rocketnet_server_transport_t * transport )
+{
+#if ROCKETNET_DEV
+    if ( rn_server_abort_create_hold )
+    {
+        return !rn_server_abort_create_hold( rn_server_abort_create_hold_context, transport );
+    }
+#endif // #if ROCKETNET_DEV
+    return rocketnet_server_transport_stopped( transport );
+}
+
+// The failed-create unwind of a create with an owner waits one second, the
+// budget rocketnet_client_destroy polls a worker for.
+static const double RN_SERVER_ABORT_CREATE_WAIT_SECONDS = 1.0;
+
 // A failed create cannot return a live partially constructed object. This
-// private construction-only unwind is allowed to wait; successful objects use
-// the explicit request/completion/destroy contract above.
-static void rocketnet_server_transport_abort_create( struct rocketnet_server_transport_t * transport )
+// private construction-only unwind stops the I/O and waits for it to stop;
+// successful objects use the explicit request/completion/destroy contract
+// above. A caller that owns a retained slot (retained not NULL: server start,
+// rocketnet_server_t's failed_start in sdk/rocketnet_api.cpp) waits at most
+// RN_SERVER_ABORT_CREATE_WAIT_SECONDS: on the deadline the transport, still
+// owned by its worker, is handed to that slot and nothing is freed; the
+// owner reports not stopped until rocketnet_server_transport_failed_create_stopped
+// is true and then destroys it. With no owner the wait has no deadline, since
+// nobody else could ever free the transport. The create returns its failure
+// status either way. proofs/tla/RNCreateUnwind.tla models the ownership:
+// FailInTransport, UnwindWaits, then UnwindFrees, or with an owner
+// UnwindDeadline into the retained slot.
+static void rocketnet_server_transport_abort_create( struct rocketnet_server_transport_t * transport, struct rocketnet_server_transport_t ** retained )
 {
     transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;
     transport->io_stop_requested = true;
     rocketnet_server_transport_io_stop( &transport->io );
-    while ( !rocketnet_server_transport_stopped( transport ) )
+
+    bool held = false;
+    double now = 0.0;
+#if ROCKETNET_DEV
+    held = rn_server_abort_create_hold != NULL;
+#endif // #if ROCKETNET_DEV
+    if ( !held )
     {
-        rocketnet_platform_sleep( 0.001 );
+        now = rocketnet_platform_time();
     }
+
+    const double deadline = now + RN_SERVER_ABORT_CREATE_WAIT_SECONDS;
+    for ( ;; )
+    {
+        bool stopped = false;
+#if ROCKETNET_DEV
+        if ( held )
+        {
+            stopped = !rn_server_abort_create_hold( rn_server_abort_create_hold_context, transport );
+        }
+#endif // #if ROCKETNET_DEV
+        if ( !held )
+        {
+            stopped = rocketnet_server_transport_stopped( transport );
+        }
+        if ( stopped )
+        {
+            break;
+        }
+
+        if ( retained && now >= deadline )
+        {
+            rocketnet_error( "server transport create: the worker has not exited after %.1f seconds; the server keeps the transport, not freed, until it has",
+                             RN_SERVER_ABORT_CREATE_WAIT_SECONDS );
+            // the I/O worker never reads the protocol: its keys are wiped
+            // now, so a transport whose worker never exits does not keep
+            // them; the owner's destroy wipes them again
+            sodium_memzero( transport->protocol.server_secret_key, sizeof( transport->protocol.server_secret_key ) );
+            sodium_memzero( transport->protocol.cookie_key, sizeof( transport->protocol.cookie_key ) );
+            sodium_memzero( transport->protocol.previous_cookie_key, sizeof( transport->protocol.previous_cookie_key ) );
+            rocketnet_assert( *retained == NULL );
+            *retained = transport;
+            return;
+        }
+
+        if ( held )
+        {
+            now += 0.001;
+        }
+        else
+        {
+            rocketnet_platform_sleep( 0.001 );
+            now = rocketnet_platform_time();
+        }
+    }
+
     rocketnet_server_transport_destroy( transport );
 }
 
@@ -4422,7 +4527,9 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
 // nobody took, publishes the acked batch and does the rest of update.
 // update is the three in a row with no client taken: the same result.
 
-void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time )
+static void rocketnet_server_transport_update_receive_body( struct rocketnet_server_transport_t * server_transport, double time, bool from_layer );
+
+static void rocketnet_server_transport_update_body( struct rocketnet_server_transport_t * server_transport, double time, bool from_layer )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
     {
@@ -4433,8 +4540,26 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     {
         return;
     }
-    rocketnet_server_transport_update_receive( server_transport, time );
+    rocketnet_server_transport_update_receive_body( server_transport, time, from_layer );
     rocketnet_server_transport_update_finish( server_transport );
+}
+
+void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time )
+{
+    rocketnet_server_transport_update_body( server_transport, time, false );
+}
+
+// the message server's updates: the time is its object's clock, already
+// advanced from the caller's samples (rocketnet_update_clock_follow)
+
+void rocketnet_server_transport_update_from_layer( struct rocketnet_server_transport_t * server_transport, double time )
+{
+    rocketnet_server_transport_update_body( server_transport, time, true );
+}
+
+void rocketnet_server_transport_update_receive_from_layer( struct rocketnet_server_transport_t * server_transport, double time )
+{
+    rocketnet_server_transport_update_receive_body( server_transport, time, true );
 }
 
 int rocketnet_server_transport_update_client_acks( struct rocketnet_server_transport_t * server_transport, int client_index )
@@ -4478,6 +4603,11 @@ int rocketnet_server_transport_update_client_acks( struct rocketnet_server_trans
 
 void rocketnet_server_transport_update_receive( struct rocketnet_server_transport_t * server_transport, double time )
 {
+    rocketnet_server_transport_update_receive_body( server_transport, time, false );
+}
+
+static void rocketnet_server_transport_update_receive_body( struct rocketnet_server_transport_t * server_transport, double time, bool from_layer )
+{
     if ( !rocketnet_api_null_guard( server_transport ) )
     {
         return;
@@ -4504,12 +4634,21 @@ void rocketnet_server_transport_update_receive( struct rocketnet_server_transpor
     }
 
     // the caller's clock is clamped once, before anything reads it: a NaN,
-    // an infinity or a step backwards becomes the last good time, counted and
-    // loud in a debug build. the last good time starts at zero, the value a
-    // value-initialized transport carries.
+    // an infinity, a negative time, a caller's time above
+    // ROCKETNET_UPDATE_TIME_MAX_SECONDS or a step backwards becomes the last good
+    // time, counted and loud in a debug build. The message server's clock is
+    // not held to the ceiling: its raw samples were. the last good time
+    // starts at zero, the value a value-initialized transport carries.
 
     bool time_clamped = false;
-    time = rocketnet_update_clock_advance( server_transport->time, &server_transport->raw_time, &server_transport->time_offset, time, &time_clamped );
+    if ( from_layer )
+    {
+        time = rocketnet_update_clock_follow( server_transport->time, &server_transport->raw_time, &server_transport->time_offset, time, &time_clamped );
+    }
+    else
+    {
+        time = rocketnet_update_clock_advance( server_transport->time, &server_transport->raw_time, &server_transport->time_offset, time, &time_clamped );
+    }
 
     // proofs/tla/RNDriverSendStaging.tla ResetLeases: update bumps the lease epoch
     // before it reads. A fill still open here was not joined.
@@ -5849,6 +5988,14 @@ uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_
     return server_transport->disconnect_seals;
 }
 
+// the transport's own clamped clock, for the test that the message server's
+// clock reaches it (tests/test_unit_client_server_lifecycle.cpp)
+double rocketnet_server_transport_time_for_test( const struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    return server_transport->time;
+}
+
 // The burst key lives at a ring index, the same index drain wipes
 // (disconnect_burst_keys[disconnect_burst_head]), not at the client slot.
 // Copies ROCKETNET_KEY_BYTES from that ring slot. head and count may be NULL.
@@ -6098,6 +6245,30 @@ void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_t
 }
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
+// development library only: the datagrams the transport's receive workers
+// refused that are folded into PACKETS_RECEIVED (each prefilter reason's
+// cumulative total, as of the last counters read), apart from main's own
+// count. The load harness (tests/load/harden_load.cpp) reads it at its cut
+// after the counters, so its chain names these refusals from the workers'
+// own totals rather than from PACKETS_RECEIVED less the received count
+uint64_t rocketnet_server_transport_worker_refused_for_testing( struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+    uint64_t refused = 0;
+    for ( int drop = ROCKETNET_RECEIVE_ACCEPT + 1; drop < ROCKETNET_RECEIVE_NUM_DROPS; ++drop )
+    {
+        int counters[ROCKETNET_RECEIVE_DROP_MAX_COUNTERS];
+        const int num_counters = rocketnet_receive_drop_counters( (enum rocketnet_receive_drop_t) drop, counters );
+        if ( num_counters > 0 && counters[0] == ROCKETNET_COUNTER_PACKETS_RECEIVED )
+        {
+            refused += server_transport->transport_receive_drop_totals[drop];
+        }
+    }
+    return refused;
+}
+#endif // #if ROCKETNET_DEV
+
 static void rocketnet_server_transport_fold_receive_drops( struct rocketnet_server_transport_t * server_transport )
 {
     uint64_t totals[ROCKETNET_RECEIVE_NUM_DROPS] = {};
@@ -6199,8 +6370,8 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
     }
 
     // the gso, io_uring, iocp and rio transports' own counts are the public
-    // rows GSO_PACKETS_SENT .. RIO_COMMITS, the rio, iocp, gso, xdp and
-    // io_uring transports' refused pins *_PIN_REFUSALS, and the io_uring
+    // rows GSO_PACKETS_SENT .. RIO_COMMITS, the rio, iocp, gso, xdp, io_uring
+    // and portable transports' refused pins *_PIN_REFUSALS, and the io_uring
     // transport's URING_RECEIVE_DROPPED_SOCKET, cumulative, assigned on read;
     // a transport writes its own rows and the rest reads 0, so every platform
     // has every row
@@ -6221,6 +6392,7 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
         // the kernel dropped at its sockets
         server_transport->counters.values[ROCKETNET_COUNTER_URING_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_URING_PIN_REFUSALS];
         server_transport->counters.values[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET] = transport_rows[ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SOCKET];
+        server_transport->counters.values[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS] = transport_rows[ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS];
     }
 
     return &server_transport->counters;

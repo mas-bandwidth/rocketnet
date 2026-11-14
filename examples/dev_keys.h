@@ -5,8 +5,10 @@
     The examples' protocol id. The development backend public key the examples
     set into the server config comes from rocketnet.h itself,
     ROCKETNET_DEV_BACKEND_PUBLIC_KEY (development builds): it is public, and a
-    release library refuses it at server start, so a release server never
-    accepts the development tokens rocketnet_create_dev_connect_token makes. A
+    production library (ROCKETNET_DEV=0) refuses it at server start, so a
+    production server never accepts the development tokens
+    rocketnet_create_dev_connect_token makes. A Release build is still a
+    development build unless it sets ROCKETNET_DEV=0. A
     real server brings its own backend's key, recommended through
     ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code.
 */

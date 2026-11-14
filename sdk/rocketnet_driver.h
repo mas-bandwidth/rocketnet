@@ -13,6 +13,13 @@
 // transport writes only min(reported bytes, supplied capacity/stride) bytes.
 // Truncated UDP datagrams retain their length for prefilter size accounting;
 // consumers must reject sizes beyond the wire ceiling before parsing bytes.
+// The built-in loopback transport is the exception: it queues only datagrams
+// of at most ROCKETNET_RECEIVE_CEILING bytes, and a receive whose capacity or
+// stride is smaller than the queued datagram drops it whole and counts it in
+// the endpoint's dropped count (read in a development build by
+// rocketnet_loopback_endpoint_dropped), so it never reports a truncated
+// length. proofs/tla/LoopbackQueue.tla Drop models the drop; the model's
+// dropped count is the send side's full-queue drops only.
 // Negative lengths and lengths beyond the non-jumbogram UDP envelope are faults.
 #define ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES 65535
 
@@ -194,8 +201,10 @@ struct rocketnet_server_transport_io_operations_t
     // use the whole room (proofs/tla/RNSendReserve.tla).
     //   send_queues: any thread; the queue count, fixed after create,
     //     1 .. ROCKETNET_SERVER_MAX_SEND_QUEUES.
-    //   send_queue_of: any thread, pure; the queue start_packet stages a
-    //     frame to this address in (the destination hash).
+    //   send_queue_of: any thread; the queue start_packet stages a frame to
+    //     this address in (the destination hash, or for msgx the client's
+    //     socket-table slot), the same answer from the budget's open to the
+    //     fill's end.
     //   send_room_queue: send_room for one queue, on the same threads.
     int ( *send_queues )( void * transport );
     int ( *send_queue_of )( void * transport, const rocketnet_address_t * to );

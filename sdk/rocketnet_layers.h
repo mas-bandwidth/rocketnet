@@ -38,6 +38,7 @@ extern "C"
 #define ROCKETNET_SERVER_CONFIG_BYTES_5 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, token_epoch_unix_seconds ) + sizeof( uint64_t ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_6 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, bind_ipv6_address ) + sizeof( const char * ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_7 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, num_msgx_transmit_workers ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_BYTES_8 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, portable_reserve_cpu_0 ) + sizeof( int ), sizeof( void * ) )
 
 /// Receive bounds match the sender's datagram and payload limits.
 #define ROCKETNET_RECEIVE_PACKET_BYTES                     ROCKETNET_MAX_PACKET_BYTES
@@ -736,7 +737,10 @@ struct rocketnet_address_t
 // num_msgx_transmit_workers; sdk/rocketnet_network_threads.h): zero is that
 // transport's measured default, a value outside its range is refused loudly at
 // create, never clamped, and the portable transport has none. num_os_cpus
-// configures the Linux transports' core layout (cpu 0 is always the OS's).
+// configures the Linux transports' core layout: cpu 0 is the OS's, unless a
+// gso, io_uring or portable transport's *_reserve_cpu_0 is
+// ROCKETNET_CPU_0_NOT_RESERVED, which puts that transport's thread q on cpu q
+// (rocketnet.h, rocketnet_server_config_t).
 //
 // public_address, empty by default, displaces the create call's address
 // parameter when set, so the address the transport list verifies, the
@@ -767,7 +771,7 @@ struct rocketnet_server_transport_config_t
     uint8_t server_secret_key[32];                  // secret: logged redacted
     /** @brief XDP threads, one per NIC queue; zero selects ROCKETNET_XDP_DEFAULT_THREADS, otherwise 1 through 1024. */
     int num_xdp_threads;                            // 1 .. 1024; 0 is the default (sdk/rocketnet_network_threads.h)
-    /** @brief Cores reserved for the operating system by XDP; zero selects the transport default, otherwise 1 through 256. */
+    /** @brief Cpus left for the operating system on Linux, from cpu 0: the xdp, gso, io_uring and portable network threads start at cpu num_os_cpus; zero reads as 1, otherwise 1 through 256. */
     int num_os_cpus;                                // 1 .. 256; 0 is the transport default
     /** @brief Ordered transport candidate list; defaults to auto. */
     char transport[ROCKETNET_TRANSPORT_STRING_LENGTH];    // the candidate list; default "auto"
@@ -808,6 +812,12 @@ struct rocketnet_server_transport_config_t
     int num_iocp_send_threads;
     /** @brief macOS msgx transmit workers; zero selects ROCKETNET_MSGX_DEFAULT_TRANSMIT_WORKERS, otherwise 1 through 16. */
     int num_msgx_transmit_workers;
+    /** @brief gso (Linux): zero or ROCKETNET_CPU_0_RESERVED keeps cpu 0 for the OS (worker q on cpu num_os_cpus + q); ROCKETNET_CPU_0_NOT_RESERVED puts worker q on cpu q. */
+    int gso_reserve_cpu_0;
+    /** @brief io_uring (Linux): as gso_reserve_cpu_0. */
+    int io_uring_reserve_cpu_0;
+    /** @brief portable on Linux (also the msgx name there): as gso_reserve_cpu_0, for its send (0) and receive (1) workers. */
+    int portable_reserve_cpu_0;
 };
 
 /** @brief Resolves the local address a server transport binds from its config and served address.
@@ -943,6 +953,7 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
  * @param public_address_string [in] Non-NULL numeric address; port zero requests dynamic binding when supported by the selected transport.
  * @param config [in] Optional full configuration; NULL selects defaults and does not supply production keys.
  * @return A caller-owned transport or NULL on any creation failure. Use create_internal to obtain the specific refusal status.
+ * @details A create that fails after its I/O worker started stops that worker and waits for it to exit before it returns NULL, with no deadline: the transport is freed only once its worker no longer owns it. rocketnet_server_start bounds that wait at one second and keeps the transport in the server instead (rocketnet.h).
  */
 struct rocketnet_server_transport_t * rocketnet_server_transport_create( void * context, const char * public_address_string, const struct rocketnet_server_transport_config_t * config );
 
@@ -1705,7 +1716,13 @@ uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_messa
 // connection (the client's one, one per server slot) -- and allocates nothing
 // after create. memory is optional: NULL makes the one allocation, and a
 // caller block of at least *_required_memory bytes, 64-aligned, makes none
-// (the transport still allocates its own at its create).
+// (the transport still allocates its own at its create). A create whose
+// object fails after its transport was created (with memory NULL, the one
+// allocation refused) stops that transport and waits for its worker to exit,
+// with no deadline, before it returns NULL and OUT_OF_MEMORY: nothing it made
+// stays live, and the create blocks for as long as the worker runs. A caller
+// block of at least *_required_memory bytes cannot fail there
+// (proofs/tla/RNCreateUnwind.tla).
 //
 // The update order, on the main thread: update (the transport's update, the
 // transport's acked packet ids into the channels -- the only ack there is --

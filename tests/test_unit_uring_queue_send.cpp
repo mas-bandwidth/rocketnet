@@ -18,6 +18,7 @@
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_address.h"
 #include "../sdk/rocketnet_constants.h"
+#include "../sdk/rocketnet_memory.h"
 #include "../sdk/rocketnet_uring_queue_send.h"
 #include "../sdk/rocketnet_uring_send_queue.h"
 
@@ -113,6 +114,27 @@ static void test_uring_queue_send_create_refuses_bad_limits()
 
 REGISTER_UNIT_TEST( test_uring_queue_send_create_refuses_bad_limits );
 
+#if ROCKETNET_RED_ZONES && ROCKETNET_DEV
+// ASan development builds: each carved array is followed by a poisoned red
+// zone (sdk/rocketnet_memory.h), so a write one past the queue arrays of the
+// send banks and of the queue send is reported, not landed in the next array
+static void test_uring_send_allocations_carve_red_zones()
+{
+    struct rocketnet_uring_send_queues_t * banks = rocketnet_uring_send_queues_create( NULL, 2, 4 );
+    check( banks != NULL );
+    struct rocketnet_uring_queue_send_t * send = rocketnet_uring_queue_send_create( NULL, banks, 4, 1500 );
+    check( send != NULL );
+    check( !__asan_address_is_poisoned( &banks->queue[1] ) );
+    check( __asan_address_is_poisoned( &banks->queue[2] ) );
+    check( !__asan_address_is_poisoned( &send->queue[1] ) );
+    check( __asan_address_is_poisoned( &send->queue[2] ) );
+    rocketnet_uring_queue_send_destroy( send );
+    rocketnet_uring_send_queues_destroy( banks );
+}
+
+REGISTER_UNIT_TEST( test_uring_send_allocations_carve_red_zones );
+#endif // #if ROCKETNET_RED_ZONES && ROCKETNET_DEV
+
 // RNUringQueueSend Publish: nothing staged keeps the producer; a staged
 // producer goes to the ready FIFO and the free head replaces it, reset; with
 // no spare the producer is kept with its slots (the reversed witness
@@ -151,6 +173,42 @@ static void test_uring_queue_send_publish_needs_a_spare()
 }
 
 REGISTER_UNIT_TEST( test_uring_queue_send_publish_needs_a_spare );
+
+// RNUringQueueSend MainNeverWaits: main only tries the handoff mutex. With
+// the worker inside its claim or retire (the test holds the mutex, as the
+// worker would), a publish comes back false at once and keeps the producer
+// with its slots (PublishKept), and idle says not idle; once the mutex is
+// free the same publish goes. Before round 1 both acquired it and main
+// waited on the worker (here, on the test's own thread, for ever).
+
+static void test_uring_queue_send_main_never_waits_on_the_worker()
+{
+    queue_send_test_t t( 2, 4, 1 << 16 );
+    check( t.send != NULL );
+
+    // nothing staged, ready or held: idle, but not while the worker holds the mutex
+    check( rocketnet_uring_queue_send_idle( t.send, 0 ) );
+    rocketnet_platform_mutex_acquire( &t.send->queue[0].mutex );
+    check( !rocketnet_uring_queue_send_idle( t.send, 0 ) );
+    rocketnet_platform_mutex_release( &t.send->queue[0].mutex );
+    check( rocketnet_uring_queue_send_idle( t.send, 0 ) );
+
+    // a staged producer with a spare: kept while the mutex is held, published after
+    check( t.stage( 1, 100 ) == 0 );
+    rocketnet_platform_mutex_acquire( &t.send->queue[0].mutex );
+    check( !rocketnet_uring_queue_send_publish( t.send, 0 ) );
+    check( t.banks->queue[0].producer == 0 );
+    check( rocketnet_uring_send_queues_staged( t.banks, 0 ) == 1 );
+    check( t.send->queue[0].handoff.ready_count == 0 );
+    rocketnet_platform_mutex_release( &t.send->queue[0].mutex );
+    check( t.stage( 2, 100 ) == 1 );                        // the kept producer still fills
+
+    check( rocketnet_uring_queue_send_publish( t.send, 0 ) );
+    check( t.banks->queue[0].producer == 1 );
+    check( t.send->queue[0].handoff.ready_count == 1 );
+}
+
+REGISTER_UNIT_TEST( test_uring_queue_send_main_never_waits_on_the_worker );
 
 // RNUringQueueSend WorkerClaim: the oldest ready bank, only when the worker
 // holds none; its runs group each destination's packets in staged order and

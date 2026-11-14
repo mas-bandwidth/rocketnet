@@ -129,6 +129,12 @@ static void test_memory_plan_covers_lifecycle()
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
     server_config.loopback_hub = rocketnet_test_loopback_hub();
+#if !ROCKETNET_DEV
+    // a production build refuses the published test packet filter, so the
+    // production half's server sets its own (no client connects to it)
+    static const uint8_t production_packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x4D, 0x50, 0x4C, 0x43 };
+    memcpy( server_config.packet_filter, production_packet_filter, sizeof( server_config.packet_filter ) );
+#endif // #if !ROCKETNET_DEV
 
     const uint64_t server_required = rocketnet_server_required_memory( &server_config );
     check( server_required > 0 );
@@ -528,34 +534,63 @@ static void bounded_pump( rocketnet_server_t * server, rocketnet_client_t * clie
     memory_plan_now += 0.01;
 }
 
-static void bounded_send_client( rocketnet_client_t * client, uint8_t value )
+static uint32_t bounded_send_client( rocketnet_client_t * client, uint8_t value )
 {
     uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 2 );
     check( out != NULL );
     if ( !out )
     {
-        return;
+        return 0;
     }
     out[0] = 0x4C;
     out[1] = value;
-    check( rocketnet_client_finish_message( client, 2 ) != 0 );
+    const uint32_t serial = rocketnet_client_finish_message( client, 2 );
+    check( serial != 0 );
+    return serial;
 }
 
-static void bounded_send_server( rocketnet_server_t * server, uint64_t index, uint8_t value )
+static uint32_t bounded_send_server( rocketnet_server_t * server, uint64_t index, uint8_t value )
 {
     uint8_t * out = rocketnet_server_start_message( server, index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 2 );
     check( out != NULL );
     if ( !out )
     {
-        return;
+        return 0;
     }
     out[0] = 0x53;
     out[1] = value;
-    check( rocketnet_server_finish_message( server, 2 ) != 0 );
+    const uint32_t serial = rocketnet_server_finish_message( server, 2 );
+    check( serial != 0 );
+    return serial;
+}
+
+// the receipts one end reports after an update: each must be ACKED and name
+// one of that end's four sends not acked in an earlier update; acked[k] is
+// set for the send whose serial it names
+
+static void bounded_take_receipts( const struct rocketnet_receipt_t * found, int count, const uint32_t * serials, bool * acked )
+{
+    check( count >= 0 && count <= 4 );
+    for ( int r = 0; r < count && r < 4; r++ )
+    {
+        check( found[r].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+        int k = 0;
+        while ( k < 4 && serials[k] != found[r].serial )
+        {
+            k++;
+        }
+        check( k < 4 );                     // a serial this end's sends returned
+        if ( k < 4 )
+        {
+            check( !acked[k] );             // once: a receipt is not reported in two updates
+            acked[k] = true;
+        }
+    }
 }
 
 // one connected cycle: connect, exchange reliable receipted messages both
-// ways until both ends receive and report receipts, at the fake clock
+// ways until both ends receive every message and report an ACKED receipt for
+// each of their own sends, at the fake clock
 
 static void bounded_exchange( rocketnet_server_t * server, rocketnet_client_t * client, const uint8_t * backend_secret, uint8_t tag )
 {
@@ -588,16 +623,21 @@ static void bounded_exchange( rocketnet_server_t * server, rocketnet_client_t * 
     }
     check( rocketnet_server_client_connected( server, index ) );
 
+    uint32_t client_serials[4] = {};
+    uint32_t server_serials[4] = {};
     for ( int i = 0; i < 4; i++ )
     {
-        bounded_send_client( client, (uint8_t) ( tag + i ) );
-        bounded_send_server( server, (uint64_t) index, (uint8_t) ( tag + i ) );
+        client_serials[i] = bounded_send_client( client, (uint8_t) ( tag + i ) );
+        server_serials[i] = bounded_send_server( server, (uint64_t) index, (uint8_t) ( tag + i ) );
     }
 
     int at_server = 0;
     int at_client = 0;
-    int receipts = 0;
-    for ( int i = 0; i < 400 && ( at_server < 4 || at_client < 4 || receipts == 0 ); i++ )
+    bool client_acked[4] = {};
+    bool server_acked[4] = {};
+    int client_acks = 0;
+    int server_acks = 0;
+    for ( int i = 0; i < 400 && ( at_server < 4 || at_client < 4 || client_acks < 4 || server_acks < 4 ); i++ )
     {
         bounded_pump( server, client );
 
@@ -611,18 +651,28 @@ static void bounded_exchange( rocketnet_server_t * server, rocketnet_client_t * 
             at_client += batch->num_messages;
         }
 
-        struct rocketnet_receipt_t found[4];
-        const int client_receipts = rocketnet_client_receipts( client, found, 4 );
-        const int server_receipts = rocketnet_server_receipts( server, index, found, 4 );
-        if ( client_receipts > 0 || server_receipts > 0 )
+        // each end's receipts in their own array, read after the update
+
+        struct rocketnet_receipt_t client_found[4];
+        struct rocketnet_receipt_t server_found[4];
+        memset( client_found, 0, sizeof( client_found ) );
+        memset( server_found, 0, sizeof( server_found ) );
+        bounded_take_receipts( client_found, rocketnet_client_receipts( client, client_found, 4 ), client_serials, client_acked );
+        bounded_take_receipts( server_found, rocketnet_server_receipts( server, index, server_found, 4 ), server_serials, server_acked );
+
+        client_acks = 0;
+        server_acks = 0;
+        for ( int k = 0; k < 4; k++ )
         {
-            receipts = 1;
+            client_acks += client_acked[k] ? 1 : 0;
+            server_acks += server_acked[k] ? 1 : 0;
         }
     }
 
     check( at_server == 4 );
     check( at_client == 4 );
-    check( receipts == 1 );
+    check( client_acks == 4 );
+    check( server_acks == 4 );
 }
 
 static void test_light_required_memory_sufficient_bounded()

@@ -122,7 +122,13 @@ static const allowlist_row_t allowlist[] = {
     { F_H, "Packets per second", "TRANSPORT SIZE" },
     { F_H, "PACKETS_IN_FLIGHT", "TRANSPORT SIZE" },
     { F_H, "unacknowledged packets tracked for their acks", "TRANSPORT SIZE" },
-    { F_H, "one number to a packet never evicts", "TRANSPORT SIZE" },
+    { F_H, "and at least reliable_messages_in_flight. Packets with reliable", "TRANSPORT SIZE" },
+    { F_H, "messages and packets with only unreliable receipt sends share it.", "TRANSPORT SIZE" },
+    { F_H, "packet, of both kinds and resends included, sent from any packet's", "TRANSPORT SIZE" },
+    { F_H, "send, that packet included, until the processing of its ack: the", "TRANSPORT SIZE" },
+    { F_S, "the writer's finish of an unreliable start reserved over one packet and", "TRANSPORT SIZE" },
+    { F_S, "finished with bytes one packet carries: the finish decides the form from", "TRANSPORT SIZE" },
+    { F_S, "the start at a size one packet carries never takes the channel", "TRANSPORT SIZE" },
     { F_H, "PACKETS_PER_UPDATE", "TRANSPORT SIZE" },
 
     // FRAGMENT PACKING: how messages are packed into packets.

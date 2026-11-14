@@ -45,6 +45,29 @@ void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signe
 // counts the client's calls of rocketnet_ack_endpoint_update_stats, for the
 // functional test
 std::atomic<unsigned long long> g_client_ack_stats_count{ 0 };
+
+// The client I/O stop-wait hold (sdk/rocketnet_test_seams.h): a unit test
+// answers each poll of the exit's stop_woken wait and fails at its own
+// ceiling, so the wait does not sleep and cannot hang. Per process, null by
+// default.
+static rocketnet_dev_client_io_stop_wait_function_t * rn_client_io_stop_wait_hold;
+static void * rn_client_io_stop_wait_hold_context;
+
+void rocketnet_dev_set_client_io_stop_wait_hook( rocketnet_dev_client_io_stop_wait_function_t * function, void * context )
+{
+    rn_client_io_stop_wait_hold = function;
+    rn_client_io_stop_wait_hold_context = context;
+}
+
+bool rocketnet_dev_client_io_stop_wait_poll( void )
+{
+    if ( !rn_client_io_stop_wait_hold )
+    {
+        return false;
+    }
+    rn_client_io_stop_wait_hold( rn_client_io_stop_wait_hold_context );
+    return true;
+}
 #endif // #if ROCKETNET_DEV
 
 // the ordinal each client's link simulator seed mixes in, so two clients on
@@ -55,17 +78,28 @@ static std::atomic<unsigned long long> g_client_link_simulator_ordinal{ 0 };
 // The update clock the three owners share: the caller's raw time beside the
 // clamped time they hand out. proofs/tla/RNUpdateClock.tla models it: ForwardStep, a
 // forward raw step, BackwardStep, a backwards raw step, and NonFiniteStep, a
-// non-finite sample. A forward step of d advances the clamped time by exactly
-// d while the caller's clock is still behind, so a clock whose caller
-// stepped backwards resumes with the caller instead of standing still until
-// the caller's clock passes the last good time again (BASE's rule, which
+// non-finite or negative sample, refused before the clock reads it, so it
+// changes neither the raw time nor the offset (a negative is never a raw time
+// the next sample steps forward from), and AboveCeilingStep, a sample above
+// ROCKETNET_UPDATE_TIME_MAX_SECONDS, refused the same way so every sum the
+// clock makes stays finite. A forward step of d advances the
+// clamped time by exactly d while the caller's clock is still behind, so a
+// clock whose caller stepped backwards resumes with the caller instead of
+// standing still until the caller's clock passes the last good time again (BASE's rule, which
 // proofs/tla/MCRNUpdateClockBrokenStall.cfg reverses). Once the caller's clock has
 // caught up, the clock is the caller's clock again. While no backwards step
 // has happened the offset is exactly 0.0 and the returned time is the
 // caller's time, bit for bit: the common path never adds to the last good
 // time, so every caller that reads an exact time still reads it.
+//
+// The ceiling bounds a caller's raw sample only. A message object's clock can
+// pass it after a backwards step (the clamped time runs ahead of the raw one),
+// and the object hands that clock to its transport: the transport takes it
+// through rocketnet_update_clock_follow, which judges it as every other
+// sample but not against the ceiling, so the transport's clock keeps pace with
+// the object's (proofs/tla/RNUpdateClock.tla LowerFollows).
 
-double rocketnet_update_clock_advance( double last_good, double * raw_time, double * time_offset, double time, bool * clamped )
+static double rocketnet_update_clock_step( double last_good, double * raw_time, double * time_offset, double time, bool * clamped, bool caller_sample )
 {
     if ( clamped )
     {
@@ -84,6 +118,44 @@ double rocketnet_update_clock_advance( double last_good, double * raw_time, doub
         rocketnet_api_misuse_record();
 
         rocketnet_error( "update refused its time %f: it is not finite; the last good time %f is kept", time, last_good );
+
+        return last_good;
+    }
+
+    if ( time < 0.0 )
+    {
+        // a negative sample is refused like a non-finite one, before the
+        // clock reads it: it changes neither the raw time nor the offset, so
+        // a later negative is never a forward step from an earlier one, and
+        // every negative is counted
+
+        if ( clamped )
+        {
+            *clamped = true;
+        }
+
+        rocketnet_api_misuse_record();
+
+        rocketnet_error( "update refused its time %f: it is negative; the last good time %f is kept", time, last_good );
+
+        return last_good;
+    }
+
+    if ( caller_sample && time > ROCKETNET_UPDATE_TIME_MAX_SECONDS )
+    {
+        // a caller's sample above the ceiling is refused the same way: the
+        // raw time stays at or below 2^52, so each call moves the clamped
+        // time by at most about 2^52 and every sum stays finite
+        // (proofs/tla/RNUpdateClock.tla AboveCeilingStep)
+
+        if ( clamped )
+        {
+            *clamped = true;
+        }
+
+        rocketnet_api_misuse_record();
+
+        rocketnet_error( "update refused its time %f: it is above %.0f seconds; the last good time %f is kept", time, ROCKETNET_UPDATE_TIME_MAX_SECONDS, last_good );
 
         return last_good;
     }
@@ -130,6 +202,16 @@ double rocketnet_update_clock_advance( double last_good, double * raw_time, doub
     return last_good + step;
 }
 
+double rocketnet_update_clock_advance( double last_good, double * raw_time, double * time_offset, double time, bool * clamped )
+{
+    return rocketnet_update_clock_step( last_good, raw_time, time_offset, time, clamped, true );
+}
+
+double rocketnet_update_clock_follow( double last_good, double * raw_time, double * time_offset, double time, bool * clamped )
+{
+    return rocketnet_update_clock_step( last_good, raw_time, time_offset, time, clamped, false );
+}
+
 // payloads are decrypted out of the receive frames into this storage, and
 // handed to the caller as pointers into it, valid until the next update
 
@@ -174,8 +256,8 @@ static_assert( sizeof( rocketnet_client_payload_ring_t ) == offsetof( rocketnet_
                "client ring has no implicit tail padding" );
 
 // One update processes at most ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET packets:
-// the legacy path exposes ready buffers up to that many packets, and the I/O
-// core exposes one buffer, which never holds more. Each processed packet
+// both receive paths expose at most that many records (rocketnet_client_receive_view),
+// and the rest wait for the next update. Each processed packet
 // places at most one payload (an opened payload, or the payload its fragment
 // completed), so the batch, sized by the same budget, always has a slot for
 // the packet being processed: a payload is never counted delivered without
@@ -193,8 +275,6 @@ struct rocketnet_client_received_packets_t
     uint8_t data[ROCKETNET_FRAME_SIZE * ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET];
 };
 
-static_assert( sizeof( ( (rocketnet_client_receive_buffer_t *) 0 )->packet_data ) / sizeof( uint8_t * ) <= ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET,
-               "one exposed receive buffer fits the update's packet budget" );
 static_assert( sizeof( ( (rocketnet_client_received_packets_t *) 0 )->packet_data ) / sizeof( uint8_t * ) >= ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET,
                "the payload batch holds one payload for every packet an update processes" );
 
@@ -232,16 +312,15 @@ struct rocketnet_client_transport_counters_t
     uint64_t bytes_received;
 };
 
-// BASE uses the same N-buffer ownership exchange as the I/O core
-// (proofs/tla/RNBufferHandoffBase.tla). The
-// worker always owns fill; update drains every READY batch within its packet
-// budget and returns it in the same call. Contended returns stay caller-owned.
+// BASE uses the receive handoff of the I/O core (sdk/rocketnet_receive_handoff.h,
+// proofs/tla/RNReceiveHandoff.tla): the receive worker appends to
+// buffer[handoff.worker] and commits its count at the end of each drain;
+// update reads the worker's buffer in place up to the committed count, after
+// the unread tail of the buffer the worker left, within its packet budget.
 struct rocketnet_client_legacy_receive_state_t
 {
-    rocketnet_buffer_handoff_t<ROCKETNET_CLIENT_IO_NUM_BUFFERS> handoff;
-    int fill;
-    int returned[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
-    int returned_count = 0;
+    struct rocketnet_receive_handoff_t handoff;
+    rocketnet_client_receive_buffer_t * buffer[ROCKETNET_CLIENT_IO_NUM_BUFFERS];
 #if ROCKETNET_DEV
     unsigned test_busy_mask = 0;
 #endif // #if ROCKETNET_DEV
@@ -1370,9 +1449,15 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     if ( strcmp( transport, "loopback" ) == 0 )
     {
         // the endpoint's record and queue are in the caller's hub, allocated
-        // at hub create, and loopback opens no socket. A threaded client
-        // still starts its network thread.
+        // at hub create, and loopback opens no socket. Its client create
+        // makes the wake its I/O thread waits on (zero bytes where the
+        // platform has none), and a threaded client still starts its network
+        // thread.
         plan.transport_io_bytes = 0;
+        if ( !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_wake_allocation_bytes() ) )
+        {
+            return false;
+        }
         if ( threaded && !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_thread_allocation_bytes() ) )
         {
             return false;
@@ -1451,7 +1536,7 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     }
 
     // loopback opens no socket and runs no family race; its endpoint is in
-    // the caller's hub, so a step-driven loopback client plans no I/O bytes
+    // the caller's hub, so a step-driven loopback client plans only its wake
 
     if ( !plan.transport_bytes || ( plan.sockets != 0 && !plan.transport_io_bytes ) )
     {
@@ -2050,8 +2135,8 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     memcpy( client_transport->protocol.packet_filter, config->packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
 
     // the create-time clock is checked the same way an update's is: a
-    // non-finite or negative seed would poison every later comparison, so it
-    // is clamped to the initial last good time before anything reads it.
+    // non-finite, negative or above-ceiling seed would poison every later
+    // comparison, so it is clamped to the initial last good time before anything reads it.
 
     bool time_clamped = false;
     time = rocketnet_update_clock_advance( 0.0, &client_transport->raw_time, &client_transport->time_offset, time, &time_clamped );
@@ -2606,9 +2691,12 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
         }
     }
 
-    rocketnet_buffer_handoff_init( &client_transport->receive_buffer_index.handoff, 0 );
+    rocketnet_receive_handoff_init( &client_transport->receive_buffer_index.handoff );
 
-    client_transport->receive_buffer_index.fill = 0;
+    for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_BUFFERS; i++ )
+    {
+        client_transport->receive_buffer_index.buffer[i] = &client_transport->receive_buffer[i];
+    }
 
     if ( !rocketnet_platform_mutex_create( &client_transport->mutex ) )
     {
@@ -2631,7 +2719,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     // a transport with wait and wake runs the I/O thread design of
     // docs/CLIENT-IO.md through rocketnet_client_io_t, modelled by
     // proofs/tla/RNClientIo.tla (every RNClientIo action named here). Built-in
-    // loopback uses the same core with bounded worker polling. Custom drivers
+    // loopback has wait and wake too: its I/O thread sleeps until a datagram is queued for it. Custom drivers
     // without wait/wake keep the BASE path: per-packet sends on the main
     // thread and a polling receive worker that exchanges buffer ownership
     // under a short mutex.
@@ -2646,9 +2734,18 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     // never moves: a live setting change does not move a running connection
     // between the two paths.
 
+#if ROCKETNET_DEV
+    // the step-driven unit fixture over the built-in loopback's own operations
+    // keeps the receive-thread path it ran before loopback had wait and wake:
+    // its cases step that path (rocketnet_client_transport_step_legacy_for_test)
+    const rocketnet_transport_definition_t * loopback_definition = rocketnet_transport_definition( ROCKETNET_TRANSPORT_LOOPBACK );
+    const bool step_driven_builtin_loopback = step_driven_operations && loopback_definition && loopback_definition->backend &&
+                                              step_driven_operations == loopback_definition->backend->client;
+#endif // #if ROCKETNET_DEV
+
     client_transport->io_thread = !rocketnet_network_simulator_created_active( client_transport->link_simulator ) &&
 #if ROCKETNET_DEV
-                                  ( rocketnet_client_transport_uses_io_thread( client_transport->io.operations ) ||
+                                  ( ( rocketnet_client_transport_uses_io_thread( client_transport->io.operations ) && !step_driven_builtin_loopback ) ||
                                     ( !step_driven_operations && granted_transport == ROCKETNET_TRANSPORT_LOOPBACK ) );
 #else
                                   ( rocketnet_client_transport_uses_io_thread( client_transport->io.operations ) ||
@@ -2695,10 +2792,11 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     // below, the I/O thread or the legacy receive thread.
     // proofs/tla/RNClientIo.tla OnThread: outside the step-driven mode the I/O thread
     // created here runs every core action.
-    // proofs/tla/RNClientIo.tla IoSend, IoFinishRing, IoReceive, IoPublish, IoOwe,
-    // IoWait, IoWake, IoClearWake and IoExit: the I/O thread's step sends each
-    // handed-off ring, drains datagrams into its buffer and publishes it, waits
-    // and wakes, and exits once quit is stored.
+    // proofs/tla/RNClientIo.tla IoSend, IoFinishRing, IoReceive, IoWait, IoWake,
+    // IoClearWake and IoExit: the I/O thread's step sends each handed-off ring,
+    // drains datagrams into its buffer and commits its count
+    // (proofs/tla/RNReceiveHandoff.tla Commit), waits and wakes, and exits once
+    // quit is stored.
     // proofs/tla/RNClientIoShutdown.tla TakeRing and FinishRing: the worker takes the
     // handed-off ring and marks it sent when every slot left.
 
@@ -3075,6 +3173,16 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
         rocketnet_client_race_commit( client_transport, race, from_second ? 1 : 0 );
     }
 
+    // proofs/tla/RNClientIoDecrypt.tla OpenPayloads: the record that connected the
+    // client lets the I/O thread open payloads from now on (TRANSPORT.md t11.3).
+    // A transport without the I/O core never reads the word.
+
+    if ( state_before != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+         client_transport->protocol.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
+        rocketnet_client_io_open_payloads( &client_transport->client_io );
+    }
+
     const uint64_t session_sequence = client_transport->protocol.received_session_sequence;
 
     // proofs/tla/RNClientDelivery.tla RecvPayload: the payload the protocol
@@ -3218,108 +3326,44 @@ static void rocketnet_client_transport_io_commit_packet( rocketnet_client_transp
     ring->info[slot].wire_bytes = packet_bytes;
 }
 
-// Try once at each caller handoff. Unit tests can refuse either phase without
-// starting a competing thread or depending on scheduler timing.
-// proofs/tla/RNBufferHandoff.tla MainTryLock: main takes a free mutex or skips this
-// exchange, never waiting.
-// proofs/tla/RNBufferHandoff.tla MainLockWait: the reversed witness's blocked main
-// waits for a held mutex; the fixed main only try-acquires and never waits.
-// proofs/tla/RNBufferHandoffBase.tla MainTry: the try-lock of update's expose and
-// return phases.
+// Try once at each expose. Unit tests can refuse it without starting a
+// competing thread or depending on scheduler timing.
+// proofs/tla/RNReceiveHandoff.tla Call: main takes a free mutex or skips the
+// begin, never waiting.
 
-static bool rocketnet_client_legacy_try_acquire( rocketnet_client_transport_t * client_transport, unsigned phase )
+static bool rocketnet_client_legacy_try_acquire( rocketnet_client_transport_t * client_transport )
 {
 #if ROCKETNET_DEV
-    if ( client_transport->receive_buffer_index.test_busy_mask & phase )
+    if ( client_transport->receive_buffer_index.test_busy_mask )
     {
         return false;
     }
-#else
-    (void) phase;
 #endif // #if ROCKETNET_DEV
     return rocketnet_platform_mutex_try_acquire( &client_transport->mutex );
 }
 
-// Called with the mutex held. The counts were cleared while the caller still
-// owned the buffers; publishing their indices is the only ownership transfer.
+// proofs/tla/RNReceiveHandoff.tla Call: the I/O core's expose on the BASE
+// path (rocketnet_client_io_expose), through the same shared helpers the trace
+// check tests/tla_trace_client_receive_handoff.cpp binds (this function itself
+// is covered by the unit tests, not the trace walk): every record the receive worker
+// committed before this call took the mutex, within the packet budget. The
+// worker polls, so a full buffer it keeps is left at its next poll and needs
+// no wake.
 
-static void rocketnet_client_legacy_publish_returns( rocketnet_client_legacy_receive_state_t * state )
+static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_transport_t * client_transport, struct rocketnet_client_receive_view_t * view )
 {
-    for ( int i = 0; i < state->returned_count; ++i )
-    {
-        rocketnet_buffer_handoff_release( &state->handoff, state->returned[i] );
-    }
-
-    state->returned_count = 0;
-}
-
-// Take the oldest READY buffers that fit the packet budget. If the worker
-// owns the mutex, leave everything in place and continue this update without
-// receiving. Returning previously processed buffers precedes taking new ones.
-// proofs/tla/RNBufferHandoffBase.tla Expose: returns the deferred cleared buffers and
-// takes the oldest READY prefix within the packet budget.
-// proofs/tla/RNBufferHandoff.tla ConsumerExchange and Unlock: main's release-and-take
-// index exchange under the mutex, then the release.
-
-static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_transport_t * client_transport, int * exposed )
-{
-    if ( !rocketnet_client_legacy_try_acquire( client_transport, 1 ) )
-    {
-        return 0;
-    }
-
     rocketnet_client_legacy_receive_state_t * state = &client_transport->receive_buffer_index;
-    rocketnet_client_legacy_publish_returns( state );
 
-    int num_exposed = 0;
-    int num_packets = 0;
+    rocketnet_client_receive_expire( &state->handoff, state->buffer );
 
-    while ( state->handoff.ready_count > 0 )
+    if ( rocketnet_client_legacy_try_acquire( client_transport ) )
     {
-        const int packets = client_transport->receive_buffer[state->handoff.ready_index[state->handoff.ready_head]].num_packets;
-        if ( num_exposed > 0 && num_packets + packets > ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET )
-        {
-            break;
-        }
+        (void) rocketnet_client_receive_begin( &state->handoff );
 
-        exposed[num_exposed++] = rocketnet_buffer_handoff_take( &state->handoff );
-        num_packets += packets;
+        rocketnet_platform_mutex_release( &client_transport->mutex );
     }
 
-    rocketnet_platform_mutex_release( &client_transport->mutex );
-
-    return num_exposed;
-}
-
-// Keep processed buffers caller-owned if the worker has the mutex. They are
-// neither READY nor FREE, so neither side can process or overwrite them again.
-// proofs/tla/RNBufferHandoffBase.tla ReleaseOnly: clears the processed buffers
-// outside the mutex and returns them without taking any.
-
-static void rocketnet_client_update_return_legacy_receive( rocketnet_client_transport_t * client_transport, const int * exposed, int num_exposed )
-{
-    if ( num_exposed == 0 )
-    {
-        return;
-    }
-
-    rocketnet_client_legacy_receive_state_t * state = &client_transport->receive_buffer_index;
-    rocketnet_assert( state->returned_count == 0 );
-
-    for ( int i = 0; i < num_exposed; i++ )
-    {
-        client_transport->receive_buffer[exposed[i]].num_packets = 0;
-        state->returned[state->returned_count++] = exposed[i];
-    }
-
-    if ( !rocketnet_client_legacy_try_acquire( client_transport, 2 ) )
-    {
-        return;
-    }
-
-    rocketnet_client_legacy_publish_returns( state );
-
-    rocketnet_platform_mutex_release( &client_transport->mutex );
+    return rocketnet_client_receive_view( &state->handoff, state->buffer, view, ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET );
 }
 
 // Process previous stats frames into published per-second numbers, then
@@ -3372,15 +3416,29 @@ static void rocketnet_client_update_stats( rocketnet_client_transport_t * client
     }
 }
 
-// proofs/tla/RNClientIo.tla Expose, Return and OnMain: update exposes the Ready
-// buffer at its start and returns it at its end, on the main thread.
+// proofs/tla/RNClientIo.tla OnMain (historical two-ring design): update's
+// expose runs on the main thread.
 // proofs/tla/RNClientIo.tla StepBegin, StepEnd and OnCaller: with step_in_update the
 // I/O step runs on the caller's thread inside update, never blocking.
-// proofs/tla/RNBufferHandoff.tla Consume: update reads and clears the buffer it took.
-// proofs/tla/RNBufferHandoffBase.tla Process and EndUpdate: update reads every exposed
-// buffer outside the mutex, and its end begins the next expose.
+// proofs/tla/RNReceiveHandoff.tla Call: update reads the records of its view
+// outside the mutex; its next expose empties a finished tail.
+
+static void rocketnet_client_transport_update_body( rocketnet_client_transport_t * client_transport, double time, bool from_layer );
 
 void rocketnet_client_transport_update( rocketnet_client_transport_t * client_transport, double time )
+{
+    rocketnet_client_transport_update_body( client_transport, time, false );
+}
+
+// the message client's update: the time is its object's clock, already
+// advanced from the caller's samples (rocketnet_update_clock_follow)
+
+void rocketnet_client_transport_update_from_layer( rocketnet_client_transport_t * client_transport, double time )
+{
+    rocketnet_client_transport_update_body( client_transport, time, true );
+}
+
+static void rocketnet_client_transport_update_body( rocketnet_client_transport_t * client_transport, double time, bool from_layer )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
     {
@@ -3412,11 +3470,20 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     }
 
     // the caller's clock is clamped once, before anything reads it: a NaN,
-    // an infinity or a step backwards becomes the last good time, counted and
-    // loud in a debug build.
+    // an infinity, a negative time, a caller's time above
+    // ROCKETNET_UPDATE_TIME_MAX_SECONDS or a step backwards becomes the last
+    // good time, counted and loud in a debug build. The message client's
+    // clock is not held to the ceiling: its raw samples were.
 
     bool time_clamped = false;
-    time = rocketnet_update_clock_advance( client_transport->time, &client_transport->raw_time, &client_transport->time_offset, time, &time_clamped );
+    if ( from_layer )
+    {
+        time = rocketnet_update_clock_follow( client_transport->time, &client_transport->raw_time, &client_transport->time_offset, time, &time_clamped );
+    }
+    else
+    {
+        time = rocketnet_update_clock_advance( client_transport->time, &client_transport->raw_time, &client_transport->time_offset, time, &time_clamped );
+    }
 
     client_transport->packet_leases.reset();
 
@@ -3433,15 +3500,13 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
     client_transport->protocol.num_acked = 0;
 
-    // proofs/tla/RNClientIo.tla Expose (rocketnet_client_io_expose):
-    // a Ready buffer becomes Exposed and is processed exactly as at BASE. The
-    // BASE path exposes the oldest Ready buffers that fit the packet budget
-    // under one short mutex hold; additional buffers stay Ready for later.
+    // proofs/tla/RNReceiveHandoff.tla Call (rocketnet_client_io_expose, and
+    // the BASE path's rocketnet_client_update_expose_legacy_receive): every
+    // record the receiving thread committed before this update took the
+    // mutex, within the packet budget, processed in arrival order.
 
-    rocketnet_client_receive_buffer_t * receive_buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
-    int num_receive_buffers = 0;
-    int legacy_exposed[ROCKETNET_CLIENT_IO_NUM_BUFFERS];
-    int num_legacy_exposed = 0;
+    struct rocketnet_client_receive_view_t view;
+    view.num_ranges = 0;
 
     const bool io_core = rocketnet_client_io_core( client_transport );
 
@@ -3453,9 +3518,8 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
             rocketnet_client_io_step( &client_transport->client_io, false ); // RNClientIo CallerStep
         }
 #endif // #if ROCKETNET_DEV
-        receive_buffers[0] = rocketnet_client_io_expose( &client_transport->client_io );
+        (void) rocketnet_client_io_expose( &client_transport->client_io, &view, ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET );
         rocketnet_client_io_fold_counters( &client_transport->client_io );
-        num_receive_buffers = receive_buffers[0] ? 1 : 0;
     }
     else
     {
@@ -3467,14 +3531,8 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
             rocketnet_client_receive_packets( client_transport );
         }
 #endif // #if ROCKETNET_DEV
-        num_legacy_exposed = rocketnet_client_update_expose_legacy_receive( client_transport, legacy_exposed );
+        (void) rocketnet_client_update_expose_legacy_receive( client_transport, &view );
         rocketnet_client_io_fold_counters( &client_transport->client_io );
-        for ( int i = 0; i < num_legacy_exposed; i++ )
-        {
-            receive_buffers[i] = &client_transport->receive_buffer[legacy_exposed[i]];
-        }
-
-        num_receive_buffers = num_legacy_exposed;
     }
 
     // proofs/tla/RNClientDelivery.tla Begin: the last update's batch, kept
@@ -3488,18 +3546,18 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 #if ROCKETNET_ASSERTS
     {
         int exposed_packets = 0;
-        for ( int b = 0; b < num_receive_buffers; b++ )
+        for ( int r = 0; r < view.num_ranges; r++ )
         {
-            exposed_packets += receive_buffers[b]->num_packets;
+            exposed_packets += view.end[r] - view.first[r];
         }
         rocketnet_assert( exposed_packets <= ROCKETNET_CLIENT_UPDATE_PACKET_BUDGET );
     }
 #endif // #if ROCKETNET_ASSERTS
 
-    for ( int b = 0; b < num_receive_buffers; b++ )
+    for ( int r = 0; r < view.num_ranges; r++ )
     {
-        rocketnet_client_receive_buffer_t * receive_buffer = receive_buffers[b];
-        for ( int i = 0; i < receive_buffer->num_packets; i++ )
+        rocketnet_client_receive_buffer_t * receive_buffer = view.buffer[r];
+        for ( int i = view.first[r]; i < view.end[r]; i++ )
         {
             client_transport->stats_frames[stats_index].packets_received++;
             client_transport->stats_frames[stats_index].bytes_received += (uint64_t) receive_buffer->packet_bytes[i] + (uint64_t) rocketnet_wire_header_bytes( receive_buffer->from[i].type );
@@ -3513,14 +3571,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
             rocketnet_client_process_packet( client_transport, &receive_buffer->from[i], receive_buffer->packet_data[i], (int) receive_buffer->packet_bytes[i], current_time,
                                              verdict, sequence );
         }
-
-        if ( io_core )
-        {
-            receive_buffer->num_packets = 0;
-        }
     }
-
-    rocketnet_client_update_return_legacy_receive( client_transport, legacy_exposed, num_legacy_exposed );
 
     // the protocol's scheduled send and its deadlines
 
@@ -3555,17 +3606,13 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     if ( io_core )
     {
         // the protocol packet is sealed into a slot of the Filling ring
-        // (counted into the stats by the hand-off); then RNClientIo Return
-        // (update step 2: whether or not anything was exposed this frame, the
-        // held buffer goes back Free, and the I/O thread is woken when it owes
-        // a publish), then a hand-off attempt every frame, which retries any
-        // deferred slots and hands off this packet
+        // (counted into the stats by the hand-off); then a hand-off attempt
+        // every frame, which retries any deferred slots and hands off this
+        // packet
         if ( packet_bytes > 0 )
         {
             rocketnet_client_transport_io_commit_packet( client_transport, packet, packet_bytes );
         }
-
-        rocketnet_client_io_return( &client_transport->client_io );
 
         rocketnet_client_transport_io_hand_off( client_transport );
 #if ROCKETNET_DEV
@@ -4283,6 +4330,16 @@ double rocketnet_client_transport_heard_age( const struct rocketnet_client_trans
 }
 
 #if ROCKETNET_DEV
+// the transport's own clamped clock, for the test that the message client's
+// clock reaches it (tests/test_unit_client_server_lifecycle.cpp)
+double rocketnet_client_transport_time_for_test( const struct rocketnet_client_transport_t * client_transport )
+{
+    rocketnet_assert( client_transport );
+    return client_transport->time;
+}
+#endif // #if ROCKETNET_DEV
+
+#if ROCKETNET_DEV
 // The transport's half of the delivery capture (rocketnet_layers.h): plain
 // copies of the protocol's receive window, send sequence and ack endpoint, on
 // the main thread outside update. Not connected leaves the capture untouched.
@@ -4457,41 +4514,36 @@ void rocketnet_client_ack_stats_public_client_for_test_free( struct rocketnet_cl
 }
 #endif // #if ROCKETNET_DEV
 
-// RNBufferHandoff ProducerExchange on the BASE path: the receive worker
-// always holds one buffer (fill), reads datagrams into it outside the mutex,
-// and publishes it when the socket is drained or the buffer is full and a
-// free buffer exists (MaxReady N-1).
-// Otherwise it keeps the batch and adds to it while it has room; a full
-// buffer that cannot publish leaves datagrams in the transport until a later
-// update frees one. No buffer another side owns is ever written.
+// proofs/tla/RNReceiveHandoff.tla Commit on the BASE path (the shared
+// rocketnet_receive_handoff_commit the trace check
+// tests/tla_trace_client_receive_handoff.cpp binds; this function and the
+// worker loop's cadence are covered by the unit tests): the receive
+// worker makes its buffer's count visible to update under the mutex and, when
+// update has started on its buffer, moves to the free one, which update
+// emptied before freeing it. Otherwise it keeps its buffer and appends to it
+// while it has room; full, it leaves datagrams in the transport until update
+// has started on it. No record below the committed count is ever written.
+// Returns true when the worker moved.
 
-// proofs/tla/RNBufferHandoff.tla WorkerLock, ProducerExchange and Unlock: the receive
-// worker locks, publishes its buffer index and takes a free one, then unlocks.
-// proofs/tla/RNBufferHandoffBase.tla WorkerLock and Publish: the same lock and publish
-// with MaxReady N-1.
-
-static void rocketnet_client_legacy_publish( rocketnet_client_transport_t * client_transport )
+static bool rocketnet_client_legacy_commit( rocketnet_client_transport_t * client_transport )
 {
     rocketnet_client_legacy_receive_state_t * state = &client_transport->receive_buffer_index;
 
+    const uint32_t count = (uint32_t) state->buffer[state->handoff.worker]->num_packets;
+
     rocketnet_platform_mutex_acquire( &client_transport->mutex );
 
-    const int next = rocketnet_buffer_handoff_publish( &state->handoff, state->fill, ROCKETNET_CLIENT_IO_NUM_BUFFERS - 1 );
+    const int next = rocketnet_receive_handoff_commit( &state->handoff, count );
 
     rocketnet_platform_mutex_release( &client_transport->mutex );
 
-    if ( next >= 0 )
-    {
-        state->fill = next;
-        client_transport->receive_buffer[next].num_packets = 0;
-    }
+    rocketnet_assert( next < 0 || state->buffer[next]->num_packets == 0 );
+
+    return next >= 0;
 }
 
-// proofs/tla/RNBufferHandoff.tla Produce: the receive worker writes datagrams into
-// its buffer outside the mutex.
-// proofs/tla/RNBufferHandoff.tla WriteReady: the reversed witness's receive worker
-// writes into a buffer it already published, which update now holds.
-// proofs/tla/RNBufferHandoffBase.tla Produce: the same write into the producer buffer.
+// proofs/tla/RNReceiveHandoff.tla Bank: the receive worker writes datagrams
+// into its buffer, at and past the committed count, outside the mutex.
 
 static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport, const double * synthetic_time )
 {
@@ -4502,14 +4554,11 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
 
     while ( 1 )
     {
-        rocketnet_client_receive_buffer_t * receive_buffer = &client_transport->receive_buffer[state->fill];
+        // only the receive worker changes handoff.worker (rocketnet_receive_handoff_commit)
+        rocketnet_client_receive_buffer_t * receive_buffer = state->buffer[state->handoff.worker];
         if ( receive_buffer->num_packets >= ROCKETNET_NUM_CLIENT_PACKETS )
         {
-            const int full = state->fill;
-
-            rocketnet_client_legacy_publish( client_transport );
-
-            if ( state->fill == full )
+            if ( !rocketnet_client_legacy_commit( client_transport ) )
             {
                 break;
             }
@@ -4529,10 +4578,10 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
 
         if ( packet_bytes <= 0 || packet_bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
         {
-            // publish a partial batch on drain or fault; an empty buffer stays the worker's
+            // commit on drain or fault; an empty buffer stays the worker's
             if ( receive_buffer->num_packets )
             {
-                rocketnet_client_legacy_publish( client_transport );
+                (void) rocketnet_client_legacy_commit( client_transport );
             }
             break;
         }
@@ -4590,36 +4639,24 @@ void rocketnet_client_transport_step_legacy_for_test( rocketnet_client_transport
     rocketnet_client_receive_packets( client_transport, &time );
 }
 
+// mask 1: update's try of the mutex fails, as when the receive worker holds it
 void rocketnet_client_transport_legacy_busy_for_test( rocketnet_client_transport_t * client_transport, unsigned mask )
 {
-    rocketnet_assert( client_transport && client_transport->step_driven && !client_transport->thread && mask <= 3 );
+    rocketnet_assert( client_transport && client_transport->step_driven && !client_transport->thread && mask <= 1 );
     client_transport->receive_buffer_index.test_busy_mask = mask;
 }
 
-// The step-driven fixture has no concurrent worker. Expose ownership so its
-// regression can check backpressure and buffer reuse without depending on
-// scheduler timing or private layout offsets.
+// The step-driven fixture has no concurrent worker. Expose the receive
+// handoff so its regressions can check backpressure and buffer reuse without
+// depending on scheduler timing or private layout offsets.
 
-void rocketnet_client_transport_legacy_receive_state_for_test(
-    const rocketnet_client_transport_t * client_transport, int * fill, int * ready_count, int * free_count )
+void rocketnet_client_transport_legacy_receive_state_for_test( const rocketnet_client_transport_t * client_transport,
+                                                               struct rocketnet_receive_handoff_t * handoff )
 {
     rocketnet_assert( client_transport && client_transport->step_driven && !client_transport->thread &&
-                      !rocketnet_client_io_core( client_transport ) );
+                      !rocketnet_client_io_core( client_transport ) && handoff );
 
-    const rocketnet_client_legacy_receive_state_t * state = &client_transport->receive_buffer_index;
-
-    if ( fill )
-    {
-        *fill = state->fill;
-    }
-    if ( ready_count )
-    {
-        *ready_count = state->handoff.ready_count;
-    }
-    if ( free_count )
-    {
-        *free_count = state->handoff.free_count;
-    }
+    *handoff = client_transport->receive_buffer_index.handoff;
 }
 #endif // #if ROCKETNET_DEV
 

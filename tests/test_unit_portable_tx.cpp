@@ -19,7 +19,18 @@ static void test_portable_tx_handoff()
     rocketnet_unit_check( rocketnet_portable_tx_test_handoff() );
 }
 
+// The fixtures run only where the portable transport is built
+// (ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE); elsewhere each fixture returns
+// false, so a case is left out with a SKIPPED line rather than passing with
+// no logic run.
+#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+static constexpr bool portable_tx_platform_has_event_only_wake = true;
+#else
+static constexpr bool portable_tx_platform_has_event_only_wake = false;
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+
 REGISTER_UNIT_TEST( test_portable_tx_handoff );
+UNIT_TEST_SKIPPED_UNLESS( test_portable_tx_handoff, portable_tx_platform_has_event_only_wake );
 
 // Stop keeps a producer it cannot publish and publishes it on a later poll,
 // before quit (proofs/tla/RNPortableTx.tla MStopRetry); nothing is dropped.
@@ -31,6 +42,7 @@ static void test_portable_tx_stop_publishes_across_polls()
 }
 
 REGISTER_UNIT_TEST( test_portable_tx_stop_publishes_across_polls );
+UNIT_TEST_SKIPPED_UNLESS( test_portable_tx_stop_publishes_across_polls, portable_tx_platform_has_event_only_wake );
 
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

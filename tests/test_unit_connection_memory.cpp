@@ -202,11 +202,15 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
     {
         const rn_store_class_t * x = &a->store.classes[c];
         const rn_store_class_t * y = &b->store.classes[c];
-        if ( x->num_chunks != y->num_chunks || x->free_head != y->free_head || x->free_count != y->free_count || x->chunk_bytes != y->chunk_bytes || x->fresh != y->fresh )
+        if ( x->num_chunks != y->num_chunks || x->free_top != y->free_top || x->free_count != y->free_count || x->chunk_bytes != y->chunk_bytes || x->fresh != y->fresh )
         {
             return false;
         }
         if ( memcmp( x->meta, y->meta, sizeof( uint32_t ) * x->fresh ) != 0 )
+        {
+            return false;
+        }
+        if ( memcmp( x->free_stack, y->free_stack, sizeof( uint32_t ) * x->free_top ) != 0 )
         {
             return false;
         }
@@ -459,7 +463,7 @@ static void test_reused_slot_starts_clean()
         rn_region_send_free( a, taken[i] );
     }
     a->channel_send[0].ordered_write = 7;
-    a->channel_receive[1].ordered_read = 9;
+    a->channel_receive[ROCKETNET_DEFAULT_NUM_CHANNELS - 1].ordered_read = 9;   // the default config's last channel: inside the array at every channel ceiling, 1 included
     a->send_numbers[3].descriptor = 5;
     a->receive_descriptors[4].live = 1;
     a->received_bits[0] = 0xFF;
@@ -1379,8 +1383,105 @@ REGISTER_UNIT_TEST( test_send_refusal_leaves_the_region_as_it_was );
 REGISTER_UNIT_TEST( test_generation_tagged_slots_and_lifo_stack );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_span_links_pin_oldest_live );
+// The receiver chooses which sends it acknowledges, so it chooses which
+// chunks are freed and in what order (finding W2-86). It holds a long run of
+// chunks and each update acknowledges one chunk below the run and the newest
+// send above it; the sender takes the freed low chunk, then one more. Neither
+// allocation, nor the room query between them, may examine the held run:
+// each choice costs a bounded number of entries however many chunks are
+// held (rn_store_cost_t counts them; no time is measured).
+
+#if ROCKETNET_DEV
+static void test_store_choice_never_walks_a_held_run()
+{
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    check( rocketnet_message_validate_config( &config ) );
+
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+
+    rn_arena_t * arena = rn_unit_arena_create( &config, 1, &counters );
+    check( arena );
+
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_send_store_t * store = &region->store;
+    const int bytes = 10;
+    const uint32_t total = rn_send_store_total_chunks( store, RN_STORE_SMALL );
+    const uint32_t low = 64;
+    check( total > 4 * low );
+
+    // every chunk of the class held
+
+    std::vector<uint32_t> handles( total );
+    for ( uint32_t i = 0; i < total; i++ )
+    {
+        uint32_t index = 0;
+        check( rn_send_store_find( store, bytes, &index ) );
+        handles[i] = rn_send_store_take( store, bytes, index );
+    }
+    check( rn_send_store_free_chunks( store, RN_STORE_SMALL ) == 0 );
+
+    // the newest send acknowledged: one free chunk above the held run
+
+    uint32_t top = handles[total - 1];
+    check( rn_send_store_free_checked( store, top ) );
+
+    uint64_t worst_take = 0;
+    uint64_t worst_room = 0;
+
+    for ( uint32_t round = 0; round < 4 * low; round++ )
+    {
+        // one acknowledged chunk below the run
+
+        const uint32_t k = round % low;
+        check( rn_send_store_free_checked( store, handles[k] ) );
+
+        for ( int send = 0; send < 2; send++ )
+        {
+            rn_store_cost_reset();
+            check( rn_region_send_fit_store( region, bytes, NULL ) == RN_SEND_FIT_OK );
+            const uint64_t room = rn_store_cost_read().choice_visits;
+            worst_room = room > worst_room ? room : worst_room;
+
+            rn_store_cost_reset();
+            uint32_t index = 0;
+            check( rn_send_store_find( store, bytes, &index ) );
+            const uint32_t handle = rn_send_store_take( store, bytes, index );
+            const uint64_t take = rn_store_cost_read().choice_visits;
+            worst_take = take > worst_take ? take : worst_take;
+
+            if ( send == 0 )
+            {
+                handles[k] = handle;
+            }
+            else
+            {
+                top = handle;
+            }
+        }
+
+        check( rn_send_store_free_chunks( store, RN_STORE_SMALL ) == 0 );
+
+        // the newest send acknowledged again
+
+        check( rn_send_store_free_checked( store, top ) );
+    }
+
+    printf( "send store choice: chunks=%u held=%u worst_take_visits=%llu worst_room_visits=%llu\n",
+            total, total - 1, (unsigned long long) worst_take, (unsigned long long) worst_room );
+    fflush( stdout );
+
+    check( worst_take <= 1 );
+    check( worst_room <= 1 );
+
+    rn_unit_arena_destroy( arena );
+}
+#endif // #if ROCKETNET_DEV
+
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_store_chunk_generation_never_zero );
+REGISTER_UNIT_TEST( test_store_choice_never_walks_a_held_run );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_descriptor_generation_never_zero );
 REGISTER_UNIT_TEST( test_store_class_holds_up_to_the_handle_index );

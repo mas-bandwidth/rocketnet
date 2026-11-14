@@ -18,7 +18,9 @@
 #include "portable_crt.h"
 
 #include "rocketnet_internal.h"
+#include "rocketnet_config.h"
 #include "rocketnet_connect_token.h"
+#include "rocketnet_test_seams.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -93,8 +95,9 @@ static void production_config( struct rocketnet_server_transport_config_t * conf
     config->protocol_id = 1;
 }
 
-// A named production server rung with a concrete memory plan. The budget=1
-// case refuses before opening it, so this unit test needs no native backend.
+// The budget case below names the loopback rung, whose memory plan is
+// concrete, and a one-byte budget refuses it before it opens, so this unit
+// test needs no native backend.
 
 #if ROCKETNET_ASSERTS
 // the NULL argument below is the documented counted no-op, which fires
@@ -164,8 +167,9 @@ static void test_server_transport_create_ex_reports_every_status()
         check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     }
 
-    // Real environment budget parsing and both production budget rungs
-    // are covered by test_platform_primitives.
+    // Real environment budget parsing and both production budget rungs are
+    // covered by test_platform_primitives (a functional test); the budget's
+    // refusal itself is the NO_TRANSPORT_FOUND step below.
 
     // S4: the default config carries the published test packet filter, which
     // a production build refuses
@@ -285,6 +289,33 @@ static void test_server_transport_create_ex_reports_every_status()
         state.fail_at = 0;
     }
 
+    // NO_TRANSPORT_FOUND through the preallocation memory budget. A
+    // budget of one byte is below every candidate's plan, so the create is
+    // refused before its first allocation and before any transport opens;
+    // the transport is the in-memory loopback, so a budget check that
+    // regressed would create a server here (and fail the check), never bind a
+    // socket
+    {
+        struct rocketnet_server_transport_config_t config;
+        production_config( &config );
+        snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+        config.loopback_hub = rocketnet_test_loopback_hub();
+        config.max_clients = 1;
+        const int live = state.live;
+        const int calls = state.calls;
+
+        status = -1;
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_resolved( &state, "127.0.0.1:12345", &config, 1, &status, NULL );
+        check( server == NULL );
+        if ( server )
+        {
+            rn_test_server_transport_stop_and_destroy( server );
+        }
+        check( status == ROCKETNET_STATUS_NO_TRANSPORT_FOUND );
+        check( state.calls == calls );
+        check( state.live == live );
+    }
+
     // a clean term, then restore the default allocator for the worker's term
 
     check( rocketnet_test_loopback_hub_release() );
@@ -329,3 +360,169 @@ static void test_protocol_id_zero_refused( void )
 }
 
 REGISTER_UNIT_TEST( test_protocol_id_zero_refused );
+#if ROCKETNET_DEV
+// A server start that fails after its transport's worker started, the worker
+// not exited a second after it was told to stop, keeps that transport in the
+// server and frees nothing under the worker (rocketnet_server_start,
+// proofs/tla/ServerSession.tla StartFailsKept then StopCompletes). Public API
+// only. The hold seam (rocketnet_test_seams.h) answers the stopped query as
+// not stopped and counts polls, on a counter clock each poll advances by
+// 1 ms; past the ceiling the case fails, so a wait with no deadline cannot
+// hang the suite. While held the server is stopping: stopped is false, start
+// is refused with SERVER_NOT_STOPPED, and destroy keeps the server (its wait
+// set to 0 s) without counting misuse. Once the hold is cleared the worker
+// has exited: stopped is true, destroy frees it, and the library terminates
+// with nothing live under a counting allocator. The failure is a second
+// loopback server on the address the first holds. No socket.
+//
+// What this shows: who owns the transport. The public server keeps it
+// through the failed start, reports it, refuses a restart, and frees it once
+// the worker has exited; nothing is reached through a captured pointer. What
+// it does not show: a real worker delayed past a second (the hold stands in
+// for its completion, simulated, with no real time), a failure after the
+// protocol was set up (the failure here is the bind), the keys wiped at the
+// handoff, a successful start after the worker exits (the case destroys
+// instead), or how long destroy waits (its budget is set to 0 s, so the early
+// destroy returns at once rather than after the 1 s a build gives it).
+// proofs/tla/RNCreateUnwind.tla UnwindDeadline then RetainedFrees model the
+// ownership.
+
+struct failed_start_hold_t
+{
+    int polls;
+    int ceiling;
+    int logged;
+};
+
+static int failed_start_hold( void * context, struct rocketnet_server_transport_t * )
+{
+    failed_start_hold_t * hold = (failed_start_hold_t *) context;
+    hold->polls++;
+    if ( hold->polls > hold->ceiling )
+    {
+        rocketnet_unit_check( 0 );
+    }
+    return 1;
+}
+
+static void failed_start_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t )
+{
+    if ( level == ROCKETNET_LOG_LEVEL_ERROR && strstr( message, "the server keeps the transport, not freed, until it has" ) != NULL )
+    {
+        ( (failed_start_hold_t *) context )->logged++;
+    }
+}
+
+// a global count: the library passes each call's own context, NULL here
+static int g_failed_start_live = 0;
+
+static void * failed_start_allocate( void * context, size_t bytes )
+{
+    (void) context;
+    void * base = malloc( bytes + 128 );
+    if ( !base )
+    {
+        return NULL;
+    }
+    uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
+    memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
+    ++g_failed_start_live;
+    return (void *) address;
+}
+
+static void failed_start_release( void * context, void * pointer )
+{
+    (void) context;
+    void * base = NULL;
+    memcpy( &base, (uint8_t *) pointer - sizeof( void * ), sizeof( base ) );
+    --g_failed_start_live;
+    free( base );
+}
+
+static void test_server_failed_start_keeps_its_transport_until_the_worker_exits()
+{
+    // the worker starts initialized: terminate, and initialize again with a
+    // counting allocator
+
+    g_failed_start_live = 0;
+    rocketnet_unit_check( rocketnet_test_loopback_hub_release() );
+    rocketnet_unit_check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+    int init_status = -1;
+    rocketnet_unit_check( rocketnet_init_internal( NULL, failed_start_allocate, failed_start_release, &init_status ) );
+    rocketnet_unit_check( init_status == ROCKETNET_STATUS_OK );
+
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+    {
+        seed[i] = (uint8_t) ( 0x5F ^ i );
+    }
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
+    rocketnet_unit_check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_server_config_t config;
+    rocketnet_unit_check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
+    config.protocol_id = 1;
+    config.max_clients = 1;
+    config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    memcpy( config.backend_public_key, backend_public, sizeof( config.backend_public_key ) );
+
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    rocketnet_server_t * holder = rocketnet_server_create( NULL, "127.0.0.1:40777", NULL, &config, &status );
+    rocketnet_unit_check( holder != NULL && status == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( rocketnet_server_start( holder ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_server_t * second = rocketnet_server_create( NULL, "127.0.0.1:40777", NULL, &config, &status );
+    rocketnet_unit_check( second != NULL && status == ROCKETNET_STATUS_OK );
+
+    failed_start_hold_t hold = {};
+    hold.ceiling = 1000 + 64;
+
+    rocketnet_dev_set_server_abort_create_hold_hook( failed_start_hold, &hold );
+    rocketnet_log_function( failed_start_log, &hold );
+
+    const enum rocketnet_status_t failed = rocketnet_server_start( second );
+
+    rocketnet_log_function( NULL, NULL );
+
+    rocketnet_unit_check( failed != ROCKETNET_STATUS_OK && failed != ROCKETNET_STATUS_SERVER_NOT_STOPPED );
+    rocketnet_unit_check( hold.polls >= 1000 );
+
+    // the worker has not exited: the server is stopping, and says so
+
+    rocketnet_quiet( true );
+    const uint64_t misuse_before = rocketnet_api_misuse_count();
+
+    rocketnet_unit_check( !rocketnet_server_running( second ) );
+    rocketnet_unit_check( !rocketnet_server_stopped( second ) );
+    rocketnet_unit_check( rocketnet_server_start( second ) == ROCKETNET_STATUS_SERVER_NOT_STOPPED );
+    rocketnet_unit_check( hold.logged == 1 );
+
+    // destroy waits (0 s here) and keeps the server: nothing is freed under
+    // the worker, and the server is still there to poll and destroy
+
+    rocketnet_destroy_stop_seconds_for_test( 0.0 );
+    rocketnet_server_destroy( second );
+    rocketnet_destroy_stop_seconds_for_test( -1.0 );
+    rocketnet_unit_check( !rocketnet_server_stopped( second ) );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == misuse_before );
+
+    // the worker exits: stopped, and destroy frees the transport with the server
+
+    rocketnet_dev_set_server_abort_create_hold_hook( NULL, NULL );
+    rocketnet_unit_check( rocketnet_server_stopped( second ) );
+    rocketnet_server_destroy( second );
+    rocketnet_unit_check( rocketnet_api_misuse_count() == misuse_before );
+    rocketnet_quiet( false );
+
+    rn_test_server_stop_and_destroy( holder );
+
+    rocketnet_unit_check( rocketnet_test_loopback_hub_release() );
+    rocketnet_unit_check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+    rocketnet_unit_check( g_failed_start_live == 0 );
+    rocketnet_unit_check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+}
+
+REGISTER_UNIT_TEST( test_server_failed_start_keeps_its_transport_until_the_worker_exits );
+#endif // #if ROCKETNET_DEV

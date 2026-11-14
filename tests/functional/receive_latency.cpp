@@ -10,12 +10,21 @@
     back returns it one update late (sdk/rocketnet_receive_delivery_check.h is
     the same rule as a unit test, with no time).
 
-    Each row is one server transport, and is one case. The server updates at
-    RECEIVE_LATENCY_RATE on the case's thread and the two clients run on a
-    second thread. Each frame, every client sends the server a message at 15%
-    and again at 55% of the frame, timed from the server's update, so the
-    server's handoff gets two datagrams a frame some time apart; the receive
-    call is the server's update.
+    The server updates at RECEIVE_LATENCY_RATE on the case's thread and the two
+    clients run on a second thread. Each frame, every message goes out at 15%
+    and again at 55% of the frame, so the receiver's handoff gets two datagrams
+    a frame some time apart. Each row is one transport pair and one direction,
+    and is one case:
+
+      server  each client sends the server a message at both phases, timed
+              from the server's update; the receive call is the server's
+              update.
+      client  the server sends each client a message at both phases, between
+              its updates; the clients update on their own thread at 75% of
+              the frame, and the receive call is the client's update. The
+              row measures the client transport it names (the I/O thread's
+              receive handoff, sdk/rocketnet_receive_handoff.h); its server
+              may be any.
 
     A message is late when the receive call that returned it is not the first
     one to begin after its send. The case asserts on the count of late
@@ -23,8 +32,12 @@
     A rule that holds datagrams back an update makes at least the second
     message of each frame late (half of all, and nearly all in practice); a
     loaded runner that stalls a thread for a fifth of a frame makes a few late.
-    It also requires every message to arrive. To add a transport, add a row to
-    receive_latency_rows and register its case in rocketnet_functional_tests.cpp.
+    It also requires every message to arrive. A client row in a DEV build also
+    requires that the clients' update opened no session packet on its own
+    thread (rocketnet_crypto_tally): once connected, the I/O thread opens
+    every payload (proofs/tla/RNClientIoDecrypt.tla OpenPayloads). To add a
+    transport, add a row to receive_latency_rows and register its case in
+    rocketnet_functional_tests.cpp.
 
     The xdp row runs only where the veth cases run (root in the xdp guest,
     rocketnet_test_xdp_veth_runs_here): the server binds the near end of the
@@ -36,6 +49,8 @@
 #include "../time_scale.h"
 #include "../token_string.h"
 #include "rocketnet.h"
+#include "rocketnet_crypto_tally.h"
+#include "rocketnet_driver.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 
@@ -69,6 +84,7 @@ const char * rocketnet_xdp_veth_host( bool ipv6, bool far );
 #define RECEIVE_LATENCY_MIN_FRAMES 20
 #define RECEIVE_LATENCY_CLIENTS 2
 #define RECEIVE_LATENCY_PHASES 2
+#define RECEIVE_LATENCY_CLIENT_PHASE 0.75
 #define RECEIVE_LATENCY_LATE_PERCENT 10
 #define RECEIVE_LATENCY_PROTOCOL_ID 0x524c4154454e4359ULL
 
@@ -77,22 +93,33 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds
 // any filter but the published test filter, which a production library refuses
 static const uint8_t receive_latency_packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x52, 0x4C, 0x41, 0x54 };
 
+enum receive_latency_direction_t
+{
+    RECEIVE_LATENCY_SERVER,
+    RECEIVE_LATENCY_CLIENT,
+};
+
 struct receive_latency_row_t
 {
     const char * name;
     const char * server_transport;
     const char * client_transport;
+    enum receive_latency_direction_t direction;
     bool veth; // the server on the near end of the case's veth pair, the clients on the far end
 };
 
 // the rows: one case each (rocketnet_functional_tests.cpp registers them)
 static const struct receive_latency_row_t receive_latency_rows[] = {
-    { "server_gso", "gso", "portable", false },
-    { "server_io_uring", "io_uring", "portable", false },
-    { "server_xdp", "xdp", "portable", true },
-    { "server_rio", "rio", "portable", false },
-    { "server_iocp", "iocp", "portable", false },
-    { "server_msgx", "msgx", "portable", false },
+    { "server_gso", "gso", "portable", RECEIVE_LATENCY_SERVER, false },
+    { "server_io_uring", "io_uring", "portable", RECEIVE_LATENCY_SERVER, false },
+    { "server_xdp", "xdp", "portable", RECEIVE_LATENCY_SERVER, true },
+    { "server_rio", "rio", "portable", RECEIVE_LATENCY_SERVER, false },
+    { "server_iocp", "iocp", "portable", RECEIVE_LATENCY_SERVER, false },
+    { "server_msgx", "msgx", "portable", RECEIVE_LATENCY_SERVER, false },
+    { "client_portable", "portable", "portable", RECEIVE_LATENCY_CLIENT, false },
+    { "client_gso", "portable", "gso", RECEIVE_LATENCY_CLIENT, false },
+    { "client_msgx", "portable", "msgx", RECEIVE_LATENCY_CLIENT, false },
+    { "client_iocp", "iocp", "iocp", RECEIVE_LATENCY_CLIENT, false },
 };
 
 // the phase of each send in the frame
@@ -206,6 +233,14 @@ static void receive_latency_veth_down( const char * name, bool restore_xdp_threa
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
+// the io_uring row in a build without liburing: the transport has no
+// backend, and its documented fallback (rocketnet_test_server_pin_allows_io_uring)
+// runs the row on another transport, which the case does not measure
+static bool receive_latency_io_uring_unbuilt( const struct receive_latency_row_t * row )
+{
+    return strcmp( row->server_transport, "io_uring" ) == 0 && !rocketnet_transport_definition( ROCKETNET_TRANSPORT_IO_URING )->backend;
+}
+
 static void receive_latency_run( const struct receive_latency_row_t * row )
 {
     const char * name = row->name;
@@ -281,12 +316,22 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
     receive_latency_check( server && status == ROCKETNET_STATUS_OK, name, "server create" );
     receive_latency_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK, name, "server start" );
 
-    // a build or kernel without the transport falls to another one through
-    // the pin's own fallback (rocketnet_test_server_pin_allows_io_uring): the
-    // row measures only the transport it names
-    if ( strcmp( rocketnet_server_transport_name( server ), row->server_transport ) != 0 )
+    // a server row measures the server transport it names. A leg whose server
+    // pin excludes it, or a host that cannot grant it, skips the row through
+    // its predicate before it runs (SKIPPED with that predicate's name,
+    // expected_skips.txt); a row that runs asked for a transport the leg
+    // allows, so being granted another fails the case. The one fallback that
+    // passes is the io_uring row's documented one
+    // (rocketnet_test_server_pin_allows_io_uring): a build without liburing
+    // still runs the row and the request falls to portable, which the case
+    // reports and does not measure. A client row measures the client's
+    // transport, so its server may be any (a leg's server pin).
+    const char * server_granted = rocketnet_server_transport_name( server );
+    if ( row->direction == RECEIVE_LATENCY_SERVER && ( !server_granted || strcmp( server_granted, row->server_transport ) != 0 ) )
     {
-        printf( "receive latency %s: granted %s, not %s: nothing to measure\n", name, rocketnet_server_transport_name( server ), row->server_transport );
+        const bool unbuilt_io_uring = receive_latency_io_uring_unbuilt( row );
+        printf( "receive latency %s: granted %s, not %s: %s\n", name, server_granted ? server_granted : "none", row->server_transport,
+                unbuilt_io_uring ? "io_uring is not built, so the pin falls to another transport: nothing to measure" : "the requested transport was not granted" );
         fflush( stdout );
         rn_cli_server_stop_and_destroy( server );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
@@ -295,6 +340,7 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
             receive_latency_veth_down( name, restore_xdp_threads, saved_xdp_threads, restore_os_cpus, saved_os_cpus );
         }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+        receive_latency_check( unbuilt_io_uring, name, "the server was granted another transport than the row measures" );
         return;
     }
 
@@ -359,51 +405,120 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
         rocketnet_sleep( 0.001 );
     }
 
+    int slot[RECEIVE_LATENCY_CLIENTS];
+    for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
+    {
+        slot[c] = rocketnet_client_index( clients[c] );
+        receive_latency_check( slot[c] >= 0, name, "client has no slot" );
+    }
+
+    // a client row measures the client transport it names, and is registered
+    // only where that transport ships and no pin excludes it: a client
+    // granted any other transport fails the row, so a leg meant to measure it
+    // never passes having measured something else
+    if ( row->direction == RECEIVE_LATENCY_CLIENT )
+    {
+        for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
+        {
+            const char * granted = rocketnet_client_transport_name( clients[c] );
+            if ( !granted || strcmp( granted, row->client_transport ) != 0 )
+            {
+                printf( "receive latency %s: client %d granted %s, not %s\n", name, c, granted ? granted : "none", row->client_transport );
+                fflush( stdout );
+                receive_latency_check( false, name, "the client was granted another transport than the row measures" );
+            }
+        }
+    }
+
     const int total = frames * RECEIVE_LATENCY_PHASES * RECEIVE_LATENCY_CLIENTS;
     std::vector<double> send_time( (size_t) total, 0.0 );
     std::vector<int> received_at( (size_t) total, -1 );
-    // the server updates frames + 2 times, the last two after the last send
+    // both sides update frames + 2 times, the last two after the last send
     std::vector<double> server_update( (size_t) frames + 2, 0.0 );
+    std::vector<double> client_update( (size_t) frames + 2, 0.0 );
 
     // the server's update starts, published to the client thread
     std::atomic<int> server_updates( 0 );
     std::atomic<double> last_update( 0.0 );
     std::atomic<bool> stop( false );
+    // the session packets the clients' update opened on the client thread
+    uint64_t client_thread_opens = 0;
 
     const double start = rocketnet_time() + 0.1;
 
-    // each frame: every client sends at each phase, timed from the server's
-    // update. A frame the thread missed (the host stalled it past an update)
-    // is sent at once, so every message is still sent; its lateness is
-    // measured from its own send time
     std::thread client_thread( [&]()
                                {
-        int sent_frame = -1;
-        while ( !stop.load() )
+        if ( row->direction == RECEIVE_LATENCY_SERVER )
         {
+            // each frame: every client sends at each phase, timed from the
+            // server's update. A frame the thread missed (the host stalled it
+            // past an update) is sent at once, so every message is still
+            // sent; its lateness is measured from its own send time
+            int sent_frame = -1;
+            while ( !stop.load() )
+            {
+                for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
+                {
+                    receive_latency_pump( clients[c] );
+                }
+                const int k = server_updates.load() - 1;
+                const int last = k < frames ? k : frames - 1;
+                for ( int f = sent_frame + 1; f <= last; f++ )
+                {
+                    const double begun = last_update.load();
+                    for ( int phase = 0; phase < RECEIVE_LATENCY_PHASES; phase++ )
+                    {
+                        if ( f == k )
+                        {
+                            receive_latency_wait_until( begun + receive_latency_phase[phase] / rate );
+                        }
+                        for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
+                        {
+                            receive_latency_check( receive_latency_send( clients[c], receive_latency_sequence( f, phase, c ) ), name, "client send refused" );
+                        }
+                    }
+                    sent_frame = f;
+                }
+                rocketnet_sleep( 0.0005 );
+            }
+            return;
+        }
+
+        // client direction: the clients update late in each frame, two frames
+        // past the server's last send
+        for ( int j = 0; j < frames + 2; j++ )
+        {
+            const double now = receive_latency_wait_until( start + ( j + RECEIVE_LATENCY_CLIENT_PHASE ) / rate );
+            client_update[(size_t) j] = now;
             for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
             {
-                receive_latency_pump( clients[c] );
-            }
-            const int k = server_updates.load() - 1;
-            const int last = k < frames ? k : frames - 1;
-            for ( int f = sent_frame + 1; f <= last; f++ )
-            {
-                const double begun = last_update.load();
-                for ( int phase = 0; phase < RECEIVE_LATENCY_PHASES; phase++ )
+#if ROCKETNET_DEV
+                const uint64_t opens_before = rocketnet_crypto_tally_get().aead_open;
+#endif // #if ROCKETNET_DEV
+                rocketnet_client_update( clients[c], now );
+                const struct rocketnet_message_batch_t * batch;
+                while ( ( batch = rocketnet_client_receive_messages( clients[c] ) ) != NULL )
                 {
-                    if ( f == k )
+                    for ( int i = 0; i < batch->num_messages; i++ )
                     {
-                        receive_latency_wait_until( begun + receive_latency_phase[phase] / rate );
-                    }
-                    for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
-                    {
-                        receive_latency_check( receive_latency_send( clients[c], receive_latency_sequence( f, phase, c ) ), name, "client send refused" );
+                        struct receive_latency_payload_t payload;
+                        if ( batch->bytes[i] != (int) sizeof( payload ) )
+                        {
+                            continue;
+                        }
+                        memcpy( &payload, batch->data[i], sizeof( payload ) );
+                        if ( payload.sequence < (uint32_t) total && received_at[payload.sequence] < 0 )
+                        {
+                            received_at[payload.sequence] = j;
+                            send_time[payload.sequence] = payload.send_time;
+                        }
                     }
                 }
-                sent_frame = f;
+                rocketnet_client_send_packets( clients[c] );
+#if ROCKETNET_DEV
+                client_thread_opens += rocketnet_crypto_tally_get().aead_open - opens_before;
+#endif // #if ROCKETNET_DEV
             }
-            rocketnet_sleep( 0.0005 );
         } } );
 
     // the server, on an absolute schedule
@@ -419,7 +534,7 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
             for ( int i = 0; i < batch->num_messages; i++ )
             {
                 struct receive_latency_payload_t payload;
-                if ( batch->bytes[i] != (int) sizeof( payload ) )
+                if ( row->direction != RECEIVE_LATENCY_SERVER || batch->bytes[i] != (int) sizeof( payload ) )
                 {
                     continue;
                 }
@@ -432,6 +547,26 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
             }
         }
         rocketnet_server_send_packets( server );
+        if ( row->direction == RECEIVE_LATENCY_CLIENT && k < frames )
+        {
+            // each frame: the server sends every client a message at each phase
+            for ( int phase = 0; phase < RECEIVE_LATENCY_PHASES; phase++ )
+            {
+                receive_latency_wait_until( now + receive_latency_phase[phase] / rate );
+                for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
+                {
+                    struct receive_latency_payload_t payload;
+                    memset( &payload, 0, sizeof( payload ) );
+                    payload.sequence = receive_latency_sequence( k, phase, c );
+                    payload.send_time = rocketnet_time();
+                    uint8_t * data = rocketnet_server_start_message( server, (uint64_t) slot[c], 0, ROCKETNET_RELIABILITY_UNRELIABLE, (int) sizeof( payload ) );
+                    receive_latency_check( data != NULL, name, "server send refused" );
+                    memcpy( data, &payload, sizeof( payload ) );
+                    receive_latency_check( rocketnet_server_finish_message( server, (int) sizeof( payload ) ) != 0, name, "server finish refused" );
+                }
+                rocketnet_server_send_packets( server );
+            }
+        }
         last_update.store( now );
         server_updates.store( k + 1 );
     }
@@ -442,7 +577,7 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
     // count: a message is late when the update that returned it is not the
     // first to begin after its send
 
-    const std::vector<double> & updates = server_update;
+    const std::vector<double> & updates = row->direction == RECEIVE_LATENCY_SERVER ? server_update : client_update;
     int late = 0;
     int lost = 0;
     double sum = 0.0;
@@ -484,6 +619,7 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
     char too_late[128];
     snprintf( too_late, sizeof( too_late ), "more messages than the bound waited an extra %.1f ms at %.0f Hz (one update)", 1000.0 / rate, rate );
     receive_latency_check( late * 100 <= total * RECEIVE_LATENCY_LATE_PERCENT, name, too_late );
+    receive_latency_check( client_thread_opens == 0, name, "the clients' update opened session packets the I/O thread passed raw" );
 }
 
 static void receive_latency_run_named( const char * row_name )
@@ -502,6 +638,10 @@ static void receive_latency_run_named( const char * row_name )
 void rocketnet_test_receive_latency_server_gso();
 void rocketnet_test_receive_latency_server_io_uring();
 void rocketnet_test_receive_latency_server_xdp();
+void rocketnet_test_receive_latency_client_portable();
+void rocketnet_test_receive_latency_client_gso();
+void rocketnet_test_receive_latency_client_msgx();
+void rocketnet_test_receive_latency_client_iocp();
 
 void rocketnet_test_receive_latency_server_gso()
 {
@@ -516,6 +656,26 @@ void rocketnet_test_receive_latency_server_io_uring()
 void rocketnet_test_receive_latency_server_xdp()
 {
     receive_latency_run_named( "server_xdp" );
+}
+
+void rocketnet_test_receive_latency_client_portable()
+{
+    receive_latency_run_named( "client_portable" );
+}
+
+void rocketnet_test_receive_latency_client_gso()
+{
+    receive_latency_run_named( "client_gso" );
+}
+
+void rocketnet_test_receive_latency_client_msgx()
+{
+    receive_latency_run_named( "client_msgx" );
+}
+
+void rocketnet_test_receive_latency_client_iocp()
+{
+    receive_latency_run_named( "client_iocp" );
 }
 
 void rocketnet_test_receive_latency_server_rio();

@@ -14,10 +14,10 @@
 //   2. the dev connect-token writer takes connect_token_bytes and returns a status
 //   3. typed enums replace the #defines, named ROCKETNET_<SET>_<VALUE>; the
 //      updates return void, and the client state carries the disconnect reason
-//   4. pure questions return bool; step_driven is an int flag (0/1)
+//   4. pure questions return bool; step_driven is a bool flag
 //   5. Next SDK naming: rocketnet_log_level, rocketnet_assert_function
 //   6. one log sink: rocketnet_log_function; the log level is an enum
-//   7. every lookup ends in _name and returns "unknown" for an unknown value
+//   7. every lookup ends in _name and returns "UNKNOWN" for an unknown value
 //   8. memory and buffer sizes are size_t; create takes the config alone
 //   9. a NULL client's state is ROCKETNET_CLIENT_STATE_DISCONNECTED, counted as misuse
 
@@ -85,6 +85,12 @@ static_assert( rn_same<decltype( rocketnet_client_connect( NULL, NULL ) ), rocke
 static_assert( rn_same<decltype( rocketnet_server_start( NULL ) ), rocketnet_status_t>::value, "ruling 1: start" );
 static_assert( rn_same<decltype( &rocketnet_status_name ), const char * (*) ( rocketnet_status_t )>::value, "ruling 1 and 7: status_name takes the enum" );
 
+// --- ruling 2: the dev token writer takes the buffer's size and returns a status
+
+static_assert( rn_same<decltype( &rocketnet_write_test_connect_token ),
+                       rocketnet_status_t ( * )( const char *, uint64_t, uint64_t, uint8_t *, size_t )>::value,
+               "ruling 2: the dev token writer takes connect_token_bytes and returns a status" );
+
 // the published development keys, set by hand after the defaults
 
 static void api_polish_dev_server_config( struct rocketnet_server_config_t * config )
@@ -134,6 +140,13 @@ static void test_api_polish_status_returns()
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_production_connect_token( backend_secret, public_key, 0x1234ULL, addresses, 1, 7, 1000, 2000, 10, NULL, token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
     check( rocketnet_write_production_connect_token( backend_secret, public_key, 0x1234ULL, addresses, 1, 7, 1000, 2000, 10, NULL, token, sizeof( token ) - 1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+
+    // ruling 2: the dev token writer reads the buffer's size, where the old
+    // form wrote a whole token into any buffer: one byte short is refused
+    // with a status, and a whole token's buffer is written
+
+    check( rocketnet_write_test_connect_token( "127.0.0.1:40000", 7, 1000, token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_write_test_connect_token( "127.0.0.1:40000", 7, 1000, token, sizeof( token ) - 1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
     // the default config and create's status: OK is 0, where the old form's success was 1
 
@@ -215,7 +228,7 @@ static void test_api_polish_bool_field_abi()
 }
 REGISTER_UNIT_TEST( test_api_polish_bool_field_abi );
 
-// --- ruling 5 and 6: set_/get_ naming, one log sink, an enum level -------------
+// --- ruling 5 and 6: Next SDK naming, one log sink, an enum level -------------
 
 static_assert( rn_same<decltype( &rocketnet_log_level ), void ( * )( rocketnet_log_level_t )>::value, "ruling 5: rocketnet_log_level" );
 static_assert( rn_same<decltype( rocketnet_log_level_current() ), rocketnet_log_level_t>::value, "ruling 5: the internal rocketnet_log_level_current" );
@@ -266,7 +279,7 @@ static void test_api_polish_log_callback_receives_a_message()
 }
 REGISTER_UNIT_TEST( test_api_polish_log_callback_receives_a_message );
 
-// --- ruling 7: every lookup is _name and says "unknown" ------------------------
+// --- ruling 7: every lookup is _name and says "UNKNOWN" ------------------------
 
 static_assert( rn_same<decltype( &rocketnet_log_level_name ), const char * (*) ( rocketnet_log_level_t )>::value, "ruling 7: log level name" );
 static_assert( rn_same<decltype( &rocketnet_client_state_name ), const char * (*) ( rocketnet_client_state_t )>::value, "ruling 7: client state name" );
@@ -517,16 +530,132 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
 }
 REGISTER_UNIT_TEST( test_api_polish_client_index_is_minus_one_until_connected );
 
+// --- a negative first update time is misuse on every clock ----------------------
+
+// Update times are finite and non-negative, the first included (rocketnet.h
+// rocketnet_client_update, rocketnet_server_update): every clock starts at
+// 0.0, so a negative first time is a step back, counted as misuse, and the
+// clock starts at the first time it accepts. The server, the client handle
+// with no connection, and a connection's first update all agree.
+
+static void test_api_polish_negative_first_update_time_is_misuse()
+{
+    rocketnet_quiet( true );
+    rocketnet_assert_function( api_polish_count_assert );
+    g_polish_asserts = 0;
+    g_polish_index_now = 1000.0;
+
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+    {
+        seed[i] = (uint8_t) ( 0x3E ^ i );
+    }
+
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
+    check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_server_config_t server_config;
+    check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+    server_config.protocol_id = API_POLISH_INDEX_PROTOCOL;
+    server_config.max_clients = 1;
+    server_config.transport = "loopback";
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+    memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
+
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    check( server != NULL );
+    check( create_status == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+    // the server: every negative time is misuse, repeated and increasing
+    // ones included (rocketnet_update_clock_advance refuses each before the
+    // clock reads it); the next good time is not
+
+    uint64_t before = rocketnet_api_misuse_count();
+    rocketnet_server_update( server, -5.0 );
+    rocketnet_server_update( server, -5.0 );
+    rocketnet_server_update( server, -4.0 );
+    check( rocketnet_api_misuse_count() == before + 3 );
+    before = rocketnet_api_misuse_count();
+    rocketnet_server_update( server, g_polish_index_now );
+    rocketnet_server_send_packets( server );
+    check( rocketnet_api_misuse_count() == before );
+
+    char address[64];
+    snprintf( address, sizeof( address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+
+    const char * addresses[] = { address };
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    check( rn_test_server_token_string( backend_secret, server, API_POLISH_INDEX_PROTOCOL, addresses, 1,
+                                        0x3E, 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    client_config.transport = "loopback";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
+    client_config.step_driven = 1;
+    client_config.time_callback = api_polish_index_clock;
+
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
+    check( client != NULL );
+    check( create_status == ROCKETNET_STATUS_OK );
+
+    // the client handle with no connection: the same rule as its connections
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_client_update( client, -5.0 );
+    rocketnet_client_update( client, -5.0 );
+    rocketnet_client_update( client, -4.0 );
+    check( rocketnet_api_misuse_count() == before + 3 );
+    before = rocketnet_api_misuse_count();
+    rocketnet_client_update( client, 0.5 );
+    check( rocketnet_api_misuse_count() == before );
+
+    // a connection's first update: negative is misuse, then it connects from
+    // the first good time
+
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+    before = rocketnet_api_misuse_count();
+    rocketnet_client_update( client, -5.0 );
+    rocketnet_client_update( client, -5.0 );
+    rocketnet_client_update( client, -4.0 );
+    check( rocketnet_api_misuse_count() == before + 3 );
+    before = rocketnet_api_misuse_count();
+
+    for ( int i = 0; i < 400 && rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    {
+        g_polish_index_now += 0.01;
+        rocketnet_client_update( client, g_polish_index_now );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_update( server, g_polish_index_now );
+        rocketnet_server_send_packets( server );
+    }
+
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_api_misuse_count() == before );
+    check( g_polish_asserts == 0 );
+
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
+    rocketnet_assert_function( NULL );
+    rocketnet_quiet( false );
+}
+REGISTER_UNIT_TEST( test_api_polish_negative_first_update_time_is_misuse );
+
 // --- a connected client in a server slot at or past this build's cap ------------
 
-// The client has no opinion on the server's slot count (sdk/rocketnet.h
-// rocketnet_client_index): a server with more slots than this build's
-// ROCKETNET_MAX_CLIENTS assigns a slot at or past that cap, and reading the
-// index back must return it without trapping. The server here is a protocol
-// object with ROCKETNET_MAX_CLIENTS + 1000 slots whose first
-// ROCKETNET_MAX_CLIENTS slots are already held, so the handshake assigns
-// slot ROCKETNET_MAX_CLIENTS; the client is a step-driven transport on the
-// fake driver, adopted as a public client once connected.
+// The client has no opinion on the server's slot count up to the slot count
+// maximum (standard/TRANSPORT.md t10 step 17, ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT):
+// a server with more slots than this build's ROCKETNET_MAX_CLIENTS assigns a
+// slot at or past that cap, and reading the index back must return it
+// without trapping. The server here is a protocol object with
+// ROCKETNET_MAX_CLIENTS + 1000 slots, capped at the slot count maximum,
+// whose first held_slots slots are already held (ROCKETNET_MAX_CLIENTS, or
+// one fewer than the server's slots in a build at the maximum), so the
+// handshake assigns slot held_slots; the client is a step-driven transport
+// on the fake driver, adopted as a public client once connected.
 
 static double g_polish_big_index_now = 1000.0;
 static double api_polish_big_index_clock( void * ) { return g_polish_big_index_now; }
@@ -538,7 +667,12 @@ static void test_api_polish_client_index_at_build_max_clients()
     g_polish_asserts = 0;
     g_polish_big_index_now = 1000.0;
 
-    const int server_max_clients = ROCKETNET_MAX_CLIENTS + 1000;
+    // the server's slots stop at the keep-alive's slot count ceiling (t10
+    // step 17), the most any server can be built with; in a build at that
+    // ceiling the held slots leave the last one free
+
+    const int server_max_clients = ROCKETNET_MAX_CLIENTS + 1000 <= ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT ? ROCKETNET_MAX_CLIENTS + 1000 : ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT;
+    const int held_slots = ROCKETNET_MAX_CLIENTS < server_max_clients ? ROCKETNET_MAX_CLIENTS : server_max_clients - 1;
 
     struct rocketnet_counters_t server_counters;
     memset( &server_counters, 0, sizeof( server_counters ) );
@@ -567,7 +701,7 @@ static void test_api_polish_client_index_at_build_max_clients()
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, 0, sizeof( user_data ) );
-    for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; i++ )
+    for ( int i = 0; i < held_slots; i++ )
     {
         const uint64_t dummy_id = UINT64_C( 0xD000000000000000 ) | (uint64_t) (uint32_t) i;
         check( rocketnet_client_slots_assign( server.client_slots, dummy_id, -1, dummy_id, user_data ) == i );
@@ -644,7 +778,7 @@ static void test_api_polish_client_index_at_build_max_clients()
     }
 
     check( rocketnet_client_transport_state( transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
-    check( rocketnet_client_transport_client_index( transport ) == ROCKETNET_MAX_CLIENTS );
+    check( rocketnet_client_transport_client_index( transport ) == held_slots );
 
     rn_message_link_t link;
     rn_message_client_link( &link, transport );
@@ -660,7 +794,7 @@ static void test_api_polish_client_index_at_build_max_clients()
     // the server-assigned slot is at this build's cap: reading it must not trap
 
     g_polish_asserts = 0;
-    check( rocketnet_client_index( client ) == ROCKETNET_MAX_CLIENTS );
+    check( rocketnet_client_index( client ) == held_slots );
     check( g_polish_asserts == 0 );
 
     rn_test_client_stop_and_destroy( client );
