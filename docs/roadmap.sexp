@@ -993,11 +993,6 @@
    :text "nightly linux / mutation reports 194 new survivors (150 on 11-13) against the 181 rows of tools/mutation/survivors.tsv, and 46 of 515 mutants do not compile. The daily slices were never triaged into the baseline. Fix: triage each slice's survivors into a test or a survivors.tsv row with its reason."
    :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly 43577137425")
 
-  (item "channel-seed-block-resend-cost" :group "review-v1-2" :area "tests"
-   :title "Channel seeds: test_block_resend_cost_over_long_path fails on rolling seeds"
-   :text "nightly-channel-seeds fails test_block_resend_cost_over_long_path with reason=one at seed 4917323 (a1a426851) and 4914435 (21543f689); red on 11-12 and 11-13 too. GUESS on the class: what 'one' asserts was not read. Settled by replaying seed 4917323 alone."
-   :date "2026-11-14" :origin "Nightly triage 2026-11-14: nightly-channel-seeds 43580939573")
-
   (item "linux-transport-cells-x50" :group "review-v1-2" :area "tests"
    :title "Linux transport cells x50: every cell red, cause only in the artifacts"
    :text "nightly linux / transport cells x50 and ASan fails every suite cell (portable/portable, auto, gso, io_uring, loopback) on amd-1-1 and vision-1, and was red on 11-13. The failing case is printed only in the per-cell suite logs uploaded as artifacts. GUESS: the env-pinned placement cases (env-pinned-placement-cast) or an ASan report. Settled by the artifacts; fix then: print each cell's first failing check into the job log."
