@@ -1534,15 +1534,22 @@ static int posix_connected_send_to_closed_port( int ipv6, const char * pump )
     int checked = 0;
     for ( int call = 0; call < 2; call++ )
     {
-        // the first datagram draws the ICMP; wait until the socket holds it
+        // the first datagram draws the ICMP; wait until the socket holds it.
+        // The kernel rate-limits these (measured on macOS: a datagram sent
+        // within about 100 ms of the last ICMP draws none), so the datagram
+        // goes again every 250 ms until one is queued, for up to 5 s
 
-        rocketnet_platform_socket_send_packet( socket, &to, packets[0], (int) sizeof( packets[0] ) );
         struct pollfd pending;
         pending.fd = socket->handle;
         pending.events = POLLIN;
         pending.revents = 0;
-        const int ready = poll( &pending, 1, 5000 );
-        posix_check( ready >= 0 );
+        int ready = 0;
+        for ( int wait = 0; wait < 20 && ready == 0; wait++ )
+        {
+            rocketnet_platform_socket_send_packet( socket, &to, packets[0], (int) sizeof( packets[0] ) );
+            ready = poll( &pending, 1, 250 );
+            posix_check( ready >= 0 );
+        }
         if ( ready == 0 )
         {
             // the host sent no ICMP (a kernel's global ICMP rate limit, shared
