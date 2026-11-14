@@ -47,6 +47,7 @@ struct harden_message_t
 
 struct harden_stream_t
 {
+    uint64_t client_id = 0; // the stream's owner: a server slot's stream changes owner when another client takes the slot
     uint32_t connection = 0;
     uint32_t expected = 0;
     uint32_t first = 0;     // the connection's first sequence taken: the ones below it are in head
@@ -64,6 +65,7 @@ struct harden_verify_t
     uint64_t errors = 0;
     uint64_t wrong_owner = 0;
     uint64_t reliable_gaps = 0;
+    uint64_t old_connection = 0;
     uint64_t back = 0;
     uint64_t duplicates = 0;
 };
@@ -82,14 +84,38 @@ static inline void harden_stream_mark( harden_stream_t * stream, uint32_t sequen
 
 static inline void harden_stream_take( harden_stream_t * stream, const harden_message_t * m, bool reliable, harden_verify_t * v )
 {
-    if ( !stream->started || stream->connection != m->connection )
+    if ( stream->started && stream->client_id == m->client_id && m->connection < stream->connection )
+    {
+        // the same client's earlier connection: connection ids only grow (the
+        // server's for each connect, and a client's own count of its
+        // connects), so this is an old session's message delivered after the
+        // new one began. An isolation error, and it never resets the stream
+        v->old_connection++;
+        v->errors++;
+        return;
+    }
+    if ( !stream->started || stream->client_id != m->client_id || stream->connection != m->connection )
     {
         // a new connection's first message: sequences start at 0, so what
-        // came before it was sent before this end could take it
+        // came before it was sent before this end could take it. A reliable
+        // ordered kind delivers its connection's messages in order from the
+        // first, so a first message past 0 names messages lost on a live
+        // connection: a gap
+        if ( reliable && m->sequence != 0 )
+        {
+            v->reliable_gaps++;
+            v->errors++;
+        }
         *stream = harden_stream_t();
         stream->started = true;
+        stream->client_id = m->client_id;
         stream->connection = m->connection;
-        v->head[m->kind] += m->sequence;
+        if ( !reliable )
+        {
+            // an unreliable kind's messages before the first taken are the
+            // head: lost before this end could take them, counted, never failed
+            v->head[m->kind] += m->sequence;
+        }
         stream->expected = m->sequence;
         stream->first = m->sequence;
     }

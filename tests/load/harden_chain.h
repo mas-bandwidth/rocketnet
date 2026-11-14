@@ -15,6 +15,12 @@
 
 #include <stdint.h>
 
+// the most datagrams one GSO skb carries: the kernel's UDP_MAX_SEGMENTS floor,
+// which every library send path keeps to (ROCKETNET_GSO_MAX_SEGMENTS,
+// ROCKETNET_CLIENT_GSO_MAX_SEGMENTS, ROCKETNET_URING_MAX_SEGMENTS), and GRO's
+// most segments in one receive skb
+#define HARDEN_GSO_MAX_SEGMENTS 64
+
 // one direction's chain, every term named: what the sending library counted,
 // what the sending namespace's kernel took or refused, what the qdisc and the
 // device dropped on the way, what the receiving namespace's kernel saw, and
@@ -159,9 +165,16 @@ static inline harden_chain_result_t harden_chain_judge( const harden_chain_t & c
     // names one where the libraries lost several. The datagrams riding in a
     // GSO skb beyond its first are the send_gap (OutDatagrams counts the skb),
     // so while any of those drops, a gap of at most that many is a dropped
-    // GSO skb's later segments; the gap is never below zero
+    // GSO skb's later segments; the gap is never below zero. Each named skb
+    // hides at most HARDEN_GSO_MAX_SEGMENTS - 1 more, and only a sender
+    // whose kernel counted the library's sends batched them: with no kernel
+    // send counted (an XDP server sends below the kernel's UDP, or the OS
+    // reads no counters) the send_gap is every datagram, not a GSO batch,
+    // and there is no slack
     const int64_t skb_drops = c.qdisc_dropped + c.kernel_sndbuf + r.cell_noports + c.arrived_inerrors;
-    r.gso_slack = skb_drops > 0 && r.send_gap > 0 ? r.send_gap : 0;
+    const bool batched = c.sender_counters && c.kernel_out > 0 && r.send_gap > 0;
+    const int64_t per_skb = skb_drops * ( HARDEN_GSO_MAX_SEGMENTS - 1 );
+    r.gso_slack = skb_drops > 0 && batched ? ( r.send_gap < per_skb ? r.send_gap : per_skb ) : 0;
     const bool gap_ok = duplicates_expected ? r.library_gap <= 0 : r.library_gap >= -c.device_overlap && r.library_gap <= r.gso_slack;
     r.ok = r.strays_valid && gap_ok;
     return r;

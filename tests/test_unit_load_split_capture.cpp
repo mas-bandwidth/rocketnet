@@ -554,6 +554,26 @@ static void test_load_split_capture_sdk_reads_both_ends()
 
     // the counter blocks are the ones the endpoint counts in
 
+    // (each block is the layer's own, read through the layers: the server's
+    // transport and message server, the client's connection and its
+    // transport; the transport and message blocks are two blocks)
+
+    struct rocketnet_message_server_t * message_server = rocketnet_server_message_server( pair.server );
+    check( message_server != NULL );
+    struct rocketnet_server_transport_t * server_transport = rocketnet_message_server_transport( message_server );
+    check( server_transport != NULL );
+    check( rocketnet_server_transport_counter_block( pair.server ) == rocketnet_server_transport_counters( server_transport ) );
+    check( rocketnet_server_message_counter_block( pair.server ) == rocketnet_message_server_counters( message_server ) );
+    check( rocketnet_server_transport_counter_block( pair.server ) != rocketnet_server_message_counter_block( pair.server ) );
+
+    struct rocketnet_message_client_t * message_client = rocketnet_client_message_client( pair.client );
+    check( message_client != NULL );
+    struct rocketnet_client_transport_t * client_transport = rocketnet_message_client_transport( message_client );
+    check( client_transport != NULL );
+    check( rocketnet_client_transport_counter_block( pair.client ) == rocketnet_client_transport_counters( client_transport ) );
+    check( rocketnet_client_message_counter_block( pair.client ) == rocketnet_message_client_counters( message_client ) );
+    check( rocketnet_client_transport_counter_block( pair.client ) != rocketnet_client_message_counter_block( pair.client ) );
+
     check( rocketnet_server_transport_counter_block( pair.server ) != NULL );
     check( rocketnet_server_message_counter_block( pair.server ) != NULL );
     check( rocketnet_client_transport_counter_block( pair.client ) != NULL );
