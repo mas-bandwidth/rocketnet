@@ -22,12 +22,12 @@ a call that arrives meanwhile waits for the close. The model takes term as one
 step, which is its safety; the closing flag keeps a stream of generator calls
 from starving term.
 
-Draws outside the four connect-token generators
-(`rocketnet_connect_token.cpp`) take no hold: `rocketnet_random_bytes`,
-`rocketnet_random_uint64`, and every draw the transports, protocols and token
-tables make. The model assumes they run between `rocketnet_init` and
-`rocketnet_term`, when the source is open and no term can close it, and does
-not model them.
+`rocketnet_random_uint64` and `rocketnet_random_bytes` hold the source as a
+generator does (`rocketnet_random_draw`: `rocketnet_crypto_acquire`, the draw,
+`rocketnet_crypto_release`), so they are generator calls here. The other draws
+(every draw the transports, protocols and token tables make) take no hold.
+The model assumes they run between `rocketnet_init` and `rocketnet_term`, when
+the source is open and no term can close it, and does not model them.
 
 | name | meaning |
 |---|---|
