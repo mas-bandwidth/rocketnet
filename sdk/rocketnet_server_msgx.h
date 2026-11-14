@@ -65,20 +65,20 @@ struct rocketnet_server_msgx_t;
 #define ROCKETNET_MSGX_SEND_BATCH                                       64
 
 // the receive worker's bank and its recvmsg_x batch. One bank holds one
-// update's whole receive budget at the most clients a build allows
-// (rocketnet_server_receive_packets_per_update, 16000 at 1000 clients), as
-// the io_uring transport's does, so main takes an update's budget in one
-// claim. The worker reads only into room (sdk/rocketnet_msgx_receive_fill.h):
-// with its bank full and the last one not yet taken by main it stops reading,
-// the kernel's socket buffers hold the rest, and it sleeps HOLD_SECONDS
-// before it looks again
-#define ROCKETNET_MSGX_RECV_QUEUE_SIZE                                ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
+// update's whole receive budget at the server's configured max_clients
+// (rocketnet_server_receive_packets_per_update, 16000 at 1000 clients, the
+// budget the Linux and Windows servers size theirs by), sized at create, so
+// main takes an update's budget in one claim. The worker reads only into room
+// (sdk/rocketnet_msgx_receive_fill.h): a read asks for the batch or the room
+// left, whichever is less, so a bank smaller than the batch is read in
+// smaller calls. With its bank full and the last one not yet taken by main it
+// stops reading, the kernel's socket buffers hold the rest, and it sleeps
+// HOLD_SECONDS before it looks again
+#define ROCKETNET_MSGX_RECV_QUEUE_SIZE( max_clients )                 rocketnet_server_receive_packets_per_update( max_clients )
 #define ROCKETNET_MSGX_RECV_BATCH                                       32
 #define ROCKETNET_MSGX_RECV_EVENTS                                     256
 #define ROCKETNET_MSGX_RECV_SOCKET_BUDGET                              256
 #define ROCKETNET_MSGX_RECV_HOLD_SECONDS                            0.0005
-
-ROCKETNET_STATIC_ASSERT( ROCKETNET_MSGX_RECV_QUEUE_SIZE >= ROCKETNET_MSGX_RECV_BATCH, "a msgx receive bank holds one recvmsg_x batch" );
 
 // sockets opened in one update at most: a connect storm of 1000 clients
 // opens over 16 updates instead of one long frame. Chosen, not measured.
@@ -186,6 +186,11 @@ int rocketnet_server_msgx_test_sockets_open( struct rocketnet_server_msgx_t * ms
 // production drain of an IPv4 transport with a fake recvmsg_x and no
 // socket: banked is what reached the worker bank, failed its RECEIVE_FAILED
 bool rocketnet_server_msgx_test_receive_source( uint16_t port, int * banked, uint64_t * failed );
+// test_allocate makes every allocation create makes before its sockets and
+// threads (the transport, the process view, the socket table, the receiver
+// and its banks, the send workers and their buckets) through the installed
+// allocator and frees them: false when out of range or out of memory
+bool rocketnet_server_msgx_test_allocate( int num_workers, int max_clients );
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_MSGX_H
