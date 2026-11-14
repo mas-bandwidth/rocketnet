@@ -344,7 +344,8 @@ uint64_t rocketnet_platform_receive_empties( void );
 uint64_t rocketnet_platform_receive_refused_sources( void );
 
 // counts each dropped datagram and each refused sendmsg_x chunk once; the replay's refusals count in send_replay_failures.
-// a chunk that only returned a connected socket's pending ICMP error is not refused: each datagram its resend drops counts here
+// a sendmsg_x that returned a connected socket's pending ICMP error is not a refused chunk: it goes again once, and a
+// second pending error at the same datagram drops that datagram, counted here once
 uint64_t rocketnet_platform_socket_send_failures( struct rocketnet_platform_socket_t * socket );
 
 #if ROCKETNET_DEV

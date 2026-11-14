@@ -2842,6 +2842,7 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
         }
 
         int offset = 0;
+        int retried = -1;
         while ( offset < count )
         {
             errno = 0;
@@ -2881,20 +2882,25 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
 
             // A pending ICMP error on a connected socket (see
             // rocketnet_platform_send_error_is_pending): the call failed, not
-            // the chunk. Its tail goes once more per packet, the one more try
-            // each message gets; a second pending error drops that one
-            // message, counted in send_failures. Nothing else is counted, and
-            // the pump stays batched.
+            // the chunk, so the same call goes again once from the same
+            // message, batched, as the sendmmsg paths do. A second pending
+            // error at that message drops it, counted in send_failures, and
+            // the call goes on from the next one; no message is tried a third
+            // time. Nothing else is counted, and the pump stays batched. Had
+            // xnu delivered a prefix before the error, the call again repeats
+            // it: duplicates the receiver's replay protection eats, as for the
+            // replay below.
 
             if ( socket->connected && rocketnet_platform_send_error_is_pending( error ) )
             {
-                rocketnet_debug( "sendmsg_x returned a pending error (%s). chunk finishes per-packet", strerror( error ) );
-                for ( int i = offset; i < count; i++ )
+                if ( retried != offset )
                 {
-                    const rocketnet_platform_send_t * send = &sends[map[i]];
-                    rocketnet_platform_send_one( socket, send->to, send->packet_data, send->packet_bytes, &socket->send_failures, 1 );
+                    retried = offset;
+                    continue;
                 }
-                offset = count;
+                rocketnet_debug( "sendmsg_x returned a pending error (%s) twice. one message dropped", strerror( error ) );
+                rocketnet_platform_send_failed( socket, &socket->send_failures, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, error );
+                offset++;
                 continue;
             }
 
