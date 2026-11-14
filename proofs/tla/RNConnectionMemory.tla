@@ -1,7 +1,8 @@
 ------------------------- MODULE RNConnectionMemory -------------------------
 (***************************************************************************)
 (* Per-connection message memory: a send refused for no room, and the     *)
-(* kick on the receive side's exhaustion                                   *)
+(* kick on the region's exhaustion (a receive placement, or the           *)
+(* connection's own outbound CONFIG, with no room)                         *)
 (* (docs/CHANNELS.md 4; sdk/rocketnet_allocator.cpp, the region's          *)
 (* exhausted state, rn_region_reset and rn_connection_memory_decide).      *)
 (*                                                                         *)
@@ -17,12 +18,14 @@
 (*   UseSpan(s, n)  a large send takes n records of room at once (a span)  *)
 (*   Release(s)     an acked send, an abort or a released delivery gives   *)
 (*                  room back; also while exhausted, since it takes none   *)
-(*   Refuse(s, n)   a send of n records finds no room, or a region the     *)
-(*                  receive side exhausted: the start is refused and       *)
+(*   Refuse(s, n)   a send of n records finds no room, or a region         *)
+(*                  already exhausted: the start is refused and            *)
 (*                  counted, and the region and the connection are as they *)
 (*                  were (standard/MESSAGES.md m1.7)                       *)
-(*   Exhaust(s)     a receive placement finds no room, which only a broken *)
-(*                  invariant of the receiver reaches: the region's sticky *)
+(*   Exhaust(s)     a receive placement finds no room, or the connection's *)
+(*                  own outbound CONFIG does (rn_ordered_announce_config   *)
+(*                  in sdk/rocketnet_channel.cpp); either is an invariant  *)
+(*                  break, not a message send: the region's sticky         *)
 (*                  exhausted state, reason MESSAGE_MEMORY_EXHAUSTED       *)
 (*   Kick(s)        the owner disconnects the exhausted connection with    *)
 (*                  that reason (the server kicks the slot; a client       *)
@@ -144,7 +147,7 @@ Release(s) ==
     /\ UNCHANGED <<state, owner, exhausted, reason, records, refused>>
 
 \* rn_region_send_refuse: a send of n records (one, or a span) that the fit
-\* refuses (no room, or a region the receive side already exhausted) is
+\* refuses (no room, or a region already exhausted) is
 \* refused and counted (MESSAGE_SEND_QUEUE_FULL, MESSAGE_SEND_STORE_FULL or
 \* MESSAGE_MEMORY_EXHAUSTED, and the connection's send_refused); in the code
 \* the fit only reads, so nothing of the region or the connection changes
@@ -167,11 +170,14 @@ Refuse(s, n) ==
     /\ refused' = [refused EXCEPT ![s] = (@ + 1) % CountMod]
     /\ UNCHANGED <<state, owner>>
 
-\* rn_region_exhaust from the receive side: a receive placement that cannot
-\* get the room it asks for (one record, or a span of n) sets the sticky
-\* state. Only a broken invariant of the receiver reaches it: the receive
-\* window and ring bound what a remote endpoint can make it hold
-\* (standard/MESSAGES.md m1.9, rule 1).
+\* rn_region_exhaust: a receive placement that cannot get the room it asks
+\* for (one record, or a span of n), or the connection's own outbound CONFIG
+\* finding no room (rn_ordered_announce_config, after its
+\* rn_region_send_alloc has counted the refusal), sets the sticky state.
+\* Only a broken invariant reaches it: the receive window and ring bound
+\* what a remote endpoint can make it hold (standard/MESSAGES.md m1.9,
+\* rule 1), and the code calls a CONFIG with no room an invariant break,
+\* not a send.
 Exhaust(s) ==
     /\ state[s] = "Connected"
     /\ ~exhausted[s]
@@ -255,8 +261,9 @@ StartStep(s, n) ==
 
 \* (N) No send ends its connection: no start step, refused or not, changes
 \* its slot's connection state, exhausted flag or reason, read on the state
-\* the step leaves (standard/MESSAGES.md m1.7). Only the receive side
-\* exhausts a region (Exhaust), and an exhausted region is what the owner
+\* the step leaves (standard/MESSAGES.md m1.7). Only Exhaust (a receive
+\* placement or the outbound CONFIG with no room, never a message send)
+\* exhausts a region, and an exhausted region is what the owner
 \* kicks (Kick), so a slot's end never follows from a send. Reversed by
 \* SendExhausts.
 SendNeverEnds ==
@@ -277,7 +284,7 @@ RefusalLeavesStateUnchanged ==
               /\ Slot(s)' = Slot(s)
               /\ refused'[s] = (refused[s] + 1) % CountMod]_vars
 
-\* the receive side's exhaustion (the only one there is): from exhausted, the
+\* the region's exhaustion (Exhaust, the only one there is): from exhausted, the
 \* slot takes no further room: the steps that change it
 \* are Kick to Disconnected with the reason kept, and a Release that gives
 \* one record back and changes nothing else
