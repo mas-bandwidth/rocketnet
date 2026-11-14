@@ -1616,7 +1616,7 @@ void rocketnet_test_transport_start_finish_shape()
             rocketnet_check( frame );
             rocketnet_check( context.payload_index == ROCKETNET_FRAME_PAYLOAD_OFFSET );
             memcpy( frame, "shape", 5 );
-            rocketnet_server_transport_finish_packet( server, &context, 5 );
+            rocketnet_check( rocketnet_server_transport_finish_packet( server, &context, 5 ) > 0 );
             rocketnet_server_transport_send_packets( server );
             shape_sends++;
             start = rocketnet_platform_time();
