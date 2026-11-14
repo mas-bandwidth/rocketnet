@@ -202,7 +202,16 @@ Block(S, n, f, ff, delta) ==
             THEN Bad(S, "BAD_BLOCK")
             ELSE Collect(S, n, f, ff, delta, cur)
 
-\* rn_sequenced_in_turn (delta = 0)
+\* rn_sequenced_in_turn (delta = 0).  The watermark test comes before the
+\* superseding release, as in the code: a newer record refused as stale
+\* leaves the in-turn block as it was (standard/MESSAGES.md m6.3); only a
+\* record that is not a superseder (a continuation, or none in turn)
+\* releases the in-turn block when it is stale.  Here that order is not
+\* observable: every record's sequencing is 0, so no in-turn record
+\* supersedes, and with natural arithmetic the in-turn block is never
+\* behind the watermark (InTurnBlockFresh).  RNSequencingWrap.tla, which
+\* carries the 24-bit compare, has the reversed witness
+\* MCRNSequencingWrapBrokenReleaseBeforeRefuse.cfg.
 InTurn(S, n) ==
     LET r == Rec(n)
         block == r.count > 1
@@ -212,12 +221,13 @@ InTurn(S, n) ==
        ELSE LET hg == IF cur = NONE THEN 0 ELSE r.seq - Rec(S.desc[cur].num).seq
                 other == cur # NONE /\ ~(block /\ hg = 0)
             IN IF other /\ hg <= 0 THEN ReleaseNumber(S, n)
+               ELSE IF r.seq - S.wm < 0
+               THEN IF other THEN ReleaseNumber(S, n)
+                    ELSE ReleaseSlot(ReleaseNumber(S, n), "bit", S.bitf).st
                ELSE LET R1 == IF other THEN ReleaseSlot(S, "bit", S.bitf)
                               ELSE [st |-> S, ok |-> TRUE]
                         S1 == R1.st
                     IN IF ~R1.ok THEN S1
-                       ELSE IF r.seq - S1.wm < 0
-                       THEN ReleaseSlot(ReleaseNumber(S1, n), "bit", S1.bitf).st
                        ELSE IF block THEN Block(S1, n, "bit", "bitf", 0)
                        ELSE IF DeliverSeqOK(S1, r.ordering, r.seq)
                             THEN [S1 EXCEPT !.dl = @ \cup {n % W}, !.wm = r.seq + 1]
@@ -357,6 +367,10 @@ NoSlotCollision == "SLOT_COLLISION" \notin rv.viol
 
 \* Nor to any other violation this model reaches.
 NoViolation == rv.viol = {}
+
+\* The in-turn block is never behind the watermark, so no superseding
+\* record is refused at it and InTurn's release order is not observable.
+InTurnBlockFresh == rv.bit # NONE => Rec(rv.desc[rv.bit].num).seq >= rv.wm
 
 TypeOK ==
     /\ next \in 0..MaxNum + 1

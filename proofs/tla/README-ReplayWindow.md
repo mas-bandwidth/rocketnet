@@ -125,7 +125,10 @@ own witness run.
 - Sequence reconstruction from 32 wire bits (`rocketnet_reconstruct_sequence`); the
   model receives 64-bit sequences up to `MaxSeq`.
 - The open itself. A `Receive(s)` is a packet that opened; a forgery that does not open
-  never reaches `advance` (`sdk/rocketnet_server_protocol.cpp`) and is not
+  never reaches `advance` (`sdk/rocketnet_server_protocol.cpp`). It is modelled
+  only as `Forge(s)`, which leaves both windows alone and records whether the
+  open was attempted on a pending mapping (`openedPending`, which
+  `NoOpenBeforeConnect` reads); the integrity-failure count it adds is not
   modelled. Who can produce a packet that opens under the session keys of a mapping
   without a slot is a question for the security model; here the event is simply
   possible, as the code's comment in `rocketnet_server_process_sealed_packet` allows ("a lost-response race or an

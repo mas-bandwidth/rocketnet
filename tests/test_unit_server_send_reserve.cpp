@@ -726,6 +726,55 @@ static void test_server_fill_ring_chunk()
     rn_test_server_transport_stop_and_destroy( rig.server );
 }
 
+// A small server's payload ring (1, 8 and 15 clients; the ring holds at least
+// ROCKETNET_SERVER_MIN_SEND_PACKETS slots): the guard claims a chunk only
+// while a chunk is free for every fill line (8 x 64 = 512 slots), which a
+// ring under 512 slots never has, so every take is one slot and no line ever
+// holds unused slots, whatever the threads. Every slot of the ring's capacity
+// is taken, by single takes, before the first refusal; nothing is refused
+// while a slot is free. (From 512 clients the ring and the guard are as they
+// were before sizing followed max_clients.)
+static void test_server_fill_ring_small_server_takes_every_slot()
+{
+    const int counts[] = { 1, 8, 15 };
+    for ( int k = 0; k < (int) ( sizeof( counts ) / sizeof( counts[0] ) ); ++k )
+    {
+        struct sr_rig_t rig;
+        sr_connect( &rig, counts[k] );
+        rocketnet_server_transport_send_packets( rig.server );
+
+        const int capacity = rocketnet_server_transport_send_capacity_available( rig.server );
+        check( capacity >= ROCKETNET_SERVER_MIN_SEND_PACKETS );
+        check( capacity < 8 * ROCKETNET_FILL_PHASE_FILL_LINES );
+
+        int accepted = 0;
+        for ( int i = 0; i < capacity + 16; ++i )
+        {
+            struct rocketnet_packet_context_t context;
+            if ( !rocketnet_server_transport_start_packet( rig.server, 0, 8, &context ) )
+            {
+                break;
+            }
+            check( rocketnet_server_transport_fill_ring_chunk_for_test( rig.server ) == 0 );   // a single take: no chunk on the line
+            check( rocketnet_server_transport_finish_packet( rig.server, &context, 8 ) > 0 );
+            accepted++;
+            check( rocketnet_server_transport_payload_ring_count_for_test( rig.server ) == (uint64_t) accepted );
+        }
+        check( accepted == capacity );
+        check( rocketnet_server_transport_send_capacity_available( rig.server ) == 0 );
+
+        struct rocketnet_server_transport_stats_t stats;
+        rocketnet_server_transport_stats( rig.server, &stats );
+        const uint64_t sent = stats.packets_sent;
+        rocketnet_server_transport_send_packets( rig.server );
+        rocketnet_server_transport_stats( rig.server, &stats );
+        check( stats.packets_sent == sent + (uint64_t) capacity );
+
+        rn_test_client_transport_stop_and_destroy( rig.client );
+        rn_test_server_transport_stop_and_destroy( rig.server );
+    }
+}
+
 // A thread whose chunk install finds the line refilled by another thread on
 // it gives its own chunk up whole and takes its slot from the line's chunk:
 // a lost install never makes its slots fall, so the flush, which walks the
@@ -906,6 +955,7 @@ REGISTER_UNIT_TEST( test_server_fill_refused_claim_retested );
 REGISTER_UNIT_TEST( test_server_fill_refusal_names_tails_held );
 REGISTER_UNIT_TEST( test_server_fill_ring_chunk );
 REGISTER_UNIT_TEST( test_server_fill_ring_chunk_lost_install_keeps_start_order );
+REGISTER_UNIT_TEST( test_server_fill_ring_small_server_takes_every_slot );
 REGISTER_UNIT_TEST( test_server_send_reserve_other_queue_full_drains );
 REGISTER_UNIT_TEST( test_server_send_reserve_stop_drains_while_a_queue_has_room );
 

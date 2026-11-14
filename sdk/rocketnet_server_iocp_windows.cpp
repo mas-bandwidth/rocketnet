@@ -2052,7 +2052,7 @@ static bool rocketnet_iocp_sized_layout( int max_clients, int workers, rocketnet
     layout->send_queue_size = rocketnet_server_iocp_send_queue_size( max_clients );
     layout->num_lanes = rocketnet_server_iocp_send_lanes( max_clients );
     layout->receive_queue_size = rocketnet_server_iocp_receive_queue_size( max_clients, workers );
-    layout->process_capacity = rocketnet_server_receive_packets_per_update( max_clients );
+    layout->process_capacity = rocketnet_server_iocp_receive_packets_per_update( max_clients );
     layout->retry_capacity = (uint64_t) rocketnet_power_of_two_at_least( workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER );
 
     const uint64_t send = (uint64_t) layout->send_queue_size;

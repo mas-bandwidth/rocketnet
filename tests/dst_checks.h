@@ -674,7 +674,10 @@ static inline int rocketnet_dst_check_ordered_runtime( struct rocketnet_dst_chec
         return 1;
     }
 
-    for ( uint32_t earlier = 0; earlier < seq && earlier < ROCKETNET_DST_CHECK_SEQ_BITS; earlier++ )
+    // from the reliable base: every sequence below it is resolved (delivered),
+    // and the window holds the 4096 from it, so a walk from 0 would stop below
+    // the base once it passes 4096 and never see an earlier undelivered send
+    for ( uint32_t earlier = s->reliable_base; earlier < seq && earlier - s->reliable_base < ROCKETNET_DST_CHECK_SEQ_BITS; earlier++ )
     {
         if ( !rocketnet_dst_check_bit( st, s->reliable_sent, s->reliable_base, earlier, "reliable_sent" ) )
         {

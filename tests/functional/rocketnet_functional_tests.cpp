@@ -9592,7 +9592,7 @@ static void rocketnet_test_portable_placement_cell( const struct rocketnet_test_
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_PORTABLE_PIN_REFUSALS );
 }
 
-// the portable server's two workers on Linux (also the msgx name there): the
+// the portable server's two workers on Linux: the
 // send worker on cpu num_os_cpus, the receive worker on num_os_cpus + 1, each
 // alone on its cpu, whatever mask the creating thread had; not reserved, on
 // cpus 0 and 1; where the host does not allow a worker's cpu, that worker is
@@ -14988,8 +14988,8 @@ static void rocketnet_test_public_client_reads_server_disconnected()
 // rocketnet_server_stopped while the clients update. Every client reads
 // ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED, well inside its timeout: the
 // stop handed every burst over and stopped the I/O only after the transport
-// finished sending it. A transport this build or host cannot create is
-// skipped.
+// finished sending it. A transport this host cannot run is a named skip (the
+// row's runs_here predicate); a create or start that fails is red.
 
 static void rocketnet_test_server_stop_disconnects_every_client( const char * transport )
 {
@@ -15002,16 +15002,16 @@ static void rocketnet_test_server_stop_disconnects_every_client( const char * tr
     server_config.max_clients = num_clients;
     server_config.transport = transport;
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
-    if ( !server || rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    // a transport this host cannot run is a named skip in the registry (its
+    // runs_here predicate); here a create or start that fails is a failure
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    if ( !server )
     {
-        if ( server )
-        {
-            rn_cli_server_stop_and_destroy( server );
-        }
-        printf( "    %s server transport not available here: skipped\n", transport );
-        return;
+        printf( "    %s server create failed: %s\n", transport, rocketnet_status_name( create_status ) );
     }
+    rocketnet_check( server );
+    rocketnet_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     rocketnet_check( rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) );
@@ -16609,6 +16609,21 @@ extern void rocketnet_test_ack_apply_jobs_match_inline();
 extern void rocketnet_test_client_io_threaded_batch_flushes_mid_ring();
 extern void rocketnet_test_client_io_threaded_single_datagrams();
 extern void rocketnet_test_session_reconnect_isolation_portable();
+extern void rocketnet_test_small_server_sessions_portable();
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+extern void rocketnet_test_small_server_sessions_gso();
+extern void rocketnet_test_small_server_sessions_io_uring();
+#if ROCKETNET_XDP
+extern void rocketnet_test_small_server_sessions_xdp();
+#endif // #if ROCKETNET_XDP
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+extern void rocketnet_test_small_server_sessions_msgx();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+extern void rocketnet_test_small_server_sessions_iocp();
+extern void rocketnet_test_small_server_sessions_rio();
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 extern void rocketnet_test_server_bind_address_not_reached_on_another_address();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -17139,7 +17154,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_server_stop_disconnects_every_client_portable", rocketnet_test_server_stop_disconnects_every_client_portable, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_stop_disconnects_every_client_gso", rocketnet_test_server_stop_disconnects_every_client_gso, NULL },
-    { "test_server_stop_disconnects_every_client_io_uring", rocketnet_test_server_stop_disconnects_every_client_io_uring, NULL },
+    { "test_server_stop_disconnects_every_client_io_uring", rocketnet_test_server_stop_disconnects_every_client_io_uring, rocketnet_server_uring_available },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_server_stop_disconnects_every_client_iocp", rocketnet_test_server_stop_disconnects_every_client_iocp, NULL },
@@ -17387,6 +17402,21 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_client_io_threaded_batch_flushes_mid_ring", rocketnet_test_client_io_threaded_batch_flushes_mid_ring, NULL },
     { "test_client_io_threaded_single_datagrams", rocketnet_test_client_io_threaded_single_datagrams, NULL },
     { "test_session_reconnect_isolation_portable", rocketnet_test_session_reconnect_isolation_portable, NULL },
+    { "test_small_server_sessions_portable", rocketnet_test_small_server_sessions_portable, NULL },
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "test_small_server_sessions_gso", rocketnet_test_small_server_sessions_gso, NULL },
+    { "test_small_server_sessions_io_uring", rocketnet_test_small_server_sessions_io_uring, rocketnet_server_uring_available },
+#if ROCKETNET_XDP
+    { "test_small_server_sessions_xdp", rocketnet_test_small_server_sessions_xdp, rocketnet_test_xdp_veth_runs_here },
+#endif // #if ROCKETNET_XDP
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    { "test_small_server_sessions_msgx", rocketnet_test_small_server_sessions_msgx, NULL },
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    { "test_small_server_sessions_iocp", rocketnet_test_small_server_sessions_iocp, NULL },
+    { "test_small_server_sessions_rio", rocketnet_test_small_server_sessions_rio, NULL },
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_server_bind_refused_portable", rocketnet_test_server_bind_refused_portable, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC

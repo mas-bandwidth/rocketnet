@@ -43,8 +43,10 @@ records in `proofs/tla/RUNS.tsv`.
   each class from its head, and stops when the plan holds a packet. A due
   retransmit is planned ahead of every never-sent number, so a block whose
   first pass is paced by the send budget does not hold its lost chunks.
-- **The timeout.** A record unacked for `reliable_timeout` (10 s) ends the
-  connection with `RELIABLE_TIMEOUT`, and nothing more is sent.
+- **The timeout.** The oldest unacked number (U), on the wire for
+  `reliable_timeout` (10 s) since its own first send, ends the connection
+  with `RELIABLE_TIMEOUT`, and nothing more is sent. A later number's clock
+  is never read, and a U never sent has none.
 - **The validation.** A config is refused when
   `reliable_message_timeout_ms < ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS × message_resend_delay_initial_ms`, with
   `ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS = 4`.
@@ -127,6 +129,8 @@ Invariants:
 - `ConfigAccepted`: the instance passes the validation rule.
 - `AttemptsBeforeTimeout`: a record of either class still unacked at the
   timeout was sent at least `MinAttempts` times.
+- `TimeoutFromOldest`: the timeout ends the connection only once U is on the
+  wire and `Timeout` ticks have passed since U's own first send.
 - `ResendGapBounded`: while the connection is up, an unacked record waits at
   most `Min(RtoMax, Cap(r)) · MaxBackoff` ticks between sends.
 - `NoDueRecordHeld`: no update ends with a record of either class due; a due
@@ -254,6 +258,7 @@ numbers a call.
 | `MCRNResendTimingBrokenUnsentFirst.cfg` | the sent marks: `MCRNResendTimingPaced.cfg` walked from each FIFO's head, never-sent numbers first (`UnsentFirst = TRUE`) | `AttemptsBeforeTimeout`, exit 12: the chunk sent at 0 is never acked; each update's one packet goes to the next never-sent chunk (42 down to 22), the chunk falls due at tick 4 and is never planned, and at tick 20 it has one send where four are owed. |
 | `MCRNResendTimingBrokenUnsentFirstHeld.cfg` | the same, on `MCRNResendTimingPacedSmall.cfg` | `NoDueRecordHeld`, exit 12: both records are sent at 0 and two pending chunks fill tick 0; at tick 1 a sample sets `rto` to 1, both records are due, and the two calls write the small record and a never-sent chunk; the update ends with the chunk due and unsent. |
 | `MCRNResendTimingBrokenRefusedOffWire.cfg` | the refused resend on the wire: `MCRNResendTimingPacedRefused.cfg` with a refused resend walked among the never-sent numbers (`RefusedOffWire = TRUE`, the code before `rn_resend_fifo_push_mark`) | `RetryPlanned`, exit 12: both records are sent at 0 and the two pending chunks fill tick 0; at tick 1 a sample sets `rto` to 1 and both records are due; the first call's packet carries the small record and is refused, and it is put back among the never-sent numbers, so the second call plans the chunk, the one retransmit, which fills its packet, and the refused small record is not planned. Against the code before the fix: `push_head` put the refused small record at the head of its FIFO, ahead of the mark, so the walk of the numbers on the wire reached the due chunk first and stopped at a full plan. |
+| `MCRNResendTimingBrokenAnyClock.cfg` | the timeout on any record: `MCRNResendTimingRefusedChunk.cfg` with `TimedOut` over every unacked record on the wire (`AnyClock = TRUE`, the model before it was matched to `rn_window_ack_check_timeout`) | `TimeoutFromOldest`, exit 12: the small record (U) is refused at tick 0 while the chunk is sent, U is first sent at tick 1, and at tick 8 the chunk's clock ends the connection with U at 7 ticks of its 8. |
 
 The back-off witness passes `ConfigAccepted` (`10 s >= 4 × 1 s`), so
 validation alone does not keep the property; the delay without back-off does. The unit
@@ -294,6 +299,26 @@ stamps the due-now sentinel, the record is refused to tick 7 and then sent at
 (`test_unit_channel_ordered.cpp`) replays it against the code: a refused first
 send leaves `last_send` never sent and no clock, no timeout past
 `reliable_timeout`, and the real send starts the clock at its own time.
+
+The timeout reads one clock, U's: `rn_window_ack_check_timeout` times the
+oldest unacknowledged number from its own first send, and only once it is on
+the wire (`has_oldest`, set by `rn_window_ack_refresh_oldest` and
+`rn_window_ack_record_first_send` for U alone). `TimedOut` is `~acked[U] /\
+OnWire(U) /\ t >= Deadline(U)`. It parts from a rule over any record on the
+wire when U's first send is refused and a later number already has a clock.
+`MCRNResendTimingRefusedChunk.cfg` reaches that: the chunk beside the small
+record, either first send refusable for 6 ticks, scaled to 1 s ticks (resend
+delay 2 s, timeout 8 s) to fit the budget; `TimeoutFromOldest` (the timeout
+ends the connection only once U has stood `Timeout` ticks since its own first
+send) holds with the rest. Its reversed witness
+`MCRNResendTimingBrokenAnyClock.cfg` (`AnyClock`, the model before it was
+matched to the code) fails `TimeoutFromOldest`, exit 12: the small record's
+first send is refused at tick 0 while the chunk goes, the small record is first
+sent at tick 1, and at tick 8 the chunk's clock ends the connection with U at
+7 ticks. Against the code: at tick 8 `has_oldest` already names U (set by
+`rn_window_ack_record_first_send` at its first send), so
+`rn_window_ack_check_timeout` reads `oldest_first_send` = 1, and 8 - 1 is short
+of the timeout; the chunk's `send_first_sends` entry is never read.
 
 ## Revision 1.1: the timeout off, probe pacing and the silence filter
 

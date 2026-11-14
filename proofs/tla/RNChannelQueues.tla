@@ -1,4 +1,12 @@
 ------------------------------ MODULE RNChannelQueues ------------------------------
+\* SUPERSEDED SKETCH: no code cites this module as its model. Its invariants
+\* (OrderPreserved, ReadyNoDuplicates, UnreliableOrder) hold by construction
+\* of its actions, it has no reversed witness, and it has no pop action. The
+\* code of these queues is modelled at its layout by RNChannelQueuesLayout.tla
+\* (the channel FIFOs and the ready list, sdk/rocketnet_channel.cpp) and
+\* RNUnreliableRingLayout.tla (the unreliable ring, sdk/rocketnet_endpoint.cpp),
+\* each with reversed witnesses. Kept as the history of the design.
+\*
 \* Sequence scheduling for the per-channel descriptor FIFO, ready-channel
 \* membership, and the unreliable endpoint FIFO. The C++ is
 \* sdk/rocketnet_channel.cpp and sdk/rocketnet_endpoint.cpp. The resend

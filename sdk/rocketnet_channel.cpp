@@ -12,7 +12,7 @@
 // Layer 4's dispatch (standard/MESSAGES.md m6, m7). The spec is proofs/tla/RNChannel.tla; each
 // function names the action it implements. Nothing here allocates, locks or
 // reads a clock (owner rules R2 and R7). Channel and ready queues name a
-// descriptor generation and the region's schedule epoch (proofs/tla/RNChannelQueues.tla).
+// descriptor generation and a ready ticket (proofs/tla/RNChannelQueuesLayout.tla).
 
 static void rn_channels_count( rocketnet_counters_t * counters, int counter )
 {
@@ -1210,7 +1210,7 @@ void rn_channels_end_update( struct rn_channels_t * channels )
 //                 the send API (RNChannel!Enqueue)
 // ---------------------------------------------------------------
 
-// proofs/tla/RNChannelQueues.tla Enqueue, Front, ReadyJoin, Rotate and Reset.
+// proofs/tla/RNChannelQueuesLayout.tla Enqueue, Config, WalkEmpty and Number.
 // Ready membership is one ticket per channel. A push
 // of a channel that already holds a ticket is a no-op, so a channel cannot
 // sit on the list twice. Removing a ticket that is not the current one leaves
@@ -1987,7 +1987,7 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
         }
 
         // Rotate off the ready list before the dequeue, while the membership
-        // still names the generation captured at join (proofs/tla/RNChannelQueues.tla Rotate).
+        // still names the generation captured at join (proofs/tla/RNChannelQueuesLayout.tla Number).
 
         rn_ready_remove_named( channels, channel, send->ready_ticket, send->ready_generation );
 

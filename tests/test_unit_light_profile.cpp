@@ -316,7 +316,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // With counter 291 (XDP_KERNEL_DROPPED_NO_SESSION) as well
 // (integration/v1.1.58, 902e10754): 64 more to each, actual=1665308787 and
 // 15046474 (studio, Apple clang, Debug, DEV=ON), measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664260211 )
+// The msgx receive banks, socket table and worker sort buckets sized at
+// create from the configured max_clients (the banks, the table's arrays and
+// each worker's buckets carved after their owners, reached by pointers): at
+// 1000 clients the same arrays, 136 more bytes of pointers, sizes and carve
+// alignment; the client unchanged: actual=1665308923 and 15046474 (studio,
+// Apple clang, Debug, DEV=ON), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664260347 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997898 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).

@@ -113,7 +113,7 @@ outstanding cookies, which no slot record holds, so no property here depends on 
 | `Establish(i)` | the response opens: the token is recorded in the history, the slot is CONNECTED, its reason cleared |
 | `Deny(i)`, `SlotTimeout(i)`, `ClientLeaves(i)`, `DisconnectClient(i)` | a denial during the handshake; the slot's timeout; the client's own disconnect; `disconnect_client(i)` with its burst. The reasons TIMED_OUT, CLIENT_DISCONNECTED and SERVER_DISCONNECTED are `ROCKETNET_DISCONNECT_REASON_TIMED_OUT`, `_CLIENT_DISCONNECTED` and `_SERVER_DISCONNECTED`: the transport's reset records the first two and the message layer reads them for the slot it finds dropped (`proofs/tla/RNSlots.tla` `Observe`). DENIED, and TIMED_OUT for a HANDSHAKE slot, are abstractions: the code assigns the slot only when the session is established, so those ends leave the slot's reason as it was |
 | `ServerSend(i)` | message start/finish to a connected slot (the `sendbeforeconnected` defect also enables it for a FREE or HANDSHAKE slot) |
-| `MessageEnd(i)` | the message layer ends a CONNECTED slot while RUNNING, standing for both the update kick and the send kick: a delivery the application never took (`MESSAGE_NOT_RECEIVED`, `rn_message_object_update`, sdk/rocketnet_message_server.cpp) or an endpoint error (`CONFIG_MISMATCH`, `PROTOCOL_VIOLATION`, `RELIABLE_TIMED_OUT`, sdk/rocketnet_message_server.cpp), and a send whose connection exhausted its message memory (`MESSAGE_MEMORY_EXHAUSTED`, sdk/rocketnet_message_server.cpp). `rn_message_object_kick` records the reason and calls `link.disconnect` (sdk/rocketnet_message_server.cpp), which on the server is `rocketnet_server_transport_disconnect_client` (sdk/rocketnet_server_transport.cpp) and sends the connected slot its disconnect burst, so `sendDisc` is TRUE. The update returns before the message layer while stopped or stopping (sdk/rocketnet_api.cpp) and a send with no running block is dropped, so the kick needs both the RUNNING state and a CONNECTED slot; the ghost `messageIn` holds the slot state of every message-layer end |
+| `MessageEnd(i)` | the message layer ends a CONNECTED slot while RUNNING, standing for both the update kick and the send kick: a delivery the application never took (`MESSAGE_NOT_RECEIVED`, `rn_message_object_update`, sdk/rocketnet_message_server.cpp) or an endpoint error (`CONFIG_MISMATCH`, `PROTOCOL_VIOLATION`, `RELIABLE_TIMED_OUT`, sdk/rocketnet_message_server.cpp), and a send whose connection exhausted its message memory (`MESSAGE_MEMORY_EXHAUSTED`, sdk/rocketnet_message_server.cpp). `rn_message_object_kick` records the reason and calls `link.disconnect` (sdk/rocketnet_message_server.cpp), which on the server is `rocketnet_server_transport_disconnect_client` (sdk/rocketnet_server_transport.cpp) and sends the connected slot its disconnect burst, so `sendDisc` is TRUE: the burst is left waiting for the update's drain, or counted discarded when the queue is full, the same deferred path as `DisconnectClient(i)` (both are in the disconnect branch of `Next`, which writes `waiting'` and `discarded'`; before this the kick sat in the group that leaves the drain unchanged, so no kick's burst ever waited). The update returns before the message layer while stopped or stopping (sdk/rocketnet_api.cpp) and a send with no running block is dropped, so the kick needs both the RUNNING state and a CONNECTED slot; the ghost `messageIn` holds the slot state of every message-layer end |
 | `ServerDropSend(i)` | message start to a slot that is not CONNECTED, on a running, stopping or stopped server (`rocketnet_server_start_message` returns NULL and counts the `messages_dropped_not_connected` stat; the message layer's `MESSAGE_SEND_NOT_CONNECTED`): no slot field changes, nothing is held; the ghost `droppedIn` is the slot's state after a drop and `{}` after any other step (RN-2 m1.5) |
 | `ClientSend(s)`, `Deliver(s)`, `Lose(s)` | the client of any session ever started sends (also after its connection ended); the packet arrives at that session's slot (the same address reconnecting into the same slot is the worst case) and opens only under the keys it was sealed with, into a connected slot |
 
@@ -158,7 +158,7 @@ send-state clause, while the drop actions constrain the drop-state ghost.
 | `MCServerSessionResetClearsHistory.cfg` | `Defect = "resetclearshistory"`: `Reset(i)` empties the used-token history | `TokenAdmitsOnce`, exit 12 | 8 states: create, start, session 1 connects with token 1 and is established (`kept.used = {1}`), the slot times out and the reset empties the history, session 2 connects with token 1 and is established: `doubleTok = TRUE`, one token admitted twice in one run |
 | `MCServerSessionReadmitAfterStart.cfg` | `Defect = "none"`, `MaxStarts = 2`; invariant `NoReadmitAfterStart` (a reachability witness) | `NoReadmitAfterStart`, exit 12 | create, start, session 1 established with token 1, stop (STOPPING, then StopCompletes to STOPPED), start (`kept.used = {}`, `priorTokens = {1}`), session 2 connects with token 1 and is established: `readmitted = TRUE`, the fresh history at start reached |
 | `MCServerSessionSendBeforeConnected.cfg` | `Defect = "sendbeforeconnected"`: `ServerSend(i)` also runs for a slot that is not CONNECTED | `NoSendUnlessConnected`, exit 12 | 4 states: create, start, a send to a free slot: every slot `FREE`, `queuedIn = {"FREE"}`. In the code that is `rocketnet_server_start_message` to an index below max_clients with no client, which the message layer drops (`ServerDropSend`) |
-| `MCServerSessionBrokenMessageEnd.cfg` | `Defect = "messageendbeforeconnected"`: `MessageEnd(i)` also runs for a slot that is not CONNECTED | `MessageEndOnlyConnected`, exit 12 | 3 states: create, start, the message layer ends a free slot: every slot `FREE`, `messageIn = {"FREE"}`. In the code `rn_message_object_kick` returns at once unless the message connection is CONNECTED (`sdk/rocketnet_message_server.cpp`), and both its update and send call sites run only for a connected slot of a running server |
+| `MCServerSessionBrokenMessageEnd.cfg` | `Defect = "messageendbeforeconnected"`: `MessageEnd(i)` also runs for a slot that is not CONNECTED | `MessageEndOnlyConnected`, exit 12 | 4 states: create, start, the message layer ends a free slot: every slot `FREE`, `messageIn = {"FREE"}`. In the code `rn_message_object_kick` returns at once unless the message connection is CONNECTED (`sdk/rocketnet_message_server.cpp`), and both its update and send call sites run only for a connected slot of a running server |
 | `MCServerSessionBrokenReasonAcrossRestart.cfg` | `Defect = "reasonacrossrestart"`, `MaxStarts = 2`: stop writes SERVER_STOPPED into each occupied slot and keeps a free slot's reason, and start keeps every reason (the rule this model held before it followed the code) | `ReasonKeptWithinRun`, exit 12 | create, start, session 1 opens a mapping into slot 1, stop: `state = "STOPPING"`, `slot[1].reason = "SERVER_STOPPED"`, `lastEnd[1] = "NONE"`. In the code the reason is NONE once stop has cleared the running block (`sdk/rocketnet_api.cpp`) |
 | `MCServerSessionBrokenReceiveWhileStopping.cfg` | `Defect = "receivewhilestopping"`: Read runs while STOPPING | `NoReceiveUnlessRunning`, exit 12 | a datagram is read while `state = "STOPPING"`, so `readIn` holds STOPPING. The code returns before receive (`sdk/rocketnet_server_transport.cpp`) |
 | `MCServerSessionBrokenConnIdPerRun.cfg` | `Defect = "connidperrun"`, `MaxStarts = 2`: the public id is the per-run transport id alone, with no base for earlier runs | `ConnIdNeverRepeats`, exit 12 | create, start, a session establishes with id 1, stop, start, the next session establishes with id 1 again. In the code `rn_server_finish_stop` adds the old run's `rocketnet_server_transport_connections_assigned` to `connection_id_base` (`sdk/rocketnet_api.cpp`); `test_server_connection_id_tracks_each_connection` fails the same way with the base removed |
@@ -191,21 +191,24 @@ case, one for witnesses, 110-second cap per case):
 
 | cfg | Result | Generated | Distinct | Seconds | Exit |
 |---|---|---:|---:|---:|---:|
-| `MCServerSession.cfg` | pass | 555,756 | 57,434 | 32.666 | 0 |
-| `MCServerSessionUnresetSlot.cfg` | `SlotReuseObservesNothing` violated | 1,084,404 | 164,147 | 16.520 | 12 |
-| `MCServerSessionStopLeavesClient.cfg` | `NoClientWhileStopped` violated | 48 | 40 | 1.026 | 12 |
-| `MCServerSessionDisconnectAllLeavesClient.cfg` | `DisconnectAllIsAtomic` violated | 132 | 95 | 0.927 | 12 |
-| `MCServerSessionTouchesOtherSlot.cfg` | `ResetTouchesOnlyItsSlot` violated | 133 | 96 | 0.895 | 12 |
-| `MCServerSessionDestroySilent.cfg` | `StopDisconnectsAll` violated | 128 | 92 | 0.946 | 12 |
-| `MCServerSessionResetClearsHistory.cfg` | `TokenAdmitsOnce` violated | 3,927 | 1,701 | 1.472 | 12 |
-| `MCServerSessionReadmitAfterStart.cfg` | `NoReadmitAfterStart` violated | 62,962 | 17,517 | 2.775 | 12 |
-| `MCServerSessionSendBeforeConnected.cfg` | `NoSendUnlessConnected` violated | 7 | 6 | 1.029 | 12 |
-| `MCServerSessionBrokenMessageEnd.cfg` | `MessageEndOnlyConnected` violated | 7 | 6 | 0.895 | 12 |
-| `MCServerSessionBrokenReasonAcrossRestart.cfg` | `ReasonKeptWithinRun` violated | 26 | 18 | 0.798 | 12 |
-| `MCServerSessionBrokenReceiveWhileStopping.cfg` | `NoReceiveUnlessRunning` violated | 664 | 349 | 1.021 | 12 |
-| `MCServerSessionBrokenAdmitWhileStopping.cfg` | `NoAdmitUnlessRunning` violated | 21 | 14 | 0.867 | 12 |
-| `MCServerSessionBrokenDisconnectAllUnbounded.cfg` | `DisconnectWorkBounded` violated | 4,254 | 1,778 | 1.198 | 12 |
-| `MCServerSessionBrokenConnIdPerRun.cfg` | `ConnIdNeverRepeats` violated | 62,962 | 17,517 | 3.142 | 12 |
+| `MCServerSession.cfg` | pass | 730,276 | 74,719 | 25.157 | 0 |
+| `MCServerSessionTwoClientsSafety.cfg` | pass | 4,244,278 | 411,808 | 18.656 | 0 |
+| `MCServerSessionTwoClients.cfg` | declared timeout debt (bench), run nightly | - | - | 110.232 | 124 |
+| `MCServerSessionTwoClientsReachable.cfg` | `NotTwoConnected` violated | 880 | 439 | 0.788 | 12 |
+| `MCServerSessionUnresetSlot.cfg` | `SlotReuseObservesNothing` violated | 1,564,903 | 259,336 | 11.875 | 12 |
+| `MCServerSessionStopLeavesClient.cfg` | `NoClientWhileStopped` violated | 54 | 44 | 0.747 | 12 |
+| `MCServerSessionDisconnectAllLeavesClient.cfg` | `DisconnectAllIsAtomic` violated | 148 | 100 | 0.744 | 12 |
+| `MCServerSessionTouchesOtherSlot.cfg` | `ResetTouchesOnlyItsSlot` violated | 149 | 101 | 0.745 | 12 |
+| `MCServerSessionDestroySilent.cfg` | `StopDisconnectsAll` violated | 139 | 92 | 0.744 | 12 |
+| `MCServerSessionResetClearsHistory.cfg` | `TokenAdmitsOnce` violated | 3,980 | 1,731 | 0.910 | 12 |
+| `MCServerSessionReadmitAfterStart.cfg` | `NoReadmitAfterStart` violated | 65,539 | 19,295 | 1.705 | 12 |
+| `MCServerSessionSendBeforeConnected.cfg` | `NoSendUnlessConnected` violated | 8 | 7 | 0.737 | 12 |
+| `MCServerSessionBrokenMessageEnd.cfg` | `MessageEndOnlyConnected` violated | 10 | 9 | 0.767 | 12 |
+| `MCServerSessionBrokenReasonAcrossRestart.cfg` | `ReasonKeptWithinRun` violated | 32 | 22 | 0.724 | 12 |
+| `MCServerSessionBrokenReceiveWhileStopping.cfg` | `NoReceiveUnlessRunning` violated | 686 | 354 | 0.781 | 12 |
+| `MCServerSessionBrokenAdmitWhileStopping.cfg` | `NoAdmitUnlessRunning` violated | 18 | 16 | 0.729 | 12 |
+| `MCServerSessionBrokenDisconnectAllUnbounded.cfg` | `DisconnectWorkBounded` violated | 4,363 | 1,828 | 0.855 | 12 |
+| `MCServerSessionBrokenConnIdPerRun.cfg` | `ConnIdNeverRepeats` violated | 65,539 | 19,295 | 1.747 | 12 |
 
 ## Bounds
 
@@ -221,7 +224,15 @@ case, one for witnesses, 110-second cap per case):
   case above). `MaxTokens = 2` with `MaxStarts = 2` also passes (5,115,808 generated,
   486,498 distinct, depth 24, 1 min 53 s with four workers on macOS, 2026-11-10; not a recorded case) but does not fit the
   cap with two workers. `MCServerSessionTwoClientsReachable.cfg` shows two CONNECTED slots
-  are reached in this instance.
+  are reached in this instance. Since `MessageEnd` joined the `DisconnectClient` branch of
+  `Next` (2026-11-13) the control passes at 4,244,278 generated, 411,808 distinct, depth 21,
+  in 134.8 s with two workers (a manual run on aws-mut-4, not a bounded record), past the
+  110-second cap: it is declared timeout debt (`DECLARED_DEBT` in
+  `tools/check_tla_records.py`, `NIGHTLY-DEBT.tsv`) and the nightly run checks it.
+- `MCServerSessionTwoClientsSafety.cfg` (module `MCServerSessionTwoClients.tla`): the same
+  instance with every invariant and `SPECIFICATION Spec`, no liveness: the release gate's
+  two-client case. The state space is the control's; the liveness check is what the cap
+  could not hold.
 - The witnesses: `SlotCount = 2`, `MaxSessions = 2`, `MaxTokens = 2`, `MaxCreates = 1`,
   `SPECIFICATION Spec`. `MaxStarts = 1`, except `MCServerSessionReadmitAfterStart.cfg`,
   `MCServerSessionBrokenReasonAcrossRestart.cfg`, `MCServerSessionBrokenReceiveWhileStopping.cfg`,
@@ -252,5 +263,5 @@ witness is added here because no step of this model changes.
 `MCServerSessionTwoClients.cfg` ran past the 110-second budget on the
 2026-11-11 bench (exit 124, recorded as such in `RUNS.tsv`). Run there with no
 budget, as evidence and not a record, it completes with no error at 205,243
-distinct states, the earlier count, in 4 min 44 s. Its record is owed a
-re-measure on a quieter bench.
+distinct states, the earlier count, in 4 min 44 s. It was then re-measured
+at 75 s; since 2026-11-13 it is declared timeout debt (see Bounds).

@@ -1,5 +1,12 @@
 # RNUringSendPhases: the io_uring send staging's phases at the code's layout
 
+Historical design only: this models the one-ring io_uring driver that
+`sdk/rocketnet_server_uring_linux.cpp` was before the per-queue rewrite. Its
+functions (`rocketnet_server_uring_submit_phase` and the two-phase staging)
+exist nowhere in `sdk/` now; the current send path is modelled by
+`RNUringQueueBankLayout`, `RNUringQueueSend` and `RNSendGatherLayout`. The
+text below describes the old driver.
+
 `RNUringSendPhases.tla` models the send staging of the io_uring server
 transport (`sdk/rocketnet_server_uring_linux.cpp`) with the code's own index
 arithmetic: two phases of slots in one array, the fill phase start_packet

@@ -172,7 +172,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnsendspans` | Send-span ring storage and ownership. |
 | `rnsentmap` | The sent-packet map against the window (README-RNSentMap.md). |
 | `rnwindow` | Abstract reliable sender/receiver window. |
-| `rnuringdriver` | io_uring transport (README-RNUringDriver.md). |
+| `rnuringdriver` | Historical one-ring io_uring driver design before the per-queue rewrite (README-RNUringDriver.md); the current transport is RNUringQueueBankLayout, RNUringQueueSend, RNSendGatherLayout, RNUringQueueWorker, RNUringQueueReceive and RNUringQueueReceiveLayout. |
 | `rnclientio` | Client I/O ownership and progress in threaded and step-driven modes. |
 | `rnclientiodecrypt` | Decrypt on the client I/O thread. |
 | `sessionacks` | Session ACK window and retained sent-ring bitmaps. |
@@ -209,6 +209,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnsequencedholdpool` | The code-1 hold pool at the code's layout, two holds and two channels, the free stack and the delivered list as one array (README-RNSequencedHoldPool.md). |
 | `rnmessageviews` | The message object's receive views at the code's layout, a table of three and a batch of two (README-RNMessageViews.md). |
 | `rnchannelqueueslayout` | The channel FIFOs and the ready list at the code's links, three descriptors and two channels (README-RNChannelQueuesLayout.md). |
+| `rnchannelqueues` | Superseded sketch (RNChannelQueues.tla): its invariants hold by construction and it has no witness; no code cites it. The code is modelled by RNChannelQueuesLayout and RNUnreliableRingLayout. |
 | `rnorderingwrap` | The 24-bit ordering against the 32-bit read index and the sequenced hold's reservation term, a duplicate and an in-turn fragment that completes nothing each reserving one, W = 2, wire modulo 8, counter modulo 32, a table of three and Du = 1 (README-RNOrderingWrap.md). |
 | `rnreplaylayout` | The replay window's words at the code's layout, three words of four bits and sequences to 30 (README-RNReplayLayout.md). |
 | `rnackbuildlayout` | The ack block builder's descending word pass, three words of three bits, every window (README-RNAckBuildLayout.md). |
@@ -228,14 +229,14 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnloopbackbindlayout` | The loopback hub's bound table and ephemeral port search at the code's layout, three records and ports 0..5 with the range 2..5, with the range 4..5 so every port can be held, and with 4..5 lowered by the sizing to hold every record (README-RNLoopbackBindLayout.md). |
 | `rnclientslotslayout` | The client slots' LIFO free stack and owner generations at the code's layout, three slots, two ids and five generations (README-RNClientSlotsLayout.md). |
 | `rnsimulatorstorelayout` | The development link simulator's slot store and destination index at the code's layout, three slots, two shards and three destinations (README-RNSimulatorStoreLayout.md). |
-| `rnserverpayloadringlayout` | The portable server transport's payload ring at the code's layout (README-RNServerPayloadRingLayout.md). |
+| `rnserverpayloadringlayout` | The portable server transport's payload ring at the code's layout, one slot per fetch-add; the code's chunk take is not modelled (README-RNServerPayloadRingLayout.md). |
 | `clientgrocarry` | The gso client's GRO receive at the code's layout, rooms 1 to 4, a read threshold of three segments and messages of up to five (README-RNClientGroCarry.md). |
 | `serverstopspread` | The disconnect ring's layout and the stop spread across steps within the send room (README-ServerStopSpread.md). |
 | `rnserverlinkstop` | The stop's drain of the packets the development link simulator holds, judged by each packet's own send queue, one and two queues (README-RNServerLinkStop.md). |
-| `rnuringreaplayout` | The io_uring reap at the code's layout, a completion ring of four, three buffers and a hold ring of three (README-RNUringReapLayout.md). |
-| `rnuringsendphases` | The io_uring send staging's two phases at the code's layout, phases of two slots over four updates (README-RNUringSendPhases.md). |
+| `rnuringreaplayout` | Historical: the one-ring io_uring driver's reap before the per-queue rewrite (current receive: RNUringQueueWorker, RNUringQueueReceive, RNUringQueueReceiveLayout), at that driver's layout, a completion ring of four, three buffers and a hold ring of three (README-RNUringReapLayout.md). |
+| `rnuringsendphases` | Historical: the one-ring io_uring driver's send staging before the per-queue rewrite (current send: RNUringQueueBankLayout, RNUringQueueSend, RNSendGatherLayout), its two phases at that driver's layout, phases of two slots over four updates (README-RNUringSendPhases.md). |
 | `rnsegmentrefusal` | A refused UDP segmented send scoped to its destination on the gso and io_uring server transports, two destinations one of which refuses, three on a kernel that cannot segment, and two that share one table entry on it (README-RNSegmentRefusal.md). |
-| `rnsequencingwrap` | The 24-bit ordering and sequencing compares of the sequenced receive path at the half range, the wire modulo 8, uint32 modulo 32, starts at 0 and 6 (README-RNSequencingWrap.md). |
+| `rnsequencingwrap` | The 24-bit ordering and sequencing compares of the sequenced receive path at the half range, the wire modulo 8, uint32 modulo 32, starts at 0 and 6, and one step outside the half-range assumption for the in-turn release order (README-RNSequencingWrap.md). |
 
 Experiments described outside the declared cases remain historical evidence;
 this listing does not make them current measurements or alter model semantics.

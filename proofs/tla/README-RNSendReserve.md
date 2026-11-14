@@ -29,7 +29,7 @@ Two modules:
 | Model | Code |
 |---|---|
 | `free` | the queue's free frames: `send_room_queue`, or `send_room` for one queue |
-| `started` | `fill_started[queue]`: game frames staged and counted since the budget opened |
+| `started` | the sum over fill lines of `fill_lines[i].started[queue]` (`rocketnet_server_transport_started_sum`): game frames staged and counted since the budget opened. `queue_budget_now` sums it before and after its room read and retries on a change; each line's counter only rises within a phase, so equal sums mean no term moved and the double read is a consistent read of the one count the model keeps. The tails are per line (`fill_lines[i].tails[queue]`) and add up to the model's `Pending` |
 | `ownUsed` | `fill_own_used[queue]`: own frames staged and counted since then |
 | `ownTaken`, `ownLeft` (`own` in the calls module) | `fill_own_frame[client]` cleared and set; `fill_own_frames_left` |
 | `claims` | `fill_claims[queue]` |

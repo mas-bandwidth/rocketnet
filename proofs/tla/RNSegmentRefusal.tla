@@ -45,7 +45,11 @@
 (*                                                                         *)
 (* Queues: each destination's sends go through one queue (Queue, the       *)
 (* io_uring worker or gso lane of rocketnet_send_queue_of), and each queue *)
-(* keeps its own table, count and segment flag.  Whether a segmented send  *)
+(* keeps its own table and count.  The segment flag is the queue's on the  *)
+(* io_uring transport (FlagScope "queue": each worker's own) and the       *)
+(* transport's on the gso transport (FlagScope "transport": one            *)
+(* gso->features, which rocketnet_server_gso_send_bank clears for every    *)
+(* lane and each lane's rocketnet_server_gso_flush reads).  Whether a segmented send  *)
 (* was ever accepted is the transport's (AcceptedRule "transport": the     *)
 (* shared segment_accepted the refusal reads), so a queue whose own        *)
 (* destinations all refuse keeps segmenting once another queue's           *)
@@ -62,7 +66,8 @@ CONSTANTS Dests,            \* the destinations
           Mode,             \* "perdest" (the code), "fillcount", "transport" or "consecutive"
           Slot,             \* each destination's entry (rocketnet_segment_refused_entry)
           Queue,            \* each destination's queue (rocketnet_send_queue_of)
-          AcceptedRule      \* "transport" (the code) or "queue"
+          AcceptedRule,     \* "transport" (the code) or "queue"
+          FlagScope         \* the segment flag: "queue" (io_uring) or "transport" (gso)
 
 ASSUME Refusing \subseteq Dests
 ASSUME KernelSegments \in BOOLEAN
@@ -72,12 +77,13 @@ ASSUME Mode \in {"perdest", "fillcount", "transport", "consecutive"}
 ASSUME Slot \in [Dests -> Nat]
 ASSUME Queue \in [Dests -> Nat]
 ASSUME AcceptedRule \in {"transport", "queue"}
+ASSUME FlagScope \in {"queue", "transport"}
 
 NoDest == "none"
 Entries == {Slot[d] : d \in Dests}
 Queues == {Queue[d] : d \in Dests}
 
-VARIABLES segOn,        \* each queue's FEATURE_SEGMENT bit
+VARIABLES segOn,        \* each queue's FEATURE_SEGMENT bit (one bit for all under FlagScope "transport")
           table,        \* each queue's table: each entry's destination, or NoDest
           count,        \* each queue's segment_refused.destinations
           everRefused,  \* destinations that ever refused (not code state: the property's measure)
@@ -149,7 +155,10 @@ Refuse(d) ==
     /\ CASE Mode \in {"perdest", "fillcount"} ->
               /\ table' = [table EXCEPT ![Queue[d]][Slot[d]] = d]
               /\ count' = [count EXCEPT ![Queue[d]] = Counted(d)]
-              /\ segOn' = [segOn EXCEPT ![Queue[d]] = @ /\ ~(~Accepted(Queue[d]) /\ Counted(d) >= Threshold)]
+              /\ LET off == ~Accepted(Queue[d]) /\ Counted(d) >= Threshold
+                 IN segOn' = IF FlagScope = "transport"
+                             THEN [q \in Queues |-> segOn[q] /\ ~off]
+                             ELSE [segOn EXCEPT ![Queue[d]] = @ /\ ~off]
               /\ UNCHANGED <<streak, dropped>>
          [] Mode = "transport" ->
               /\ segOn' = [q \in Queues |-> FALSE]

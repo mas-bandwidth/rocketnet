@@ -1,7 +1,13 @@
 # RNBufferHandoff
 
 The N-buffer handoff of `sdk/rocketnet_buffer_handoff.h`, as the client
-transport runs it in both directions (docs/decisions/BUFFER-HANDOFF-DECISION-20261021.md).
+transport runs it to send (docs/decisions/BUFFER-HANDOFF-DECISION-20261021.md).
+The receive direction is historical: the client's receive buffers moved to
+`sdk/rocketnet_receive_handoff.h`, modelled by RNReceiveHandoff, and the
+receive functions this file names (`rocketnet_client_io_return`,
+`rocketnet_client_io_receive_exchange`, `io->receive_fill`) are gone. Every user
+of `rocketnet_buffer_handoff_t` today is a send path. The receive
+configurations and traces below are the record of that earlier code.
 Every buffer has one owner: the producer, the ready queue, the consumer or the
 free queue. Only indices move, inside a mutex held for the exchange alone.
 The game thread only try-acquires the mutex; the I/O thread acquires it and
@@ -10,7 +16,7 @@ waits on a level-triggered wake.
 | direction | producer | consumer | MaxReady | code |
 |---|---|---|---|---|
 | send | game thread (payload rings) | I/O thread | 2 | `rocketnet_client_io_hand_off`, `rocketnet_client_io_step`, `rocketnet_client_io_stop` |
-| receive | I/O thread (datagrams) | update | 1 | `rocketnet_client_io_step`, `rocketnet_client_io_expose`, `rocketnet_client_io_return` |
+| receive (historical) | I/O thread (datagrams) | update | 1 | the earlier `rocketnet_client_io_step`, `rocketnet_client_io_expose`, `rocketnet_client_io_return`; now RNReceiveHandoff |
 
 The instance is three buffers of two items and five items. Both controls enable
 every rule. Exact current state counts and outcomes are in `RUNS.tsv`
@@ -52,7 +58,7 @@ carries this for the send direction:
 - `SentToCommitted`: each consumed item was sent to the address it was
   committed with. It is in every configuration; on receive it is vacuous.
 
-## Receive expose and return
+## Receive expose and return (historical)
 
 `ConsumerExchange(main, TRUE)` is expose: release a deferred consumed buffer,
 then take the oldest ready one. `ConsumerExchange(main, FALSE)` is a successful
@@ -100,7 +106,11 @@ receive behavior; the receive delivery property is `ArrivedDelivered`.
 ## Reversed witnesses
 
 Each restores one defect and fails its named property. The traces below are
-TLC's, checked against the code by hand.
+TLC's, checked against the code by hand when they were written. The
+receive-side functions named below (`rocketnet_client_io_receive_exchange`,
+`io->receive_fill`) are from the historical receive direction and are gone;
+the send-side names (`rocketnet_client_io_hand_off`, `rocketnet_client_io_step`)
+are current.
 
 - `MCRNBufferHandoffBrokenMainBlocks.cfg`, `MainNeverWaits`, 3 states: the I/O
   thread takes the mutex, then update finds it held and waits. In the code,

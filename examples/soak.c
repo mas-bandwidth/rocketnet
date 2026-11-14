@@ -1168,10 +1168,12 @@ int main( int argc, char ** argv )
 
     // Clients disconnect in batches, each once the batch before it has left
     // and the server has read it. Each client sends a redundant burst of
-    // datagrams, and the server's loopback endpoint queues 2048 datagrams
-    // between updates (TRANSPORTS.md): every client leaving between two
-    // server updates overflows it, and the clients whose bursts are dropped
-    // end only on timeout. At most two batches' bursts are queued at once.
+    // datagrams; the server's loopback endpoint queues max_clients x
+    // ROCKETNET_RECEIVE_PACKETS_PER_CLIENT (16) datagrams between updates,
+    // rounded up to a power of two (rocketnet_loopback_server_queue_packets),
+    // so every client's disconnect burst fits even if all leave between two
+    // server updates. The batches pace the shutdown; they are not needed to
+    // keep the queue from overflowing.
 
     const double shutdown_started = rocketnet_time();
     const double shutdown_sim_start = sim_time;

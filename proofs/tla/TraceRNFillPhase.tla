@@ -45,7 +45,7 @@ VARIABLES ti,        \* the index of the record the state matches
 
 \* every model variable by the field name the harness writes
 VarsRec == [mpc |-> mpc, mscan |-> mscan, mkind |-> mkind, fpc |-> fpc, fclient |-> fclient, fepoch |-> fepoch,
-            seen |-> seen, saved |-> saved, mainCalls |-> mainCalls, window |-> window, stage |-> stage, fillsIn |-> fillsIn,
+            seen |-> seen, saved |-> saved, mainCalls |-> mainCalls, window |-> window, stage |-> stage, fresh |-> fresh, fillsIn |-> fillsIn,
             fline |-> fline, epoch |-> epoch, word |-> word, owner |-> owner, armed |-> armed,
             overlaps |-> overlaps, twoFillers |-> twoFillers, opted |-> opted,
             fbroke |-> fbroke,

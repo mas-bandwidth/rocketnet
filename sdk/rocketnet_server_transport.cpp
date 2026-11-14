@@ -365,6 +365,8 @@ struct rocketnet_server_transport_t
     // exercises fairness.
     int send_capacity;
 
+    int fill_own_frame_capacity;                        // fill_own_frame's entries (max_clients), below
+
     double time;                                        // the game's clock, last seen
     double raw_time;                                    // the caller's clock, last seen, beside the clamped one
     double time_offset;                                 // the backwards offset, exactly 0.0 until the first step
@@ -453,7 +455,8 @@ struct rocketnet_server_transport_t
     // frames claim the queue's budget. 1 while the frame is there. Set by
     // main at open; taken with one atomic add by a packet start, so two game
     // threads that start packets to one client at once take it once.
-    uint64_t fill_own_frame[ROCKETNET_MAX_CLIENTS] = {};
+    // fill_own_frame_capacity entries (max_clients), carved at create.
+    uint64_t * fill_own_frame = NULL;
     uint64_t fill_own_frames_left = 0;                      // own frames not yet taken since the budget opened (atomic)
 #if ROCKETNET_DEV
     uint64_t retest_take_back_for_test = 0;                 // claims taken back, as by another thread, between a claim's refusal and its retest
@@ -478,6 +481,7 @@ struct rocketnet_server_transport_t
 struct rocketnet_server_transport_layout_t
 {
     int send_packets, receive_packets, ring_slots, disconnect_bursts, cookie_reply_source_words;
+    uint64_t fill_phase_clients, fill_own_frame;
     uint64_t cookie_reply_sources;
     uint64_t send_to, send_packet_bytes, send_data, send_sends, send_accepted;
     uint64_t receive_from, receive_packet_bytes, receive_data;
@@ -507,6 +511,10 @@ static bool rocketnet_server_transport_layout( int max_clients, rocketnet_server
     const uint64_t bursts = (uint64_t) layout->disconnect_bursts;
 
     rocketnet_carve_t carve = { sizeof( rocketnet_server_transport_t ), false };
+
+    // one fill-phase word and one own-frame flag per configured client
+    layout->fill_phase_clients = rocketnet_carve( carve, (uint64_t) max_clients, sizeof( rocketnet_fill_phase_client_t ) );
+    layout->fill_own_frame = rocketnet_carve( carve, (uint64_t) max_clients, sizeof( uint64_t ) );
 
     // the payload ring's slots, a page clear of the fixed part, of each other
     // and of what follows
@@ -572,6 +580,17 @@ static rocketnet_server_transport_t * rocketnet_server_transport_allocate( void 
 
     // value-initialized: zeroed, then its default member initializers
     rocketnet_server_transport_t * server_transport = new ( base ) rocketnet_server_transport_t();
+
+    // constructed here; rocketnet_fill_phase_init clears them at create
+    rocketnet_fill_phase_client_t * fill_phase_clients = (rocketnet_fill_phase_client_t *) ( base + layout.fill_phase_clients );
+    for ( int i = 0; i < max_clients; ++i )
+    {
+        new ( &fill_phase_clients[i] ) rocketnet_fill_phase_client_t();
+    }
+    server_transport->fill_phase.clients = fill_phase_clients;
+    server_transport->fill_own_frame = (uint64_t *) ( base + layout.fill_own_frame );
+    server_transport->fill_own_frame_capacity = max_clients;
+    memset( server_transport->fill_own_frame, 0, (size_t) max_clients * sizeof( uint64_t ) );
 
     rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
     ring->size = layout.ring_slots;
@@ -1260,7 +1279,7 @@ static void rocketnet_server_transport_open_fill_budget( struct rocketnet_server
     const struct rocketnet_client_slots_t * slots = server_transport->protocol.client_slots;
     const int max_clients = slots ? rocketnet_client_slots_max_clients( slots ) : 0;
     uint64_t own = 0;
-    for ( int client_index = 0; client_index < max_clients && client_index < ROCKETNET_MAX_CLIENTS; ++client_index )
+    for ( int client_index = 0; client_index < max_clients && client_index < server_transport->fill_own_frame_capacity; ++client_index )
     {
         const bool owned = own < smallest_reserve && rocketnet_client_slots_connected( slots, client_index ) && server_transport->protocol.acks &&
                            server_transport->protocol.acks->endpoints[client_index].keep_alive_acked;
@@ -1342,7 +1361,7 @@ static int rocketnet_server_transport_fill_claim( struct rocketnet_server_transp
     // it held. Only the start that finds 1 there has the frame; a start that
     // finds anything else (another game thread's start to this client took
     // it first, or is taking it now) puts its one back and claims the budget.
-    if ( client_index >= 0 && client_index < ROCKETNET_MAX_CLIENTS && rocketnet_server_transport_load_u64( &server_transport->fill_own_frame[client_index] ) == 1 )
+    if ( client_index >= 0 && client_index < server_transport->fill_own_frame_capacity && rocketnet_server_transport_load_u64( &server_transport->fill_own_frame[client_index] ) == 1 )
     {
         if ( rocketnet_platform_atomic_add_u64( &server_transport->fill_own_frame[client_index], UINT64_MAX ) == 1 )
         {
@@ -1636,7 +1655,7 @@ int rocketnet_server_transport_send_capacity_to( const rocketnet_server_transpor
     {
         return room;
     }
-    if ( client_index < ROCKETNET_MAX_CLIENTS && rocketnet_server_transport_load_u64( &server_transport->fill_own_frame[client_index] ) == 1 )
+    if ( client_index < server_transport->fill_own_frame_capacity && rocketnet_server_transport_load_u64( &server_transport->fill_own_frame[client_index] ) == 1 )
     {
         left++;
     }
@@ -1934,7 +1953,7 @@ uint64_t rocketnet_server_transport_fill_own_used_for_test( const struct rocketn
 
 bool rocketnet_server_transport_fill_own_frame_for_test( const struct rocketnet_server_transport_t * server_transport, int client_index )
 {
-    rocketnet_assert( server_transport && client_index >= 0 && client_index < ROCKETNET_MAX_CLIENTS );
+    rocketnet_assert( server_transport && client_index >= 0 && client_index < server_transport->fill_own_frame_capacity );
     return rocketnet_server_transport_load_u64( &server_transport->fill_own_frame[client_index] ) == 1;
 }
 
@@ -3831,7 +3850,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     }
 
     protocol->counters = &server_transport->counters;
-    rocketnet_fill_phase_init( &server_transport->fill_phase, max_clients,
+    rocketnet_fill_phase_init( &server_transport->fill_phase, max_clients, server_transport->fill_phase.clients,
                                &server_transport->counters.values[ROCKETNET_COUNTER_MAIN_THREAD_CALL_OVERLAP],
                                &server_transport->counters.values[ROCKETNET_COUNTER_CLIENT_SEND_TWO_THREADS] );
 
@@ -5148,7 +5167,9 @@ uint8_t * rocketnet_server_transport_payload( struct rocketnet_server_transport_
     return payloads->payload_data[payload_index];
 }
 
-// proofs/tla/RNServerPayloadRingLayout.tla Acquire, on the calling thread's
+// proofs/tla/RNServerPayloadRingLayout.tla Acquire models one fetch-add per
+// slot; the chunk take below is not modelled (docs/roadmap.sexp
+// payload-ring-chunk-layout-model). On the calling thread's
 // line: a slot of the line's chunk when it holds one (a compare-and-swap on
 // the line). Otherwise, while the ring has ROCKETNET_SERVER_FILL_CHUNK free
 // slots for every line (the guard), one fetch-add of a chunk: its first slot
@@ -5664,9 +5685,10 @@ static void rocketnet_server_transport_flush( struct rocketnet_server_transport_
 
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
-    // proofs/tla/RNServerPayloadRingLayout.tla Flush: the lines' unused chunk
-    // slots marked empty, the counter clamped to send_capacity, every
-    // finished slot below it sent, the counter reset
+    // proofs/tla/RNServerPayloadRingLayout.tla Flush: the counter clamped to
+    // send_capacity, every finished slot below it sent, the counter reset; the
+    // lines' unused chunk slots marked empty first is not modelled
+    // (docs/roadmap.sexp payload-ring-chunk-layout-model)
     rocketnet_server_payload_ring_return_chunks( server_transport );
     uint64_t num_packets = ring->num_packets;
     if ( num_packets > (uint64_t) server_transport->send_capacity )

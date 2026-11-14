@@ -19,9 +19,9 @@ XDP, msgx) do not use it. Transport payloads fit within one packet.
 | `Stride` | `ROCKETNET_FRAME_STRIDE` |
 
 `send_capacity` is at most the ring: the capacity is the configured client
-count raised to `ROCKETNET_SERVER_MIN_SEND_PACKETS` (256), while the ring is
-that count raised to `ROCKETNET_SERVER_MIN_SIZED_CLIENTS` (512). Both are
-bounded by the build ceiling. A test override is accepted only when it fits
+count raised to `ROCKETNET_SERVER_MIN_SEND_PACKETS` (256), and the ring is
+that same count raised to the same 256-slot minimum. Both are bounded by the
+build ceiling. A test override is accepted only when it fits
 `payload_ring.size`. The counter has no bound of its
 own between flushes: every refused acquire still moves it. The model bounds
 acquires per flush by `MaxCount`, above `Cap`, so refused acquires are reached.
@@ -32,10 +32,18 @@ The flush runs with no packet between start and finish: the caller's contract
 that an update's sends from game threads end before its flush. A lease left
 open across a flush is RNDriverSendStaging's.
 
+Not modelled: the code's chunk take. `rocketnet_server_payload_ring_take`
+claims `ROCKETNET_SERVER_FILL_CHUNK` slots per fetch-add and installs them on
+a per-line packed word by compare-and-swap, and
+`rocketnet_server_payload_ring_return_chunks` marks a line's unused chunk
+slots empty before the flush. `Acquire` below is one fetch-add per slot; the
+chunk model is owed (`docs/roadmap.sexp` `payload-ring-chunk-layout-model`).
+
 ## Actions and the code they mirror
 
 - **`Acquire(t)`**: the portable branch of
-  `rocketnet_server_transport_start_packet`: `slot =
+  `rocketnet_server_transport_start_packet` on its single-slot path below the
+  chunk guard: `slot =
   rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 )` (fetch-add, the
   old value), refused at `slot >= send_capacity`, else `info[slot]` written
   with `wire_bytes = 0` and the frame at `ring->data + slot *
@@ -65,9 +73,9 @@ open across a flush is RNDriverSendStaging's.
 
 Frame stride 2 (the broken recovery divides by 1). The controls run three
 threads at a capacity of three: `MCRNServerPayloadRingLayout.cfg` with the ring
-exactly the capacity (as configured client counts at or above 512 produce) and
+exactly the capacity (as every configured client count produces) and
 four acquires per flush, `MCRNServerPayloadRingLayoutSpare.cfg` with a ring one
-larger (the relation below the ring's allocation floor) and five. The witnesses run two threads at a capacity
+larger (the relation under the unit seam's smaller capacity) and five. The witnesses run two threads at a capacity
 of two.
 
 ## Reversed witnesses

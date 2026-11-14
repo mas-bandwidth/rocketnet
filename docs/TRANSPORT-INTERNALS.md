@@ -198,13 +198,13 @@ bounded per receive call by the read budget below.
 | Transport | Send budget | Receive capacity |
 | --- | --- | --- |
 | portable | 256–1000, max `rocketnet_server_send_batch_packets` (1000, `sdk/rocketnet_constants.h`) | 16000 per update (`rocketnet_server_receive_packets_per_update`) |
-| msgx | per transmit worker, a producer bank of 16384 send slots and two banks the worker sends from (`ROCKETNET_MSGX_SEND_QUEUE_SIZE`, `ROCKETNET_MSGX_TX_BANKS`) | receive banks of 16000 datagrams, one update's receive budget at the build's most clients (`ROCKETNET_MSGX_RECV_QUEUE_SIZE`) |
+| msgx | per transmit worker, a producer bank of 16384 send slots and two banks the worker sends from (`ROCKETNET_MSGX_SEND_QUEUE_SIZE`, `ROCKETNET_MSGX_TX_BANKS`) | three receive banks, each one update's receive budget at the configured `max_clients` (`ROCKETNET_MSGX_RECV_QUEUE_SIZE( max_clients )`: 16000 datagrams at 1000 clients); the socket table, its lists and index and each worker's sort buckets also hold the configured clients |
 | loopback | portable batch, 256–1000 | 2048 per client endpoint; server queue scales with hub capacity (16384 at 1000 clients), with 16000 processed per update (`sdk/rocketnet_driver_loopback.h`) |
 | gso | per queue, a producer bank of 16384 send slots and two banks the worker sends from (`ROCKETNET_GSO_SEND_QUEUE_SIZE`, `ROCKETNET_GSO_TX_BANKS`) | 32768 per queue buffer (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |
 | io_uring | per queue, a producer bank of at least 4096 send slots sized by rate (at most 32768) and two banks the worker sends from; the worker reaps its own completions (`ROCKETNET_URING_SEND_QUEUE_SIZE`, `rocketnet_server_uring_send_slots`, `ROCKETNET_URING_SEND_MAX_BANK_SLOTS`) | 4096 receive buffers of 66 KiB per queue; a receive bank per queue of at least `ROCKETNET_URING_RECEIVE_BANK_FLOOR` (`ROCKETNET_URING_RECV_BUFFERS`, `rocketnet_server_uring_bank_packets`) |
 | xdp | 16384 per queue (`ROCKETNET_XDP_SEND_QUEUE_SIZE`) | 32768 staging per queue (`ROCKETNET_XDP_RECV_QUEUE_SIZE`) |
-| iocp | 4096 per send lane, one lane per 128 clients from 4 to 16 lanes, a lane never smaller than every client slot plus 1024 and all lanes within 65536 operations; 8 x 4096 at 1000 clients, 4 x 16384 at 10000 (`rocketnet_server_iocp_send_lanes`, `rocketnet_server_iocp_send_queue_size`) | 16000 across the completion workers, one update's receive budget (`rocketnet_server_iocp_receive_queue_size`) |
-| rio | 16384 per phase per lane (the staging, floor `ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE`; `rocketnet_server_rio_send_queue_size`) | 4096 posted receives per lane (`rocketnet_server_rio_receives`) |
+| iocp | 4096 per send lane, one lane per 128 clients from 1 to 16 lanes, a lane never smaller than every client slot plus 1024 and all lanes within 65536 operations; 8 x 4096 at 1000 clients, 4 x 16384 at 10000 (`rocketnet_server_iocp_send_lanes`, `rocketnet_server_iocp_send_queue_size`) | 16000 across the completion workers, one update's receive budget, each worker's bank at least its 128 posted receives (`rocketnet_server_iocp_receive_queue_size`) |
+| rio | 16384 per phase per lane (the staging, floor `ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE`; `rocketnet_server_rio_send_queue_size`) | 4096 posted receives per lane at 1000 clients, twice the staging and at least 512 (`rocketnet_server_rio_receives`) |
 
 <a id="current-staging-and-drain-limitations"></a>
 
@@ -516,7 +516,8 @@ transport creates, from the creating thread right after the create
 `rocketnet_thread_priority( false )` turns the priority calls off for
 threads created after it. The pins of the XDP, GSO and io_uring threads to
 their queue's cpu always run; those threads ask for `SCHED_RR` only when the
-switch is on and the thread was kept off core 0.
+switch is on and the pin was granted (with cpu 0 not reserved, that pin may
+be cpu 0).
 A refused call is counted in the stats structs' `thread_priority_refusals` and
 logged once per call kind (`docs/ERRORS-AND-LOGGING.md` 3.4); the transport starts
 either way. The server task workers of a game and its main thread are the

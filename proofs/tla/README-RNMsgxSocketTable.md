@@ -40,7 +40,7 @@ model's kernel maps each descriptor to its remote, so that send is the event
 | `freeSlots`, `numFree` | `free_slots[]`, `num_free` (a stack) |
 | `retired`, `numRetired` | `retired[]`, `num_retired` (compacted in place by the sweep) |
 | `numOpen` | `num_open` |
-| `index[e]` | `index[e]`, for the entries in use: the model's index is a function on the entries holding a slot, where the code holds -1 in an empty entry (a record of the table names the entries in use, not all 2048) |
+| `index[e]` | `index[e]`, for the entries in use: the model's index is a function on the entries holding a slot, where the code holds -1 in an empty entry (a record of the table names the entries in use, not all `index_size`) |
 | `coolAddr`, `coolUntil` | `cooldown_address[]`, `cooldown_until[]` |
 | `counters`, `update`, `opensLeft` | `counters[]`, `update`, `opens_left` |
 | `mpc`, `ms`, `mi`, `mk` | main's place inside a call; `"idle"` between calls |
@@ -224,8 +224,9 @@ with `ROCKETNET_TLA_PLANT`, which includes `sdk/rocketnet_msgx_socket_table.cpp`
 with `ROCKETNET_MSGX_SOCKET_TABLE_PLANT`) walks the real table for 500 steps
 per seed over a fake kernel of three descriptors, two transmit holders, one
 receive holder, a budget of two opens and one other descriptor of the process,
-with four addresses whose real hashes give homes 2046, 2046, 2047 and 0 in the
-code's 2048-entry index (a collision and a wrap). Each record carries the op,
+with four addresses whose real hashes give homes 6, 6, 7 and 0 in the code's
+index for its three slots (`ROCKETNET_MSGX_TABLE_INDEX_SIZE( 3 )`, 8 entries:
+the table is sized for its configured slots), a collision and a wrap. Each record carries the op,
 the model action it took, its arguments and every model variable;
 `TraceRNMsgxSocketTable.tla` requires the records to be a behaviour of `Spec`
 one action at a time ([README-TraceCheck.md](README-TraceCheck.md)). A forget

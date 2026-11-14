@@ -590,9 +590,10 @@ Done ==
     /\ phase = "Freed"
     /\ UNCHANGED vars
 
-\* step mode: update or send_packets (or destroy, while it waits for the
-\* other ring to be Sent and after Stop) begins the I/O step on the
-\* caller's thread; the main thread runs nothing else until the step ends
+\* step mode: update or send_packets (or update after Stop, which steps
+\* until the transport has stopped; destroy only requires it stopped and
+\* runs no step) begins the I/O step on the caller's thread; the main
+\* thread runs nothing else until the step ends
 StepBegin ==
     /\ StepDriven
     /\ ~inCall

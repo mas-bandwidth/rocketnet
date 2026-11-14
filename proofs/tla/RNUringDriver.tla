@@ -1,5 +1,12 @@
 ---------------------------- MODULE RNUringDriver ----------------------------
 (***************************************************************************)
+(* HISTORICAL DESIGN ONLY: the one-ring io_uring driver that               *)
+(* sdk/rocketnet_server_uring_linux.cpp was before the per-queue rewrite.  *)
+(* No code implements it now; the current transport is a worker per queue: *)
+(* RNUringQueueBankLayout, RNUringQueueSend, RNSendGatherLayout,           *)
+(* RNUringQueueWorker, RNUringQueueReceive and RNUringQueueReceiveLayout   *)
+(* (COVERAGE.tsv row io-uring-driver).                                     *)
+(*                                                                         *)
 (* The io_uring server driver (sdk/rocketnet_server_uring_linux.cpp).     *)
 (* One io_uring per driver, used only on the main thread, with no worker  *)
 (* thread.  The code receives on one socket per queue, each with its own  *)

@@ -22,8 +22,13 @@
 (*   window     fill_phase->window: the update in three calls is open      *)
 (*   stage      the message layer's update_stage is not CLOSED: the update *)
 (*              is open, whether or not the transport opened its own       *)
-(*   kicked     ghost: an update call ended connections for deliveries     *)
-(*              its own finish of the open update handed over (KickAll)    *)
+(*   kicked     ghost: an update call's not-received check ended a         *)
+(*              connection for deliveries a finish handed over earlier in  *)
+(*              the same main operation (KickAll)                          *)
+(*   fresh      a finish in the main operation still running handed        *)
+(*              deliveries over, and the game has had no return to receive *)
+(*              them (cleared when the operation returns); the check reads *)
+(*              it, so it is no ghost: the trace walk keeps it, as stage   *)
 (*   unchecked  ghost: a plain finish or abort ran unchecked (ScanFirst)   *)
 (*   mkind      the main operation's kind: "update" (begun with           *)
 (*              update_call: update, update_receive, update_finish) or    *)
@@ -83,6 +88,7 @@ CONSTANTS
     ArmedAtCreate,  \* TRUE: the check is armed from create, whatever the game calls (reversed witness)
     OwnerAtDecide,  \* TRUE: the decide stores the owner and the claim, and a refused look puts them back in three stores (reversed witness)
     KickAll,        \* TRUE: an update call that finds the update open finishes it and begins the next in the same call (reversed witness)
+    FreshKept,      \* TRUE: deliveries a finish handed over still count as never offered to the game after the operation returns (reversed witness)
     ShutOnEarly,    \* TRUE: an update call's work may leave the update open with the window shut (reversed witness)
     ScanFirst,      \* TRUE: the plain finish and abort scan for the open message before any check (reversed witness)
     DepthMax,       \* ROCKETNET_FILL_PHASE_DEPTH_MAX: the deepest nesting the word holds
@@ -147,21 +153,22 @@ VARIABLES
     phaseIn,        \* the fillers whose calls on each client passed the check in this fill phase
     falseAlarm,     \* a refusal of a call or operation that neither broke the contract nor met a break
     refusal,        \* the last refusal step taken ("none" before any): history for the trace check's reach predicates
-    kicked,         \* an update call ended connections for deliveries its own finish of the open update handed over (KickAll)
+    kicked,         \* an update call's not-received check ended a connection for deliveries handed over earlier in the same operation (KickAll)
+    fresh,          \* a finish in the running main operation handed deliveries over; the game has had no return to receive them
     unchecked,      \* a plain finish or abort ran its scan in the window or beside a fill call past its check (ScanFirst)
     mainsDone,
     fillsDone,
     takesDone
 
 vars == <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, stage, fillsIn, fline, epoch, word, owner,
-          armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, kicked, unchecked, mainsDone, fillsDone,
+          armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, kicked, fresh, unchecked, mainsDone, fillsDone,
           takesDone>>
 
 \* what the MC runs fingerprint (VIEW View): the refusal counts and the last
 \* refusal are history no step reads but to count on, and would only
 \* multiply the states
 View == <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, stage, fillsIn, fline, epoch, word, owner,
-               armed, opted, fbroke, phaseIn, falseAlarm, kicked, unchecked, mainsDone, fillsDone, takesDone>>
+               armed, opted, fbroke, phaseIn, falseAlarm, kicked, fresh, unchecked, mainsDone, fillsDone, takesDone>>
 
 NoWord == [ep |-> 0, depth |-> 0, in |-> FALSE]
 
@@ -178,6 +185,7 @@ TypeOK ==
     /\ window \in BOOLEAN
     /\ stage \in BOOLEAN
     /\ kicked \in BOOLEAN
+    /\ fresh \in BOOLEAN
     /\ unchecked \in BOOLEAN
     /\ fillsIn \in [Lines -> 0..Cardinality(Fillers)]
     /\ fline \in [Fillers -> Lines \cup {NoLine}]
@@ -209,6 +217,7 @@ Init ==
     /\ window = FALSE
     /\ stage = FALSE
     /\ kicked = FALSE
+    /\ fresh = FALSE
     /\ unchecked = FALSE
     /\ fillsIn = [l \in Lines |-> 0]
     /\ fline = [f \in Fillers |-> NoLine]
@@ -256,7 +265,7 @@ MainAnnounce(k) ==
     /\ mainCalls' = mainCalls + 1
     /\ MainMeets
     /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 MainScan(k) ==
     /\ LookFirst
@@ -268,7 +277,7 @@ MainScan(k) ==
     /\ mkind' = k
     /\ MainMeets
     /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 \* ok: main_begin's look at line l let the operation go on (the line's
 \* count was 0); a look at a counted line refuses it
@@ -289,7 +298,7 @@ MainLook(l, ok) ==
           ELSE /\ mscan' = mscan \ {l}
                /\ UNCHANGED <<mpc, mkind, mainCalls, mainsDone, falseAlarm, overlaps, refusal>>
     /\ UNCHANGED <<fpc, fclient, fepoch, seen, saved, window, fillsIn, fline, epoch, word, owner, phaseIn, fillsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, twoFillers, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, twoFillers, takesDone>>
 
 \* ok: the window's load let the operation in: it is an update call, or the
 \* window is shut. An operation refused here broke the window's rule
@@ -309,7 +318,7 @@ MainIn(ok) ==
           ELSE /\ mpc' = "in"
                /\ UNCHANGED <<mkind, mainCalls, mainsDone, overlaps, refusal>>
     /\ UNCHANGED <<mscan, fpc, fclient, fepoch, seen, saved, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, fillsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, twoFillers, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, twoFillers, takesDone>>
 
 \* An update call's work: s is the stage it leaves, the update open (an
 \* update_receive) or closed (update_finish, update), and w the window it
@@ -325,14 +334,25 @@ UpdateWork(k, w, s) ==
        ELSE /\ s = stage
             /\ w = window
 
-\* An update call that finds the update open (no update_finish, or a
-\* refused one) finishes it, which hands the update's deliveries to the
-\* game, and begins none: they wait for receive_messages.  KickAll, the old
-\* code, began the next update in the same call, and its not-received check
-\* ended every connection the finish had just delivered to.  The ghost
-\* is the step's own (no step reads it): the invariant fails in the state
-\* the kicking step leaves
-KickedBy(k) == kicked' = (KickAll /\ k = "update" /\ stage)
+\* The update's deliveries and the not-received check, in the order of
+\* rn_message_object_update_begin and _end (sdk/rocketnet_message_server.cpp).
+\* A finish (update_end's, or an update call's finish of an update it found
+\* open) hands the update's deliveries over; they wait for receive_messages,
+\* which the game can call only once the operation returns (fresh, cleared
+\* by MainDrop and at the end of MainSkip).  The begin's not-received check
+\* ends every connection with a delivery still waiting, and the code
+\* reaches it only in an update call that found the update closed: one
+\* that finds it open counts a misuse, finishes it and begins none.  The
+\* check is taken here for every update call that finds the update closed
+\* (update_finish on a closed update reaches no check: taking it anyway
+\* only makes the invariant harder to hold).  A kick of a delivery a finish
+\* handed over earlier in the same operation is the bug: the game never had
+\* the chance to receive it (kicked).  KickAll, the old code, went on from
+\* the finish of an open update to begin the next in the same call, so its
+\* check met the deliveries that finish had just handed over.
+UpdateChecks(k) == k = "update" /\ (~stage \/ KickAll)
+UpdateHands(k, s) == k = "update" /\ (stage \/ ~s)
+KickedBy(k) == kicked' = (UpdateChecks(k) /\ (fresh \/ (k = "update" /\ stage)))
 
 \* the operation's work done, then the epoch moves and a new fill phase
 \* begins.  w and s: the window and the stage the work left (UpdateWork)
@@ -343,6 +363,7 @@ MainEpoch(w, s) ==
     /\ window' = w
     /\ stage' = s
     /\ KickedBy(mkind)
+    /\ fresh' = (fresh \/ UpdateHands(mkind, s))
     /\ epoch' = IF ResetOnLeave THEN epoch + 1 ELSE epoch
     /\ phaseIn' = [c \in Clients |-> {}]
     /\ MainMeets
@@ -355,6 +376,8 @@ MainDrop ==
     /\ mkind' = "none"
     /\ mainCalls' = mainCalls - 1
     /\ mainsDone' = mainsDone + 1
+    \* the operation returns: the game may now receive what its finish handed over
+    /\ fresh' = (fresh /\ FreshKept)
     /\ MainMeets
     /\ UNCHANGED <<mscan, fpc, fclient, fepoch, seen, saved, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, fillsDone>>
     /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
@@ -408,7 +431,7 @@ FillBegin(f, c) ==
           /\ FillMeets(f)
           /\ UNCHANGED <<fclient, fepoch>>
     /\ UNCHANGED <<mpc, mscan, mkind, seen, saved, mainCalls, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 \* ok: the lock was taken (the in bit was clear); else, the word in with
 \* depth 0 (another call deciding), the call is refused.  A word in with
@@ -430,7 +453,7 @@ FillLock(f, ok) ==
                /\ fpc' = [fpc EXCEPT ![f] = "locked"]
                /\ UNCHANGED <<falseAlarm, fillsDone, twoFillers, refusal>>
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, saved, mainCalls, window, fillsIn, fline, epoch, owner, phaseIn, mainsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, takesDone>>
 
 FillLoad(f) ==
     /\ LoadStore
@@ -439,7 +462,7 @@ FillLoad(f) ==
     /\ seen' = [seen EXCEPT ![f] = word[fclient[f]]]
     /\ FillMeets(f)
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, saved, mainCalls, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 FillStore(f) ==
     LET c == fclient[f] IN
@@ -453,7 +476,7 @@ FillStore(f) ==
                /\ fpc' = [fpc EXCEPT ![f] = "locked"]
                /\ UNCHANGED <<falseAlarm, fillsDone, twoFillers>>
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, owner, phaseIn, mainsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, refusal, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, refusal, takesDone>>
 
 \* the lock is held: only f writes the word and the owner until it clears in.
 \* ok: f may claim the client; else another filler holds it in this epoch and
@@ -476,7 +499,7 @@ FillDecide(f, ok) ==
                /\ fpc' = [fpc EXCEPT ![f] = "decided"]
                /\ UNCHANGED <<falseAlarm, fillsDone, twoFillers, refusal>>
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, mainCalls, window, fillsIn, fline, epoch, phaseIn, mainsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, takesDone>>
 
 \* l: the line the call counted on
 FillCount(f, l) ==
@@ -488,7 +511,7 @@ FillCount(f, l) ==
     /\ fline' = [fline EXCEPT ![f] = l]
     /\ FillMeets(f)
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, word, owner, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 \* a main operation running, or one that ran since this call loaded the
 \* epoch, or the window open: refused (ok FALSE), and the word, the only
@@ -523,7 +546,7 @@ FillLook(f, ok) ==
                /\ word' = IF OwnerAtDecide THEN word ELSE [word EXCEPT ![c] = [ep |-> fepoch[f], depth |-> 1, in |-> TRUE]]
                /\ UNCHANGED <<falseAlarm, fillsDone, fillsIn, fline, overlaps, refusal>>
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, mainsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, twoFillers, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, twoFillers, takesDone>>
 
 \* OwnerAtDecide's refused look, its second store: the owner put back
 FillUnwind1(f) ==
@@ -533,7 +556,7 @@ FillUnwind1(f) ==
     /\ owner' = [owner EXCEPT ![c] = saved[f]]
     /\ FillMeets(f)
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, word, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 \* its third: the word put back, then the count dropped and the refusal counted
 FillUnwind2(f) ==
@@ -547,7 +570,7 @@ FillUnwind2(f) ==
     /\ refusal' = "FillLook"
     /\ FillMeets(f)
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, owner, phaseIn, mainsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, twoFillers, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, twoFillers, takesDone>>
 
 \* fill_begin's first load found the word in with depth 1 or more: a call
 \* not inside one for the client ("begun") and a call nested inside f's own
@@ -562,7 +585,7 @@ FillPeek(f) ==
     /\ seen' = IF fpc[f] = "begun" THEN [seen EXCEPT ![f] = word[c]] ELSE seen
     /\ FillMeets(f)
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, saved, mainCalls, window, fillsIn, fline, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 \* the owner loaded.  ok: it is f and the depth is under DepthMax: the call is
 \* nested, and the word's depth grows by one from the word it loaded.  Not
@@ -593,7 +616,7 @@ FillNest(f, ok) ==
                /\ Alarm(mine)
                /\ UNCHANGED fillsDone
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, owner, phaseIn, mainsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, takesDone>>
 
 \* a nested call's end: the depth back by one
 FillUnnest(f) ==
@@ -603,7 +626,7 @@ FillUnnest(f) ==
     /\ word' = [word EXCEPT ![c] = [@ EXCEPT !.depth = @ - 1]]
     /\ FillMeets(f)
     /\ UNCHANGED <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 FillUnclaim(f) ==
     LET c == fclient[f] IN
@@ -613,7 +636,7 @@ FillUnclaim(f) ==
     /\ word' = [word EXCEPT ![c] = [@ EXCEPT !.depth = 0, !.in = FALSE]]
     /\ FillMeets(f)
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, fillsIn, fline, epoch, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 FillLeave(f) ==
     /\ fpc[f] = "unclaimed"
@@ -623,7 +646,7 @@ FillLeave(f) ==
     /\ fillsDone' = [fillsDone EXCEPT ![f] = @ + 1]
     /\ FillMeets(f)
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, word, owner, phaseIn, falseAlarm, mainsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 (***************************************************************************)
 (* A take (update_client): take_begin is TakeCount (fills_in fetch_add on  *)
@@ -641,7 +664,7 @@ TakeCount(f, l) ==
     /\ fline' = [fline EXCEPT ![f] = l]
     /\ fbroke' = [fbroke EXCEPT ![f] = MainBusy]
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, twoFillers, refusal, takesDone>>
 
 TakeLook(f, ok) ==
     /\ fpc[f] = "tcounted"
@@ -658,7 +681,7 @@ TakeLook(f, ok) ==
           ELSE /\ fpc' = [fpc EXCEPT ![f] = "tin"]
                /\ UNCHANGED <<takesDone, fillsIn, fline, falseAlarm, overlaps, refusal>>
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, word, owner, phaseIn, mainsDone, fillsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, twoFillers>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, twoFillers>>
 
 TakeLeave(f) ==
     /\ fpc[f] = "tin"
@@ -668,7 +691,7 @@ TakeLeave(f) ==
     /\ takesDone' = [takesDone EXCEPT ![f] = @ + 1]
     /\ FillMeets(f)
     /\ UNCHANGED <<mpc, mscan, mkind, fclient, fepoch, seen, saved, mainCalls, window, epoch, word, owner, phaseIn, falseAlarm, mainsDone, fillsDone>>
-    /\ UNCHANGED <<stage, kicked, unchecked, armed, opted, overlaps, twoFillers, refusal>>
+    /\ UNCHANGED <<stage, kicked, fresh, unchecked, armed, opted, overlaps, twoFillers, refusal>>
 
 \* The latch.  The server creates the check not armed, and the game's first
 \* call that names a client, or its first update_receive, arms it, for good
@@ -683,7 +706,7 @@ Arm ==
     /\ opted' = TRUE
     /\ armed' = TRUE
     /\ UNCHANGED <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, stage, fillsIn, fline, epoch, word, owner,
-                   overlaps, twoFillers, fbroke, phaseIn, falseAlarm, refusal, kicked, unchecked, mainsDone, fillsDone, takesDone>>
+                   overlaps, twoFillers, fbroke, phaseIn, falseAlarm, refusal, kicked, fresh, unchecked, mainsDone, fillsDone, takesDone>>
 
 FillSkip(f) ==
     /\ ~armed
@@ -691,7 +714,7 @@ FillSkip(f) ==
     /\ fillsDone[f] < MaxFills
     /\ fillsDone' = [fillsDone EXCEPT ![f] = @ + 1]
     /\ UNCHANGED <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, stage, fillsIn, fline, epoch, word, owner,
-                   armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, kicked, unchecked, mainsDone, takesDone>>
+                   armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, kicked, fresh, unchecked, mainsDone, takesDone>>
 
 TakeSkip(f) ==
     /\ ~armed
@@ -699,7 +722,7 @@ TakeSkip(f) ==
     /\ takesDone[f] < MaxTakes
     /\ takesDone' = [takesDone EXCEPT ![f] = @ + 1]
     /\ UNCHANGED <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, stage, fillsIn, fline, epoch, word, owner,
-                   armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, kicked, unchecked, mainsDone, fillsDone>>
+                   armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, kicked, fresh, unchecked, mainsDone, fillsDone>>
 
 \* a main operation of kind k made not armed: its work only (UpdateWork)
 MainSkip(k, w, s) ==
@@ -710,6 +733,7 @@ MainSkip(k, w, s) ==
     /\ window' = w
     /\ stage' = s
     /\ KickedBy(k)
+    /\ fresh' = ((fresh \/ UpdateHands(k, s)) /\ FreshKept)
     /\ mainsDone' = mainsDone + 1
     /\ UNCHANGED <<mscan, mpc, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, fillsIn, fline, epoch, word, owner,
                    armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, unchecked, fillsDone, takesDone>>
@@ -729,14 +753,14 @@ PlainScan ==
     /\ unchecked' = (window \/ \E f \in Fillers : fpc[f] \in PastCheck)
     /\ mainsDone' = mainsDone + 1
     /\ UNCHANGED <<mscan, mpc, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, stage, fillsIn, fline, epoch, word, owner,
-                   armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, kicked, fillsDone, takesDone>>
+                   armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, kicked, fresh, fillsDone, takesDone>>
 
 Done ==
     /\ mpc = "idle" /\ mainsDone = MaxMain
     /\ \A f \in Fillers : fpc[f] = "idle" /\ fillsDone[f] = MaxFills /\ takesDone[f] = MaxTakes
     \* every variable by name, not vars: the ghost refusal is read by no step
     /\ UNCHANGED <<mpc, mscan, mkind, fpc, fclient, fepoch, seen, saved, mainCalls, window, stage, fillsIn, fline, epoch, word, owner,
-                   armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, kicked, unchecked, mainsDone, fillsDone,
+                   armed, overlaps, twoFillers, opted, fbroke, phaseIn, falseAlarm, refusal, kicked, fresh, unchecked, mainsDone, fillsDone,
                    takesDone>>
 
 Next ==
@@ -778,7 +802,11 @@ StageShut == stage => /\ \A f \in Fillers : fpc[f] \notin PastCheck
                       /\ ~(mpc \in {"in", "epoched"} /\ mkind = "other")
 
 \* no update call ends a connection for a delivery the game never had the
-\* chance to receive (MCRNFillPhaseBrokenKickAll)
+\* chance to receive.  It rests on two rules, and each has a witness: the
+\* check runs only in an update call that found the update closed, so no
+\* finish comes before it in the same call (MCRNFillPhaseBrokenKickAll), and
+\* the operation's return offers what a finish handed over to the game before
+\* any later check (MCRNFillPhaseBrokenFreshKept)
 NoKickOnOpenUpdate == ~kicked
 
 \* the plain finish and abort never run beside a fill call past its check,

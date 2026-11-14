@@ -132,7 +132,7 @@ instead:
 | --- | --- | --- | --- | --- |
 | `ROCKETNET_SERVER_GSO_RESERVE_CPU_0` | `gso_reserve_cpu_0` | `gso` (Linux) | reserved | 1 reserved, 2 not reserved |
 | `ROCKETNET_SERVER_IO_URING_RESERVE_CPU_0` | `io_uring_reserve_cpu_0` | `io_uring` (Linux) | reserved | 1 reserved, 2 not reserved |
-| `ROCKETNET_SERVER_PORTABLE_RESERVE_CPU_0` | `portable_reserve_cpu_0` | `portable` on Linux (and `msgx` there) | reserved | 1 reserved, 2 not reserved |
+| `ROCKETNET_SERVER_PORTABLE_RESERVE_CPU_0` | `portable_reserve_cpu_0` | `portable` (Linux) | reserved | 1 reserved, 2 not reserved |
 
 Zero is the default and reads as reserved (`ROCKETNET_CPU_0_RESERVED`): network
 thread q runs on cpu `num_os_cpus + q`. Not reserved

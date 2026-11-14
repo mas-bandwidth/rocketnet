@@ -83,16 +83,23 @@ static void test_max_clients_derived_limits()
     check( ROCKETNET_SERVER_PACKET_LEASES / 2 >= 2 * clients );
     check( ROCKETNET_SERVER_PACKET_LEASES / 2 >= rocketnet_server_send_staging_packets( clients ) );
 
-    // each server-wide sizing follows the configured count, raised to the
-    // smallest sizing count and never past the build's
+    // each server-wide sizing follows the configured count itself, never past
+    // the build's; the send batch and the receive budget keep their own slot
+    // minimums (256 and 512), which no count of 512 or more reaches
 
-    const int counts[] = { 1, ROCKETNET_SERVER_MIN_SIZED_CLIENTS, ROCKETNET_DEFAULT_MAX_CLIENTS, clients };
+    const int counts[] = { 1, 8, 64, 255, 256, 257, 511, 512, ROCKETNET_DEFAULT_MAX_CLIENTS, clients };
     for ( const int n : counts )
     {
-        const int sized = n > ROCKETNET_SERVER_MIN_SIZED_CLIENTS ? n : ROCKETNET_SERVER_MIN_SIZED_CLIENTS;
+        const int sized = n;
         check( rocketnet_server_sized_clients( n ) == sized );
-        check( rocketnet_server_receive_packets_per_update( n ) == ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * sized );
-        check( rocketnet_server_send_batch_packets( n ) == sized );
+        const int receive = ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * sized;
+        check( rocketnet_server_receive_packets_per_update( n ) == ( receive > ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE ? receive : ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE ) );
+        check( rocketnet_server_send_batch_packets( n ) == ( sized > ROCKETNET_SERVER_MIN_SEND_PACKETS ? sized : ROCKETNET_SERVER_MIN_SEND_PACKETS ) );
+        if ( n >= 512 )
+        {
+            check( rocketnet_server_receive_packets_per_update( n ) == ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * n );
+            check( rocketnet_server_send_batch_packets( n ) == n );
+        }
 
         // the server-wide send staging holds two packets for every client,
         // and each receive side twice that
@@ -117,12 +124,21 @@ static void test_max_clients_derived_limits()
         check( lanes * lane_packets >= ( wanted < ROCKETNET_IOCP_MAX_OPERATIONS ? wanted : ROCKETNET_IOCP_MAX_OPERATIONS ) );
         check( lanes * lane_packets <= UINT16_MAX + 1 );
         check( rocketnet_server_iocp_receive_queue_size( n, 1 ) == rocketnet_server_receive_packets_per_update( n ) );
+        // a worker's bank is its share of the budget, never fewer than the
+        // receives it posts
+        const int share = rocketnet_server_receive_packets_per_update( n ) / ROCKETNET_IOCP_MAX_WORKERS;
+        check( rocketnet_server_iocp_receive_queue_size( n, ROCKETNET_IOCP_MAX_WORKERS ) ==
+               ( share > ROCKETNET_IOCP_RECEIVES_PER_WORKER ? share : ROCKETNET_IOCP_RECEIVES_PER_WORKER ) );
         // each RIO lane's phase is the staging with a floor of 16384
         check( rocketnet_server_rio_send_queue_size( n ) == ( staging > ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE ? staging : ROCKETNET_RIO_MIN_SEND_QUEUE_SIZE ) );
-        check( rocketnet_server_rio_receives( n ) == 2 * staging );
+        // its posted receives twice the staging, never fewer than the
+        // receive budget's minimum
+        check( rocketnet_server_rio_receives( n ) ==
+               ( 2 * staging > ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE ? 2 * staging : ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE ) );
 
         const int macs = rocketnet_xdp_reply_mac_entries( n );
-        check( macs >= 4 * sized && ( macs & ( macs - 1 ) ) == 0 );
+        check( macs >= 4 * sized && macs >= ROCKETNET_XDP_REPLY_MAC_MIN_ENTRIES && ( macs & ( macs - 1 ) ) == 0 );
+        check( macs == ( (int) rocketnet_power_of_two_at_least( 4 * sized ) > ROCKETNET_XDP_REPLY_MAC_MIN_ENTRIES ? (int) rocketnet_power_of_two_at_least( 4 * sized ) : ROCKETNET_XDP_REPLY_MAC_MIN_ENTRIES ) );
         check( rocketnet_xdp_replay_entries( n ) >= (uint32_t) n );
         check( rocketnet_server_uring_bank_packets( n ) >= rocketnet_server_receive_packets_per_update( n ) );
     }
@@ -169,6 +185,80 @@ static void test_max_clients_derived_limits()
 }
 
 REGISTER_UNIT_TEST( test_max_clients_derived_limits );
+
+// Every relation the per-server sizes keep holds at every configured count
+// from 1 to ROCKETNET_MAX_CLIENTS, not only at the counts above: the receive
+// budget twice the portable send batch and twice the server-wide staging, the
+// IOCP process view twice a lane, a RIO bank inside the process view and at
+// least the receive budget's minimum, an IOCP worker's bank at least the
+// receives it posts, the XDP
+// view twice its send queue, the reply MAC table wider than four probe
+// windows, the io_uring bank at least the budget, and the send capacity
+// inside the payload ring. No size at 512 clients or more is raised by any
+// minimum.
+
+static void test_max_clients_sizing_relations_hold_at_every_count()
+{
+    for ( int n = 1; n <= ROCKETNET_MAX_CLIENTS; ++n )
+    {
+        const int receive = rocketnet_server_receive_packets_per_update( n );
+        const int send = rocketnet_server_send_batch_packets( n );
+        const int staging = rocketnet_server_send_staging_packets( n );
+        check( send >= n && send >= ROCKETNET_SERVER_MIN_SEND_PACKETS );
+        check( receive >= ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * n );
+        check( receive >= 2 * send );
+        check( receive >= 2 * staging );
+        check( rocketnet_server_rio_receives( n ) <= receive );
+        check( rocketnet_server_iocp_receive_packets_per_update( n ) >= receive );
+        check( rocketnet_server_iocp_receive_packets_per_update( n ) >= 2 * rocketnet_server_iocp_send_queue_size( n ) );
+#if ROCKETNET_XDP
+        check( rocketnet_server_xdp_receive_packets_per_update( n ) >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE );
+#endif // #if ROCKETNET_XDP
+        const int macs = rocketnet_xdp_reply_mac_entries( n );
+        check( macs >= 4 * ROCKETNET_XDP_REPLY_MAC_PROBES && ( macs & ( macs - 1 ) ) == 0 );
+        check( rocketnet_server_uring_bank_packets( n ) >= receive );
+        check( rocketnet_server_rio_receives( n ) >= ROCKETNET_SERVER_MIN_RECEIVE_PACKETS_PER_UPDATE );
+        for ( int workers = 1; workers <= ROCKETNET_IOCP_MAX_WORKERS; ++workers )
+        {
+            check( rocketnet_server_iocp_receive_queue_size( n, workers ) >= ROCKETNET_IOCP_RECEIVES_PER_WORKER );
+        }
+        const int capacity = n > ROCKETNET_SERVER_MIN_SEND_PACKETS ? n : ROCKETNET_SERVER_MIN_SEND_PACKETS;
+        check( capacity <= send );
+        if ( n >= 512 )
+        {
+            check( receive == ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * n );
+            check( send == n );
+            check( rocketnet_server_iocp_receive_packets_per_update( n ) == receive );
+            check( rocketnet_server_rio_receives( n ) == 2 * staging );
+            check( rocketnet_server_iocp_receive_queue_size( n, ROCKETNET_IOCP_MAX_WORKERS ) == receive / ROCKETNET_IOCP_MAX_WORKERS );
+            check( macs == (int) rocketnet_power_of_two_at_least( 4 * n ) );
+        }
+    }
+}
+
+REGISTER_UNIT_TEST( test_max_clients_sizing_relations_hold_at_every_count );
+
+// The XDP reply MAC table of every small server binds: the transport's
+// create binds a table of rocketnet_xdp_reply_mac_entries( max_clients )
+// entries, and the bind refuses fewer than four probe windows, so a table
+// sized below that minimum (1 to 15 clients without it) would refuse the
+// create. One more check: a table one window short is refused.
+
+static void test_max_clients_small_reply_mac_tables_bind()
+{
+    static struct rocketnet_xdp_reply_mac_entry_t entries[256];
+    for ( int n = 1; n <= 64; ++n )
+    {
+        const int count = rocketnet_xdp_reply_mac_entries( n );
+        check( count <= 256 );
+        struct rocketnet_xdp_reply_macs_t table;
+        check( rocketnet_xdp_reply_macs_bind( &table, entries, count ) );
+    }
+    struct rocketnet_xdp_reply_macs_t table;
+    check( !rocketnet_xdp_reply_macs_bind( &table, entries, ROCKETNET_XDP_REPLY_MAC_MIN_ENTRIES / 2 ) );
+}
+
+REGISTER_UNIT_TEST( test_max_clients_small_reply_mac_tables_bind );
 
 // A light per-client config, so a server of ROCKETNET_MAX_CLIENTS slots stays
 // small enough for the unit suite. The slot count is what the case is about,
@@ -237,6 +327,67 @@ static void test_server_plan_follows_configured_max_clients()
 }
 
 REGISTER_UNIT_TEST( test_server_plan_follows_configured_max_clients );
+
+// Every transport's plan follows the configured count all the way down: it
+// grows strictly over 1, 8, 64, 512 and 1000 clients (no floor holds a small
+// server at a larger one's size), and the server transport's own block at
+// 8 clients is under a third of the block at 512 (with the floor it was the
+// same block). Only the plan is read here;
+// tools/check_memory.py and benchmarks/transport_memory hold each plan to
+// what create allocates.
+
+static void test_server_plan_grows_with_max_clients_on_every_transport()
+{
+    const char * transports[] = {
+        "portable",
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+        "gso",
+#if defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING
+        "io_uring",
+#endif // #if defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING
+#if ROCKETNET_XDP
+        "xdp",
+#endif // #if ROCKETNET_XDP
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        "iocp",
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    };
+    const int counts[] = { 1, 8, 64, 512, 1000 };
+    for ( const char * transport : transports )
+    {
+        uint64_t previous_total = 0;
+        uint64_t previous_transport = 0;
+        uint64_t transport_at_8 = 0;
+        for ( const int n : counts )
+        {
+            if ( n > ROCKETNET_MAX_CLIENTS )
+            {
+                continue;
+            }
+            rocketnet_server_transport_config_t config;
+            rocketnet_server_transport_default_config( &config );
+            config.max_clients = n;
+            rocketnet_server_memory_plan_t plan;
+            check( rocketnet_server_transport_memory_plan( &config, transport, plan ) );
+            check( plan.total_bytes > previous_total );
+            check( plan.transport_bytes > previous_transport );
+            previous_total = plan.total_bytes;
+            previous_transport = plan.transport_bytes;
+            if ( n == 8 )
+            {
+                transport_at_8 = plan.transport_bytes;
+            }
+            if ( n == 512 )
+            {
+                // the 8 MiB packet lease table is the one fixed part (sdk/rocketnet_constants.h)
+                check( 3 * transport_at_8 < plan.transport_bytes );
+            }
+        }
+    }
+}
+
+REGISTER_UNIT_TEST( test_server_plan_grows_with_max_clients_on_every_transport );
 
 // the suite reads the bound before any case runs, with no library and no
 // hub, so it plans the portable transport (a superset of loopback's plan,

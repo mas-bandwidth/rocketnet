@@ -183,8 +183,8 @@ struct alignas( 64 ) rocketnet_fill_phase_t
     int num_clients;
     uint64_t * overlap_counter;                 // MAIN_THREAD_CALL_OVERLAP, NULL: not counted
     uint64_t * two_fillers_counter;             // CLIENT_SEND_TWO_THREADS, NULL: not counted
+    struct rocketnet_fill_phase_client_t * clients;     // num_clients entries, the owner's storage (the server transport carves it from max_clients)
     struct rocketnet_fill_phase_line_t lines[ROCKETNET_FILL_PHASE_FILL_LINES];
-    struct rocketnet_fill_phase_client_t clients[ROCKETNET_MAX_CLIENTS];
 };
 #if defined( _MSC_VER )
 #pragma warning( pop )
@@ -196,8 +196,10 @@ inline int rocketnet_fill_phase_line_of( uint64_t thread_id )
     return (int) ( ( thread_id * 0x9E3779B97F4A7C15ULL ) >> 58 );
 }
 
-// num_clients is the server's max_clients; the counters may be NULL
+// num_clients is the server's max_clients; clients is storage for that many
+// entries (constructed, any contents: init clears them); the counters may be NULL
 void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * fill_phase, int num_clients,
+                                struct rocketnet_fill_phase_client_t * clients,
                                 uint64_t * overlap_counter, uint64_t * two_fillers_counter );
 
 // armed: the scopes below run the check; not armed: they do nothing (see

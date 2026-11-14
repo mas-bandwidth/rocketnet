@@ -349,6 +349,46 @@ static void test_harden_chain_refused_both_parts_io_uring()
     check( !harden_chain_judge( c, 0 ).ok );
 }
 
+static void test_harden_chain_refused_hostile_xdp()
+{
+    // xdp, --row hostile: the clients sent 1000, the hostile role 10. xdp has no
+    // receive workers' totals; its kernel program dropped 5 for the filter and
+    // 2 too small (XDP_KERNEL_DROPPED_*), and 3 frames were dropped before a
+    // datagram was read (XDP_RECEIVE_FRAME_DROPPED), none of them in
+    // PACKETS_RECEIVED; the library received the clients' 1000
+
+    harden_terms_t t;
+    t["clients.c2s_packets_sent"] = 1000;
+    t["hostile.sent"] = 10;
+    t["clients.c2s_udp_out"] = 1010;
+    t["server.c2s_packets_received"] = 1000;
+    t[harden_transport_key( ROCKETNET_COUNTER_PACKETS_RECEIVED )] = 1000;
+    t[harden_transport_key( ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_WRONG_FILTER )] = 5;
+    t[harden_transport_key( ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_TOO_SMALL )] = 2;
+    t[harden_transport_key( ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED )] = 3;
+    harden_chain_t c = harden_chain_test_up( t );
+    check( c.library_sent == 1010 );
+    check( c.library_refused_before_received == 10 );
+    harden_chain_result_t r = harden_chain_judge( c, 0 );
+    check( r.ok );
+    check( r.library_gap == 0 );
+    check( harden_chain_test_handoff_gap( t ) == 0 );
+
+    // without the xdp terms (the term before this fix) the 10 are no named
+    // drop and the chain fails a cell that lost nothing
+    c.library_refused_before_received = 0;
+    r = harden_chain_judge( c, 0 );
+    check( !r.ok );
+    check( r.library_gap == 10 );
+
+    // a hostile datagram that no counter names still fails
+    t["hostile.sent"] = 11;
+    t["clients.c2s_udp_out"] = 1011;
+    r = harden_chain_judge( harden_chain_test_up( t ), 0 );
+    check( !r.ok );
+    check( r.library_gap == 1 );
+}
+
 static void test_harden_chain_refused_from_terms_reads_the_counters()
 {
     // every key the term reads: the workers' count and each outside size drop
@@ -356,8 +396,22 @@ static void test_harden_chain_refused_from_terms_reads_the_counters()
     // both parts and are never read, and PACKETS_RECEIVED is never read into
     // the term (the received count is not subtracted from anything)
 
-    const int outside[] = { ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SIZE, ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_SHORT, ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE,
-                            ROCKETNET_COUNTER_RIO_RECEIVE_TOO_SHORT, ROCKETNET_COUNTER_RIO_RECEIVE_TOO_LARGE };
+    const int outside[] = { ROCKETNET_COUNTER_URING_RECEIVE_DROPPED_SIZE,
+                            ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_SHORT,
+                            ROCKETNET_COUNTER_IOCP_RECEIVE_TOO_LARGE,
+                            ROCKETNET_COUNTER_RIO_RECEIVE_TOO_SHORT,
+                            ROCKETNET_COUNTER_RIO_RECEIVE_TOO_LARGE,
+                            ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_TOO_SMALL,
+                            ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_TOO_LARGE,
+                            ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_WRONG_FILTER,
+                            ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_INVALID_TYPE,
+                            ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_WRONG_EPOCH,
+                            ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_REPLAYED,
+                            ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_FIRST_FRAGMENT,
+                            ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_NO_SOCKET,
+                            ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION,
+                            ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_NO_SESSION,
+                            ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED };
     for ( int i = 0; i < (int) ( sizeof( outside ) / sizeof( outside[0] ) ); i++ )
     {
         harden_terms_t t;
@@ -374,6 +428,7 @@ static void test_harden_chain_refused_from_terms_reads_the_counters()
 REGISTER_UNIT_TEST( test_harden_chain_refused_from_terms_reads_the_counters );
 REGISTER_UNIT_TEST( test_harden_chain_refused_hostile_worker_prefilter );
 REGISTER_UNIT_TEST( test_harden_chain_refused_both_parts_io_uring );
+REGISTER_UNIT_TEST( test_harden_chain_refused_hostile_xdp );
 REGISTER_UNIT_TEST( test_harden_chain_refused_received_count_short_is_red );
 REGISTER_UNIT_TEST( test_harden_chain_strays_named_pass );
 REGISTER_UNIT_TEST( test_harden_chain_unnamed_strays_fail );
