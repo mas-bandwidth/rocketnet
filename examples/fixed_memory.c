@@ -179,33 +179,46 @@ static int run_frames( struct rocketnet_server_t * server, struct rocketnet_clie
     return sent >= 4 && received >= 4;
 }
 
-static int fail( const char * what, enum rocketnet_status_t status )
+// every failure prints its line and leaves through main's one cleanup path,
+// which destroys whatever was created and terms
+
+static void fail( const char * what, enum rocketnet_status_t status )
 {
     printf( "FAIL: %s: %s\n", what, rocketnet_status_name( status ) );
-    return 1;
 }
 
 int main( void )
 {
+    int result = 1;
+    struct rocketnet_loopback_hub_t * hub = NULL;
+    struct rocketnet_server_t * server = NULL;
+    struct rocketnet_client_t * client = NULL;
+    struct budget_t server_budget, client_budget;
+    struct rocketnet_server_config_t server_config;
+    struct rocketnet_client_config_t client_config;
+    size_t server_required = 0, client_required = 0, server_peak = 0, client_peak = 0;
+    const uint8_t backend_public_key[] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+
     enum rocketnet_status_t status = rocketnet_init( NULL, budget_malloc, budget_free );
     if ( status != ROCKETNET_STATUS_OK )
     {
-        return fail( "init", status );
+        fail( "init", status );
+        return 1;
     }
 
-    struct rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 2, &status );
+    hub = rocketnet_loopback_hub_create( NULL, 2, &status );
     if ( !hub )
     {
-        return fail( "loopback hub create", status );
+        fail( "loopback hub create", status );
+        goto cleanup;
     }
 
     // the configs the objects are created with are the configs they are sized with
 
-    const uint8_t backend_public_key[] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
-    struct rocketnet_server_config_t server_config;
     if ( ( status = rocketnet_server_default_config( &server_config ) ) != ROCKETNET_STATUS_OK )
     {
-        return fail( "server default config", status );
+        fail( "server default config", status );
+        goto cleanup;
     }
     server_config.protocol_id = EXAMPLE_PROTOCOL_ID;
     server_config.max_clients = 2;
@@ -213,54 +226,58 @@ int main( void )
     server_config.transport = "loopback";
     server_config.loopback_hub = hub;
 
-    struct rocketnet_client_config_t client_config;
     if ( ( status = rocketnet_client_default_config( &client_config ) ) != ROCKETNET_STATUS_OK )
     {
-        return fail( "client default config", status );
+        fail( "client default config", status );
+        goto cleanup;
     }
     client_config.transport = "loopback";
     client_config.loopback_hub = hub;
     client_config.step_driven = true;
 
-    const size_t server_required = rocketnet_server_required_memory( &server_config );
-    const size_t client_required = rocketnet_client_required_memory( &client_config );
+    server_required = rocketnet_server_required_memory( &server_config );
+    client_required = rocketnet_client_required_memory( &client_config );
     if ( server_required == 0 || client_required == 0 )
     {
         printf( "FAIL: required memory: a config is invalid\n" );
-        return 1;
+        goto cleanup;
     }
 
-    struct budget_t server_budget, client_budget;
     budget_reset( &server_budget, server_required );
     budget_reset( &client_budget, client_required );
 
     // the whole lifecycle inside the budgets
 
-    struct rocketnet_server_t * server = rocketnet_server_create( &server_budget, "127.0.0.1:0", NULL, &server_config, &status );
+    server = rocketnet_server_create( &server_budget, "127.0.0.1:0", NULL, &server_config, &status );
     if ( !server )
     {
-        return fail( "server create", status );
+        fail( "server create", status );
+        goto cleanup;
     }
     if ( ( status = rocketnet_server_start( server ) ) != ROCKETNET_STATUS_OK )
     {
-        return fail( "server start", status );
+        fail( "server start", status );
+        goto cleanup;
     }
 
-    struct rocketnet_client_t * client = rocketnet_client_create( &client_budget, &client_config, &status );
+    client = rocketnet_client_create( &client_budget, &client_config, &status );
     if ( !client )
     {
-        return fail( "client create", status );
+        fail( "client create", status );
+        goto cleanup;
     }
 
     for ( int connection = 0; connection < 2; connection++ )
     {
         if ( ( status = connect_client( server, client ) ) != ROCKETNET_STATUS_OK )
         {
-            return fail( "client connect", status );
+            fail( "client connect", status );
+            goto cleanup;
         }
         if ( !run_frames( server, client ) )
         {
-            return fail( "messages", ROCKETNET_STATUS_OK );
+            fail( "messages", ROCKETNET_STATUS_OK );
+            goto cleanup;
         }
 
         // disconnect, then reconnect: the next connect frees the old attempt before it allocates
@@ -270,7 +287,9 @@ int main( void )
     }
 
     rocketnet_client_destroy( client );
+    client = NULL;
     rn_cli_server_stop_and_destroy( server );
+    server = NULL;
 
     printf( "server: required %zu bytes, peak %zu, refusals %d\n", server_required, server_budget.peak, server_budget.refusals );
     printf( "client: required %zu bytes, peak %zu, refusals %d\n", client_required, client_budget.peak, client_budget.refusals );
@@ -279,14 +298,14 @@ int main( void )
          server_budget.live || client_budget.live )
     {
         printf( "FAIL: the lifecycle did not fit the required memory\n" );
-        return 1;
+        goto cleanup;
     }
 
     // the negative control: one byte under the peak each object reached, start
     // and connect refuse with OUT_OF_MEMORY and leave nothing behind
 
-    const size_t server_peak = server_budget.peak;
-    const size_t client_peak = client_budget.peak;
+    server_peak = server_budget.peak;
+    client_peak = client_budget.peak;
 
     budget_reset( &server_budget, server_peak - 1 );
     server = rocketnet_server_create( &server_budget, "127.0.0.1:0", NULL, &server_config, &status );
@@ -297,15 +316,18 @@ int main( void )
     printf( "server with %zu bytes: %s\n", server_peak - 1, rocketnet_status_name( status ) );
     if ( status != ROCKETNET_STATUS_OUT_OF_MEMORY )
     {
-        return fail( "server under budget", status );
+        fail( "server under budget", status );
+        goto cleanup;
     }
     rn_cli_server_stop_and_destroy( server );
+    server = NULL;
 
     budget_reset( &server_budget, server_required );
     server = rocketnet_server_create( &server_budget, "127.0.0.1:0", NULL, &server_config, &status );
     if ( !server || ( status = rocketnet_server_start( server ) ) != ROCKETNET_STATUS_OK )
     {
-        return fail( "server start", status );
+        fail( "server start", status );
+        goto cleanup;
     }
 
     budget_reset( &client_budget, client_peak - 1 );
@@ -317,27 +339,43 @@ int main( void )
     printf( "client with %zu bytes: %s\n", client_peak - 1, rocketnet_status_name( status ) );
     if ( status != ROCKETNET_STATUS_OUT_OF_MEMORY )
     {
-        return fail( "client under budget", status );
+        fail( "client under budget", status );
+        goto cleanup;
     }
     if ( client )
     {
         rocketnet_client_destroy( client );
+        client = NULL;
     }
     rn_cli_server_stop_and_destroy( server );
+    server = NULL;
 
     if ( server_budget.live || client_budget.live )
     {
         printf( "FAIL: a refused start or connect left memory behind\n" );
-        return 1;
+        goto cleanup;
     }
 
-    rn_cli_loopback_hub_destroy( hub );
+    result = 0;
+
+cleanup:
+
+    rn_cli_client_stop_and_destroy( client, now );
+    rn_cli_server_stop_and_destroy( server );
+    if ( hub )
+    {
+        rn_cli_loopback_hub_destroy( hub );
+    }
     if ( ( status = rocketnet_term() ) != ROCKETNET_STATUS_OK )
     {
-        return fail( "term", status );
+        fail( "term", status );
+        result = 1;
     }
 
-    printf( "PASS\n" );
+    if ( result == 0 )
+    {
+        printf( "PASS\n" );
+    }
 
-    return 0;
+    return result;
 }

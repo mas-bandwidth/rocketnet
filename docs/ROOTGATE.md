@@ -26,6 +26,7 @@ the exact final line `test_xdp_filter: 19 cases passed`:
 - `ipv6_icmpv6_passes`
 - `ipv6_same_drops_as_ipv4`
 - `config_layout_matches_header`
+- `vlan_server_takes_its_tag`
 - `replay_drops_behind_the_window`
 - `replay_never_writes_the_map`
 - `replay_key_layout_matches_header`

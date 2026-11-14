@@ -831,12 +831,13 @@ static inline void rocketnet_dst_check_receipt_sent( struct rocketnet_dst_check_
     r->outcomes = 0;
 }
 
-// Mirrors RNReceipts::BlockAckedOnlyWhenAllFragmentsAcked and
-// RNChannelTypes::EveryReliableAckedAndDelivered (safety side), for one
+// Checks the delivered half of RNReceipts::BlockAckedOnlyWhenAllFragmentsAcked
+// and RNChannelTypes::EveryReliableAckedAndDelivered (safety side), for one
 // receipt rocketnet_dst_check_receipt_one_outcome accepted: an ACKED receipt
 // names a message the receiver delivered, or for type 7 one it holds behind
-// an earlier sequence still undelivered. A receipt whose receiving stream has
-// moved to a new session is not judged.
+// an earlier sequence still undelivered. The type 7 case passes with no
+// fragment observation, so the all-fragments condition is not checked here.
+// A receipt whose receiving stream has moved to a new session is not judged.
 
 static inline int rocketnet_dst_check_receipt_acked_delivered( struct rocketnet_dst_check_state_t * st,
                                                                int sender, uint32_t serial, int32_t status )
@@ -1119,8 +1120,9 @@ static inline void rocketnet_dst_check_generation( struct rocketnet_dst_check_st
     }
 }
 
-// Mirrors ReplayWindow::Monotone and HighestIsReceived: within a session the
-// receiver's replay_session.highest_opened never decreases.
+// Mirrors ReplayWindow::Monotone only: within a session the receiver's
+// replay_session.highest_opened never decreases. HighestIsReceived is not
+// checked here; the replay bit is never read.
 
 static inline void rocketnet_dst_check_replay( struct rocketnet_dst_check_state_t * st, int session,
                                                uint64_t generation, uint64_t highest_opened )
@@ -1163,9 +1165,10 @@ static inline void rocketnet_dst_check_crashed_silent( struct rocketnet_dst_chec
     }
 }
 
-// Mirrors RNSimFaults::SkewBounded and ClockMonotone: every endpoint's clock is
-// within its bound of the true clock. The harness passes each endpoint's own
-// clock (docs/DST.md, clock-back) and the shared step clock; clock-back
+// Mirrors a fixed-bound form of RNSimFaults::SkewBounded: every endpoint's
+// clock is within the bound the harness passes of the true clock (the model's
+// bound grows with t and is not mirrored). The harness passes each endpoint's
+// own clock (docs/DST.md, clock-back) and the shared step clock; clock-back
 // steps one endpoint's clock back on purpose, so ClockMonotone is not
 // checked here.
 static inline void rocketnet_dst_check_clock( struct rocketnet_dst_check_state_t * st, int endpoint,
@@ -1708,9 +1711,14 @@ static inline void rocketnet_dst_check_issued( struct rocketnet_dst_check_state_
     st->issued_high[endpoint] = packet_id;
 }
 
-// Mirrors RNReceipts::AckedMeansPacketOpened: a link ack names a packet the
-// acked endpoint itself issued, and names it once. The join key the seam
-// surfaces is the packet id recorded when the frame was sealed.
+// The related issued-once check for RNReceipts::AckedMeansPacketOpened and
+// ReplayWindow::AckReportsOnlyReceived: a link ack names a packet the acked
+// endpoint itself issued, and names it once. The join key the seam surfaces
+// is the packet id recorded when the frame was sealed. Whether the receiving side
+// opened or received the packet is not observed here; those mirrors are
+// owed (COVERAGE.tsv). For SessionAcks::AckedMeansSurfaced the same check
+// covers the surfaced ids the harness returns; comparing the sender's
+// internally acked records against its ACK batch is the owed half.
 
 static inline void rocketnet_dst_check_ack_id( struct rocketnet_dst_check_state_t * st, int endpoint, uint64_t packet_id )
 {

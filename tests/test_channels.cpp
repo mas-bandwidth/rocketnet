@@ -1258,7 +1258,7 @@ static const uint64_t RN_RED_ZONES_PER_REGION = (uint64_t) RN_NUM_PARTS * ROCKET
 
 static void test_channels_allocator_layout()
 {
-    // docs/LOAD.md Table 3's formula, part by part, at the defaults: 6,706,560 bytes, no padding
+    // docs/LOAD.md Table 3's formula, part by part, at the defaults, with the free stack added after v1.1.0: 6,763,840 bytes, no padding
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -1270,12 +1270,13 @@ static void test_channels_allocator_layout()
 
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
-    check( layout.formula_bytes == 6706560 );
-    check( layout.region_bytes == 6706560 + RN_RED_ZONES_PER_REGION );       // ASan builds: a red zone after each part (sdk/rocketnet_memory.h)
-    check( rocketnet_message_connection_bytes( &config ) == 6706560 + RN_RED_ZONES_PER_REGION );
-    check( rocketnet_message_connection_bytes( NULL ) > 6706560 + RN_RED_ZONES_PER_REGION );
+    check( layout.formula_bytes == 6763840 );
+    check( layout.region_bytes == 6763840 + RN_RED_ZONES_PER_REGION );       // ASan builds: a red zone after each part (sdk/rocketnet_memory.h)
+    check( rocketnet_message_connection_bytes( &config ) == 6763840 + RN_RED_ZONES_PER_REGION );
+    check( rocketnet_message_connection_bytes( NULL ) > 6763840 + RN_RED_ZONES_PER_REGION );
 
-    const uint64_t C = 32, W = 1024, B = 1048576, Q = 1024, S = 4194304, P = 1024, Du = 1024, Ru = 16, Rq = 256;
+    const uint64_t C = 32, W = 1024, B = 1048576, Q = 1024, S = 4251584, P = 1024, Du = 1024, Ru = 16, Rq = 256;
+    // S: the three classes of 4,194,304 / 3 bytes, each chunk with its meta word, plus one free-stack word a chunk (sdk/rocketnet_allocator.cpp rn_store_class_bytes)
     check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 88 * C );
     check( layout.bytes[RN_PART_SEND_NUMBERS] == 32 * W );
     check( layout.bytes[RN_PART_RECEIVE_DESCRIPTORS] == 32 * W );
@@ -1917,10 +1918,10 @@ static void test_channels_allocator_sizing()
     check( (int) strlen( text ) == length );
     check( strstr( text, "88C + 112.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq" ) != NULL );
     char expected[128];
-    snprintf( expected, sizeof( expected ), "region bytes %llu", (unsigned long long) ( 6706560 + RN_RED_ZONES_PER_REGION ) );
+    snprintf( expected, sizeof( expected ), "region bytes %llu", (unsigned long long) ( 6763840 + RN_RED_ZONES_PER_REGION ) );
     check( strstr( text, expected ) != NULL );
-    check( strstr( text, "formula bytes 6706560" ) != NULL );
-    snprintf( expected, sizeof( expected ), "1000 connections %llu", (unsigned long long) ( 1000 * ( 6706560 + RN_RED_ZONES_PER_REGION ) ) );
+    check( strstr( text, "formula bytes 6763840" ) != NULL );
+    snprintf( expected, sizeof( expected ), "1000 connections %llu", (unsigned long long) ( 1000 * ( 6763840 + RN_RED_ZONES_PER_REGION ) ) );
     check( strstr( text, expected ) != NULL );
 
     // too small a buffer truncates and still reports the full length, as snprintf does

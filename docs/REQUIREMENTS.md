@@ -62,8 +62,13 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
   and never ends the connection. Unreliable
   work may be dropped only at documented bounded resources and is counted.
 - Receipt serials report terminal ACK or loss for receipt-bearing messages.
-  The outcomes recorded for a connection remain readable after that
-  connection ends, until its next update begins. A receipt-bearing send,
+  A connection ended by an explicit disconnect (client) or kick (server), or
+  by the message layer at the end of an update or between updates, keeps
+  the outcomes recorded for it readable until the next update begins or, on
+  the client, a connect ends it, whichever comes first. A connection the
+  transport ends inside an update, or that an update ends for a message not
+  received, reports no outcomes from that update on: outcomes recorded
+  since the previous update are dropped. A receipt-bearing send,
   reliable or unreliable, that is still in flight when its connection ends
   gets no terminal outcome.
 
@@ -95,7 +100,8 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
   [`docs/ENVIRONMENT.md`](ENVIRONMENT.md).
 - Callers query deterministic worst-case allocator requirements through
   `rocketnet_client_required_memory` and `rocketnet_server_required_memory`
-  (or `LOAD_PLAN_ONLY=1 ./bin/load` and `bin/transport_memory`) and account
+  (or `LOAD_PLAN_ONLY=1 ./bin/load <clients> <seconds>` and
+  `bin/transport_memory`) and account
   separately for OS and kernel resources outside the user-space allocator
   (thread stacks, AF_XDP page-aligned UMEM and kernel rings, `io_uring` mapped
   rings, and kernel socket buffers).

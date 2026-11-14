@@ -32,7 +32,10 @@
 #   --server-dev D / --client-dev D   each machine's interface (default ens5)
 #   --seconds S, --clients N, --threads T, --burst-clients K, --hostile-pps P,
 #   --frame-p99-us U, --quiet-seconds Q, --warm-seconds W, --xdp-queues Q
-#                                     as scripts/harden-cell
+#                                     as scripts/harden-cell; --xdp-queues sets the xdp
+#                                     transport's thread count only (--num-xdp-threads):
+#                                     give another transport's count with --server-args
+#                                     (--num-gso-workers N, --num-io-uring-workers N, ...)
 #   --fill-jobs J                     the server writes its unreliable messages on J job threads
 #   --payload pattern|copy            the message body: verified pattern, or a pre-built body copied in
 #   --port P                          the server's UDP port (default 40000)

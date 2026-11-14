@@ -135,10 +135,18 @@ the handler, so a misuse inside `sodium_init`, which holds it, can reach the
 handler. Upstream's leave decides from `locked`, which says that some thread
 holds the lock, not that this one does: a fatal misuse on a thread outside the
 section while another thread holds it would clear that thread's flag and
-unlock a mutex it does not own. The adaptations add a thread-local
-`_sodium_lock_held`, set by enter and cleared by leave; leave refuses (EPERM,
-as for an unlocked lock) unless this thread holds the lock, and reads `locked`
-only when it does, so a thread outside the section never touches `locked`. The functional case
+unlock a mutex it does not own. The adaptations make enter record the holder,
+`_sodium_lock_owner` (`pthread_self()`), and set `_sodium_lock_owned`, which
+leave clears; leave refuses (EPERM, as for an unlocked lock) unless the lock
+is owned and `pthread_equal` says this thread owns it, and reads `locked` only
+when it does, so a thread outside the section never touches `locked`. No
+thread-local storage: a production build carries none
+(`tools/check_no_thread_local.py`). A thread outside the section reads the
+owner while the holder may be writing it, so both are GCC/Clang `__atomic`
+accesses (`pthread_t` is an integer or a pointer on every POSIX platform the
+SDK supports): `_sodium_lock_owned` is stored with release after the owner
+and loaded with acquire before it, so a thread that sees the flag set reads
+that holder's id, and only the holder passes the test. The functional case
 `test_sodium_crit_leave_unlocks_only_on_the_owner`
 (`tests/functional/platform_primitives.cpp`) holds the lock on one thread and
 leaves on another. The Windows branch keeps upstream's check (roadmap

@@ -527,10 +527,14 @@ static void test_load_split_capture_sdk_reads_both_ends()
     check( server_side.highest_received_sequence > 0 && server_side.highest_received_sequence <= client_side.highest_sent_sequence );
     check( client_side.highest_received_sequence > 0 && client_side.highest_received_sequence <= server_side.highest_sent_sequence );
 
-    // both ends heard the other within the last few steps, each on its own clock
+    // both ends heard the other within one send interval and a step, each on
+    // its own clock: an idle end sends at least a keep-alive every interval
+    // (TRANSPORT.md t17), and where in the interval the sample falls depends
+    // on when the handshake finished
 
-    check( server_side.last_receive_age_seconds >= 0.0 && server_side.last_receive_age_seconds <= 0.05 );
-    check( client_side.last_receive_age_seconds >= 0.0 && client_side.last_receive_age_seconds <= 0.05 );
+    const double heard_within = 0.1 + 0.01;     // 10 Hz, and one step
+    check( server_side.last_receive_age_seconds >= 0.0 && server_side.last_receive_age_seconds <= heard_within );
+    check( client_side.last_receive_age_seconds >= 0.0 && client_side.last_receive_age_seconds <= heard_within );
     check( server_side.reliable_oldest_unacked_age_seconds < 0.0 );
     check( server_side.srtt_seconds >= 0.0 );
 

@@ -90,19 +90,20 @@ BASE_INCLUDES = """
 // valid range as rn_pin_<tag>_min_<field> and rn_pin_<tag>_max_<field>. A bytes
 // field has no scalar default and no name here.
 #define RN_PIN_INT_( tag, name, def ) static const long long rn_pin_##tag##_default_##name = (long long) ( def );
+#define RN_PIN_UINT64_( tag, name, def ) static const unsigned long long rn_pin_##tag##_default_##name = (unsigned long long) ( def );
 #define RN_PIN_RANGE_( tag, name, min, max ) static const long long rn_pin_##tag##_min_##name = (long long) ( min ); \
                                              static const long long rn_pin_##tag##_max_##name = (long long) ( max );
 #define RN_PIN_STR_( tag, name, def ) static const char * const rn_pin_##tag##_default_##name = def;
 #define RN_PIN_S_INT( name, def, min, max, flags )          RN_PIN_INT_( server, name, def ) RN_PIN_RANGE_( server, name, min, max )
-#define RN_PIN_S_UINT64( name, def, flags )                 RN_PIN_INT_( server, name, def )
+#define RN_PIN_S_UINT64( name, def, flags )                 RN_PIN_UINT64_( server, name, def )
 #define RN_PIN_S_BYTES( name, size, def, flags )
 #define RN_PIN_S_STRING( name, capacity, def, flags )       RN_PIN_STR_( server, name, def )
 #define RN_PIN_C_INT( name, def, min, max, flags )          RN_PIN_INT_( client, name, def ) RN_PIN_RANGE_( client, name, min, max )
-#define RN_PIN_C_UINT64( name, def, flags )                 RN_PIN_INT_( client, name, def )
+#define RN_PIN_C_UINT64( name, def, flags )                 RN_PIN_UINT64_( client, name, def )
 #define RN_PIN_C_BYTES( name, size, def, flags )
 #define RN_PIN_C_STRING( name, capacity, def, flags )       RN_PIN_STR_( client, name, def )
 #define RN_PIN_M_INT( name, def, min, max, flags )          RN_PIN_INT_( message, name, def ) RN_PIN_RANGE_( message, name, min, max )
-#define RN_PIN_M_UINT64( name, def, flags )                 RN_PIN_INT_( message, name, def )
+#define RN_PIN_M_UINT64( name, def, flags )                 RN_PIN_UINT64_( message, name, def )
 #define RN_PIN_M_BYTES( name, size, def, flags )
 #define RN_PIN_M_STRING( name, capacity, def, flags )       RN_PIN_STR_( message, name, def )
 ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( RN_PIN_S_INT, RN_PIN_S_UINT64, RN_PIN_S_BYTES, RN_PIN_S_STRING )
@@ -117,10 +118,15 @@ PRINTERS = r"""
 static void rn_pin_print( int row, const char * value ) { printf( "%d\ts\t%s\n", row, value ); }
 static void rn_pin_print( int row, double value ) { printf( "%d\tr\t%.17g\n", row, value ); }
 static void rn_pin_print( int row, float value ) { printf( "%d\tr\t%.9g\n", row, (double) value ); }
+// an enum is signed when its underlying type is (is_signed is false for every enum)
+template <typename T, bool is_enum = std::is_enum<T>::value> struct rn_pin_signed : std::is_signed<T> {};
+template <typename T> struct rn_pin_signed<T, true> : std::is_signed<typename std::underlying_type<T>::type> {};
 template <typename T> static void rn_pin_print( int row, T value )
 {
     static_assert( std::is_integral<T>::value || std::is_enum<T>::value, "a pin expression is an integer, a real or a string" );
-    if ( (long long) value < 0 )
+    // only a signed type prints negative: an unsigned value with bit 63 set is
+    // that unsigned number, never a negative one
+    if ( rn_pin_signed<T>::value && (long long) value < 0 )
         printf( "%d\ti\t%lld\n", row, (long long) value );
     else
         printf( "%d\ti\t%llu\n", row, (unsigned long long) value );

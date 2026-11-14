@@ -62,10 +62,15 @@ gives it the time that rate needs (`fuzz-nightly.yml`).
 ### With libFuzzer (Linux)
 
 libFuzzer needs LLVM clang (`clang++`), not g++ or Apple clang. Build the
-development library first, then the targets:
+development library first, instrumented for coverage and the sanitizers as
+the nightly builds it, then the targets. A library built without these flags
+links, but libFuzzer then sees no coverage inside it and the sanitizers do
+not check it:
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
+    -DCMAKE_C_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer" \
+    -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 cmake --build build --target rocketnet_dev --parallel 4
 make -C tests/fuzz -j 4                 # the sixteen targets
 make -C tests/fuzz compile              # syntax check of all sixteen sources on any host
@@ -73,8 +78,8 @@ make -C tests/fuzz compile              # syntax check of all sixteen sources on
 
 `tests/fuzz/Makefile` builds the sixteen targets with
 `-fsanitize=fuzzer,address,undefined`, the same flags and link set as the
-nightly job (`.github/workflows/fuzz-nightly.yml`). One target by hand, as the
-nightly builds it:
+nightly job (`.github/workflows/fuzz-nightly.yml`), against the library built
+above. One target by hand, as the nightly builds it:
 
 ```sh
 cd tests/fuzz

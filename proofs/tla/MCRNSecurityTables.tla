@@ -31,4 +31,8 @@ MCNoBackwardsRollover == FALSE
 \* MCRNSecurityTablesBrokenNoCharge.cfg overrides ChargePastVerify with
 \* this: a refusal past the verify records no failure.
 MCNoChargePastVerify == FALSE
+\* MCRNSecurityTablesBrokenRepeat.cfg overrides RepeatRung with this: a
+\* refusal past the verify that charges nothing holds no token for the
+\* repeat rung.
+MCNoRepeatRung == FALSE
 =============================================================================
