@@ -880,8 +880,8 @@ candidate that starts wins, and a list that every candidate refuses fails
 loudly. `"auto"` (the default, also NULL or the empty
 string) is the platform's recommended order; a one-element list of an available transport is a pin.
 The server's `auto` order is `xdp`, `gso`, `io_uring`, `portable` on Linux;
-`msgx`, `portable` on macOS; and `iocp`, `rio`, `portable` on Windows in
-production builds (`portable`, `iocp`, `rio` in development builds).
+`msgx`, `portable` on macOS; and `rio`, `iocp`, `portable` on Windows in
+production builds (`portable`, `rio`, `iocp` in development builds).
 The client's `auto` order is the native client, then `portable`: `gso`,
 `portable` on Linux; `msgx`, `portable` on macOS; `iocp`, `portable` on Windows. `portable` is ranked last on every OS in production and is the
 fallback when the native transport's create refuses. A

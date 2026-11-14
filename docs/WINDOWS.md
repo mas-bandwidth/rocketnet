@@ -46,15 +46,24 @@ the SDK into a game's own build.
 
 ## The Windows transports
 
+**`rio` is the server transport to use on Windows.** It is the one measured
+to hold the 1000-player peak, about 900,000 packets a second, with no refused
+sends: the five- and six-lane rows in [PERFORMANCE.md](PERFORMANCE.md) have
+zero message-start refusals. `iocp` remains available and holds the average
+load with none, but at the peak it refuses a small share of sends: its two
+peak rows there held about 900,000 packets a second with 738 and 7405
+message-start refusals over the run. A server's `auto` tries `rio` first, and
+falls to `iocp` where `rio` cannot start.
+
 | Transport | Endpoint | `auto` rank | What it is |
 | --- | --- | --- | --- |
 | `portable` | server and client | server: development 30, production 50; client 30 | one UDP socket; two workers on the server, one I/O worker on the client |
 | `iocp` | server and client | server 40; client 10 | server: `num_iocp_completion_workers` completion workers (2 on a bind address, 1 on the wildcard) and `num_iocp_send_threads` send threads (2); client: one I/O worker on its own completion port |
-| `rio` | server | 45 | Winsock Registered I/O: per lane (`num_rio_lanes`: 5 on a bind address, 1 on the wildcard) one socket, one registered memory region and one I/O worker polling its completion queues |
+| `rio` | server | 35 | Winsock Registered I/O: per lane (`num_rio_lanes`: 5 on a bind address, 1 on the wildcard) one socket, one registered memory region and one I/O worker polling its completion queues |
 | `loopback` | server and client | pin only | in-process, no socket; for tests and tools |
 
-A production server's `auto` is **iocp, then rio, then portable**; a
-development server's is **portable, iocp, rio**. The client's `auto` order is
+A production server's `auto` is **rio, then iocp, then portable**; a
+development server's is **portable, rio, iocp**. The client's `auto` order is
 **iocp, then portable**, on the client I/O thread described in
 [CLIENT-IO.md](CLIENT-IO.md). The ranks are the rows of
 `sdk/rocketnet_drivers.inc`.
@@ -96,8 +105,15 @@ server starts, and the line it logs then names each lane's region size:
 rio transport: port 40000, 1 lane (one socket and I/O worker each), 4096 receive slices and 16384 send frames per phase per lane, <n> registered bytes per lane
 ```
 
-Because `rio` ranks after `iocp`, `auto` reaches it only when `iocp` refuses;
-pin it to run it. How its send phases and receive banks change hands is in
+Because `rio` ranks ahead of `iocp`, `auto` runs it whenever it starts, and
+falls to `iocp` only when `rio` refuses: when Winsock offers no Registered I/O
+function table, when `num_rio_lanes` is outside 1 to 32, when more than one
+lane is asked for on the wildcard or an IPv4-mapped address, when another
+socket holds the lanes' address and port, when its registered region cannot
+be allocated or registered, or when its memory plan exceeds the operator's
+memory budget. Each refusal is logged with its reason. With no bind address
+a server runs one `rio` lane, as `iocp` runs one completion worker (below).
+How its send phases and receive banks change hands is in
 TRANSPORTS.md, "The RIO server transport".
 
 ### To reach 10 Gb/s on Windows set a bind address
@@ -164,6 +180,10 @@ either as "Network adapter setup for rio and iocp" says.
    and iocp" at load.
 
 ### Network adapter setup for rio and iocp
+
+Set the adapter up for `rio`, the server transport to use on Windows (see
+"The Windows transports" above); the `iocp` part below is for a server that
+falls back to it.
 
 The network card's work, its interrupts and the deferred procedure calls
 (DPCs) that follow them, runs ahead of every thread on the processor it lands
@@ -250,6 +270,7 @@ persists; the per-processor check above is the first thing to read.
 
 ### IOCP at 10 Gb/s
 
+`iocp` is the fallback where `rio` cannot start; for the peak load use `rio`.
 The rule is the same as for `rio`: keep the RSS processors and the completion
 workers' processors apart, and check with the per-processor list above that no
 worker processor the server logs is in it.

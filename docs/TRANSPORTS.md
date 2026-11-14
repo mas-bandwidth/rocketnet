@@ -21,7 +21,7 @@ does not have the transport.
 | `msgx` | macOS | 10 | 10 | the Darwin `sendmsg_x`/`recvmsg_x` batch calls; see [docs/MACOS.md](MACOS.md) |
 | `portable` | every platform | development 30, production 50 | 30 | UDP sockets only |
 | `iocp` | Windows | 40 | 10 | Winsock overlapped I/O; uses UDP send and receive offload where the stack has them; see [docs/WINDOWS.md](WINDOWS.md) |
-| `rio` | Windows | 45 | - | the Winsock Registered I/O extension, and one registered memory region per lane; see [docs/WINDOWS.md](WINDOWS.md) |
+| `rio` | Windows | 35 | - | the Winsock Registered I/O extension, and one registered memory region per lane; see [docs/WINDOWS.md](WINDOWS.md) |
 | `loopback` | every platform | pin only | pin only | nothing: both ends in one process, no socket; for tests and tools |
 
 So `auto` resolves to:
@@ -30,10 +30,13 @@ So `auto` resolves to:
 | --- | --- | --- | --- |
 | Linux | `xdp`, `gso`, `io_uring`, `portable` | `xdp`, `gso`, `io_uring`, `portable` | `gso`, `portable` |
 | macOS | `msgx`, `portable` | `msgx`, `portable` | `msgx`, `portable` |
-| Windows | `portable`, `iocp`, `rio` | `iocp`, `rio`, `portable` | `iocp`, `portable` |
+| Windows | `portable`, `rio`, `iocp` | `rio`, `iocp`, `portable` | `iocp`, `portable` |
 
-A Linux build without liburing has no `io_uring` row. `rio` ranks after
-`iocp`, so `auto` reaches it only when `iocp` refuses; pin it to run it.
+A Linux build without liburing has no `io_uring` row. On a Windows server
+`rio` is the transport to use: it is the one measured to hold the 1000-player
+peak with no refused sends ([PERFORMANCE.md](PERFORMANCE.md)), so it ranks
+ahead of `iocp`, which `auto` reaches when `rio` refuses
+([WINDOWS.md](WINDOWS.md#the-windows-transports)).
 
 **Pinning.** Set `transport` in `rocketnet_server_config_t` or
 `rocketnet_client_config_t`, or set `ROCKETNET_SERVER_TRANSPORT` or

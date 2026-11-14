@@ -27,6 +27,11 @@ released id moved.
   - Writer finish restarts a short channel-route start and validates the
     bytes before it writes.
 - Transports:
+  - On Windows a server's `auto` tries `rio` before `iocp`: production
+    servers try `rio`, `iocp`, `portable` and development servers `portable`,
+    `rio`, `iocp`. `rio` is the Windows server transport measured to hold the
+    1000-player peak with no refused sends; `iocp` is tried when `rio`
+    refuses. Clients are unchanged.
   - POSIX receive treats `EMSGSIZE` as weather, not a fault.
   - The loopback client waits and is woken instead of polling every
     millisecond; the loopback hub's public contract and latency timing are
@@ -85,6 +90,7 @@ Merged branches:
 - `fix/v1.1.x/send-store-scan`
 - `fix/v1.1.x/handshake-and-ack-latency`, with `fix/v1.1.x/handshake-ci-repair`
 - `fix/v1.1.x/summary-api-retry`
+- `fix/v1.1.x/windows-prefer-rio`, with `docs/v1.1.x/windows-adapter-setup`
 - `fix/v1.1.x/v1155-a-repairs`
 - `models/v1.1.x/m2-aurora`, `tests/v1.1.x/p2-aurora`
 - `docs/v1.1.x/windows`, `docs/v1.1.x/macos`, `docs/v1.1.x/memory-load`,
