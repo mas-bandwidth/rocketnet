@@ -68,7 +68,7 @@ static void test_iocp_memory_plan_counts_workers_and_send_threads()
     config.num_iocp_completion_workers = 1;
     config.max_clients = 1000;
     rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "iocp", plan ) );
-    rocketnet_unit_check( rocketnet_server_iocp_send_lanes( 1000 ) == 8 && plan.worker_threads == 1 + 2 );
+    rocketnet_unit_check( rocketnet_server_iocp_send_lanes( 1000 ) == 16 && plan.worker_threads == 1 + 2 );
     config.num_iocp_send_threads = 1;
     rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "iocp", plan ) );
     rocketnet_unit_check( plan.worker_threads == 1 + 1 );
