@@ -58,6 +58,7 @@ fails loudly and the edit is reviewed again:
 | `crypto_generichash/blake2b/ref/blake2b-ref.c` | C4245 (`int` -1 into `uint64_t`) | `(uint64_t) -1`, the same value |
 | baseline `sodium.h` (`sodium_private_common.h`) | none: it turned C4127, C4244, C4668 and C4456 off for every file including `sodium.h` | the four `#pragma warning(disable:...)` lines removed; the warnings they hid are fixed at their sites |
 | `fe_25_5/fe.h` `fe25519_tobytes`; `ed25519_ref10.c` `sc25519_mul`, `sc25519_muladd`, `sc25519_reduce`, `slide_vartime`; `salsa20_ref.c` `stream_ref`, `stream_ref_xor_ic` | C4244 (a 64- or 32-bit limb stored into a byte) | each such store spelled with the cast the implicit conversion performs, `(unsigned char) (expr)` (`NARROWING_STORES`): the same value |
+| baseline `sodium_memcmp`, `sodium_compare`, portable `crypto_verify_n` | C4197 (MSVC 14.29 and older: top-level `volatile` in a cast is ignored) | the six casts' top-level `volatile` dropped (a `BASELINE_CONVERSIONS` rule): a cast yields a value, so it had no effect; the `volatile` pointer variables and the `volatile` data they point to are unchanged |
 
 The strict set (`ROCKETNET_STRICT_WARNINGS`: `-Wconversion`,
 `-Wsign-conversion`, `-Wcast-qual`, `-Wundef`, `-Wshadow`) is clean too. Its

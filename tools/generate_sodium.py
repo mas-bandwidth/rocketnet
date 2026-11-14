@@ -369,6 +369,10 @@ BASELINE_CONVERSIONS = {
         # pointers themselves stay volatile.
         (None, r'const volatile __m128i \*volatile (\w) =\n(\s+)\(const volatile __m128i \*volatile\) ',
          r'const __m128i *volatile \1 =\n\2(const __m128i *volatile) ', 2),
+        # C4197 (MSVC 14.29 and older): a cast yields a value, not an object,
+        # so its top-level volatile has no effect; the pointer variables it
+        # initialises and the volatile data they point to keep theirs.
+        (None, r'\(const volatile unsigned char \*volatile\) ', '(const volatile unsigned char *) ', 6),
         # MSVC's __cpuid takes the leaf as int.
         ('_cpuid(', r'__cpuid\(\(int \*\) cpu_info, cpu_info_type\)', '__cpuid((int *) cpu_info, (int) cpu_info_type)', 1),
         # At most 256 bytes are requested (asserted), so the count fits an int.
