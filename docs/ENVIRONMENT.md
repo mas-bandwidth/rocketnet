@@ -97,8 +97,13 @@ create (`CONFIG_OUT_OF_RANGE` or `CONFIG_ENV_INVALID`), never clamped.
 | `ROCKETNET_SERVER_NUM_IO_URING_WORKERS` | `num_io_uring_workers` | `io_uring` (Linux) | 2 | 1 .. 32 |
 | `ROCKETNET_SERVER_NUM_RIO_LANES` | `num_rio_lanes` | `rio` (Windows) | 5 on a bind address; 1 on the wildcard | 1 .. 32 |
 | `ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS` | `num_iocp_completion_workers` | `iocp` (Windows) | 2 on a bind address; 1 on the wildcard | 1 .. 32 |
-| `ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS` | `num_iocp_send_threads` | `iocp` (Windows) | 2, or the send lanes when fewer | 1 .. 16, and at most the send lanes (8 at 1000 clients) |
+| `ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS` | `num_iocp_send_threads` | `iocp` (Windows) | 2, or the send lanes when fewer | 1 .. 16, and at most the send lanes (8 at 1000 clients), checked at start (below the table) |
 | `ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS` | `num_msgx_transmit_workers` | `msgx` (macOS) | 3, plus one receive worker | 1 .. 16 |
+
+One check is not made at create: an `iocp` send-thread count inside 1 .. 16
+but above the send lanes the server's `max_clients` gives. `iocp` refuses it
+at start with a warning naming the limit, and start tries the next transport
+in the list; with `iocp` alone, start fails with `NO_TRANSPORT_FOUND`.
 
 `portable` and `loopback` have no count to choose: `portable` runs two fixed
 threads, `loopback` none.

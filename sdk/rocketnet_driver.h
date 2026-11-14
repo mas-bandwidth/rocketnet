@@ -329,6 +329,46 @@ bool rocketnet_transport_pin_only( int transport );
 // transport can rank in one endpoint's auto order and be pin-only in the other
 bool rocketnet_transport_pin_only( int transport, bool server );
 
+// a custom transport: a row an embedding adds after the built-in rows
+// (ROCKETNET_TRANSPORT_REGISTRY_HEADER, docs/TRANSPORT-INTERNALS.md "Adding a
+// backend without editing the transport"). The SDK has no memory plan for it:
+// its resource policy is its own.
+inline bool rocketnet_transport_custom( int transport )
+{
+    return transport > ROCKETNET_TRANSPORT_RIO;
+}
+
+// the operator memory budget's tally over a transport list, before any
+// allocation (rocketnet_client_transport_resolve and
+// rocketnet_server_transport_resolve_staged). A candidate whose plan exceeds a
+// nonzero budget is refused, and the transport order skips it. A candidate
+// whose plan fits can still be tried, and so can a custom transport, which has
+// no plan to judge. A built-in transport with no plan is neither. The create
+// is refused before its first allocation only when some candidate was refused
+// and none can still be tried (proofs/tla/RNClientTransportOrder.tla NoBudget).
+struct rocketnet_transport_budget_t
+{
+    int refused;
+    int tryable;
+};
+
+inline void rocketnet_transport_budget_count( rocketnet_transport_budget_t & budget, int candidate, bool planned, bool over_budget )
+{
+    if ( planned && over_budget )
+    {
+        budget.refused++;
+    }
+    else if ( planned || rocketnet_transport_custom( candidate ) )
+    {
+        budget.tryable++;
+    }
+}
+
+inline bool rocketnet_transport_budget_refuses( uint64_t memory_budget, const rocketnet_transport_budget_t & budget )
+{
+    return memory_budget > 0 && budget.refused > 0 && budget.tryable == 0;
+}
+
 const int * rocketnet_server_transport_io_availability( int * num_available );
 const int * rocketnet_client_transport_io_availability( int * num_available );
 

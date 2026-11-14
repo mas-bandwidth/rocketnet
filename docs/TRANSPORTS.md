@@ -121,7 +121,11 @@ no `msgx` rows yet).
 | `msgx` | `num_msgx_transmit_workers` (3) and one receive worker | where macOS puts them | none |
 | `portable` | 2, fixed | Linux: send worker on cpu `num_os_cpus`, receive worker on `num_os_cpus + 1`, not cpu 0 by default (`portable_reserve_cpu_0`); elsewhere where the OS puts them | none |
 
-A value past a transport's limit is refused at create, never clamped. On
+A value past a transport's limit is refused at create, never clamped. The
+one check made later is `iocp`'s send threads against its send lanes (8 at
+1000 clients): above them, `iocp` refuses at start with a warning, and start
+tries the next transport in the list (with `iocp` alone, start fails with
+`NO_TRANSPORT_FOUND`). On
 Linux, `gso`, `io_uring` and `portable` each have a setting that gives cpu 0
 to their threads instead, thread `q` on cpu `q`
 ([ENVIRONMENT.md](ENVIRONMENT.md#cpu-0-per-linux-transport)); `xdp` keeps cpu 0

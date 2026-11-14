@@ -14410,6 +14410,7 @@ extern void rocketnet_test_windows_connect_disconnect_1000_rio();
 extern void rocketnet_test_windows_server_restart_1000_rio();
 extern void rocketnet_test_windows_lifecycle_ledger();
 extern void rocketnet_test_windows_lifecycle_memory_accounting();
+extern void rocketnet_test_windows_free_sparse_block_working_set();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 // a hard-killed client never stalls a Windows receive (tests/functional/windows_connreset.cpp)
 extern void windows_connreset_hard_killed_client_portable_ipv4();
@@ -17323,6 +17324,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_windows_per_packet_receive_counts_empty_datagram_ipv6", windows_per_packet_receive_counts_empty_datagram_ipv6, NULL },
     { "test_windows_lifecycle_ledger", rocketnet_test_windows_lifecycle_ledger, NULL },
     { "test_windows_lifecycle_memory_accounting", rocketnet_test_windows_lifecycle_memory_accounting, NULL },
+    { "test_windows_free_sparse_block_working_set", rocketnet_test_windows_free_sparse_block_working_set, NULL },
     { "test_portable_transport_windows_init_term_1000", rocketnet_test_windows_init_term_1000_portable, NULL },
     { "test_portable_transport_windows_server_create_destroy_1000", rocketnet_test_windows_server_create_destroy_1000_portable, NULL },
     { "test_portable_transport_windows_client_create_destroy_1000", rocketnet_test_windows_client_create_destroy_1000_portable, NULL },

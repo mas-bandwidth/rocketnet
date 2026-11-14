@@ -231,8 +231,12 @@ void rocketnet_test_loopback_client_woken_by_send()
         to_server[round] = rocketnet_platform_time() - client_sent;
     }
 
-    // paced delivery: both ends update every LOOPBACK_LATENCY_PACE_SECONDS;
-    // the receiver's updates from the send to the delivery
+    // paced delivery: the receiver updates every LOOPBACK_LATENCY_PACE_SECONDS,
+    // and so does a sending client, as a game would: its hand-off only
+    // try-locks the I/O thread's mutex and returns LATE while the I/O thread
+    // holds it, and a LATE payload leaves with the client's next update
+    // (rocketnet_client_io_hand_off). Counted: the receiver's updates from
+    // the send to the delivery
 
     int paced_to_client[4] = { 0, 0, 0, 0 };     // 1, 2, 3, more
     int paced_to_server[4] = { 0, 0, 0, 0 };
@@ -267,6 +271,7 @@ void rocketnet_test_loopback_client_woken_by_send()
             }
             else
             {
+                rocketnet_client_transport_update( client, rocketnet_platform_time() );
                 rocketnet_server_transport_update( server, rocketnet_platform_time() );
                 delivered = loopback_latency_server_has( server, want );
             }
