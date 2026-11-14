@@ -147,8 +147,8 @@ static void test_transport_registry()
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     if ( rocketnet_transport_definition( ROCKETNET_TRANSPORT_IO_URING )->backend )
     {
-        CHECK( count == 5 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_GSO &&
-               servers[2] == ROCKETNET_TRANSPORT_IO_URING && servers[3] == ROCKETNET_TRANSPORT_PORTABLE && servers[4] == ROCKETNET_TRANSPORT_LOOPBACK );
+        CHECK( count == 5 && servers[0] == ROCKETNET_TRANSPORT_XDP && servers[1] == ROCKETNET_TRANSPORT_IO_URING &&
+               servers[2] == ROCKETNET_TRANSPORT_GSO && servers[3] == ROCKETNET_TRANSPORT_PORTABLE && servers[4] == ROCKETNET_TRANSPORT_LOOPBACK );
     }
     else
     {

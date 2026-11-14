@@ -265,7 +265,7 @@ bool rocketnet_transport_order_parse( const char * value, const int * available,
 // sdk/rocketnet_drivers.inc decide the order:
 //
 //               production server          development server             client
-//   linux       xdp, gso, io_uring, portable  xdp, gso, io_uring, portable   gso, portable
+//   linux       xdp, io_uring, gso, portable  xdp, io_uring, gso, portable   gso, portable
 //   macOS       msgx, portable                msgx, portable                 msgx, portable
 //   windows     iocp, rio, portable           portable, iocp, rio            iocp, portable
 //   iOS/BSDs    portable                      portable                       portable

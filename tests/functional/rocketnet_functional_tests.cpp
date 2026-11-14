@@ -8787,6 +8787,76 @@ void rocketnet_test_server_uring_probe_needs_multishot()
 #endif // #if ROCKETNET_DEV
 }
 
+#if ROCKETNET_DEV
+
+// the descriptors this process holds, from /proc/self/fd (less the one the
+// count itself opens)
+
+static int rocketnet_test_open_fds()
+{
+    DIR * dir = opendir( "/proc/self/fd" );
+    rocketnet_check( dir );
+    int count = 0;
+    struct dirent * entry;
+    while ( ( entry = readdir( dir ) ) != NULL )
+    {
+        if ( entry->d_name[0] >= '0' && entry->d_name[0] <= '9' && (int) strtol( entry->d_name, NULL, 10 ) != dirfd( dir ) )
+        {
+            count++;
+        }
+    }
+    closedir( dir );
+    return count;
+}
+
+// the level the io_uring refusal was logged at, -1 for not logged
+static std::atomic<int> rocketnet_test_uring_refusal_level{ -1 };
+
+static void rocketnet_test_capture_uring_refusal_level( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    if ( strstr( message, "io_uring transport refused" ) != NULL )
+    {
+        rocketnet_test_uring_refusal_level.store( (int) level );
+    }
+    rocketnet_test_capture_log( context, level, message, length );
+}
+
+void rocketnet_test_server_auto_uring_refused_grants_gso()
+{
+    // the Linux server order is xdp, io_uring, gso, portable: where io_uring
+    // refuses (a kernel without multishot receive, a seccomp profile that
+    // refuses io_uring_setup) auto must fall to gso, carry traffic both ways
+    // and leave nothing behind. The seam makes the probe's multishot receive
+    // end -EINVAL, the answer a Linux 5.19 kernel gives; xdp refuses here at
+    // the suite's commit barrier. The refusal is a warning naming the step
+    // and its errno, never an error: the order handles it.
+
+    rocketnet_check( rocketnet_server_uring_available() );
+    const int fds_before = rocketnet_test_open_fds();
+
+    rocketnet_server_uring_test_probe_multishot( -EINVAL );
+
+    rocketnet_test_uring_refusal_level.store( -1 );
+    enum rocketnet_log_level_t saved_level = rocketnet_test_xdp_capture_begin();
+    rocketnet_log_function( rocketnet_test_capture_uring_refusal_level, NULL );
+    rocketnet_test_transport_io_pin_exchange( "auto", "gso" );
+    rocketnet_test_xdp_capture_end( saved_level );
+
+    rocketnet_server_uring_test_probe_multishot( 0 );
+
+    const char * log = rocketnet_test_captured_log_read();
+    rocketnet_check( rocketnet_test_uring_refusal_level.load() == (int) ROCKETNET_LOG_LEVEL_WARN );
+    rocketnet_check( strstr( log, "io_uring transport refused: this kernel does not accept the io_uring ring" ) != NULL );
+    rocketnet_check( strstr( log, "the multishot receive failed, errno 22 EINVAL" ) != NULL );
+    rocketnet_check( strstr( log, "server transport io_uring refused. trying the next candidate" ) != NULL );
+    rocketnet_check( strstr( log, "server transport gso granted after refusals: " ) != NULL );
+
+    rocketnet_check( rocketnet_test_open_fds() == fds_before );
+    rocketnet_check( rocketnet_server_uring_available() );
+}
+
+#endif // #if ROCKETNET_DEV
+
 void rocketnet_test_server_uring_probe()
 {
     // create discovers an ephemeral port and reports it back; the queue
@@ -17427,6 +17497,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #endif // #if ROCKETNET_DEV
     { "test_io_uring_transport_server_probe", rocketnet_test_server_uring_probe, rocketnet_server_uring_available },
     { "test_io_uring_transport_probe_needs_multishot", rocketnet_test_server_uring_probe_needs_multishot, rocketnet_server_uring_available },
+#if ROCKETNET_DEV
+    { "test_io_uring_transport_auto_refused_grants_gso", rocketnet_test_server_auto_uring_refused_grants_gso, rocketnet_server_uring_available },
+#endif // #if ROCKETNET_DEV
     { "test_io_uring_transport_server_wire_ipv4", rocketnet_test_server_uring_wire_ipv4, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv6", rocketnet_test_server_uring_wire_ipv6, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_dual_stack", rocketnet_test_server_uring_wire_dual_stack, rocketnet_server_uring_available },

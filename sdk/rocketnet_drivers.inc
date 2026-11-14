@@ -4,6 +4,9 @@
    Add a backend by defining its operations and adding one row here. */
 // Portable is available in both modes. Production keeps native server
 // transports ahead of this fallback; development preserves its existing order.
+// A Linux server tries xdp, io_uring, gso, portable: the most direct transport
+// first, and io_uring, the strongest that needs no root, ahead of gso where xdp
+// refuses (a build without liburing or a kernel that refuses io_uring falls to gso).
 // The client column ranks the native client first on its OS (gso on Linux,
 // msgx on macOS) and portable last everywhere, the fallback when a native
 // client's create refuses, and iocp first on Windows.
@@ -14,7 +17,7 @@ ROCKETNET_TRANSPORT( XDP, "xdp", false, rocketnet_xdp_transport, ROCKETNET_TRANS
 ROCKETNET_TRANSPORT( MSGX, "msgx", true, rocketnet_msgx_transport, ROCKETNET_TRANSPORT_MAC, 10, 10 )
 ROCKETNET_TRANSPORT( IOCP, "iocp", true, rocketnet_iocp_transport, ROCKETNET_TRANSPORT_WINDOWS, 40, 10 )
 ROCKETNET_TRANSPORT( LOOPBACK, "loopback", true, rocketnet_loopback_transport, ROCKETNET_TRANSPORT_ALL_PLATFORMS, ROCKETNET_TRANSPORT_PIN_ONLY, ROCKETNET_TRANSPORT_PIN_ONLY )
-ROCKETNET_TRANSPORT( IO_URING, "io_uring", true, rocketnet_io_uring_transport, ROCKETNET_TRANSPORT_IO_URING_PLATFORMS, 25, 0 )
+ROCKETNET_TRANSPORT( IO_URING, "io_uring", true, rocketnet_io_uring_transport, ROCKETNET_TRANSPORT_IO_URING_PLATFORMS, 15, 0 )
 ROCKETNET_TRANSPORT( RIO, "rio", true, rocketnet_rio_transport, ROCKETNET_TRANSPORT_WINDOWS, 45, 0 )
 
 #if defined( ROCKETNET_TRANSPORT_REGISTRY_HEADER )

@@ -505,7 +505,7 @@ requirements to each configuration group:
 ### 6. Transports, queues, CPUs, and memory budgets (`transport`, `num_xdp_threads`, `num_os_cpus`, `ROCKETNET_*_MEMORY_BUDGET_BYTES`, `ROCKETNET_XDP_MEMORY_MIB`)
 
 - **Transport selection (`transport`)**:
-  - Leaving `transport = NULL` or `"auto"` selects the platform transport order (`xdp -> gso -> io_uring -> portable`
+  - Leaving `transport = NULL` or `"auto"` selects the platform transport order (`xdp -> io_uring -> gso -> portable`
     on Linux server; `gso -> portable` on Linux client; `msgx -> portable` on
     macOS; production Windows servers prefer `iocp -> rio -> portable`, while
     development Windows servers prefer `portable -> iocp -> rio`).
