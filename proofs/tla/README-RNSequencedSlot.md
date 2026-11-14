@@ -34,7 +34,7 @@ table's descriptor slots.
 |---|---|
 | `Receive(n)` | `rn_window_receive_accept` (`sdk/rocketnet_window_receive.cpp`): a live descriptor for another number at `n % W` is `SLOT_COLLISION`; else the descriptor is claimed and R advances. Then the dispatch below. |
 | `DispatchSeq`, `Future`, `Place` | `rn_channels_dispatch_sequenced` (`sdk/rocketnet_channel_sequenced.cpp`): stale behind the epoch, in turn, or the one future-state slot with supersede and continuation |
-| `InTurn` | `rn_sequenced_in_turn`: the in-turn block's gap, the watermark, a record or a block |
+| `InTurn` | `rn_sequenced_in_turn`: the in-turn block's gap, the watermark, then the superseding release, a record or a block |
 | `Block`, `Collect` | `rn_sequenced_block`: the accepted-span check, anchor or join, completion at the first slot, delivery in turn |
 | `ReleaseSlot`, `ReleaseNumber`, `HoldValid`, `Owns` | `rn_sequenced_release_slot`, `rn_sequenced_release_number`, `rn_sequenced_hold_valid`, `rn_sequenced_block_owns` |
 | `DrainSeq` | `rn_channels_drain_sequenced`: an in-turn block of a closed epoch released, a future hold promoted to in turn or delivered |
@@ -47,12 +47,21 @@ open a new block while a sibling number of its span is a code-4 descriptor
 that was accepted and is no longer live (released when the block was
 superseded) is stale. `FALSE` removes it.
 
+`InTurn` tests the watermark before it releases a superseded in-turn block,
+as `rn_sequenced_in_turn` does: a newer record refused as stale leaves the
+block as it was (standard m6.3). The order is not observable in this model:
+every record's sequencing is 0, so no in-turn record supersedes, and with
+natural arithmetic the in-turn block is never behind the watermark
+(`InTurnBlockFresh`). `RNSequencingWrap.tla` carries the 24-bit compare and
+the reversed witness `MCRNSequencingWrapBrokenReleaseBeforeRefuse.cfg`.
+
 ## Invariants
 
 | Invariant | Meaning |
 |---|---|
 | `NoSlotCollision` | no accepted number meets a descriptor live for another number |
 | `NoViolation` | no violation of any kind is counted (`SLOT_COLLISION`, `BAD_BLOCK`, `PROTOCOL_VIOLATION`, `NUMBER_OUTSIDE_WINDOW`, `ORDERING_BEHIND`) |
+| `InTurnBlockFresh` | the in-turn block's sequencing is at or past the watermark (the controls) |
 | `TypeOK` | types |
 
 ## Cases

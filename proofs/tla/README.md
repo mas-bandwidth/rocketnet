@@ -235,7 +235,7 @@ model's README for its current controls, witnesses and configured bounds.
 | `rnuringreaplayout` | The io_uring reap at the code's layout, a completion ring of four, three buffers and a hold ring of three (README-RNUringReapLayout.md). |
 | `rnuringsendphases` | The io_uring send staging's two phases at the code's layout, phases of two slots over four updates (README-RNUringSendPhases.md). |
 | `rnsegmentrefusal` | A refused UDP segmented send scoped to its destination on the gso and io_uring server transports, two destinations one of which refuses, three on a kernel that cannot segment, and two that share one table entry on it (README-RNSegmentRefusal.md). |
-| `rnsequencingwrap` | The 24-bit ordering and sequencing compares of the sequenced receive path at the half range, the wire modulo 8, uint32 modulo 32, starts at 0 and 6 (README-RNSequencingWrap.md). |
+| `rnsequencingwrap` | The 24-bit ordering and sequencing compares of the sequenced receive path at the half range, the wire modulo 8, uint32 modulo 32, starts at 0 and 6, and one step outside the half-range assumption for the in-turn release order (README-RNSequencingWrap.md). |
 
 Experiments described outside the declared cases remain historical evidence;
 this listing does not make them current measurements or alter model semantics.

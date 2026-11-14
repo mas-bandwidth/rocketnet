@@ -83,6 +83,27 @@ equal the true order there.
 | `HoldAhead` | the hold is truly ahead of the read index |
 | `InTurnBlockFresh` | the in-turn block is never behind the watermark |
 | `WatermarkAligned` | the 24-bit watermark is the true watermark's low bits |
+| `StaleKeepsInTurnBlock` | a record refused at the watermark leaves another state's in-turn block, still at or past the true watermark, as it was (standard m6.3) |
+
+## The release order, one step outside the honest network
+
+`rn_sequenced_in_turn` releases a superseded in-turn block only after the
+watermark test (and the room check): a superseder refused as stale leaves the
+block as it was. Only a record that does not supersede (a continuation, or
+any record with no block in turn) releases the block when it is stale. Under
+the honest network no superseder is ever behind the watermark (the in-turn
+block is at or past it, `InTurnBlockFresh`, and the verdicts are exact), so
+the order is not observable there.
+
+`Slack = 1` lets one sequenced send run exactly `Half` ahead of its epoch's
+watermark, one step outside the assumption. A block at watermark + `Half` - 1
+collecting in turn is then superseded by a record at watermark + `Half`, which
+the watermark test refuses: the case of the unit test
+`test_stale_code_1_at_the_half_range_keeps_the_in_turn_block`. A truly newer
+record is dropped there by design, so `MCRNSequencingWrapSlack.cfg` checks
+every invariant but `NewerNeverDiscarded`. In it `StaleKeepsInTurnBlock` holds
+by the code's order itself; it is the reversed witness below that gives it
+weight.
 
 ## Reversed witnesses
 
@@ -97,6 +118,10 @@ Each writes one compare of the code wrong, as a one-line defect would.
 | `MCRNSequencingWrapBrokenWatermarkBoundary.cfg` | `sequence_gap > ROCKETNET_MESSAGE_HALF_RANGE` | `NothingSilent` |
 | `MCRNSequencingWrapBrokenHoldGapUnmasked.cfg` | `gap = ordering - held_ordering`, the mask left out | `NewerNeverDiscarded` |
 | `MCRNSequencingWrapBrokenDrainGapUnmasked.cfg` | `gap = ordering - rx->ordered_read`, the mask left out | `NewerNeverDiscarded` |
+| `MCRNSequencingWrapBrokenReleaseBeforeRefuse.cfg` | at `Slack = 1`: the superseding `rn_sequenced_release_in_turn` before the watermark test | `StaleKeepsInTurnBlock` |
+
+`MCRNSequencingWrapSlack.cfg` is the passing control for the last witness:
+the same instance at `Slack = 1` with the code's order.
 
 A signed compare of the unmasked difference (`(int32_t)( a - b ) < 0`) reads a
 wrapped newer value as older exactly as the unsigned unmasked one does, so the
@@ -155,6 +180,17 @@ record is counted superseded and the older hold kept.
 ordering 8 (wire 0) is held; the ordered record at 6 is delivered (read 7) and
 `rn_channels_drain_sequenced` computes `0 - 7` unmasked, past the half range,
 and releases the hold stale although it is one epoch ahead.
+
+`MCRNSequencingWrapBrokenReleaseBeforeRefuse.cfg`: from read and sequencing 0,
+records 0, 1 and 2 are lost (watermark 0), a block at 3 sends and its first
+fragment starts collecting in `rx->block_in_turn`, and record 4 arrives.
+`held_gap = (4 - 3) & mask` is 1, so it supersedes; `sequence_gap = (4 - 0) &
+mask` is the half range, so it is stale. `rn_sequenced_in_turn` counts it
+stale with the block left in place (`supersedes` skips the release, and the
+release after the room check is never reached); releasing first drops the
+block, and its second fragment would anchor a new one. The unit test
+`test_stale_code_1_at_the_half_range_keeps_the_in_turn_block` is the same case
+at the code's width (block at 0x7FFFFF, record at 0x800000).
 
 ## Records
 
