@@ -508,9 +508,12 @@ retained for command compatibility; the plan uses
 `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES`. The queue count sets each transport's
 own count: XDP threads, GSO and io_uring workers, RIO lanes, IOCP completion
 workers (the IOCP send threads keep their default) and msgx transmit workers.
-The probe sets no bind address itself, so unless the environment names one, a
-zero on IOCP or RIO plans one completion worker or one lane, as a server on
-the wildcard address runs.
+The pure `--plan-only` path sets no bind address and does not resolve
+environment overrides. A zero count therefore plans one IOCP completion
+worker or one RIO lane for its wildcard configuration, even if the process
+environment names a specific bind address. This pure plan does not predict
+a live server whose effective configuration differs; plan the same effective
+configuration that the server will use.
 `--plan-only` emits
 a component breakdown, worker/socket counts and an explicit unknown OS/application
 cost, then exits before initialization. `--session-plan-only` reports the public
