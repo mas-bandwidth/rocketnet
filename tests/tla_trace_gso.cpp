@@ -715,7 +715,7 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
                                   tla_int( walk.lane[0].slots ) + "\n" + "    Stride = " + tla_int( (int64_t) ROCKETNET_FRAME_STRIDE ) + "\n" +
                                   "    Threads = " + threads + "\n" + "    Dests = " + dests + "\n" + "    Demand = " + tla_int( GSO_DEMAND ) + "\n" +
                                   "    MaxFlush = " + tla_int( walk.max_flush ) + "\n" + "    SkewSpan = " + tla_int( GSO_SKEW_SPAN ) + "\n" +
-                                  "    ClaimCmp = \"ge\"\n    ClaimRule = \"add\"\n    CounterWrap = 0\n    SlotRule = \"check\"\n    IdRule = \"mul\"\n"
+                                  "    ClaimCmp = \"ge\"\n    BlindStore = FALSE\n    CounterWrap = 0\n    SlotRule = \"check\"\n    IdRule = \"mul\"\n"
                                   "    FlushRule = \"joined\"\n";
 
     if ( walk.past_end == 0 )

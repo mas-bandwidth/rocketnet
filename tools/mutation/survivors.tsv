@@ -132,12 +132,10 @@ equivalent	sdk/rocketnet_platform.cpp	1	if ( setsockopt( s->handle, SOL_SOCKET, 
 equivalent	sdk/rocketnet_platform.cpp	1	if ( bind( s->handle, (sockaddr *) &socket_address, sizeof( socket_address ) ) < 0 )	if ( bind( s->handle, (sockaddr *) &socket_address, sizeof( socket_address ) ) < 1 )	Windows-only path; not compiled on Linux
 equivalent	sdk/rocketnet_platform.cpp	2	if ( bind( s->handle, (sockaddr *) &socket_address, sizeof( socket_address ) ) < 0 )	if ( bind( s->handle, (sockaddr *) &socket_address, sizeof( socket_address ) ) < 1 )	Windows-only path; not compiled on Linux
 equivalent	sdk/rocketnet_platform.cpp	1	result = WaitForMultipleObjects( 2, handles, FALSE, timeout_ms );	result = WaitForMultipleObjects( 1, handles, FALSE, timeout_ms );	Windows-only path; not compiled on Linux
-equivalent	sdk/rocketnet_server_gso_linux.cpp	1	count = ROCKETNET_GSO_SEND_QUEUE_SIZE;	{}	the CAS keeps num_packets <= SIZE (gso_linux.cpp:1581-1583), so the clamp never bites
 equivalent	sdk/rocketnet_server_gso_linux.cpp	1	in4->sin_addr.s_addr = htonl( INADDR_LOOPBACK );	{}	inside a DEV self-test (test code; the library is unchanged)
 equivalent	sdk/rocketnet_server_gso_linux.cpp	1	bytes = 1;	bytes = 2;	inside a DEV self-test (test code)
 equivalent	sdk/rocketnet_server_gso_linux.cpp	2	buffer->gro_batches = 0;	{}	inside a DEV self-test (test code)
 equivalent	sdk/rocketnet_server_gso_linux.cpp	1	valid = valid && rocketnet_server_gso_test_stage( gso, (uint16_t) ( 40000 + i ) );	valid = valid && rocketnet_server_gso_test_stage( gso, (uint16_t) ( 40000 - i ) );	inside a DEV self-test (test code)
-equivalent	sdk/rocketnet_server_gso_linux.cpp	2	count = ROCKETNET_GSO_SEND_QUEUE_SIZE;	{}	the CAS keeps num_packets <= SIZE (gso_linux.cpp:1581-1583)
 equivalent	sdk/rocketnet_server_protocol.cpp	1	if ( !server->acks || client_index < 0 || client_index >= server->acks->max_clients ||	if ( !server->acks || client_index < 0 || client_index > server->acks->max_clients ||	rocketnet_client_slots_connected refuses index == max (client_slots.cpp:437); acks and slots are created with the same max_clients
 equivalent	sdk/rocketnet_server_socket.h	1	if ( hard_error.load( std::memory_order_relaxed ) != 0 )	if ( hard_error.load( std::memory_order_relaxed ) != 1 )	hard_error holds only 0, ENETDOWN, ENXIO or EBADF (server_socket.h:44, 146-154; socket_linux.cpp:4081, 4087): never 1
 equivalent	sdk/rocketnet_server_socket_linux.cpp	2	uint8_t padding_4[4096];	uint8_t padding_4[4097];	cache-line padding; never read

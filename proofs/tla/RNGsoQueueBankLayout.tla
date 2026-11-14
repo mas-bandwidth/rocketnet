@@ -32,7 +32,7 @@
 (* fail closed.                                                            *)
 (*                                                                         *)
 (* The fetch-add is one step (Start).  Only the reversed                   *)
-(* witness ClaimRule "store" splits a claim in two, Load (read the         *)
+(* witness BlindStore splits a claim in two, Load (read the               *)
 (* counter) and Claim (store load + 1), so another thread's claim can fall *)
 (* between them.                                                           *)
 (*                                                                         *)
@@ -58,7 +58,7 @@
 (*                                                                         *)
 (* Rule switches, each changed in one reversed witness:                    *)
 (*   ClaimCmp   "ge" refuses an index >= S (the code); "gt" hands out S.   *)
-(*   ClaimRule  "add" is the one-step fetch-add (the code); "store" reads  *)
+(*   BlindStore FALSE is the one-step fetch-add (the code); TRUE reads     *)
 (*              the counter and later writes load + 1, so two threads that *)
 (*              loaded the same index both get it (NoSharedSlot).          *)
 (*   CounterWrap 0 is the code's 64-bit counter, which no fill wraps; k > 0 *)
@@ -88,7 +88,7 @@ CONSTANTS Q,            \* queues (num_queues)
           MaxFlush,     \* bound on flushes
           SkewSpan,     \* a caller may add -SkewSpan..SkewSpan bytes to the pointer it finishes (Skew)
           ClaimCmp,     \* "ge" (the code) or "gt"
-          ClaimRule,    \* "add" (the code) or "store"
+          BlindStore,   \* FALSE (the code: one fetch-add) or TRUE (load, then store)
           CounterWrap,  \* 0: no wrap (the code's uint64); k > 0: counter modulo k
           SlotRule,     \* "check" (the code) or "divide"
           IdRule,       \* "mul" (the code) or "add"
@@ -97,7 +97,7 @@ CONSTANTS Q,            \* queues (num_queues)
 ASSUME Q >= 1 /\ NB >= 2 /\ S >= 1 /\ Stride >= 2 /\ Demand >= 1 /\ MaxFlush >= 0
 ASSUME SkewSpan \in Nat
 ASSUME Dests \subseteq Nat
-ASSUME ClaimCmp \in {"ge", "gt"} /\ ClaimRule \in {"add", "store"} /\ CounterWrap \in Nat
+ASSUME ClaimCmp \in {"ge", "gt"} /\ BlindStore \in BOOLEAN /\ CounterWrap \in Nat
 ASSUME SlotRule \in {"check", "divide"} /\ IdRule \in {"mul", "add"}
 ASSUME FlushRule \in {"joined", "open"}
 
@@ -179,12 +179,12 @@ Grant(t, q, b, i) ==
     /\ shared' = (shared \/ owner[<<q, b, i>>] # -1)
     /\ workerWrite' = (workerWrite \/ own[q][b] # "prod")
 
-\* start_packet(to = d) on thread t (the code, ClaimRule "add"): one
+\* start_packet(to = d) on thread t (the code, BlindStore FALSE): one
 \* fetch-add on the counter of the destination queue's producer bank,
 \* returning r. The counter moves whether or not the index it took is
 \* granted: a refused start leaves it past S
 Start(t, d, r) ==
-    /\ ClaimRule = "add"
+    /\ ~BlindStore
     /\ held[t] = None /\ load[t] = None
     /\ demand[t] < Demand
     /\ r = StartResult(d)
@@ -198,10 +198,10 @@ Start(t, d, r) ==
     /\ demand' = [demand EXCEPT ![t] = @ + 1]
     /\ UNCHANGED <<prod, own, turn, load, flushes, foreign, routeBad>>
 
-\* the reversed witness ClaimRule "store", first half: read the producer and
+\* the reversed witness BlindStore, first half: read the producer and
 \* its counter
 Load(t, d, q) ==
-    /\ ClaimRule = "store"
+    /\ BlindStore
     /\ held[t] = None /\ load[t] = None
     /\ demand[t] < Demand
     /\ q = QueueOf(d)
@@ -219,6 +219,7 @@ ClaimResult(t) ==
 
 \* second half: store load + 1 whatever the counter now holds, returning r
 Claim(t, r) ==
+    /\ BlindStore
     /\ load[t] # None
     /\ r = ClaimResult(t)
     /\ LET l == load[t]

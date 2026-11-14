@@ -71,7 +71,7 @@ first finish or abort that writes another claim's slot.
   110 s per-case budget, and is a `bench` case with declared debt.
 
 Each switch of the model is the code's in the controls; each witness changes
-one: `ClaimCmp` ("ge"), `ClaimRule` ("add"), `CounterWrap` (0), `SlotRule`
+one: `ClaimCmp` ("ge"), `BlindStore` (FALSE), `CounterWrap` (0), `SlotRule`
 ("check"), `IdRule` ("mul"), `FlushRule` ("joined").
 
 ## Results (aws-mut-4, x86; pinned jar 936a2620..., pinned tlacheck 0c97d595, 2 workers, 2026-11-14, each case its own bounded run; RUNS.tsv)
