@@ -66,7 +66,8 @@ CONSTANTS BufferCap,         \* records one receive buffer holds
           SharedWindow,      \* defect: the I/O thread advances mainWin
           NoRetire,          \* defect: the I/O thread keeps its copy after retired
           CountOnIo,         \* defect: the I/O thread counts a refusal
-          NoPayloadGate      \* defect: the I/O thread opens a payload before connected
+          NoPayloadGate,     \* defect: the I/O thread opens a payload before connected
+          ForgedReplayFails  \* defect: a forged record update's window holds counts an integrity failure
 
 ASSUME /\ BufferCap \in Nat \ {0} /\ MaxDatagrams \in Nat
        /\ MaxSeq \in Nat \ {0} /\ W \in Nat \ {0}
@@ -74,7 +75,7 @@ ASSUME /\ BufferCap \in Nat \ {0} /\ MaxDatagrams \in Nat
        /\ IntegrityLimit \in Nat \ {0}
        /\ OpenBeforeReplay \in BOOLEAN /\ SharedWindow \in BOOLEAN
        /\ NoRetire \in BOOLEAN /\ CountOnIo \in BOOLEAN
-       /\ NoPayloadGate \in BOOLEAN
+       /\ NoPayloadGate \in BOOLEAN /\ ForgedReplayFails \in BOOLEAN
 
 Seqs    == 1..MaxSeq
 Ids     == 1..MaxDatagrams
@@ -387,8 +388,13 @@ OpenPayloads == payloadsOpen' = (payloadsOpen \/ session' = "connected")
 \*            rocketnet_replay_advance; the sequence is accepted.  A keep-alive
 \*            accepted before connected moves the state to connected.
 \*   replay:  counted as already received.
-\*   forged:  counted as did not open, and in its position
-\*            rocketnet_client_integrity_failure, which may end the session.
+\*   forged:  the state check, then update's own replay check on mainWin
+\*            (rocketnet_client_open_session checks a record the I/O thread
+\*            did not open for zero sequence and already received first):
+\*            a sequence mainWin holds is counted as already received and
+\*            nothing else; otherwise counted as did not open, and in its
+\*            position rocketnet_client_integrity_failure, which may end the
+\*            session.
 \*   zero_sequence, wrong_size: refused by a cheap rung before the AEAD and
 \*            counted; no window changes.
 \*   raw:     processed as at BASE: a handshake record outside the
@@ -444,7 +450,7 @@ UpdateConsume ==
                  /\ UNCHANGED <<crypto, cheapRefused, accepted, acceptedTwice,
                                 earlyRefused>>
             [] r.v = "forged" ->
-                 /\ IF accepts THEN Fail
+                 /\ IF accepts /\ (ForgedReplayFails \/ ~AlreadyReceived(mainWin, r.seq)) THEN Fail
                                ELSE UNCHANGED <<integrity, epoch, session, wake, mainWin, accWin>>
                  /\ UNCHANGED <<crypto, cheapRefused, accepted, acceptedTwice,
                                 earlyRefused>>
@@ -878,6 +884,16 @@ NoLateRawPayload == ~lateRaw
 \* limit above one
 NoTooOldRefusal == ~tooOld
 NoCountedFailure == integrity \in {0, IntegrityLimit}
+
+\* a forged record whose sequence update's window already holds is counted
+\* as already received: it changes neither the integrity count nor the
+\* session (rocketnet_client_open_session runs the replay check before
+\* rocketnet_client_integrity_failure)
+ReplayedForgeryNotCounted ==
+    [][(/\ UpdateConsume
+        /\ rec[ExposedBuffer][cur + 1].v = "forged"
+        /\ AlreadyReceived(mainWin, rec[ExposedBuffer][cur + 1].seq))
+       => UNCHANGED <<integrity, session>>]_vars
 
 \* after the retire the I/O thread's copy is eventually dropped
 RetiredEventuallyZeroed ==
