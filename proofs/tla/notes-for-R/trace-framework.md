@@ -51,13 +51,15 @@ again in that change too.
 
 ## MA006: witnesses the delivery-assumption check now asks for
 
-The check now follows the operators that a Fairness... definition names. It finds
-four more modules with a delivery assumption. Their missing witnesses are listed
-in OWED_WITNESSES, each with its owner:
-- RNWindow.tla: owed to M3, the MCRNWindow temporal witness.
-- Link.tla, ClientConnection.tla, ServerConnection.tla: owed to MM210, a
-  reversed witness for each PROPERTY.
+The check now follows the operators that a Fairness... definition names, through
+EXTENDS, an unnamed INSTANCE and a qualified `X!Name`. It finds more modules with
+a delivery assumption. The cases that now lack a witness are listed by config in
+OWED_WITNESSES, each with its owner:
+- the 6 MCRNWindow*.cfg: owed to M3, the MCRNWindow temporal witness.
+- 49 configs (MCClientConnection*, MCServerConnection*, MCRNSlots*, and
+  MCRNEndpointLive, which reaches Link): owed to MM210, a reversed witness for
+  each PROPERTY.
 
-When an owner lands its witnesses, the same change deletes that module's entry.
-The checker refuses an entry once no case that reaches the module lacks a
-witness, and also refuses a module it no longer finds.
+When an owner lands a case's witness, the same change deletes that config's
+entry. The checker refuses an entry whose case no longer lacks a witness, and an
+entry that names no case.

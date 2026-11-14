@@ -31,7 +31,7 @@ Rules enforced:
     ignore-terminal, TRUE with check); the cases owed to R are DEADLOCK_OWED.
   - Every PROPERTY case of a module whose fairness states a []<> ... => []<>
     delivery assumption, inline or in an operator a Fairness... definition
-    names, has a reversed liveness witness; modules owed to another package
+    names, has a reversed liveness witness; the cases owed to another package
     are OWED_WITNESSES.
 """
 
@@ -269,9 +269,11 @@ def delivery_assumption_modules(tla_dir):
     """Modules whose fairness states a []<>... => []<>... assumption.
 
     The fairness is every definition named Fairness... (Fairness,
-    FairnessTyped), and every definition of the module, or of a module it
-    EXTENDS or INSTANCEs, that one names, followed name by name: RNWindow's
-    Fairness only names AcksLand, which holds the implication. Such an
+    FairnessTyped), and every definition one names, followed name by name as
+    TLA+ resolves it: in the module, then the modules it EXTENDS (or
+    INSTANCEs unnamed), and X!N as N in the module X instances. RNWindow's
+    Fairness only names AcksLand, which holds the implication; RNSlots's is
+    Data!Fairness, Link's. Such an
     antecedent can be vacuous, so each PROPERTY case in the module needs a
     reversed liveness witness: a temporal case that fails the same property,
     showing the property is not a tautology.
@@ -284,25 +286,51 @@ def delivery_assumption_modules(tla_dir):
         except OSError:
             continue
     own = {name: module_definitions(text) for name, text in texts.items()}
+    namespaces = {}
+
+    def namespace(module):
+        """the definitions a name in module resolves to: its own first, then
+        those of the modules it EXTENDS, in their EXTENDS order"""
+        if module not in namespaces:
+            namespaces[module] = {}  # a cycle reads as empty
+            clean = strip_comments(texts.get(module, ""))
+            imported = []
+            extends = EXTENDS_RE.search(clean)
+            if extends:
+                imported += [s.strip() for s in extends.group(1).split(",")]
+            # an INSTANCE that starts a line, unnamed, imports like EXTENDS
+            imported += re.findall(r"^\s*(?:LOCAL\s+)?INSTANCE\s+([A-Za-z0-9_]+)", clean, re.MULTILINE)
+            definitions = {}
+            for ref in reversed(imported):
+                if ref + ".tla" in own and ref + ".tla" != module:
+                    definitions.update(namespace(ref + ".tla"))
+            definitions.update({d: (module, body) for d, body in own.get(module, {}).items()})
+            namespaces[module] = definitions
+        return namespaces[module]
+
     modules = set()
     for name in texts:
-        definitions = {}
-        for reached in sorted(module_closure(name, tla_dir) - {name}):
-            definitions.update(own.get(reached, {}))
-        definitions.update(own[name])
-        queue = [d for d in own[name] if re.match(r"Fairness[A-Za-z0-9_]*$", d)]
+        queue = [(name, d) for d in own[name] if re.match(r"Fairness[A-Za-z0-9_]*$", d)]
         seen = set()
         while queue:
-            d = queue.pop()
-            if d in seen or d not in definitions:
+            module, d = queue.pop()
+            entry = namespace(module).get(d)
+            if entry is None or entry in seen:
                 continue
-            seen.add(d)
-            body = definitions[d]
+            seen.add(entry)
+            home, body = entry
             if DELIVERY_ASSUMPTION_RE.search(body):
                 modules.add(name)
                 break
             head = DEFINITION_RE.match(body)
-            queue += re.findall(r"(?<![A-Za-z0-9_!])[A-Za-z_][A-Za-z0-9_]*", body[head.end():] if head else body)
+            text = body[head.end():] if head else body
+            # X!N: N in the module X instances (X == INSTANCE M ...)
+            for inst, ref in re.findall(r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)!([A-Za-z_][A-Za-z0-9_]*)", text):
+                target = namespace(home).get(inst)
+                hit = re.search(r"\bINSTANCE\s+([A-Za-z0-9_]+)", target[1]) if target else None
+                if hit and hit.group(1) + ".tla" in own:
+                    queue.append((hit.group(1) + ".tla", ref))
+            queue += [(home, n) for n in re.findall(r"(?<![A-Za-z0-9_!])[A-Za-z_][A-Za-z0-9_]*(?![A-Za-z0-9_]*!)", text)]
     return modules
 
 
@@ -325,18 +353,47 @@ def module_closure(module, tla_dir):
     return seen
 
 
-# Delivery-assumption modules whose missing witnesses are another package's
-# work, by name, each with its owner. Only a module the checker finds goes
-# here, and it leaves when it stops being found (the check below refuses a
-# stale entry), so the list stays exactly the debt. These four were found
-# when the check began to follow named operators (MA006): RNWindow's
-# Fairness names AcksLand; Link's EventualDelivery and the connections'
-# DeliveryFairTyped are named the same way.
+# The cases whose missing witnesses are another package's work, by config,
+# each with its owner. They were found when the check began to follow named
+# operators (MA006): RNWindow's Fairness names AcksLand; Link's
+# EventualDelivery and the connections' DeliveryFairTyped are named the same
+# way, and modules that instance Link reach it. An entry leaves when its
+# case has a witness for every property (the check refuses it then, and
+# refuses a config that is not a case), so the list stays exactly the debt;
+# a new case is never in it.
+OWED_TO_M3 = "owed to M3: the MCRNWindow temporal witness (MA006)"
+OWED_TO_MM210 = "owed to MM210: a reversed witness for each PROPERTY"
 OWED_WITNESSES = {
-    "RNWindow.tla": "owed to M3: the MCRNWindow temporal witness (MA006)",
-    "Link.tla": "owed to MM210: a reversed witness for each PROPERTY",
-    "ClientConnection.tla": "owed to MM210: a reversed witness for each PROPERTY",
-    "ServerConnection.tla": "owed to MM210: a reversed witness for each PROPERTY",
+    **{cfg: OWED_TO_M3 for cfg in (
+        "MCRNWindow.cfg", "MCRNWindowBrokenBlockUPrime.cfg", "MCRNWindowBrokenDropDuplicates.cfg",
+        "MCRNWindowBrokenHalfRange.cfg", "MCRNWindowBrokenHoldOrdered.cfg", "MCRNWindowBrokenSameUpdateReply.cfg",
+    )},
+    **{cfg: OWED_TO_MM210 for cfg in (
+        "MCClientConnection.cfg", "MCClientConnectionBrokenCookieRefreshes.cfg",
+        "MCClientConnectionBrokenCookieReplaces.cfg", "MCClientConnectionBrokenDeadlineInResponse.cfg",
+        "MCClientConnectionBrokenEarlyPayload.cfg", "MCClientConnectionBrokenRetryKeepsAttempt.cfg",
+        "MCClientConnectionConnectClock.cfg", "MCClientConnectionCookieTrust.cfg",
+        "MCClientConnectionF8Terminal.cfg", "MCClientConnectionForgedCookie.cfg",
+        "MCClientConnectionLAlternate.cfg", "MCClientConnectionLArbitrary.cfg", "MCClientConnectionLBurst.cfg",
+        "MCClientConnectionLCrash.cfg", "MCClientConnectionLFirst.cfg", "MCClientConnectionLNone.cfg",
+        "MCClientConnectionLSilent.cfg", "MCClientConnectionRetryFromFailure.cfg",
+        "MCClientConnectionSAlternate.cfg", "MCClientConnectionSArbitrary.cfg", "MCClientConnectionSBurst.cfg",
+        "MCClientConnectionSDelay.cfg", "MCClientConnectionSFirst.cfg", "MCClientConnectionSFirstSmall.cfg",
+        "MCClientConnectionSFirstkind.cfg", "MCClientConnectionSNone.cfg",
+        # RNEndpoint's own fairness is plain WF/SF: it is reached through
+        # the Link it instances (module_closure), as every case has been
+        "MCRNEndpointLive.cfg",
+        "MCRNSlots.cfg", "MCRNSlotsBrokenDropReadsNone.cfg", "MCRNSlotsBrokenIntegrityNone.cfg",
+        "MCRNSlotsBrokenKickCarriesOn.cfg", "MCRNSlotsBrokenObserveClearsReason.cfg",
+        "MCRNSlotsBrokenReuseInUpdate.cfg", "MCRNSlotsExhaustion.cfg", "MCRNSlotsLive.cfg",
+        "MCRNSlotsTwoSlots.cfg",
+        "MCServerConnection.cfg", "MCServerConnectionBrokenAddressNotIdentity.cfg",
+        "MCServerConnectionLive.cfg", "MCServerConnectionLossy.cfg", "MCServerConnectionLossyBrokenRefresh.cfg",
+        "MCServerConnectionLossyTimers.cfg", "MCServerConnectionMove.cfg", "MCServerConnectionRace.cfg",
+        "MCServerConnectionRaceIpv6.cfg", "MCServerConnectionResponseReplay.cfg",
+        "MCServerConnectionResponseReplayBroken.cfg", "MCServerConnectionTimers.cfg",
+        "MCServerConnectionTwoSlots.cfg",
+    )},
 }
 
 
@@ -347,12 +404,6 @@ def check_property_witnesses(cases, tla_dir, owed=None):
     owed = OWED_WITNESSES if owed is None else owed
     has_tla = tla_dir.is_dir() and any(tla_dir.glob("*.tla"))
     found = delivery_assumption_modules(tla_dir) if has_tla else set()
-    for module, why in sorted(owed.items()):
-        if (tla_dir / module).exists() and module not in found:
-            errors.append(
-                f"{module}: in OWED_WITNESSES ({why}) but its fairness states no delivery "
-                f"assumption the check finds; remove it from OWED_WITNESSES"
-            )
     witnesses = {
         (case["module"], case["property"])
         for case in cases
@@ -368,8 +419,8 @@ def check_property_witnesses(cases, tla_dir, owed=None):
         if has_tla and not module_missing and not hit:
             continue
         missing = [prop for prop in props if (case["module"], prop) not in witnesses]
-        if has_tla and not module_missing and missing and hit <= set(owed):
-            still_owed |= hit
+        if missing and case["config"] in owed:
+            still_owed.add(case["config"])
             continue
         for prop in missing:
             errors.append(
@@ -378,12 +429,13 @@ def check_property_witnesses(cases, tla_dir, owed=None):
                 f"(TLC: Temporal properties were violated), showing the delivery "
                 f"assumption's antecedent is satisfiable"
             )
-    for module, why in sorted(owed.items()):
-        if module in found and module not in still_owed:
-            errors.append(
-                f"{module}: in OWED_WITNESSES ({why}) but no case it reaches lacks a witness; "
-                f"remove it from OWED_WITNESSES"
-            )
+    if has_tla:
+        for cfg, why in sorted(owed.items()):
+            if cfg not in still_owed:
+                errors.append(
+                    f"{cfg}: in OWED_WITNESSES ({why}) but it is not a case that lacks a witness; "
+                    f"remove it from OWED_WITNESSES"
+                )
     return errors
 
 
@@ -442,6 +494,8 @@ def check_deadlock_directives(cases, tla_dir, owed=DEADLOCK_OWED):
     """A cfg's CHECK_DEADLOCK agrees with its case's deadlock column."""
     errors = []
     tla_dir = Path(tla_dir)
+    # a ledger checked away from the models (the tests' copies) has no cfg to read
+    has_models = tla_dir.is_dir() and any(tla_dir.glob("*.cfg"))
     for case in cases:
         cfg = case["config"]
         directive = cfg_check_deadlock(tla_dir / cfg)
@@ -456,13 +510,12 @@ def check_deadlock_directives(cases, tla_dir, owed=DEADLOCK_OWED):
                 f"declares deadlock = {declared}; the record would claim a check TLC did not run (or skip one "
                 f"it did): make the column say what the cfg does"
             )
-        elif cfg in owed and not disagrees and (tla_dir / cfg).exists():
+        elif cfg in owed and not disagrees and has_models:
             errors.append(f"{cfg}: in DEADLOCK_OWED but its cfg and its deadlock column agree; remove it from DEADLOCK_OWED")
     plan = {case["config"] for case in cases}
-    for cfg in sorted(owed - plan):
-        if not (tla_dir / cfg).exists():
-            continue  # a ledger checked away from the models (the tests' own)
-        errors.append(f"{cfg}: in DEADLOCK_OWED but not a case in CASES.tsv; remove it from DEADLOCK_OWED")
+    if has_models:
+        for cfg in sorted(owed - plan):
+            errors.append(f"{cfg}: in DEADLOCK_OWED but not a case in CASES.tsv; remove it from DEADLOCK_OWED")
     return errors
 
 
@@ -505,6 +558,7 @@ def check(
     forbid_stale=True,
     declared_debt=DECLARED_DEBT,
     deadlock_owed=DEADLOCK_OWED,
+    witness_owed=None,
 ):
     errors = []
 
@@ -553,7 +607,7 @@ def check(
             if not prop or prop == "-":
                 errors.append(f"{cfg}: {expected} case must name a property, got {prop!r}")
 
-    errors.extend(check_property_witnesses(list(plan.values()), Path(cases_path).parent))
+    errors.extend(check_property_witnesses(list(plan.values()), Path(cases_path).parent, witness_owed))
     errors.extend(check_deadlock_directives(list(plan.values()), Path(cases_path).parent, deadlock_owed))
 
     for cfg, case in plan.items():

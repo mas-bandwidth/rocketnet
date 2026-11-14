@@ -149,7 +149,8 @@ class CheckTlaRecordsTest(unittest.TestCase):
             write_tsv(tla / "RUNS.tsv", check_tla_records.RUNS_COLUMNS, [row])
             edit(tla)
             out = io.StringIO()
-            code = check_tla_records.check(tla / "CASES.tsv", tla / "RUNS.tsv", out, declared_debt=frozenset())
+            code = check_tla_records.check(tla / "CASES.tsv", tla / "RUNS.tsv", out, declared_debt=frozenset(),
+                                           deadlock_owed=frozenset(), witness_owed={})
             return code, out.getvalue(), files
 
     def test_current_record_passes_stale_check(self):
@@ -218,7 +219,8 @@ class CheckTlaRecordsTest(unittest.TestCase):
             write_tsv(tla / "RUNS.tsv", check_tla_records.RUNS_COLUMNS, runs)
             out = io.StringIO()
             code = check_tla_records.check(
-                tla / "CASES.tsv", tla / "RUNS.tsv", out, forbid_stale=False, declared_debt=frozenset())
+                tla / "CASES.tsv", tla / "RUNS.tsv", out, forbid_stale=False, declared_debt=frozenset(),
+                deadlock_owed=frozenset(), witness_owed={})
             return code, out.getvalue()
 
     def test_property_without_reversed_liveness_witness_rejected(self):
@@ -254,24 +256,52 @@ class CheckTlaRecordsTest(unittest.TestCase):
         code, text = self.delivery_fixture(witness=False, fairness=fairness)
         self.assertEqual(code, 0, text)
 
-    def test_owed_witness_module_is_excused_and_must_stay_owed(self):
-        code, text = self.delivery_fixture(
-            witness=False, fairness=self.NAMED_FAIRNESS, owed={"MCDelivery.tla": "owed to X"})
+    def test_unnamed_implication_needs_no_witness(self):
+        # the control for following names: an implication in a definition no
+        # Fairness... reaches (a PROPERTY of its own) asks for nothing
+        fairness = self.NAMED_FAIRNESS.replace("FairnessTyped == Fairness /\\ AcksLand", "FairnessTyped == Fairness")
+        code, text = self.delivery_fixture(witness=False, fairness=fairness)
         self.assertEqual(code, 0, text)
-        # the owner landed nothing yet the entry would excuse a later miss: a
-        # module whose cases all have witnesses leaves the list
-        code, text = self.delivery_fixture(fairness=self.NAMED_FAIRNESS, owed={"MCDelivery.tla": "owed to X"})
-        self.assertEqual(code, 1)
-        self.assertIn("MCDelivery.tla: in OWED_WITNESSES (owed to X) but no case it reaches lacks a witness", text)
-        fairness = self.NAMED_FAIRNESS.replace(
-            "AcksLand == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)", "AcksLand == WF_vars(Recv)")
-        code, text = self.delivery_fixture(fairness=fairness, owed={"MCDelivery.tla": "owed to X"})
-        self.assertEqual(code, 1)
-        self.assertIn("MCDelivery.tla: in OWED_WITNESSES (owed to X) but its fairness states no delivery", text)
 
-    def test_committed_owed_witness_modules_are_found(self):
-        found = check_tla_records.delivery_assumption_modules(check_tla_records.DEFAULT_CASES.parent)
-        self.assertTrue(set(check_tla_records.OWED_WITNESSES) <= found)
+    def test_instance_qualified_fairness_is_followed(self):
+        # RNSlots's shape: Fairness == Data!Fairness, the implication in the
+        # instanced module's own Fairness
+        with tempfile.TemporaryDirectory() as tmp:
+            tla = Path(tmp)
+            (tla / "Wire.tla").write_text(
+                "---- MODULE Wire ----\nVARIABLE x\nvars == <<x>>\nSend == x' = x\nRecv == x' = x\n"
+                "Fairness == ([]<> <<Send>>_vars) => ([]<> <<Recv>>_vars)\n====\n", encoding="utf-8")
+            (tla / "Slots.tla").write_text(
+                "---- MODULE Slots ----\nVARIABLE x\nData == INSTANCE Wire\nFairness == /\\ Data!Fairness\n====\n",
+                encoding="utf-8")
+            (tla / "Plain.tla").write_text(
+                "---- MODULE Plain ----\nVARIABLE x\nData == INSTANCE Wire\nFairness == /\\ Data!Send\n====\n",
+                encoding="utf-8")
+            found = check_tla_records.delivery_assumption_modules(tla)
+        self.assertIn("Slots.tla", found)
+        self.assertNotIn("Plain.tla", found)
+
+    def test_owed_witness_case_is_excused_and_must_stay_exact(self):
+        code, text = self.delivery_fixture(
+            witness=False, fairness=self.NAMED_FAIRNESS, owed={"MCPass.cfg": "owed to X"})
+        self.assertEqual(code, 0, text)
+        # the case has its witness now: the entry would excuse a later miss
+        code, text = self.delivery_fixture(fairness=self.NAMED_FAIRNESS, owed={"MCPass.cfg": "owed to X"})
+        self.assertEqual(code, 1)
+        self.assertIn("MCPass.cfg: in OWED_WITNESSES (owed to X) but it is not a case that lacks a witness", text)
+        # a config that is no case
+        code, text = self.delivery_fixture(
+            witness=False, fairness=self.NAMED_FAIRNESS, owed={"MCPass.cfg": "owed to X", "MCGone.cfg": "owed to Y"})
+        self.assertEqual(code, 1)
+        self.assertIn("MCGone.cfg: in OWED_WITNESSES (owed to Y) but it is not a case that lacks a witness", text)
+
+    def test_committed_owed_witnesses_are_exactly_the_debt(self):
+        # every committed case without a witness that the rule asks for is
+        # named, and nothing else (the committed check refuses the rest)
+        with check_tla_records.DEFAULT_CASES.open(encoding="utf-8", newline="") as handle:
+            cases = list(csv.DictReader(handle, delimiter="\t"))
+        errors = check_tla_records.check_property_witnesses(cases, check_tla_records.DEFAULT_CASES.parent, owed={})
+        self.assertEqual({e.split(":")[0] for e in errors}, set(check_tla_records.OWED_WITNESSES))
 
     def deadlock_fixture(self, directive, declared, owed=frozenset()):
         with tempfile.TemporaryDirectory() as tmp:
@@ -291,12 +321,21 @@ class CheckTlaRecordsTest(unittest.TestCase):
         self.assertEqual(self.deadlock_fixture("CHECK_DEADLOCK FALSE\n", "ignore-terminal"), [])
         self.assertEqual(self.deadlock_fixture("", "check"), [])
         self.assertEqual(self.deadlock_fixture("\\* CHECK_DEADLOCK FALSE\n", "check"), [])
+        self.assertIn("CHECK_DEADLOCK FALSE", self.deadlock_fixture("CHECK_DEADLOCK\n    FALSE\n", "check")[0])
         self.assertIn("not check or ignore-terminal", self.deadlock_fixture("", "maybe")[0])
 
     def test_deadlock_owed_excuses_and_must_stay_exact(self):
         self.assertEqual(self.deadlock_fixture("CHECK_DEADLOCK FALSE\n", "check", frozenset({"MCD.cfg"})), [])
         errors = self.deadlock_fixture("CHECK_DEADLOCK FALSE\n", "ignore-terminal", frozenset({"MCD.cfg"}))
         self.assertIn("MCD.cfg: in DEADLOCK_OWED but its cfg and its deadlock column agree", errors[0])
+        errors = self.deadlock_fixture("CHECK_DEADLOCK FALSE\n", "check", frozenset({"MCD.cfg", "MCGone.cfg"}))
+        self.assertEqual(errors, ["MCGone.cfg: in DEADLOCK_OWED but not a case in CASES.tsv; remove it from DEADLOCK_OWED"])
+
+    def test_committed_deadlock_owed_is_exactly_the_debt(self):
+        with check_tla_records.DEFAULT_CASES.open(encoding="utf-8", newline="") as handle:
+            cases = list(csv.DictReader(handle, delimiter="\t"))
+        errors = check_tla_records.check_deadlock_directives(cases, check_tla_records.DEFAULT_CASES.parent, frozenset())
+        self.assertEqual({e.split(":")[0] for e in errors}, set(check_tla_records.DEADLOCK_OWED))
 
     def test_property_without_delivery_implication_needs_no_witness(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -313,7 +352,8 @@ class CheckTlaRecordsTest(unittest.TestCase):
                       [run_row("MCPlain.cfg", "MCPlain.tla")])
             out = io.StringIO()
             code = check_tla_records.check(
-                tla / "CASES.tsv", tla / "RUNS.tsv", out, forbid_stale=False, declared_debt=frozenset())
+                tla / "CASES.tsv", tla / "RUNS.tsv", out, forbid_stale=False, declared_debt=frozenset(),
+                deadlock_owed=frozenset(), witness_owed={})
             self.assertEqual(code, 0, out.getvalue())
 
     def test_committed_ledgers_pass(self):
