@@ -167,8 +167,8 @@ gives no thread a core: neither transport pins its threads, and the scheduler
 places them. More transmit workers are not always more throughput: under a
 heavy send load a worker can spend most of its time in the kernel's send
 path, and then more workers may not send more (see "How much a msgx server
-sends" below). The performance report has no macOS measurement record yet
-([PERFORMANCE.md](PERFORMANCE.md)); measure your workload.
+sends" below). Consult [PERFORMANCE.md](PERFORMANCE.md) for dated
+measurement records and their scope; measure your workload.
 
 In the `portable` server the caller copies borrowed, sealed send frames
 into one of three owned TX banks outside the lock; a try-lock publishes bank
@@ -274,25 +274,25 @@ running `test_loopback_transport_udp`, `test_loopback_transport_ipv6`,
 
 ### How much a msgx server sends
 
-The workloads are the performance report's: 1000 players at 60 Hz, about
-480,000 packets a second on average and about 900,000 at peak
-([PERFORMANCE.md](PERFORMANCE.md), "Workload and measurement"). The
-performance report has no macOS record yet, so this section gives no figure
-for how much a `msgx` server sends; measure your own workload. One limit the
-operating system sets: every packet a Mac sends on an interface passes
-through that interface's one output queue, behind one lock, and one kernel
-transmit thread hands the packets to the driver (an interface whose driver
-works another way may differ). All the transmit workers' sends meet in that
-queue, so past a point more workers wait on its lock rather than send more:
-more transmit workers are not always more throughput.
+Use the workloads and measurement definitions in
+[PERFORMANCE.md](PERFORMANCE.md) when comparing results. The advice here
+establishes no throughput figure for a Mac, network interface or workload.
 
-Test with many client addresses. When every test client sends from one
-address (all the clients on one load machine with one address), every packet
-the server sends takes the same route and the same ARP entry, and the
-transmit workers also wait on the locks that guard those. One client address
-therefore understates the server, more so with more transmit workers. Give
-the load machine many addresses and spread the clients across them; in a
-real deployment the players come from many addresses.
+The operating system and interface driver can limit how concurrent sends
+reach the wire. A driver path with a shared output queue or transmit thread
+can serialize work from several transmit workers; contention there can make
+additional workers unhelpful. Queue layout, locking and transmit scheduling
+depend on the driver and OS version. Profile the actual path before treating
+any one queue or thread as its bottleneck.
+
+Include representative client addresses and routes in the test. Sending to
+one remote address can concentrate route or neighbor-cache work, so a
+single-address load machine may differ from a deployment with many players.
+Spreading clients across addresses is a useful comparison, not a promise of
+higher throughput: addresses routed through one gateway can still share its
+neighbor entry, and another part of the send path may set the limit. Keep
+workload and other machine activity comparable, and report both topologies
+with their delivery, refusal and timing results.
 
 ### A msgx server under load
 
