@@ -954,13 +954,19 @@ static int trace_writer_finish( uint64_t seed, int steps, const char * out )
     const bool stopped = rocketnet_server_transport_stopped( walk.transport );
     rocketnet_message_server_destroy( walk.server );
     const bool hub_gone = rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK;
-    rocketnet_term();
+    // term refuses with LIVE_ALLOCATIONS while anything the walk allocated is
+    // still held: a leak fails the walk, so the trace check sees it
+    const enum rocketnet_status_t termed = rocketnet_term();
 
+    if ( termed != ROCKETNET_STATUS_OK )
+    {
+        fprintf( stderr, "tla_trace writerfinish: rocketnet_term: %s\n", rocketnet_status_name( termed ) );
+    }
     if ( !stopped || !hub_gone )
     {
         fprintf( stderr, "tla_trace writerfinish: the server or its hub did not stop\n" );
     }
-    return written && stopped && hub_gone ? 0 : 1;
+    return written && stopped && hub_gone && termed == ROCKETNET_STATUS_OK ? 0 : 1;
 }
 
 TLA_TRACE_LAYER( "writerfinish", trace_writer_finish );

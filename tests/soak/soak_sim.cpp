@@ -6,7 +6,8 @@
     simulator at heavy loss, latency, jitter and duplication, under mocked
     time stepped fast -- hours of simulated network abuse per minute of wall
     clock. Its job is smoking out crashes and state machine hangs: every
-    payload is pattern verified, and a watchdog
+    payload is verified against the ledger of what the clients wrote (its
+    serial, length and bytes, taken at most once), and a watchdog
     treats a machine that neither progresses nor terminally fails as a
     wedge and fails loudly.
 
@@ -396,28 +397,118 @@ void interrupt_handler( int signal_value )
     quit = 1;
 }
 
-static void generate_payload( uint8_t * payload_data, int payload_bytes )
-{
-    const int start = payload_bytes % 256;
+// The payload ledger: what the clients wrote, so a delivered payload is
+// judged against an accepted send and never against its own length. Each
+// payload of SOAK_PAYLOAD_HEADER bytes or more carries its serial (its place
+// in the run's writes) and its length, and its bytes are a pattern of both;
+// the ledger keeps, for the last SOAK_LEDGER_SERIALS writes, each serial's
+// length and whether the server took it. A shortened payload, another
+// payload's bytes, a serial never written or one taken twice fails. A
+// payload under the header's size (1 to 7 bytes) carries only the pattern of
+// its length.
 
-    for ( int i = 0; i < payload_bytes; i++ )
+#define SOAK_PAYLOAD_HEADER 8
+#define SOAK_LEDGER_SERIALS ( 1u << 20 )
+
+struct soak_ledger_t
+{
+    uint32_t written;                           // payloads written, the next serial (wraps; ages are taken mod 2^32)
+    uint16_t length[SOAK_LEDGER_SERIALS];
+    uint8_t taken[SOAK_LEDGER_SERIALS];
+};
+
+static struct soak_ledger_t soak_ledger;
+
+static void soak_write_u32( uint8_t * p, uint32_t value )
+{
+    p[0] = (uint8_t) value;
+    p[1] = (uint8_t) ( value >> 8 );
+    p[2] = (uint8_t) ( value >> 16 );
+    p[3] = (uint8_t) ( value >> 24 );
+}
+
+static uint32_t soak_read_u32( const uint8_t * p )
+{
+    return (uint32_t) p[0] | ( (uint32_t) p[1] << 8 ) | ( (uint32_t) p[2] << 16 ) | ( (uint32_t) p[3] << 24 );
+}
+
+// the body's first byte, from the serial and the length: the body counts up
+// from it, as cheap to write and check as the length's own pattern was
+static uint8_t soak_pattern_start( uint32_t serial, int payload_bytes )
+{
+    return (uint8_t) ( ( ( serial ^ ( (uint32_t) payload_bytes << 16 ) ) * 2654435761u ) >> 24 );
+}
+
+// the payload the next write sends: serial is soak_ledger.written
+static void generate_payload( uint8_t * payload_data, int payload_bytes, uint32_t serial )
+{
+    if ( payload_bytes < SOAK_PAYLOAD_HEADER )
+    {
+        const int start = payload_bytes % 256;
+        for ( int i = 0; i < payload_bytes; i++ )
+        {
+            payload_data[i] = (uint8_t) ( start + i );
+        }
+        return;
+    }
+
+    soak_write_u32( payload_data, serial );
+    soak_write_u32( payload_data + 4, (uint32_t) payload_bytes );
+    const uint8_t start = soak_pattern_start( serial, payload_bytes );
+    for ( int i = SOAK_PAYLOAD_HEADER; i < payload_bytes; i++ )
     {
         payload_data[i] = (uint8_t) ( start + i );
     }
 }
 
-static int verify_payload( const uint8_t * payload_data, int payload_bytes )
+// a write the library accepted: its serial joins the ledger
+static void soak_ledger_written( int payload_bytes )
 {
-    const int start = payload_bytes % 256;
+    const uint32_t slot = soak_ledger.written % SOAK_LEDGER_SERIALS;
+    soak_ledger.length[slot] = (uint16_t) payload_bytes;
+    soak_ledger.taken[slot] = 0;
+    soak_ledger.written++;
+}
 
-    for ( int i = 0; i < payload_bytes; i++ )
+// take: the server's delivery, which the ledger marks; a second is a failure
+static int verify_payload( const uint8_t * payload_data, int payload_bytes, bool take )
+{
+    if ( payload_bytes < SOAK_PAYLOAD_HEADER )
+    {
+        const int start = payload_bytes % 256;
+        for ( int i = 0; i < payload_bytes; i++ )
+        {
+            if ( payload_data[i] != (uint8_t) ( start + i ) )
+            {
+                return 0;
+            }
+        }
+        return 1;
+    }
+
+    const uint32_t serial = soak_read_u32( payload_data );
+    const uint32_t age = soak_ledger.written - serial;
+    if ( age == 0 || age > SOAK_LEDGER_SERIALS || soak_read_u32( payload_data + 4 ) != (uint32_t) payload_bytes )
+    {
+        return 0;
+    }
+    const uint32_t slot = serial % SOAK_LEDGER_SERIALS;
+    if ( soak_ledger.length[slot] != (uint16_t) payload_bytes || ( take && soak_ledger.taken[slot] ) )
+    {
+        return 0;
+    }
+    const uint8_t start = soak_pattern_start( serial, payload_bytes );
+    for ( int i = SOAK_PAYLOAD_HEADER; i < payload_bytes; i++ )
     {
         if ( payload_data[i] != (uint8_t) ( start + i ) )
         {
             return 0;
         }
     }
-
+    if ( take )
+    {
+        soak_ledger.taken[slot] = 1;
+    }
     return 1;
 }
 
@@ -760,7 +851,7 @@ int main( int argc, char ** argv )
             if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
             {
                 uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
-                generate_payload( payload, payload_size );
+                generate_payload( payload, payload_size, soak_ledger.written );
 
                 int bytes = 0;
 
@@ -769,6 +860,7 @@ int main( int argc, char ** argv )
 
                 if ( bytes > 0 )
                 {
+                    soak_ledger_written( payload_size );
                     payloads_written++;
                     wire_send( simulator, &client_address[c], &server_address, packet, bytes, time );
                 }
@@ -807,7 +899,7 @@ int main( int argc, char ** argv )
                     payload_fault = false;
                 }
 
-                if ( verify_payload( delivered, delivered_bytes ) )
+                if ( verify_payload( delivered, delivered_bytes, true ) )
                 {
                     payloads_verified++;
                     payloads_verified_at_server++;
@@ -865,7 +957,7 @@ int main( int argc, char ** argv )
 
                 if ( processed && delivered_bytes > 0 )
                 {
-                    if ( verify_payload( delivered, delivered_bytes ) )
+                    if ( verify_payload( delivered, delivered_bytes, false ) )
                     {
                         payloads_verified++;
                     }
@@ -1040,7 +1132,13 @@ int main( int argc, char ** argv )
     rocketnet_server_acks_destroy( server.acks );
     rocketnet_network_simulator_destroy( simulator );
 
-    rocketnet_term();
+    // term refuses while the library still holds an allocation: a run that
+    // leaked fails (TA022)
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "soak_sim: FAILED term_status=%s: the library still holds allocations at term\n", rocketnet_status_name( term_status ) );
+    }
 
-    return ( failures || hangs || terminals || profile_refused || no_delivery ) ? 1 : 0;
+    return ( failures || hangs || terminals || profile_refused || no_delivery || term_status != ROCKETNET_STATUS_OK ) ? 1 : 0;
 }

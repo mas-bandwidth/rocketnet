@@ -22,7 +22,8 @@
  *   sequenced (UNRELIABLE_SEQUENCED, RELIABLE_SEQUENCED): never a message
  *   older than the newest delivered and never a duplicate; a stale message
  *   the receiver drops is a skip, counted and never failed (sdk/rocketnet.h:
- *   RELIABLE_SEQUENCED "can drop a stale one", so it is not exactly once);
+ *   RELIABLE_SEQUENCED "can drop a stale one", so it is not exactly once),
+ *   but RELIABLE_SEQUENCED's newest sent is never stale and must arrive;
  *   unreliable (UNRELIABLE, UNRELIABLE_SEQUENCED, UNRELIABLE_WITH_ACK_RECEIPT):
  *   no duplicate; loss is counted, never failed;
  *   receipts (the three _WITH_ACK_RECEIPT modes): every send gets exactly one
@@ -378,6 +379,7 @@ struct split_verify_stream_result_t
     uint32_t delivered;
     uint32_t lost;                  /* unreliable modes: sent - delivered, counted and never failed */
     uint32_t skipped;               /* RELIABLE_SEQUENCED: stale messages dropped, counted and never failed */
+    uint32_t final_missing;         /* RELIABLE_SEQUENCED: the newest sent never delivered, a failure */
     uint32_t missing;               /* exactly-once modes: sent - delivered, a failure */
     uint32_t phantom;               /* delivered sequences the sender never sent */
     int window_exceeded;            /* the sender sent past SPLIT_VERIFY_MAX_SEQUENCE */
@@ -409,14 +411,18 @@ static inline int split_verify_stream_final( const struct split_verify_stream_t 
     }
     else if ( split_verify_mode_is_reliable( stream->mode ) )
     {
-        result->skipped = short_by;
+        /* a stale message is one a newer one superseded; the newest sent has
+           nothing newer, and it is resent until acknowledged, so after the
+           drain it is delivered: missing, it is a loss, never a skip */
+        result->final_missing = ( sent > 0 && sent <= SPLIT_VERIFY_MAX_SEQUENCE && !split_verify_stream_has( stream, sent ) ) ? 1u : 0u;
+        result->skipped = short_by > result->final_missing ? short_by - result->final_missing : 0;
     }
     else
     {
         result->lost = short_by;
     }
 
-    result->clean = !result->window_exceeded && result->phantom == 0 && result->missing == 0 &&
+    result->clean = !result->window_exceeded && result->phantom == 0 && result->missing == 0 && result->final_missing == 0 &&
                     stream->duplicates == 0 && stream->order_errors == 0 &&
                     stream->stale_deliveries == 0 && stream->identity_errors == 0;
 

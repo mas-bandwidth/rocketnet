@@ -1443,6 +1443,11 @@ struct load_accounting_t
     int xdp_frame_dropped;
     int xdp_dropped[32];
     int num_xdp_dropped;
+    /* the socket transports' receive drops outside PACKETS_RECEIVED: a datagram
+       the kernel delivered and the transport's receive dropped before main
+       (load_receive_drop_names) */
+    int receive_dropped[16];
+    int num_receive_dropped;
 
     int separate_namespaces;
     struct load_kernel_source_t server_source;
@@ -1455,6 +1460,28 @@ struct load_accounting_t
     uint64_t destroyed_packets_received;
     uint64_t destroyed_send_failed;
 };
+
+/* The datagrams a socket transport's receive drops before main that no
+   other term names, each counted once:
+   - RECEIVE_DROPPED_FULL, RECEIVE_FAILED, RECEIVE_DROPPED_STOPPED and
+     RECEIVE_DROPPED_RETIRED: fed only by the transport's receive drop totals
+     (sdk/rocketnet_receive_prefilter.h rocketnet_receive_drop_counters), never
+     inside PACKETS_RECEIVED or the received count (rio's RECEIVE_FAILED is its
+     RIO_RECEIVE_FAILED row, so that row is not added again);
+   - the receive paths' own size drops outside PACKETS_RECEIVED: io_uring's
+     URING_RECEIVE_DROPPED_SIZE, IOCP_ and RIO_RECEIVE_TOO_SHORT/TOO_LARGE (as
+     tests/load/harden_chain.h harden_refused_from_terms names them).
+   An XDP server has no receive drop totals: these read 0 there, and its
+   drops are the XDP rows. Not named: a receive worker's prefilter refusal,
+   which the transport folds into PACKETS_RECEIVED and its reason counters
+   beside main's own refusals; the load's clients send none */
+#if ROCKETNET_DEV
+static const char * const load_receive_drop_names[] = {
+    "RECEIVE_DROPPED_FULL", "RECEIVE_FAILED", "RECEIVE_DROPPED_STOPPED", "RECEIVE_DROPPED_RETIRED",
+    "URING_RECEIVE_DROPPED_SIZE", "IOCP_RECEIVE_TOO_SHORT", "IOCP_RECEIVE_TOO_LARGE", "RIO_RECEIVE_TOO_SHORT", "RIO_RECEIVE_TOO_LARGE",
+    NULL
+};
+#endif // #if ROCKETNET_DEV
 
 static void load_accounting_init( struct load_accounting_t * accounting )
 {
@@ -1496,6 +1523,16 @@ static void load_accounting_init( struct load_accounting_t * accounting )
         else if ( strncmp( name, "XDP_KERNEL_DROPPED_", 19 ) == 0 && accounting->num_xdp_dropped < 32 )
         {
             accounting->xdp_dropped[accounting->num_xdp_dropped++] = k;
+        }
+        else
+        {
+            for ( int r = 0; load_receive_drop_names[r]; r++ )
+            {
+                if ( strcmp( name, load_receive_drop_names[r] ) == 0 && accounting->num_receive_dropped < 16 )
+                {
+                    accounting->receive_dropped[accounting->num_receive_dropped++] = k;
+                }
+            }
         }
     }
 
@@ -1546,6 +1583,7 @@ struct load_packet_terms_t
     uint64_t server_send_failed;
     uint64_t server_prefilter_dropped;
     uint64_t server_frame_dropped;
+    uint64_t server_receive_dropped;
     uint64_t server_redirected;
     uint64_t server_packets_received_counter;
     struct load_kernel_counters_t server_kernel;   /* deltas since before the first client */
@@ -1582,6 +1620,10 @@ static void load_packet_terms_read( const struct load_accounting_t * accounting,
     }
 
     terms->server_frame_dropped = load_server_counter( accounting, server, accounting->xdp_frame_dropped );
+    for ( int k = 0; k < accounting->num_receive_dropped; k++ )
+    {
+        terms->server_receive_dropped += load_server_counter( accounting, server, accounting->receive_dropped[k] );
+    }
     terms->server_redirected = load_server_counter( accounting, server, accounting->xdp_redirected );
     terms->server_packets_received_counter = load_server_counter( accounting, server, accounting->packets_received );
 
@@ -1603,7 +1645,8 @@ static void load_packet_terms_read( const struct load_accounting_t * accounting,
 static int64_t load_c2s_remainder( const struct load_accounting_t * accounting, const struct load_packet_terms_t * terms )
 {
     int64_t remainder = (int64_t) terms->client_sent - (int64_t) terms->server_received -
-                        (int64_t) terms->client_send_failed - (int64_t) terms->server_prefilter_dropped - (int64_t) terms->server_frame_dropped;
+                        (int64_t) terms->client_send_failed - (int64_t) terms->server_prefilter_dropped - (int64_t) terms->server_frame_dropped -
+                        (int64_t) terms->server_receive_dropped;
     if ( accounting->separate_namespaces )
     {
         remainder -= (int64_t) terms->client_kernel.udp_sndbuf_errors + (int64_t) terms->server_kernel.udp_in_errors;
@@ -1638,11 +1681,11 @@ static int64_t load_ring_frames( const struct load_packet_terms_t * terms )
 
 static void load_print_c2s( const struct load_accounting_t * accounting, const struct load_packet_terms_t * t, double cut_s )
 {
-    fprintf( stderr, "load: counters_agree c2s packets at quiesce t=%.3fs: client_sent=%" PRIu64 " = server_received=%" PRIu64 " + client_send_failed=%" PRIu64 " + client_ns_udp_sndbuf_errors=%" PRIu64 " + server_ns_udp_in_errors=%" PRIu64 " (rcvbuf_errors=%" PRIu64 ") + xdp_prefilter_dropped=%" PRIu64 " + xdp_frame_dropped=%" PRIu64 " + in_flight=%" PRId64 "; xdp_ring_frames=%" PRId64 " (redirected=%" PRIu64 " taken=%" PRIu64 ")%s%s\n",
+    fprintf( stderr, "load: counters_agree c2s packets at quiesce t=%.3fs: client_sent=%" PRIu64 " = server_received=%" PRIu64 " + client_send_failed=%" PRIu64 " + client_ns_udp_sndbuf_errors=%" PRIu64 " + server_ns_udp_in_errors=%" PRIu64 " (rcvbuf_errors=%" PRIu64 ") + xdp_prefilter_dropped=%" PRIu64 " + xdp_frame_dropped=%" PRIu64 " + transport_receive_dropped=%" PRIu64 " + in_flight=%" PRId64 "; xdp_ring_frames=%" PRId64 " (redirected=%" PRIu64 " taken=%" PRIu64 ")%s%s\n",
              cut_s, t->client_sent, t->server_received, t->client_send_failed,
              accounting->separate_namespaces ? t->client_kernel.udp_sndbuf_errors : t->server_kernel.udp_sndbuf_errors,
              t->server_kernel.udp_in_errors, t->server_kernel.udp_rcvbuf_errors,
-             t->server_prefilter_dropped, t->server_frame_dropped, load_c2s_remainder( accounting, t ), load_ring_frames( t ),
+             t->server_prefilter_dropped, t->server_frame_dropped, t->server_receive_dropped, load_c2s_remainder( accounting, t ), load_ring_frames( t ),
              t->server_redirected, t->server_packets_received_counter,
              accounting->separate_namespaces ? "" : " [one shared namespace: the kernel counters are host-wide and both directions' bound]",
              accounting->counters_available ? "" : " [library counters unavailable: ROCKETNET_DEV is 0]" );
@@ -2885,10 +2928,20 @@ int main( int argc, char ** argv )
     const int64_t c2s_in_flight = load_c2s_remainder( &accounting, &c2s_terms );
     const int64_t s2c_in_flight = load_s2c_remainder( &accounting, &s2c_terms );
     const int64_t ring_frames = load_ring_frames( &c2s_terms );
-    uint64_t c2s_dropped_packets = c2s_terms.client_send_failed + c2s_terms.server_prefilter_dropped + c2s_terms.server_frame_dropped;
+    uint64_t c2s_dropped_packets = c2s_terms.client_send_failed + c2s_terms.server_prefilter_dropped + c2s_terms.server_frame_dropped +
+                                   c2s_terms.server_receive_dropped;
     int packets_agree = 0;
+    /* what the packet verdict rests on, printed on the verdict line:
+       separate_namespaces (each end's own kernel counters), shared_exact (one
+       namespace, nothing left for the host-wide counters to excuse),
+       shared_weak (one namespace, a remainder excused by host-wide counters
+       that another process's UDP errors also raise: a library loss up to that
+       remainder cannot be told from them, so the PASS is weak) or drop_one
+       (the equations printed, not judged) */
+    const char * counters_scope = "separate_namespaces";
     if ( drop_injected )
     {
+        counters_scope = "drop_one";
         /* drop-one: the destroyed client's disconnect burst reaches the
            server after its stats were read, and what the server sent it
            after that is never read, so neither equation can close; the terms
@@ -2912,8 +2965,9 @@ int main( int argc, char ** argv )
         const uint64_t s2c_left = s2c_in_flight > 0 ? (uint64_t) s2c_in_flight : 0;
         c2s_dropped_packets += c2s_left;
         packets_agree = c2s_in_flight >= 0 && s2c_in_flight >= 0 && ring_frames == 0 && c2s_left + s2c_left <= kernel_bound;
-        fprintf( stderr, "load: counters_agree shared namespace: c2s_left=%" PRIu64 " + s2c_left=%" PRIu64 " <= host_udp_sndbuf_errors+in_errors=%" PRIu64 " (kernel counters %s)\n",
-                 c2s_left, s2c_left, kernel_bound, s2c_terms.server_kernel.available ? "read" : "unavailable, bound 0" );
+        counters_scope = c2s_left + s2c_left > 0 ? "shared_weak" : "shared_exact";
+        fprintf( stderr, "load: counters_agree shared namespace: c2s_left=%" PRIu64 " + s2c_left=%" PRIu64 " <= host_udp_sndbuf_errors+in_errors=%" PRIu64 " (kernel counters %s) scope=%s\n",
+                 c2s_left, s2c_left, kernel_bound, s2c_terms.server_kernel.available ? "read" : "unavailable, bound 0", counters_scope );
     }
 
     const int64_t message_lost = (int64_t) c2s_sent_total - (int64_t) c2s_received_total - (int64_t) total_counted_drops;
@@ -3176,7 +3230,7 @@ int main( int argc, char ** argv )
         printf( "load: connected=%d connect_s=%.3f connect_p50_s=%.3f connect_max_s=%.3f "
                 "profile=%s client_public_required_bytes=%zu server_public_required_bytes=%zu "
                 "connect_within_10s=PASS no_unexpected_disconnect=PASS "
-                "reliable_delivery=PASS unreliable_integrity=PASS counters_agree=PASS "
+                "reliable_delivery=PASS unreliable_integrity=PASS counters_agree=PASS counters_scope=%s "
                 "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
                 "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
                 "server_transport_io=%s client_transport_io=%s "
@@ -3191,7 +3245,7 @@ int main( int argc, char ** argv )
                 "timing_scope=traffic_and_drain drain_schedule=recent_first_cyclic "
                 "timing_baseline=%s",
                 connected_count, connect_elapsed, connect_p50_s, connect_max_s,
-                profile_name, client_public_required_bytes, server_public_required_bytes,
+                profile_name, client_public_required_bytes, server_public_required_bytes, counters_scope,
                 c2s_sent_total, c2s_received_total, total_counted_drops,
                 p50_us, p99_us, rss_mb,
                 server_transport_io, client_transport_io,
@@ -3210,7 +3264,7 @@ int main( int argc, char ** argv )
         printf( "load: connected=%d connect_s=%.3f connect_p50_s=%.3f connect_max_s=%.3f "
                 "profile=%s client_public_required_bytes=%zu server_public_required_bytes=%zu "
                 "connect_within_10s=%s no_unexpected_disconnect=%s "
-                "reliable_delivery=%s unreliable_integrity=%s counters_agree=%s "
+                "reliable_delivery=%s unreliable_integrity=%s counters_agree=%s counters_scope=%s "
                 "sent=%" PRIu64 " received=%" PRIu64 " drops=%" PRIu64 " "
                 "server_update_p50_us=%" PRIu64 " server_update_p99_us=%" PRIu64 " rss_mb=%.2f "
                 "server_transport_io=%s client_transport_io=%s "
@@ -3231,7 +3285,7 @@ int main( int argc, char ** argv )
                 crit2_no_unexpected_disconnect ? "PASS" : "FAIL",
                 crit3_reliable_delivery ? "PASS" : "FAIL",
                 crit4_unreliable_integrity ? "PASS" : "FAIL",
-                crit5_counters_agree ? "PASS" : "FAIL",
+                crit5_counters_agree ? "PASS" : "FAIL", counters_scope,
                 c2s_sent_total, c2s_received_total, total_counted_drops,
                 p50_us, p99_us, rss_mb,
                 server_transport_io, client_transport_io,

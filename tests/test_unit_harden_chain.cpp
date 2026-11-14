@@ -192,6 +192,92 @@ static void test_harden_chain_duplicates_row()
     check( !harden_chain_judge( c, 1 ).ok );
 }
 
+static void test_harden_chain_gso_slack_bounds()
+{
+    // the XDP down row sends below the kernel (kernel_out 0): its send_gap is
+    // every datagram, not a GSO batch. Planted: one of the cell's no-port
+    // drops (2 on the host, 1 a stray) and 1000 lost where no counter names
+    // them. The slack is 0 and the 999 unnamed fail (the slack was the whole
+    // 66599830 and passed them)
+
+    harden_chain_t down = harden_chain_test_down();
+    down.arrived_noports_strays = 1;
+    down.library_received -= 1000;
+    harden_chain_result_t r = harden_chain_judge( down, 0 );
+    check( r.cell_noports == 1 );
+    check( r.library_gap == 999 );
+    check( r.gso_slack == 0 );
+    check( !r.ok );
+
+    // the up row's players send GSO batches through their kernel (send_gap
+    // 148613). One named skb drop hides at most 63 more datagrams: a gap of 63
+    // passes as gso_slack, 64 fails, and so does a loss of 999 (which the
+    // whole send_gap passed)
+
+    harden_chain_t up = harden_chain_test_up();
+    up.arrived_noports_strays = 0;
+    up.library_received -= 64;
+    r = harden_chain_judge( up, 0 );
+    check( r.cell_noports == 1 );
+    check( r.library_gap == 63 );
+    check( r.gso_slack == 63 );
+    check( r.ok );
+
+    up.library_received -= 1;
+    r = harden_chain_judge( up, 0 );
+    check( r.library_gap == 64 );
+    check( !r.ok );
+
+    up = harden_chain_test_up();
+    up.arrived_noports_strays = 0;
+    up.library_received -= 1000;
+    r = harden_chain_judge( up, 0 );
+    check( r.library_gap == 999 );
+    check( !r.ok );
+
+    // two named skb drops: up to 126
+    up = harden_chain_test_up();
+    up.arrived_noports = 3;
+    up.arrived_noports_strays = 1;
+    up.library_received -= 128;
+    r = harden_chain_judge( up, 0 );
+    check( r.library_gap == 126 && r.gso_slack == 126 && r.ok );
+
+    // each enabling condition alone false, the 63 gap above fails: no
+    // kernel counters on the sender's OS, and no send_gap (the kernel counted
+    // every datagram, so nothing was batched)
+
+    up = harden_chain_test_up();
+    up.arrived_noports_strays = 0;
+    up.library_received -= 64;
+    up.sender_counters = false;
+    r = harden_chain_judge( up, 0 );
+    check( r.gso_slack == 0 && !r.ok );
+
+    up = harden_chain_test_up();
+    up.arrived_noports_strays = 0;
+    up.library_received -= 64;
+    up.kernel_out = up.library_sent;
+    r = harden_chain_judge( up, 0 );
+    check( r.send_gap == 0 && r.gso_slack == 0 && !r.ok );
+
+    // the receiving device's overlap: a gap down to -overlap passes, one
+    // below it fails
+
+    harden_chain_t c;
+    c.library_sent = 1000;
+    c.kernel_out = 1000;
+    c.arrived_in = 1000;
+    c.library_received = 1000;
+    c.arrived_device_dropped = 2;
+    c.device_overlap = 2;
+    r = harden_chain_judge( c, 0 );
+    check( r.library_gap == -2 && r.ok );
+    c.arrived_device_dropped = 3;
+    r = harden_chain_judge( c, 0 );
+    check( r.library_gap == -3 && !r.ok );
+}
+
 // The refusals before received, through the reconcile's own path: one map of
 // the terms the roles print, read by harden_chain_up_from_terms (the chain the
 // reconcile judges) and harden_handoff_gap_from_terms. The transport counter
@@ -381,3 +467,4 @@ REGISTER_UNIT_TEST( test_harden_chain_planted_loss_fails );
 REGISTER_UNIT_TEST( test_harden_chain_strays_cannot_hide_a_loss );
 REGISTER_UNIT_TEST( test_harden_chain_cell_noports_and_strays_together );
 REGISTER_UNIT_TEST( test_harden_chain_duplicates_row );
+REGISTER_UNIT_TEST( test_harden_chain_gso_slack_bounds );
