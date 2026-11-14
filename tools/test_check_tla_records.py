@@ -281,6 +281,32 @@ class CheckTlaRecordsTest(unittest.TestCase):
         self.assertIn("Slots.tla", found)
         self.assertNotIn("Plain.tla", found)
 
+    def test_resolution_forms(self):
+        # each module's Fairness reaches Wire's implication by one TLA+ form,
+        # or (the No... modules) only looks as if it does
+        wire = ("---- MODULE Wire ----\nVARIABLE x\nvars == <<x>>\nSend == x' = x\n"
+                "Lands == ([]<> <<Send>>_vars) => ([]<> <<Send>>_vars)\n====\n")
+        bodies = {
+            "Mid": "W == INSTANCE Wire\n",
+            "Ext": "EXTENDS Wire\nFairness == WF_vars(Send) /\\ Lands\n",
+            "Inst": "INSTANCE Wire\nFairness == Lands\n",
+            "ExtQualified": "EXTENDS Mid\nFairness == W!Lands\n",
+            "Param": "L(i) == INSTANCE Wire\nFairness == \\A i \\in {1}: L(i)!Lands\n",
+            "Chain": "K == INSTANCE Mid\nFairness == K!W!Lands\n",
+            "Local": "LOCAL Own == ([]<> <<x>>_x) => ([]<> <<x>>_x)\nB == x\nFairness == WF_x(B) /\\ Own\n",
+            "Spaced": "Fairness == ([] <> <<x>>_x) => ([] <> <<x>>_x)\n",
+            "NoTheorem": "Fairness == WF_x(x' = x)\nTHEOREM ([]<> <<x>>_x) => ([]<> <<x>>_x)\n",
+            "NoUnnamed": "EXTENDS Wire\nFairness == WF_vars(Send)\n",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            tla = Path(tmp)
+            (tla / "Wire.tla").write_text(wire, encoding="utf-8")
+            for name, body in bodies.items():
+                (tla / f"{name}.tla").write_text(
+                    f"---- MODULE {name} ----\nVARIABLE x\n{body}====\n", encoding="utf-8")
+            found = check_tla_records.delivery_assumption_modules(tla)
+        self.assertEqual(found, {n + ".tla" for n in ("Ext", "Inst", "ExtQualified", "Param", "Chain", "Local", "Spaced")})
+
     def test_owed_witness_case_is_excused_and_must_stay_exact(self):
         code, text = self.delivery_fixture(
             witness=False, fairness=self.NAMED_FAIRNESS, owed={"MCPass.cfg": "owed to X"})

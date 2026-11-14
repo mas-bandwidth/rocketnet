@@ -245,8 +245,15 @@ def cfg_properties(config_path):
             if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", prop)]
 
 
-DEFINITION_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\))?\s*==", re.ASCII)
-DELIVERY_ASSUMPTION_RE = re.compile(r"\[\]<>.{0,400}?=>.{0,400}?\[\]<>", re.DOTALL)
+DEFINITION_RE = re.compile(r"^(?:LOCAL\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:\([^)]*\))?\s*==", re.ASCII)
+DELIVERY_ASSUMPTION_RE = re.compile(r"\[\]\s*<>.{0,400}?=>.{0,400}?\[\]\s*<>", re.DOTALL)
+# a line starting with one of these ends the definition above it
+UNIT_START_RE = re.compile(
+    r"^(?:THEOREM|LEMMA|PROPOSITION|COROLLARY|AXIOM|ASSUME|ASSUMPTION|CONSTANTS?|VARIABLES?|"
+    r"RECURSIVE|LOCAL|INSTANCE|EXTENDS|USE|HIDE)\b")
+# X!N, L(i)!N and K!W!N: the instance path, then the name
+QUALIFIED_RE = re.compile(
+    r"(?<![A-Za-z0-9_!])((?:[A-Za-z_][A-Za-z0-9_]*(?:\([^()]*\))?!)+)([A-Za-z_][A-Za-z0-9_]*)")
 
 
 def module_definitions(text):
@@ -254,7 +261,8 @@ def module_definitions(text):
     definitions, name, body = {}, None, []
     for line in strip_comments(text).splitlines():
         start = DEFINITION_RE.match(line)
-        if start or MODULE_END_RE.match(line) or re.match(r"^\s*-{4,}\s*$", line):
+        if (start or MODULE_END_RE.match(line) or re.match(r"^\s*-{4,}\s*$", line)
+                or UNIT_START_RE.match(line)):
             if name is not None:
                 definitions[name] = "\n".join(body)
             name, body = (start.group(1), [line]) if start else (None, [])
@@ -324,12 +332,16 @@ def delivery_assumption_modules(tla_dir):
                 break
             head = DEFINITION_RE.match(body)
             text = body[head.end():] if head else body
-            # X!N: N in the module X instances (X == INSTANCE M ...)
-            for inst, ref in re.findall(r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)!([A-Za-z_][A-Za-z0-9_]*)", text):
-                target = namespace(home).get(inst)
-                hit = re.search(r"\bINSTANCE\s+([A-Za-z0-9_]+)", target[1]) if target else None
-                if hit and hit.group(1) + ".tla" in own:
-                    queue.append((hit.group(1) + ".tla", ref))
+            # X!N: N in the module X instances (X == INSTANCE M ...); L(i)!N
+            # and K!W!N walk the path one instance at a time
+            for path, ref in QUALIFIED_RE.findall(text):
+                where = home
+                for inst in re.findall(r"([A-Za-z_][A-Za-z0-9_]*)(?:\([^()]*\))?!", path):
+                    target = namespace(where).get(inst) if where else None
+                    hit = re.search(r"\bINSTANCE\s+([A-Za-z0-9_]+)", target[1]) if target else None
+                    where = hit.group(1) + ".tla" if hit and hit.group(1) + ".tla" in own else None
+                if where:
+                    queue.append((where, ref))
             queue += [(home, n) for n in re.findall(r"(?<![A-Za-z0-9_!])[A-Za-z_][A-Za-z0-9_]*(?![A-Za-z0-9_]*!)", text)]
     return modules
 
