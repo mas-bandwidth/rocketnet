@@ -539,7 +539,15 @@ cmake -S . -B build \
 ```
 
 The `.inc` has `ROCKETNET_TRANSPORT(...)` rows in the same format as the built-in
-file, and no include guard: it is intentionally expanded more than once. Native
+file, and no include guard: it is intentionally expanded more than once. Its
+rows sort into `auto` with the built-in rows by rank, the same in development
+and production builds. A server rank below 50 sorts ahead of `portable` (50),
+so an extension ranked 31 to 49 runs before it, and one below a native
+transport's rank (10 to 45) runs before that too. A rank equal to a built-in
+row's sorts after that row, because ties keep registry order and the
+embedding file's rows come after the built-in ones: an extension at 50 stays
+after `portable` (`tests/driver_extension` ranks 50 on both endpoints). The
+client column works the same way against `portable`'s 30. Native
 registration is compiled into the SDK; this is not a dynamic plugin ABI.
 Backend symbols are not public C exports. Per-transport settings and resource
 validation belong in the factory; the public transport configuration is unchanged.

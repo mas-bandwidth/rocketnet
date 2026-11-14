@@ -11,7 +11,11 @@ wins. Read the result with `rocketnet_server_transport_name` or
 (`sdk/rocketnet_drivers.inc`); a lower rank is tried first, "pin only" means
 `auto` never picks it and only a list of that one name selects it (in a
 longer list it is skipped), and "-" means that endpoint
-does not have the transport.
+does not have the transport. A transport an embedding project adds sorts
+among these by the same ranks in every build: a server rank below 50 is tried
+before `portable`, and a rank equal to a built-in one is tried after it, so 50
+stays after `portable`
+([TRANSPORT-INTERNALS.md](TRANSPORT-INTERNALS.md#adding-a-backend-without-editing-the-transport)).
 
 | Transport | Platform | Server rank | Client rank | What it needs from the host |
 | --- | --- | --- | --- | --- |
