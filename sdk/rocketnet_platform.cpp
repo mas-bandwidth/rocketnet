@@ -3727,6 +3727,26 @@ uint64_t rocketnet_platform_thread_id( void )
 // 64-bit atomics read with one plain load
 static_assert( sizeof( void * ) == 8, "rocketnet on Windows needs a 64-bit build (x64 or ARM64)" );
 
+#if ROCKETNET_RED_ZONES
+// sdk/rocketnet_memory.h rocketnet_red_zone_unpoison: VirtualQuery reads the
+// state of the shadow page without touching it, and a run of shadow pages not
+// committed is skipped whole, back to the application addresses it shadows
+uintptr_t rocketnet_red_zone_uncommitted_end( uintptr_t at )
+{
+    size_t scale = 0;
+    size_t offset = 0;
+    __asan_get_shadow_mapping( &scale, &offset );
+    const uintptr_t shadow = ( at >> scale ) + (uintptr_t) offset;
+    MEMORY_BASIC_INFORMATION info;
+    if ( VirtualQuery( (const void *) shadow, &info, sizeof( info ) ) == 0 || info.State == MEM_COMMIT )
+    {
+        return at;
+    }
+    const uintptr_t shadow_end = (uintptr_t) info.BaseAddress + (uintptr_t) info.RegionSize;
+    return ( shadow_end - (uintptr_t) offset ) << scale;
+}
+#endif // #if ROCKETNET_RED_ZONES
+
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static_assert( sizeof( uintptr_t ) == 8 && ATOMIC_LLONG_LOCK_FREE == 2 && ATOMIC_POINTER_LOCK_FREE == 2 &&
                    ATOMIC_INT_LOCK_FREE == 2,
