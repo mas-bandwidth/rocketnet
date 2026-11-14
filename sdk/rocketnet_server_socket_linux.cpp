@@ -1897,8 +1897,7 @@ bool rocketnet_server_socket_preflight_vlan_tag( const char * parent_name, int v
 
     if ( read_errno != 0 )
     {
-        char error_text[128];
-        rocketnet_warn( "xdp pre-flight: could not read the offload flags of %s (%s) (R2): cannot show the VLAN %d tag reaches the filter", parent_name, strerror_r( read_errno, error_text, sizeof( error_text ) ), vlan_id );
+        rocketnet_warn( "xdp pre-flight: could not read the offload flags of %s (%s) (R2): cannot show the VLAN %d tag reaches the filter", parent_name, rocketnet_platform_socket_error_text( read_errno ).text, vlan_id );
         return false;
     }
 
