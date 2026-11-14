@@ -356,9 +356,24 @@
    :date "2026-11-13" :origin "Review of the io_uring transport work")
 
   (item "flaky-reply-opens-a-later-update" :group "audit-remaining" :area "tests"
-   :title "test_transport_reply_opens_a_later_update failed once on a loaded macOS runner"
-   :text "On PR #1124's first CI run (43476345841, attempt 1) macos / Release / functional on one macOS runner failed at tests/functional/rocketnet_functional_tests.cpp:10204: one of the 200 replies was never seen within the case's 12000 updates (9.8 s). The case sends unreliable datagrams over real loopback and answers each once, so one lost request or reply fails it. The rerun passed on another macOS runner, and the case passed 40 of 40 on a Linux bench both at #1124's head and at its base a756b3398. The cause is not shown. PR #1118 (transport reply waits resend through the loss gate) is the candidate fix, held until it shows the cause."
-   :date "2026-11-13" :origin "PR #1124 CI")
+   :title "test_transport_reply_opens_a_later_update: the delivery assertion is fixed; the ordering proof is weak"
+   :text "The case sent each request and each answer once, as unreliable datagrams over real loopback, so one lost datagram failed it. It failed this way on PR #1124's CI (43476345841, line 10204). It failed on main at a8cf53bc8 and 3218cf5f6, both before v1.1.60, and at dc8c1e6de (v1.1.61, run 43564179693, both attempts). On the studio under the looping functional suite it failed 1 of 500 on main and 0 of 500 on v1.1.60, so v1.1.61 is not involved. The one failure lost two contiguous blocks: 10 answers that the server sent and 45 requests that never reached it. Fixed on fix/v1.1.x/reply-opens-tolerates-loss: a missing request is opened again through the loss gate (tests/kernel_drops.h), and every round has a hard bound of 12000 passes and 15 s, so the case always ends, red by name or green, within 4 rounds. What remains is item reply-opens-ordering-proof-weak, and the gate's macOS evidence (loss-gate-macos-machine-wide-evidence)."
+   :date "2026-11-14" :origin "PR #1124 CI; main run 43564179693; studio runs 2026-11-14")
+
+  (item "reply-opens-ordering-proof-weak" :group "audit-remaining" :area "tests"
+   :title "The mutation test_transport_reply_opens_a_later_update names does not turn it red"
+   :text "The case's comment says that moving the client's update and drain block after the server's answer block must turn it red. On the studio, over real sockets, that mutation passed 50 of 50 runs. The answer almost never reaches the client's receive batch within the same pass, so the case does not show that a reply is first opened in a later update than its request. A deterministic proof would run the same phases where arrival is immediate and under the test's control: the loopback hub, or a seam that hands the answer to the client before its update. The mutation must then go red every time. The library is not changed."
+   :date "2026-11-14" :origin "Studio runs 2026-11-14 while fixing flaky-reply-opens-a-later-update")
+
+  (item "start-finish-shape-asserts-delivery" :group "audit-remaining" :area "tests"
+   :title "test_transport_start_finish_shape asserts delivery of a single loopback datagram each way"
+   :text "The case sends \"shape\" from server to client and \"reply\" back, each once, over a real 127.0.0.1 socket, and fails if either is not received within 5.0 s. A lost datagram never arrives, so loopback loss on a loaded host fails it. It failed this way on main at ccacc2a0b (run 43457991785, check( replied ) after the full 5 s). PR #1118's start_finish_shape hunk is the candidate fix: send again through the loss gate. It needs two changes: the same hard bound as reply_opens_a_later_update (every wait ends, red by name), and the reply count held to one only while the reply has been sent once, because a late original and its resend can land in the same update."
+   :date "2026-11-14" :origin "PR #1118; main run 43457991785")
+
+  (item "loss-gate-macos-machine-wide-evidence" :group "audit-remaining" :area "tests"
+   :title "On macOS the test loss gate can credit a library loss as kernel loss"
+   :text "rocketnet_loss_gate_drops (tests/kernel_drops.h) counts two things on macOS. One is udps_fullsock, which is machine-wide, so another job on the host that overflows a socket raises it; the suite's own burst cases drop thousands. The other is this process's own sockets' sent minus received, which also counts a datagram the library sent to a wrong address or port. Either way, a resend can cover a datagram the library lost. A fix would take the evidence from this process's own sockets only, limited to the transport's ports where the case can name them, and would drop udps_fullsock or require the per-socket count to back it. Measure first: how often udps_fullsock moves in a 5 s window while the functional suite loops, and whether honest loopback loss is still covered once the evidence is narrowed. Linux (per-socket drops) and Windows (no count, resends refused) are not affected."
+   :date "2026-11-14" :origin "Cold read of fix/v1.1.x/reply-opens-tolerates-loss, finding 2")
 
   (item "uring-offline-cpu-holes" :group "audit-remaining" :area "sdk"
    :title "Offline cpu holes in the io_uring pin"
