@@ -46,25 +46,25 @@ the SDK into a game's own build.
 
 ## The Windows transports
 
-**`rio` is the server transport to use on Windows.** With its default five
-lanes on a bind address it is the one measured to hold the 1000-player peak,
-about 900,000 packets a second, with no refused sends: the five- and six-lane
-rows in [PERFORMANCE.md](PERFORMANCE.md) have zero message-start refusals.
-`iocp` remains available and holds the average load with none, but at the
-peak it refuses a small share of sends: its two peak rows there, at its
-built-in placement, held about 900,000 packets a second with 738 and 7405
-message-start refusals over the run. A production server's `auto` tries `rio`
-first, and falls to `iocp` where `rio` refuses (below).
+**`rio` is the Windows server transport of choice at the 1000-player peak.**
+Set it explicitly (`transport = "rio"`, or `ROCKETNET_SERVER_TRANSPORT=rio`)
+with a bind address, so it runs its default five lanes: that is the
+configuration measured to hold the peak, and `iocp` at the peak refuses a
+share of sends ([PERFORMANCE.md](PERFORMANCE.md)). Under game load `rio` held
+the peak with no refused sends in most runs but not every run; the rows are
+in PERFORMANCE.md. Without a bind address `rio` runs one lane and does not
+hold the peak. `iocp` is the default (`auto` tries it first) and the
+fallback: it is what `auto` gives a server that does not choose.
 
 | Transport | Endpoint | `auto` rank | What it is |
 | --- | --- | --- | --- |
 | `portable` | server and client | server: development 30, production 50; client 30 | one UDP socket; two workers on the server, one I/O worker on the client |
 | `iocp` | server and client | server 40; client 10 | server: `num_iocp_completion_workers` completion workers (2 on a bind address, 1 on the wildcard) and `num_iocp_send_threads` send threads (2); client: one I/O worker on its own completion port |
-| `rio` | server | 35 | Winsock Registered I/O: per lane (`num_rio_lanes`: 5 on a bind address, 1 on the wildcard) one socket, one registered memory region and one I/O worker polling its completion queues |
+| `rio` | server | 45 | Winsock Registered I/O: per lane (`num_rio_lanes`: 5 on a bind address, 1 on the wildcard) one socket, one registered memory region and one I/O worker polling its completion queues |
 | `loopback` | server and client | pin only | in-process, no socket; for tests and tools |
 
-A production server's `auto` is **rio, then iocp, then portable**; a
-development server's is **portable, rio, iocp**. The client's `auto` order is
+A production server's `auto` is **iocp, then rio, then portable**; a
+development server's is **portable, iocp, rio**. The client's `auto` order is
 **iocp, then portable**, on the client I/O thread described in
 [CLIENT-IO.md](CLIENT-IO.md). The ranks are the rows of
 `sdk/rocketnet_drivers.inc`.
@@ -106,18 +106,18 @@ server starts, and the line it logs then names each lane's region size:
 rio transport: port 40000, 1 lane (one socket and I/O worker each), 4096 receive slices and 16384 send frames per phase per lane, <n> registered bytes per lane
 ```
 
-Because `rio` ranks ahead of `iocp`, a production server's `auto` runs it
-whenever it starts, and falls to `iocp` when `rio` refuses: for example when
-Winsock offers no Registered I/O function table, when `num_rio_lanes` is
-negative or above 32 (0 is the default), when more than one lane is asked for
-on the wildcard or an IPv4-mapped address, when another socket holds the
-lanes' address and port, when its memory plan exceeds the operator's memory
-budget, or when any other step of its create fails. A region that cannot be
-allocated or registered for want of memory is the exception: that ends the
-start with `OUT_OF_MEMORY` and does not fall to `iocp` ("What the host
-needs", below).
-Each refusal is logged with its reason. With no bind address
-a server runs one `rio` lane, as `iocp` runs one completion worker (below).
+Because `rio` ranks after `iocp`, `auto` reaches it only when `iocp` refuses;
+set it to run it. The list `rio,iocp` runs `rio` and falls to `iocp` where
+`rio` refuses: for example when Winsock offers no Registered I/O function
+table, when `num_rio_lanes` is negative or above 32 (0 is the default), when
+more than one lane is asked for on the wildcard or an IPv4-mapped address,
+when another socket holds the lanes' address and port, when its memory plan
+exceeds the operator's memory budget, or when any other step of its create
+fails. A region that cannot be allocated or registered for want of memory is
+the exception: that ends the start with `OUT_OF_MEMORY` and does not fall to
+`iocp` ("What the host needs", below). Each refusal is logged with its
+reason. With no bind address a server runs one `rio` lane, which does not
+hold the peak, as `iocp` runs one completion worker (below).
 How its send phases and receive banks change hands is in
 TRANSPORTS.md, "The RIO server transport".
 
@@ -186,30 +186,28 @@ either as "Network adapter setup for rio and iocp" says.
 
 ### Network adapter setup for rio and iocp
 
-Set the adapter up for `rio`, the server transport to use on Windows (see
-"The Windows transports" above); the `iocp` part below is for a server that
-falls back to it.
+Set the adapter up for `rio`, the Windows server transport of choice at the
+peak (see "The Windows transports" above); the `iocp` part below is for a
+server that runs the default or falls back to it.
 
 The network card's work, its interrupts and the deferred procedure calls
 (DPCs) that follow them, runs ahead of every thread on the processor it lands
 on. The `rio` lane workers and `iocp` completion workers run at
 `THREAD_PRIORITY_TIME_CRITICAL` by default (unless `rocketnet_thread_priority(
-false )`, below), so a thread at normal priority cannot take their processors:
-a normal-priority busy loop on every `rio` worker processor for 3 s changed
-nothing in the measured rows. A realtime-class thread, interrupts and DPCs can.
-For `rio`, receive work belongs on each lane's socket processor (`2l`) and
-never on its worker's (`2l + 1`); step 3 above places RSS that way. For `iocp`,
-see "IOCP at 10 Gb/s" below.
+false )`, below), so a thread at normal priority cannot take their processors;
+a realtime-class thread, interrupts and DPCs can. For `rio`, receive work
+belongs on each lane's socket processor (`2l`) and never on its worker's
+(`2l + 1`); step 3 above places RSS that way. For `iocp`, see "IOCP at 10
+Gb/s" below.
 
 On the measured machines (two logical processors a core), RSS used one logical
 processor a core, the even-numbered ones: put the base and maximum on even
-processors. Every `Set-NetAdapterRss` in these rows reset the adapter: the ssh
-session to the host through it dropped for about 15 s each time, so run it
-from the machine's console or from a session that does not go through that
-adapter. `Get-NetAdapterRss` reads back the RSS
-settings, not where the adapter's interrupts land: in the 6-lane rows below it
-read back exactly what was set while interrupts landed on worker processors.
-So after every change, check where the work lands, on the running server at or
+processors. `Set-NetAdapterRss` resets the adapter, and a remote session that
+goes through it drops for some seconds, so run it from the machine's console
+or from a session that does not go through that adapter. `Get-NetAdapterRss`
+reads back the RSS settings, not where the adapter's interrupts land: it can
+read back exactly what was set while interrupts land on worker processors. So
+after every change, check where the work lands, on the running server at or
 near its peak load, from PowerShell:
 
 ```powershell
@@ -220,62 +218,24 @@ It lists the processors (instance `0,<processor>`) that spent more than 1% of
 a sample in DPCs or interrupts, once for each such sample and counter. The server's log names each worker's processor
 (`rio transport: lane <l> socket on processor <p> ..., worker pinned to mask
 ...`, `iocp transport: worker <w> socket on processor <p> ..., worker pinned to
-mask ...`); for `rio` no worker's processor should be in the list. In the
-measured 5-lane `rio` rows at the peak load (about 900,000 packets a second),
-the socket processors 0, 2, 4, 6 and 8 each spent 38 to 47% of their time in
-DPCs (about 40,000 to 47,000 a second each, the `DPCs Queued/sec` counter), and
-the worker processors 1, 3, 5, 7 and 9 spent 0.0% in DPCs and at most 0.7% in
-interrupts. If a worker's processor is in the list, do not trust the other
-numbers until it is not. These rows did not measure a way back from that
-state. On the host below, the falling-behind 5-lane rows (v1.1.53 and v1.1.47)
-followed a reset to the layout of step 3; after two more resets (to 6 lanes,
-then back to step 3's layout) rows of the same builds passed, and the rows
-with per-processor counters, taken after later resets to the same layout,
-read clean.
+mask ...`); for `rio` no worker's processor should be in the list. If a
+worker's processor is in the list, do not trust the other numbers until it is
+not; reset RSS to step 3's layout and check again.
 
-What was measured in 6-lane `rio` rows of this version on one host, after
-`-BaseProcessorNumber 0 -MaxProcessorNumber 10 -MaxProcessors 6
--NumberOfReceiveQueues 6` read back as set (per-processor counters in two of
-the three runs): the worker processors 7 and 9 spent 21.6 to 23.1% of their
-time in interrupts (about 48,000 to 50,000 a second each) and 11 about 15%. The
-runs held about 685,000 to 740,000 packets a second instead of 900,000, with
-about 165,000 to 225,000 message starts refused a second, from the load's ramp
-to its end, three runs out of three. 5-lane rows of the same build on the same
-host just before, with no interrupt time on any processor, held 900,000 a
-second with 0 refused, three out of three, and 6-lane v1.1.53 rows on that host
-about an hour earlier, after another reset to the same 6-lane settings, held 900,000
-with 0 refused, two out of two (interrupt placement not captured). These rows
-show the interrupts on the workers and the shortfall together, not that one
-caused the other.
-
-The falling-behind rows (those 6-lane rows, and 5-lane v1.1.53 rows on the same
-host whose interrupt placement was not captured) showed, against passing runs:
-
-- the counter `RIO_SEND_WAITS` (flushes that kept a lane's fill phase open
-  because its next phase was not yet idle): about 9,900 by 80 s in the 6-lane
-  rows and about 8,100 in the v1.1.53 rows, against 10 or fewer in passing
-  v1.1.53 runs;
-- the counter `MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY`: about 1.6 million by
-  80 s in the v1.1.53 rows (not read in the 6-lane rows), against 0;
-- the lane workers' thread time (`\Thread(<server process>/*)\% Processor
-  Time`): 59
-  to 79% in the 6-lane rows, where interrupts took 22% of two of the workers'
-  processors and that time is not the thread's, and 55 to 78% in the v1.1.53
-  rows, against 85 to 96%;
-- the players' input delay that the load harness measured, at 60 Hz: about 23
-  to 30 ms mean and 125 to 145 ms p99, against 9 to 13 ms mean and 29 to 35 ms
-  p99 for passing v1.1.53 runs and 5 to 9 ms mean and 18 to 20 ms p99 for
-  passing runs of this version.
-
-A 3 s stall of every worker, forced with a realtime-class busy loop on each
-`rio` worker processor, cost those 3 s and about one more, and the server was
-then back at 900,000 a second with 0 refused. A short stall recovered on its
-own, so a run that stays behind for the whole load points to a cause that
-persists; the per-processor check above is the first thing to read.
+A server that falls behind at the peak with interrupts on its workers shows
+it in its counters: `RIO_SEND_WAITS` (flushes that kept a lane's fill phase
+open because its next phase was not yet idle) and
+`MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY` climb, the lane workers' thread time
+(`\Thread(<server process>/*)\% Processor Time`) drops, and the players'
+input delay grows. A short stall of the workers recovers on its own, so a run
+that stays behind for the whole load points to a cause that persists; the
+per-processor check above is the first thing to read. The measured rows are
+in [PERFORMANCE.md](PERFORMANCE.md).
 
 ### IOCP at 10 Gb/s
 
-`iocp` is the fallback where `rio` cannot start; for the peak load use `rio`.
+`iocp` is the default and the fallback where `rio` cannot start; for the peak
+load set `rio`.
 The rule is the same as for `rio`: keep the RSS processors and the completion
 workers' processors apart, and check with the per-processor list above that no
 worker processor the server logs is in it.
@@ -297,8 +257,8 @@ with
 Set-NetAdapterRss -Name "Ethernet 2" -BaseProcessorNumber 2 -MaxProcessorNumber 4 -MaxProcessors 2 -NumberOfReceiveQueues 2
 ```
 
-It held 900,000 packets a second with 0 refused, with 54 to 57% DPC time on
-processors 2 and 4. At this version, for the built-in placement, the RSS form
+That row is in [PERFORMANCE.md](PERFORMANCE.md). At this version, for the
+built-in placement, the RSS form
 that follows from it, `-BaseProcessorNumber 0 -MaxProcessorNumber 2 -MaxProcessors 2
 -NumberOfReceiveQueues 2`, puts the DPCs on the workers' processors and is not
 a measured row.

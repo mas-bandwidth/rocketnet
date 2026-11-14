@@ -8,7 +8,7 @@ a client exchange over the loopback interface, `127.0.0.1`.
 Three kinds of `transport` setting, each created in turn on a server:
 - **auto** (`NULL`): the platform's recommended transport order from `sdk/rocketnet_drivers.inc`. A Linux server tries
   `xdp`, then `gso`, then `io_uring`, then `portable`; macOS tries `msgx`, then `portable`;
-  Windows tries `rio`, then `iocp`, then `portable` in production builds (`portable`, then `rio`, then `iocp` in development builds). Clients on `auto` try `gso`, then `portable` on Linux; `msgx`, then `portable` on macOS; and `iocp`, then `portable` on Windows. The first transport that starts wins.
+  Windows tries `iocp`, then `rio`, then `portable` in production builds (`portable`, then `iocp`, then `rio` in development builds). Clients on `auto` try `gso`, then `portable` on Linux; `msgx`, then `portable` on macOS; and `iocp`, then `portable` on Windows. The first transport that starts wins.
 - **a pin**: one name available for this endpoint and platform. The server
   gets that transport or start fails. A known name unavailable for this
   endpoint is skipped; if nothing remains, resolution falls back to `auto`

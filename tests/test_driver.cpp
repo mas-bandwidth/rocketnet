@@ -158,12 +158,12 @@ static void test_transport_registry()
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( ROCKETNET_DEV )
     {
-        CHECK( count == 4 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_RIO &&
-               servers[2] == ROCKETNET_TRANSPORT_IOCP && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK );
+        CHECK( count == 4 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_IOCP &&
+               servers[2] == ROCKETNET_TRANSPORT_RIO && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK );
     }
     else
     {
-        CHECK( count == 4 && servers[0] == ROCKETNET_TRANSPORT_RIO && servers[1] == ROCKETNET_TRANSPORT_IOCP &&
+        CHECK( count == 4 && servers[0] == ROCKETNET_TRANSPORT_IOCP && servers[1] == ROCKETNET_TRANSPORT_RIO &&
                servers[2] == ROCKETNET_TRANSPORT_PORTABLE && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK );
     }
 #else

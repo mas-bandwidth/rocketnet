@@ -4,8 +4,6 @@
    Add a backend by defining its operations and adding one row here. */
 // Portable is available in both modes. Production keeps native server
 // transports ahead of this fallback; development preserves its existing order.
-// On Windows rio (35) ranks ahead of iocp (40): rio is the server transport
-// measured to hold the 1000-player peak with no refused sends (docs/PERFORMANCE.md).
 // The client column ranks the native client first on its OS (gso on Linux,
 // msgx on macOS) and portable last everywhere, the fallback when a native
 // client's create refuses, and iocp first on Windows.
@@ -17,7 +15,7 @@ ROCKETNET_TRANSPORT( MSGX, "msgx", true, rocketnet_msgx_transport, ROCKETNET_TRA
 ROCKETNET_TRANSPORT( IOCP, "iocp", true, rocketnet_iocp_transport, ROCKETNET_TRANSPORT_WINDOWS, 40, 10 )
 ROCKETNET_TRANSPORT( LOOPBACK, "loopback", true, rocketnet_loopback_transport, ROCKETNET_TRANSPORT_ALL_PLATFORMS, ROCKETNET_TRANSPORT_PIN_ONLY, ROCKETNET_TRANSPORT_PIN_ONLY )
 ROCKETNET_TRANSPORT( IO_URING, "io_uring", true, rocketnet_io_uring_transport, ROCKETNET_TRANSPORT_IO_URING_PLATFORMS, 25, 0 )
-ROCKETNET_TRANSPORT( RIO, "rio", true, rocketnet_rio_transport, ROCKETNET_TRANSPORT_WINDOWS, 35, 0 )
+ROCKETNET_TRANSPORT( RIO, "rio", true, rocketnet_rio_transport, ROCKETNET_TRANSPORT_WINDOWS, 45, 0 )
 
 #if defined( ROCKETNET_TRANSPORT_REGISTRY_HEADER )
 #include ROCKETNET_TRANSPORT_REGISTRY_HEADER

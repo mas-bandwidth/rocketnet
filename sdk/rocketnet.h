@@ -1444,14 +1444,13 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_loopback_hub_destroy( struct 
 /// connect or server start. The first transport that starts wins. "auto" is
 /// the default, including NULL or an empty string. Development servers try
 /// xdp,gso,io_uring,portable on Linux; msgx,portable on macOS; and
-/// portable,rio,iocp on Windows. Production servers try
+/// portable,iocp,rio on Windows. Production servers try
 /// xdp,gso,io_uring,portable on Linux; msgx,portable on macOS; and
-/// rio,iocp,portable on Windows, keeping native server transports first.
-/// rio is the server transport to use on Windows: with its default five
-/// lanes on a bind address it is the one measured to hold the 1000-player
-/// peak with no refused sends; iocp remains available and is tried when rio
-/// refuses (not for want of memory, which ends the start).
-/// io_uring requires build support. Linux clients try gso,portable; macOS
+/// iocp,rio,portable on Windows, keeping native server transports first.
+/// rio is the Windows server transport of choice at the 1000-player peak:
+/// set it explicitly, with a bind address. Without a bind address rio runs
+/// one lane and does not hold the peak; iocp is the default and the
+/// fallback. io_uring requires build support. Linux clients try gso,portable; macOS
 /// clients try msgx,portable; and Windows clients try iocp,portable.
 /// Loopback is selected only as the sole name of a list, never by auto, and
 /// is skipped with a log in a longer list. It needs the config's

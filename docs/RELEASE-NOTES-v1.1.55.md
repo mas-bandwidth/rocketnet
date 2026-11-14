@@ -27,12 +27,11 @@ released id moved.
   - Writer finish restarts a short channel-route start and validates the
     bytes before it writes.
 - Transports:
-  - On Windows a server's `auto` tries `rio` before `iocp`: production
-    servers try `rio`, `iocp`, `portable` and development servers `portable`,
-    `rio`, `iocp`. `rio`, with its default five lanes on a bind address, is
-    the Windows server transport measured to hold the 1000-player peak with
-    no refused sends; `iocp` is tried when `rio` refuses (not for want of
-    memory). Clients are unchanged.
+  - The documentation names `rio` the Windows server transport of choice at
+    the 1000-player peak, set explicitly with a bind address; without one it
+    runs one lane and does not hold the peak. `auto` is unchanged: `iocp` is
+    the default and the fallback. The Windows network adapter setup for
+    `rio` and `iocp` is documented.
   - POSIX receive treats `EMSGSIZE` as weather, not a fault.
   - The loopback client waits and is woken instead of polling every
     millisecond; the loopback hub's public contract and latency timing are

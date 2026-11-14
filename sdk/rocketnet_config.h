@@ -267,7 +267,7 @@ bool rocketnet_transport_order_parse( const char * value, const int * available,
 //               production server          development server             client
 //   linux       xdp, gso, io_uring, portable  xdp, gso, io_uring, portable   gso, portable
 //   macOS       msgx, portable                msgx, portable                 msgx, portable
-//   windows     rio, iocp, portable           portable, rio, iocp            iocp, portable
+//   windows     iocp, rio, portable           portable, iocp, rio            iocp, portable
 //   iOS/BSDs    portable                      portable                       portable
 //
 // (xdp, io_uring and rio are server-only; loopback is pin-only, never in auto)
