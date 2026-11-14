@@ -54,8 +54,10 @@ every RIO call after create.
   wait also times out: 1 ms after a refused commit or re-post, 50 ms
   otherwise (`rocketnet_rio_idle_wait`). The model keeps no timeout for an
   idle worker with nothing outstanding, so where a run shows the worker
-  waiting forever, the code waits up to 50 ms (about three updates at
-  60 Hz) and runs its next pass. While a full bank's worker waits, its
+  waiting forever, the code leaves the worker idle until its 50 ms
+  timeout (nominally three updates at 60 Hz), plus scheduling and the
+  processing after it, then runs its next pass; that is not a bound on
+  how late main receives a datagram. While a full bank's worker waits, its
   queued completions hold their slices unposted, so under load the kernel
   can drop later arrivals for want of a posted slice (an OS count,
   `ArriveDropped`), not only delay them.
@@ -292,7 +294,8 @@ Left out:
   stricter than the code: every wait in the code times out (50 ms, or
   1 ms after a refused commit or re-post). So a run that needs a wake
   the model never gives shows a datagram never consumed, where the code
-  delays it by up to 50 ms. `WWait` lets the wait end without the event
+  leaves the worker idle until its 50 ms timeout, plus scheduling and the
+  processing after it (not a bound on receive delay). `WWait` lets the wait end without the event
   or the wake while a send is kernel owned or queued, or a re-post was
   refused. While running, a refused commit is retried until it succeeds
   (strong fairness on `WCommit` and `WRetire` before stop).
@@ -318,7 +321,7 @@ Left out:
 | `MCRNRioWorkerBrokenUnboundedDequeue.cfg` | `ExactDelivery` | 7854 | 1 | `BoundedDequeue = FALSE` |
 | `MCRNRioWorkerBrokenExitBeforeDrain.cfg` | `FreedOnlyWhenDrained` | 95 | 1 | `DrainBeforeExit = FALSE` |
 | `MCRNRioWorkerBrokenDropHanded.cfg` | `StopSendsHanded` | 260 | 1 | `DropHanded = TRUE` keeps the old stop discard. |
-| `MCRNRioWorkerBrokenNoWake.cfg` | `EveryDatagramConsumed` | 17736 | 13 | `WakeOnReturn = FALSE`: with no timeout on the model's idle wait the worker never wakes; in the code the same missing wake delays the datagram by up to 50 ms (about three updates at 60 Hz). |
+| `MCRNRioWorkerBrokenNoWake.cfg` | `EveryDatagramConsumed` | 17736 | 13 | `WakeOnReturn = FALSE`: with no timeout on the model's idle wait the worker never wakes; in the code the same missing wake leaves the worker idle until its 50 ms timeout (nominally three updates at 60 Hz), plus scheduling and the processing after it; not a bound on receive delay. |
 | `MCRNRioWorkerBrokenReadOnlyLeft.cfg` | `DeliveredByNextCall` | 1367 | 1 | `ReadOnlyLeft <- ReadOnlyLeftBroken`: main reads only a bank the worker has left, the old ready FIFO's rule, so a datagram committed before a call waits for a later call (16.7 ms at 60 Hz). Checked against `rocketnet_rio_lane_receive_packets`, which reads the committed bank through `rocketnet_receive_handoff_begin`. |
 | `MCRNRioWorkerBrokenCloseCancelsSends.cfg` | `StopSendsFinished` | 240 | 1 | `DrainSendsBeforeClose = FALSE` keeps the stop pass that closes with sends in flight. |
 | `MCRNRioWorkerInlineStop.cfg` | pass | 480 | 1 | Create's failure path: five posted slices, one datagram, `DrainBatch = 2`, `StopDrainWaits = 1`, every `closesocket` refusable, cancellations late; invariants, `LeakOnlyAfterStalls`, `StopCompletes`. |
@@ -408,11 +411,13 @@ Each reversed witness was read against the code by hand (2026-10-22):
     pass commits it and the worker moves to the free bank.
   - What the witness shows about the code (2026-11-13): without that
     `SetEvent` the code does not hang, because `rocketnet_rio_idle_wait`
-    waits at most 50 ms. The pass after the timeout commits the full bank
+    times out after 50 ms. The pass after the timeout commits the full bank
     and moves to the free bank, the next idle wait arms `RIONotify` on the
     non-empty receive queue, and datagram 3 is banked. So the wake removes
-    a delay of up to 50 ms (about three updates at 60 Hz) before a full
-    bank's worker moves on, during which the queued completions hold their
+    an idle stretch until the 50 ms timeout (nominally three updates at
+    60 Hz), plus scheduling and the processing after it, before a full
+    bank's worker moves on (not a bound on how late main receives a
+    datagram), during which the queued completions hold their
     slices unposted and, under load, the kernel can drop later arrivals;
     the model, with no timeout on that wait, shows the same missing wake
     as a datagram never consumed.

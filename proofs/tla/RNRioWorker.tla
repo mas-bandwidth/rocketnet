@@ -39,7 +39,9 @@
 (* The code's wait also times out (50 ms, 1 ms after a refused commit or   *)
 (* re-post); the model keeps only the timeouts that matter while sends are *)
 (* outstanding or a re-post waits (WWait), so a missing wake shows here as *)
-(* a worker that never wakes and in the code as a wait of up to 50 ms.     *)
+(* a worker that never wakes; in the code it leaves the worker idle until  *)
+(* its 50 ms timeout, plus scheduling and the passes after it, which is    *)
+(* not a bound on how late main receives a datagram.                       *)
 (*                                                                         *)
 (* Stop sets stopping and the wake.  Each stop pass                        *)
 (* (rocketnet_rio_stop_pass) posts ready phases, commits any deferred      *)
@@ -76,8 +78,9 @@
 (*   WakeOnReturn   main wakes the worker when it starts on a full bank    *)
 (*                  (FALSE: the model's idle wait has no timeout, so the   *)
 (*                  worker never wakes; the code's wait times out after    *)
-(*                  50 ms, so without the wake a datagram waits up to      *)
-(*                  50 ms, about three updates at 60 Hz, not forever)      *)
+(*                  50 ms, so without the wake the worker idles until that *)
+(*                  timeout (nominally three updates at 60 Hz), plus       *)
+(*                  scheduling, not forever; not a bound on receive delay) *)
 (*   ReadOnlyLeft   (TRUE in its witness) main reads only a bank the       *)
 (*                  worker has left, as the old ready FIFO did: a          *)
 (*                  datagram committed before a call waits for the next    *)
@@ -99,9 +102,9 @@
 (*                  posted or outstanding, abandons the socket and frees   *)
 (*                  the rest of the lane (an operator; FALSE: it leaks the *)
 (*                  whole lane with nothing kernel owned)                  *)
-(* Either of the last two keeps a draining region from leaking: with      *)
-(* both FALSE, passes that each dequeue a batch use up the bound and the   *)
-(* region leaks while completions still arrive                             *)
+(* Either DrainLoop or CountStalledOnly keeps a draining region from       *)
+(* leaking: with both FALSE, passes that each dequeue a batch use up the   *)
+(* bound and the region leaks while completions still arrive               *)
 (* (MCRNRioWorkerBrokenOneBatchPerPass.cfg); with CountStalledOnly alone   *)
 (* the same passes drain it (MCRNRioWorkerInlineStopBatchPerPass.cfg).     *)
 (***************************************************************************)
@@ -626,8 +629,10 @@ WArm ==
 \* 1 ms wait; a refused commit leaves a send pending, so it is kernel owned
 \* here).  The model's wait has no other timeout: the code waits at most
 \* 50 ms even with nothing to do, which the model leaves out, so a run
-\* where the worker waits forever is, in the code, a wait of up to 50 ms
-\* (about three updates at 60 Hz) before the next pass; meanwhile a full
+\* where the worker waits forever is, in the code, a worker idle until its
+\* 50 ms timeout (nominally three updates at 60 Hz), plus scheduling and the
+\* passes after it, before the next pass (not a bound on how late main
+\* receives a datagram); meanwhile a full
 \* bank's queued completions hold their slices unposted, so under load the
 \* kernel can drop later arrivals (ArriveDropped), not only delay them.
 WWait ==
