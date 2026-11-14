@@ -24,7 +24,12 @@
               the frame, and the receive call is the client's update. The
               row measures the client transport it names (the I/O thread's
               receive handoff, sdk/rocketnet_receive_handoff.h); its server
-              may be any.
+              may be any. The clients keep updating until two updates have
+              begun after the server's last send, the later a full update
+              after it (at most `frames` updates more): a host that stalls
+              the server's thread delays its sends,
+              and a send made after the clients' last update would otherwise
+              count as never arrived when nothing dropped it.
 
     A message is late when the receive call that returned it is not the first
     one to begin after its send. The case asserts on the count of late
@@ -445,9 +450,14 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
     const int total = frames * RECEIVE_LATENCY_PHASES * RECEIVE_LATENCY_CLIENTS;
     std::vector<double> send_time( (size_t) total, 0.0 );
     std::vector<int> received_at( (size_t) total, -1 );
-    // both sides update frames + 2 times, the last two after the last send
+    // both sides update frames + 2 times, the last two after the last send;
+    // in a client row the clients go on until two of their updates have begun
+    // after the server's last send, at most frames updates more
     std::vector<double> server_update( (size_t) frames + 2, 0.0 );
-    std::vector<double> client_update( (size_t) frames + 2, 0.0 );
+    std::vector<double> client_update;
+    client_update.reserve( (size_t) frames * 2 + 2 );
+    // a client row: the time of the server's last send, 0 until it is made
+    std::atomic<double> server_last_send( 0.0 );
 
     // the server's update starts, published to the client thread
     std::atomic<int> server_updates( 0 );
@@ -509,12 +519,23 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
             return;
         }
 
-        // client direction: the clients update late in each frame, two frames
-        // past the server's last send
-        for ( int j = 0; j < frames + 2; j++ )
+        // client direction: the clients update late in each frame, at least
+        // frames + 2 times, and on until two updates have begun after the
+        // server's last send, the later a full update after it (a stalled
+        // client thread catching up runs updates back to back), at most
+        // frames updates more
+        for ( int j = 0; j < frames * 2 + 2; j++ )
         {
+            if ( j >= frames + 2 )
+            {
+                const double last_send = server_last_send.load();
+                if ( last_send > 0.0 && client_update[(size_t) j - 2] >= last_send && client_update[(size_t) j - 1] >= last_send + 1.0 / rate )
+                {
+                    break;
+                }
+            }
             const double now = receive_latency_wait_until( start + ( j + RECEIVE_LATENCY_CLIENT_PHASE ) / rate );
-            client_update[(size_t) j] = now;
+            client_update.push_back( now );
             for ( int c = 0; c < RECEIVE_LATENCY_CLIENTS; c++ )
             {
 #if ROCKETNET_DEV
@@ -606,6 +627,10 @@ static void receive_latency_run( const struct receive_latency_row_t * row )
                     receive_latency_check( rocketnet_server_finish_message( server, (int) sizeof( payload ) ) != 0, name, "server finish refused" );
                 }
                 rocketnet_server_send_packets( server );
+            }
+            if ( k == frames - 1 )
+            {
+                server_last_send.store( rocketnet_time() );
             }
         }
         last_update.store( now );
