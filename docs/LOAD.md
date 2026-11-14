@@ -507,8 +507,8 @@ requirements to each configuration group:
 - **Transport selection (`transport`)**:
   - Leaving `transport = NULL` or `"auto"` selects the platform transport order (`xdp -> gso -> io_uring -> portable`
     on Linux server; `gso -> portable` on Linux client; `msgx -> portable` on
-    macOS; production Windows servers prefer `iocp -> rio -> portable`, while
-    development Windows servers prefer `portable -> iocp -> rio`).
+    macOS; Windows servers prefer `iocp -> rio -> portable`, in development
+    and production builds alike).
   - Because `rocketnet_server_required_memory` and `rocketnet_client_required_memory`
     are called **before** `rocketnet_server_start` / `rocketnet_client_connect`
     probes the host, an unpinned transport order must size the caller allocator for the

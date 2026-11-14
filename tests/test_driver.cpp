@@ -139,10 +139,10 @@ static void test_transport_registry()
         }
     }
 
-    // both modes offer portable; production ranks it behind native servers
+    // both modes offer portable, and both rank it behind every native server
 
     const int portable_rank = rocketnet_transport_definition( ROCKETNET_TRANSPORT_PORTABLE )->server_preference;
-    CHECK( portable_rank == ( ROCKETNET_DEV ? 30 : 50 ) );
+    CHECK( portable_rank == 50 );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     if ( rocketnet_transport_definition( ROCKETNET_TRANSPORT_IO_URING )->backend )
     {
@@ -156,16 +156,8 @@ static void test_transport_registry()
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     CHECK( count == 3 && servers[0] == ROCKETNET_TRANSPORT_MSGX && servers[1] == ROCKETNET_TRANSPORT_PORTABLE && servers[2] == ROCKETNET_TRANSPORT_LOOPBACK );
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    if ( ROCKETNET_DEV )
-    {
-        CHECK( count == 4 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_IOCP &&
-               servers[2] == ROCKETNET_TRANSPORT_RIO && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK );
-    }
-    else
-    {
-        CHECK( count == 4 && servers[0] == ROCKETNET_TRANSPORT_IOCP && servers[1] == ROCKETNET_TRANSPORT_RIO &&
-               servers[2] == ROCKETNET_TRANSPORT_PORTABLE && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK );
-    }
+    CHECK( count == 4 && servers[0] == ROCKETNET_TRANSPORT_IOCP && servers[1] == ROCKETNET_TRANSPORT_RIO &&
+           servers[2] == ROCKETNET_TRANSPORT_PORTABLE && servers[3] == ROCKETNET_TRANSPORT_LOOPBACK );
 #else
     CHECK( count == 2 && servers[0] == ROCKETNET_TRANSPORT_PORTABLE && servers[1] == ROCKETNET_TRANSPORT_LOOPBACK );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

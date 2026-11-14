@@ -1457,11 +1457,10 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_loopback_hub_destroy( struct 
 ///
 /// Transport is a comma-separated list tried from left to right at client
 /// connect or server start. The first transport that starts wins. "auto" is
-/// the default, including NULL or an empty string. Development servers try
+/// the default, including NULL or an empty string. Servers try
 /// xdp,gso,io_uring,portable on Linux; msgx,portable on macOS; and
-/// portable,iocp,rio on Windows. Production servers try
-/// xdp,gso,io_uring,portable on Linux; msgx,portable on macOS; and
-/// iocp,rio,portable on Windows, keeping native server transports first.
+/// iocp,rio,portable on Windows, in development and production builds
+/// alike: native server transports first, portable last.
 /// io_uring requires build support. Linux clients try gso,portable; macOS
 /// clients try msgx,portable; and Windows clients try iocp,portable.
 /// Loopback is selected only as the sole name of a list, never by auto, and

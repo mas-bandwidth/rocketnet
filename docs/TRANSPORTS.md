@@ -19,7 +19,7 @@ does not have the transport.
 | `gso` | Linux | 20 | 10 | nothing privileged; uses UDP GSO and GRO where the kernel has them, plain `sendmmsg`/`recvmmsg` where it does not; `num_gso_workers` at most 32 |
 | `io_uring` | Linux | 25 | - | a build configured with liburing, and a kernel that allows io_uring; `num_io_uring_workers` at most 32 |
 | `msgx` | macOS | 10 | 10 | the Darwin `sendmsg_x`/`recvmsg_x` batch calls; see [docs/MACOS.md](MACOS.md) |
-| `portable` | every platform | development 30, production 50 | 30 | UDP sockets only |
+| `portable` | every platform | 50 | 30 | UDP sockets only |
 | `iocp` | Windows | 40 | 10 | Winsock overlapped I/O; uses UDP send and receive offload where the stack has them; see [docs/WINDOWS.md](WINDOWS.md) |
 | `rio` | Windows | 45 | - | the Winsock Registered I/O extension, and one registered memory region; see [docs/WINDOWS.md](WINDOWS.md) |
 | `loopback` | every platform | pin only | pin only | nothing: both ends in one process, no socket; for tests and tools |
@@ -30,9 +30,11 @@ So `auto` resolves to:
 | --- | --- | --- | --- |
 | Linux | `xdp`, `gso`, `io_uring`, `portable` | `xdp`, `gso`, `io_uring`, `portable` | `gso`, `portable` |
 | macOS | `msgx`, `portable` | `msgx`, `portable` | `msgx`, `portable` |
-| Windows | `portable`, `iocp`, `rio` | `iocp`, `rio`, `portable` | `iocp`, `portable` |
+| Windows | `iocp`, `rio`, `portable` | `iocp`, `rio`, `portable` | `iocp`, `portable` |
 
-A Linux build without liburing has no `io_uring` row. `rio` ranks after
+Each platform tries its most efficient transport first and `portable` last,
+the same in development and production builds. A Linux build without
+liburing has no `io_uring` row. `rio` ranks after
 `iocp`, so `auto` reaches it only when `iocp` refuses; pin it to run it.
 
 **Pinning.** Set `transport` in `rocketnet_server_config_t` or

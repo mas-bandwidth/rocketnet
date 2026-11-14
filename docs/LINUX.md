@@ -117,7 +117,7 @@ comes first in `auto`, zero means the endpoint does not have that transport
 | `xdp` | 10 | 0 | `sdk/rocketnet_drivers.inc` |
 | `gso` | 20 | 10 | `sdk/rocketnet_drivers.inc` |
 | `io_uring` | 25 | 0 | `sdk/rocketnet_drivers.inc` |
-| `portable` | development: 30; production: 50 | 30 | `sdk/rocketnet_drivers.inc` |
+| `portable` | 50 | 30 | `sdk/rocketnet_drivers.inc` |
 | `loopback` | pin only | pin only | `sdk/rocketnet_drivers.inc` |
 
 The Linux server `auto` order in both builds is **xdp → gso → io_uring → portable**. A build without liburing omits

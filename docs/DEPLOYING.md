@@ -86,8 +86,8 @@ the server's configured `max_clients`; see [Maximum clients](MEMORY.md#maximum-c
 not timing or packet-rate requirements. A send frame still owned by the OS is
 unavailable to the next fill, even after an application flush.
 
-Windows production server `auto` tries iocp, rio, then portable; development
-builds try portable, iocp, then rio. Windows CI runs both configurations, plus
+Windows server `auto` tries iocp, rio, then portable, in development and
+production builds alike. Windows CI runs both configurations, plus
 completion-lifetime, allocation-failure and shutdown tests with IOCP selected.
 Compilation and loopback correctness do not establish NIC
 line-rate performance; that requires measurements on suitable Windows hardware.

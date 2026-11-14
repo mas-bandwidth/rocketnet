@@ -48,13 +48,13 @@ the SDK into a game's own build.
 
 | Transport | Endpoint | `auto` rank | What it is |
 | --- | --- | --- | --- |
-| `portable` | server and client | server: development 30, production 50; client 30 | one UDP socket; two workers on the server, one I/O worker on the client |
+| `portable` | server and client | server 50; client 30 | one UDP socket; two workers on the server, one I/O worker on the client |
 | `iocp` | server and client | server 40; client 10 | server: `num_iocp_completion_workers` completion workers (2 on a bind address, 1 on the wildcard) and `num_iocp_send_threads` send threads (2); client: one I/O worker on its own completion port |
 | `rio` | server | 45 | Winsock Registered I/O: per lane (`num_rio_lanes`: 6 on a bind address, 1 on the wildcard) one socket, one registered memory region and one I/O worker polling its completion queues |
 | `loopback` | server and client | pin only | in-process, no socket; for tests and tools |
 
-A production server's `auto` is **iocp, then rio, then portable**; a
-development server's is **portable, iocp, rio**. The client's `auto` order is
+A server's `auto` is **iocp, then rio, then portable**, in development and
+production builds alike. The client's `auto` order is
 **iocp, then portable**, on the client I/O thread described in
 [CLIENT-IO.md](CLIENT-IO.md). The ranks are the rows of
 `sdk/rocketnet_drivers.inc`.
