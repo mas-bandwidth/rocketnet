@@ -275,8 +275,13 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // it). The handshake sends the next packet in the step a reply advances the
 // client (TRANSPORT.md t11 rule 7); before that it waited out the send
 // interval, and the steps were 24 and 26 with the same packets and counters.
+// Without the simulator the client reads a datagram at the update after it
+// was received, not the one after that (sdk/rocketnet_receive_handoff.h), so
+// within the run's last step it receives one datagram more and answers it:
+// one more each way than the trace recorded before the receive handoff fix
+// ({ 67, 66, 5954, 4320, 67, 66, 4389, 5889, ... }).
 // The hashes cover every counter of the registry in index order.
-static const struct loopback_trace_t loopback_base_trace_simulator_off = { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0xcf3bac441dd0c267 ), UINT64_C( 0x5f1f8fdfa4992a85 ), 4 };
+static const struct loopback_trace_t loopback_base_trace_simulator_off = { 68, 67, 6023, 4389, 67, 67, 4389, 5962, UINT64_C( 0xd20abc32cf1fc886 ), UINT64_C( 0x981d4fdfaa659b04 ), 4 };
 static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x6352d7401922e2a7 ), UINT64_C( 0x5f1f8fdfa4992a85 ), 10 };
 
 static void test_loopback_transport_patterns_off_same_trace()

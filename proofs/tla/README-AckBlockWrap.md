@@ -52,7 +52,7 @@ Modulus 8 (2^32 in the code), Start 5 (at or above Modulus/2, as the DEV seam
 crosses the wrap at 8, where a genuine largest of 8 has wire value 0 and a
 first range length of at least one. Highest sent starts at 4 there, so a
 wire zero never reconstructs to 0; `MCAckBlockWrapFromOne.cfg` runs the same
-rule from Start 1, the production start, where below Modulus/2 a wire zero
+rule from Start 1, the production start, to MaxSeq 6, where below Modulus/2 a wire zero
 with a first run reconstructs to 0 and is refused by the run bound.
 
 | Config | Constants | Expected |
