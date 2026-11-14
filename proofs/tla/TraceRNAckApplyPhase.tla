@@ -46,7 +46,7 @@ VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
 
 \* every model variable the code or the walk holds, by the field name the harness writes
-VarsRec == [phase |-> phase, queue |-> queue, numRanges |-> numRanges, head |-> head, tail |-> tail, claim |-> claim, segment |-> segment, batch |-> batch, took |-> took, arrived |-> arrived]
+VarsRec == [phase |-> phase, queue |-> queue, numRanges |-> numRanges, head |-> head, tail |-> tail, claim |-> claim, segment |-> segment, batch |-> batch, took |-> took, acked |-> acked, arrived |-> arrived, gathered |-> gathered]
 
 \* the actions each operation of the code can be
 OpActs == [begin_receive |-> {"BeginReceive"}, receive_block |-> {"Receive"}, settle |-> {"Settle"}, open |-> {"Open"}, take |-> {"Take", "TakeRefused", "TakeOutside"}, close |-> {"Close"}]
@@ -101,15 +101,13 @@ TraceConsistent == ~rejected
 \* are in the batch (the main thread applied them); see a chain of two or
 \* more entries linked through the queue; see a client settled in the
 \* receive with blocks queued again behind the ids it already holds, so their
-\* apply starts past offset 0; and stand in a receive after each early
-\* gather. The batch is empty in a receive until one runs. A batch that is
-\* not empty with the queue holding one entry of no ranges is a gather a
-\* full queue forced: that entry forced it, and a block of no ranges always
-\* fits the range store. A batch that is not empty and shorter than
-\* PendingCap is a gather the range store forced: no full queue has been
-\* gathered. The refused take and the take outside the open phase are actions
-\* (TakeRefused, TakeOutside): the checker requires each in an accepted
-\* clean trace.
+\* apply starts past offset 0; stand in a receive after each early gather
+\* (the model's history gathered names what forced the latest: a duplicate
+\* gives no id, so the batch's length no longer tells the two apart); and
+\* see an entry applied that gave no id, a duplicate queued behind its
+\* block or after the endpoint acknowledged it. The refused take and the
+\* take outside the open phase are actions (TakeRefused, TakeOutside): the
+\* checker requires each in an accepted clean trace.
 \*
 \* LeftForFinish also holds for a client whose blocks the main thread only
 \* settled in the receive. No state tells the two apart: a client left for
@@ -120,7 +118,8 @@ TakenByGameThread == \E c \in Clients : took[c] # {} /\ Main \notin took[c]
 LeftForFinish == phase = "closed" /\ \E c \in Clients : took[c] = {} /\ \E i \in DOMAIN batch : batch[i][1] = c
 Chained == \E c \in Clients : head[c] >= 0 /\ tail[c] # head[c]
 QueuedBehindSettled == phase = "receiving" /\ \E c \in Clients : segment[c] # <<>> /\ head[c] >= 0
-GatheredQueueFull == phase = "receiving" /\ batch # <<>> /\ Len(queue) = 1 /\ queue[1].ranges = 0
-GatheredRangesFull == phase = "receiving" /\ batch # <<>> /\ Len(batch) < PendingCap
+GatheredQueueFull == phase = "receiving" /\ gathered = "queue"
+GatheredRangesFull == phase = "receiving" /\ gathered = "ranges"
+AppliedDuplicate == \E i \in DOMAIN queue : queue[i].done /\ queue[i].icnt = 0
 
 =============================================================================
