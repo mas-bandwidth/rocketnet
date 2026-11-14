@@ -22,9 +22,9 @@
     Refusals are counted from the start of traffic: in the connect phase the
     cookie reply limit may withhold a reply (t12 rule 7: a second cookieless
     request from one source in one update, or one whose keyed hash shares a
-    bit; the client sends again), which is not a refusal of traffic. Two server updates without sends follow the
-    traffic, so the payloads of the last period are read before the counts
-    are taken.
+    bit; the client sends again), which is not a refusal of traffic. Two
+    server updates without sends follow the traffic, so the payloads of the
+    last period are read before the counts are taken.
     It is absent from the default suite unless ROCKETNET_LOW_TICK_MEASURE=1.
     Linux only: the socket drop count is read from procfs.
 */
