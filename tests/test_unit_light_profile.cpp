@@ -449,10 +449,14 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The io_uring transport's rows URING_PIN_REFUSALS and
 // URING_RECEIVE_DROPPED_SOCKET add 64 more to the server: actual=5644858631
 // (amd-3, gcc, Debug, DEV ON); arm64 the same 64, computed.
-// Each transport's own network thread count, at its default (xdp 1 thread,
-// gso 1 worker, io_uring 2), lowers the server: actual=2142726194 (the Linux
-// Debug and Release DEV=ON unit jobs, run 43463295653). arm64 adds 8 for the
-// one xdp thread record in place of 56, computed.
+// Each transport's own network thread count, at its default then (xdp 1
+// thread, gso 1 worker, io_uring 2), lowers the server: actual=2142726194 (the
+// Linux Debug and Release DEV=ON unit jobs, run 43463295653). arm64 adds 8 for
+// the one xdp thread record in place of 56, computed. gso's default is now 2
+// workers (ROCKETNET_GSO_DEFAULT_WORKERS); the server's figure is planned for
+// its largest candidate, which gso is not, so the pin below is unchanged: the
+// unit suite held it equal with gso at 2 (aws-mut-4, gcc, Debug, DEV ON,
+// fix/v1.1.x/gso-default-two-workers).
 // The server protocol's per-update table of refused tokens (t12 rule 9 item
 // 6: 1024 token identifiers, their reasons and a count) adds 17408 to the
 // server across its 64-byte rounding: actual=2142743602 (amd-2, gcc,

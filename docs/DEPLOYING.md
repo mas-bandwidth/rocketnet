@@ -55,6 +55,16 @@ against each rung. The unit
 suite, `./bin/test`, does not start a transport, so a transport pin does not change
 what it asserts.
 
+**Socket buffers on Linux.** The `io_uring` and `gso` servers ask for a
+25,000,000 byte receive buffer and a 1,000,000 byte send buffer. Without
+`CAP_NET_ADMIN` the kernel caps the receive buffer at `net.core.rmem_max`, and
+the server warns at start with the sysctl to set, for example
+`set sysctl net.core.rmem_max=25000000`; it keeps running. A stock 4,194,304
+byte `rmem_max` held 1000 players at peak with the game threads half busy on
+both transports on an AWS c8gn.8xlarge (0 lost, 2026-11-14), so the warning
+is a margin, not a failure; set `sudo sysctl -w net.core.rmem_max=25000000`
+where you can, which removes it ([MEMORY.md](MEMORY.md)).
+
 The SDK test suite temporarily clears config overrides derived from both
 config tables, then restores them on return. `ROCKETNET_SERVER_TRANSPORT` and
 `ROCKETNET_CLIENT_TRANSPORT` remain intentional test pins;

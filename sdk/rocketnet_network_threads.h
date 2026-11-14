@@ -33,12 +33,18 @@
 #define ROCKETNET_XDP_DEFAULT_THREADS                                    1
 #define ROCKETNET_XDP_MAX_THREADS                                     1024
 
-// gso queue workers, one reuseport socket each. 2: AWS c8gn.8xlarge server
-// (review v1.2 AWS rows), where 1 worker failed the peak row with the game
-// threads half busy in 6 of 6 runs (842k-872k of 900k packets/s, 56.7-58.6
-// frames/s) and 2 passed it 3 of 3; 1 passed only with the game threads idle
-// there; on the X710 pair 1 passed every row (G1-G4, main 3218cf5f6) and 2
-// passed the loaded peak (M54 control). 2 is the count that passed on both.
+// gso queue workers, one reuseport socket each. 2, from these rows (1000
+// players at 60 Hz; peak 900k and average 480k packets/s; game threads idle
+// or half busy):
+//   AWS, c8gn.8xlarge server, c7gn.16xlarge clients (review v1.2 AWS rows):
+//     1 worker: peak idle 3/3, average idle 3/3, average half 2/3, peak half
+//     0/6 (842k-872k packets/s, 56.7-58.6 frames/s).
+//     2 workers: peak half 3/3 (v1.1.54); and as auto's grant in a build
+//     without liburing, all four workloads 3/3 each, 12/12 (2026-11-14).
+//   X710 pair, bare metal: 1 worker all four workloads 3/3 each, 12/12
+//     (GSO-RH); 2 workers peak half 2/2 (M54 control), the only workload
+//     run there at 2.
+// 1 fails the AWS loaded peak; 2 passed every row it ran on both machines.
 #define ROCKETNET_GSO_DEFAULT_WORKERS                                    2
 #define ROCKETNET_GSO_MAX_WORKERS                                       32
 

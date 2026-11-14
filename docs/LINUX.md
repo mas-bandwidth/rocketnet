@@ -154,7 +154,8 @@ at the probe's first `io_uring_setup`, before `gso` is tried: where the
 filter does that, set `ROCKETNET_SERVER_TRANSPORT=gso`. And `io_uring`'s
 memory plan is larger than `gso`'s: at 1000 players and 1416 byte payloads
 `transport_memory 1000 1416 <name> 0 --plan-only` reads 1,169,755,611
-allocator bytes for `io_uring` and 616,314,336 for `gso`.
+allocator bytes for `io_uring` and 844,024,703 for `gso`, both at their
+default 2 workers.
 `rocketnet_server_required_memory` already reports the largest candidate's plan
 ([MEMORY.md](MEMORY.md)), so an allocator sized by it is unchanged, but a
 failed allocation inside a candidate's create is not a refusal: start ends
