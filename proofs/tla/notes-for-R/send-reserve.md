@@ -72,7 +72,9 @@ Each is a comment only; the line numbers are at this branch's head and are given
   the lines, is the code's tail_held (proofs/tla/RNSendReserve.tla
   TailHeld)." becomes "tail + held, summed over the lines, is what
   rocketnet_server_transport_tails_held reads to pick a refusal's counter
-  (proofs/tla/RNSendReserve.tla TailsOn, read in Retest)."
+  (proofs/tla/RNSendReserve.tla TailHeld, read one line a step in
+  Retest)." (TailHeld is defined again in the model; only the function's
+  name and where it is read change.)
 - `sdk/rocketnet_server_transport.cpp lines 241-242`: "or by the filler when the
   transport refuses a frame (RNSendReserve End)." becomes "or by the filler
   when the transport refuses a frame (RNSendReserve Stage refused, then
@@ -80,11 +82,6 @@ Each is a comment only; the line numbers are at this branch's head and are given
 - `sdk/rocketnet_server_transport.cpp lines 1277-1278`: "Refused (Refuse): taken
   back whole (TakeBack) and false." becomes "Refused (Decide's test): taken
   back whole (TakeBack) and false." (there is no action Refuse.)
-- `sdk/rocketnet_server_transport.cpp lines 1295-1296`: "The tails and chunk
-  claims every line holds on the queue (TailHeld): read on the refusal path
-  only." becomes "The tails and chunk claims every line holds on the queue
-  (RNSendReserve TailsOn, one line a step in Retest): read on the refusal
-  path only."
 - `sdk/rocketnet_server_transport.cpp lines 1308-1309`: "OwnClaim, Continue, Size,
   Claim, Check, Read1-3, Decide, Refuse, TakeBack, Retest" becomes "OwnClaim,
   Continue, Size, Claim, Check, Read1-3, Decide, TakeBack, Retest".

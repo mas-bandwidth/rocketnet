@@ -193,7 +193,11 @@ struct rn_message_connection_t * rn_message_object_connection( struct rn_message
 
 bool rn_message_object_conditions( const struct rn_message_object_t * object, int index, struct rocketnet_conditions_t * conditions )
 {
-    if ( !object || index < 0 || index >= object->num_connections || object->hot_connections[index].state != RN_MESSAGE_CONNECTION_CONNECTED )
+    // a NULL out pointer is the caller's error (the public server and client
+    // conditions calls pass it straight here): asserted, and in a build without
+    // asserts refused with nothing written
+    rocketnet_assert( conditions );
+    if ( !conditions || !object || index < 0 || index >= object->num_connections || object->hot_connections[index].state != RN_MESSAGE_CONNECTION_CONNECTED )
     {
         return false;
     }
@@ -314,11 +318,12 @@ static bool rn_link_stop_wait_stopped( const struct rn_link_stop_wait_t * wait )
     return !wait->link->stopped || wait->link->stopped( wait->link->transport );
 }
 
-// stops an owned transport and steps it until it reports stopped, or the
-// budget above runs out. The wait used to sleep 1 ms with no deadline. On the
-// deadline it logs once and returns false: the worker still owns the
-// transport, so the caller keeps it rather than destroy it.
-static bool rn_message_link_stop_and_wait( const struct rn_message_link_t * link )
+// stops an owned transport and steps it until it reports stopped. bounded
+// gives the wait the budget above: on the deadline it logs once and returns
+// false, the worker still owns the transport, and the caller keeps it rather
+// than destroy it. Unbounded waits until the worker exits, as this wait did
+// before the budget was added, and always returns true.
+static bool rn_message_link_stop_and_wait( const struct rn_message_link_t * link, bool bounded )
 {
     if ( link->stop )
     {
@@ -339,7 +344,7 @@ static bool rn_message_link_stop_and_wait( const struct rn_message_link_t * link
         }
         if ( !rn_link_stop_wait_stopped( &wait ) )
         {
-            if ( rn_link_stop_wait_time( &wait ) >= deadline )
+            if ( bounded && rn_link_stop_wait_time( &wait ) >= deadline )
             {
                 rocketnet_error( "message transport stop: the worker has not exited after %.1f seconds; the transport is kept, not freed",
                                  RN_MESSAGE_LINK_STOP_WAIT_SECONDS );
@@ -352,6 +357,15 @@ static bool rn_message_link_stop_and_wait( const struct rn_message_link_t * link
     return true;
 }
 
+// the create holds the transport from its create until it returns the object
+// (proofs/tla/RNCreateUnwind.tla Build, then Succeed). A create that fails
+// after its transport was created (FailInMessage) returns no handle, so
+// nothing else could own a transport its worker still holds: the wait has no
+// deadline, and the transport is freed once the worker exits (UnwindWaits,
+// then UnwindFrees). The layered creates reach it with memory NULL when the
+// object's allocation is refused; rocketnet_server_start and
+// rocketnet_client_connect cannot, since they pass a block their create
+// sized and checked, so the object create cannot fail after the transport.
 static void rn_message_link_abort_create( const struct rn_message_link_t * link )
 {
     if ( !link || !link->destroy )
@@ -359,10 +373,8 @@ static void rn_message_link_abort_create( const struct rn_message_link_t * link 
         return;
     }
 
-    if ( rn_message_link_stop_and_wait( link ) )
-    {
-        link->destroy( link->transport );
-    }
+    rn_message_link_stop_and_wait( link, false );
+    link->destroy( link->transport );
 }
 
 // ASan builds: the red zones create poisons and destroy clears (sdk/rocketnet_memory.h)
@@ -537,7 +549,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
 
 static void rn_message_connection_cancel_pending( rn_message_object_t * object, int index );
 
-// proofs/tla/RNMessageOpen.tla Open and Close: a connection's one open start,
+// Open and close (no model yet: roadmap message-open-model): a connection's one open start,
 // and the object's count of them (fill threads open and close on different
 // connections at once, so the count and the last index are atomics)
 // the calling thread's line: line 0 for the client, and for a server whose
@@ -687,7 +699,7 @@ void rn_message_object_destroy( struct rn_message_object_t * object )
         rocketnet_error( "message %s destroy: the transport is not stopped; stop it and poll stopped before destroy. Stopping it now",
                          object->is_server ? "server" : "client" );
         rocketnet_api_misuse_record();
-        transport_stopped = rn_message_link_stop_and_wait( &object->link );
+        transport_stopped = rn_message_link_stop_and_wait( &object->link, true );
     }
 
     for ( int i = 0; i < object->num_connections; ++i )
@@ -1440,7 +1452,7 @@ static int rn_message_send_transport_max( const struct rn_message_object_t * obj
     return unreliable && object->link.max_payload_bytes ? object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 }
 
-// proofs/tla/RNWriterFinish.tla Start: in place when the update has capacity, otherwise marked as having none.
+// proofs/tla/RNWriterFinish.tla StartSmall, StartLarge and StartReliable: in place when the update has capacity, otherwise marked as having none.
 uint8_t * rn_message_object_start( struct rn_message_object_t * object, int index, int channel, int reliability, int bytes )
 {
     // proofs/tla/RNSlots.tla Request: reserves room for one message and returns the pointer the application writes.
@@ -1484,7 +1496,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
         return NULL;
     }
 
-    // one start pending per connection (proofs/tla/RNMessageOpen.tla): a
+    // one start pending per connection (no model yet: roadmap message-open-model): a
     // second on the same connection is refused until the first is finished or
     // aborted, or a reset of its connection cancels it
     // (rn_message_connection_cancel_at_reset, RNSlots ResetCancel). Starts on
@@ -1649,7 +1661,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
             // round kept for the main thread's send, or a refused frame) is
             // not a refusal: the ring holds one round and the main thread's
             // send carries the message, as it does for the serial finish
-            // (proofs/tla/RNWriterFinish.tla Start, Buffered)
+            // (proofs/tla/RNWriterFinish.tla StartSmall, Buffered)
             bool ring_only = ( ring_short || header >= 0 ) && object->link.send_buffered &&
                              object->link.send_buffered( object->link.transport );
 #if defined( ROCKETNET_WRITER_FINISH_PLANT )
@@ -1765,7 +1777,7 @@ uint32_t rn_message_object_finish_client( struct rn_message_object_t * object, i
     return rn_message_object_finish_as( object, index, bytes, true );
 }
 
-// proofs/tla/RNWriterFinish.tla Finish: with writer set, the frame is sealed in the call or the start with no capacity refused.
+// proofs/tla/RNWriterFinish.tla Finish, FinishOver, FinishRestart, FinishBadBytes and FinishLost: with writer set, the frame is sealed in the call or the start with no capacity refused.
 static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object, int index, int bytes, bool writer )
 {
     // RNChannel Enqueue's second half: the message joins its channel's queue
@@ -1804,6 +1816,18 @@ static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object
         return 0;
     }
 
+    // a bytes_written outside 1..reserved is the caller's error, refused as
+    // that whatever the start found, and the start aborted
+    // (proofs/tla/RNWriterFinish.tla FinishBadBytes)
+
+    rn_message_connection_t * connection = &object->connections[index];
+    if ( bytes < 1 || (uint32_t) bytes > connection->pending_bytes )
+    {
+        rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) connection->pending_bytes );
+        rn_message_connection_cancel_pending( object, index );
+        return 0;
+    }
+
     // the writer's finish of a start that found no capacity: refused, so
     // nothing of it waits for send_packets (proofs/tla/RNWriterFinish.tla RefuseNoCapacity).
     // Its room goes back to the region; the game sees 0
@@ -1822,21 +1846,58 @@ static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object
     }
 #endif // #if defined( ROCKETNET_WRITER_FINISH_PLANT )
 
+    // the writer's finish of an unreliable start reserved over one packet and
+    // finished with bytes one packet carries: the finish decides the form from
+    // the bytes written, so it is a small unreliable message, and the writer
+    // sends it from the call, refuses it, or queues it as the start makes that
+    // decision for its size (sdk/rocketnet.h,
+    // rocketnet_server_finish_client_message). Its bytes leave the region
+    // record, the reservation is released, and the start runs again at the
+    // size written (proofs/tla/RNWriterFinish.tla FinishRestart). The bytes
+    // go through a stack buffer, since the new start may reuse the released
+    // record: two copies, on this path only, in place of the send pass's one
+
+    if ( writer && !open->in_place )
+    {
+        int channel = 0;
+        const uint8_t * written = rn_endpoint_short_unreliable( connection, bytes, &channel );
+        if ( written )
+        {
+            uint8_t message[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+            rocketnet_assert( bytes <= (int) sizeof( message ) );
+            memcpy( message, written, (size_t) bytes );
+            const int reliability = connection->pending_type;
+            rn_message_connection_cancel_pending( object, index );
+
+            uint8_t * pointer = rn_message_object_start( object, index, channel, reliability, bytes );
+            if ( !pointer )
+            {
+                return 0;                               // refused and counted by the start
+            }
+
+            memcpy( pointer, message, (size_t) bytes );
+
+            // the start at a size one packet carries never takes the channel
+            // route, so the finish below never restarts again; were the two
+            // routing rules ever to disagree, the message is refused here
+            // rather than restarted without end
+            if ( rn_endpoint_short_unreliable( connection, bytes, &channel ) )
+            {
+                rocketnet_error( "message finish refused: a restart of %d bytes took the channel route again; the start is aborted", bytes );
+                rn_message_connection_cancel_pending( object, index );
+                return 0;
+            }
+            return rn_message_object_finish_as( object, index, bytes, true );
+        }
+    }
+
     // RNOutgoingBuild FinishInPlace: the record committed at its reservation
     // and the committed end advanced by the bytes written, so a short finish
     // returns the rest; no committed record moves (PriorRecordsUnmoved)
 
     if ( open->in_place == 2 )
     {
-        rn_message_connection_t * connection = &object->connections[index];
         rn_message_packet_build_t * build = &connection->unreliable_build;
-
-        if ( bytes < 1 || (uint32_t) bytes > connection->pending_bytes )
-        {
-            rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) connection->pending_bytes );
-            rn_message_connection_cancel_pending( object, index );
-            return 0;
-        }
 
         rocketnet_message_record_t record = {};
         const int type = connection->pending_type;
@@ -1896,18 +1957,11 @@ static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object
         // form byte written around the bytes, and the frame, full, sealed at
         // once (SealBuild) and staged by the transport, the acks due riding in it
 
-        rn_message_connection_t * connection = &object->connections[index];
         rn_message_link_t * link = &object->link;
         int payload_bytes = 0;
-        const uint32_t reserved = connection->pending_bytes;
         const uint32_t serial = rn_endpoint_in_place_finish( connection, open->in_place_payload, bytes, object->time, &payload_bytes );
         if ( serial == 0 )
         {
-            if ( bytes < 1 || (uint32_t) bytes > reserved )
-            {
-                rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) reserved );
-            }
-
             rn_message_connection_cancel_pending( object, index );     // a refused finish aborts its start: the object is never stuck
             return 0;
         }
@@ -1936,15 +1990,9 @@ static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object
         return serial;
     }
 
-    const uint32_t reserved = object->connections[index].pending_bytes;
-    const uint32_t serial = rn_endpoint_finish( &object->connections[index], bytes, 0 );   // RNEndpoint Send's second half
+    const uint32_t serial = rn_endpoint_finish( connection, bytes, 0 );   // RNEndpoint Send's second half
     if ( serial == 0 )
     {
-        if ( bytes < 1 || (uint32_t) bytes > reserved )
-        {
-            rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) reserved );
-        }
-
         rn_message_connection_cancel_pending( object, index );         // a refused finish aborts its start (proofs/tla/RNSlots.tla FinishPending)
         return 0;
     }
@@ -1954,6 +2002,7 @@ static uint32_t rn_message_object_finish_as( struct rn_message_object_t * object
     return serial;
 }
 
+// proofs/tla/RNWriterFinish.tla Abort: the start closed and nothing sent; the update's capacity stays charged.
 void rn_message_object_abort( struct rn_message_object_t * object, int index )
 {
     // a start that will not be finished: its room returns to the region
@@ -2150,7 +2199,7 @@ static int rn_message_send_admit( const struct rn_message_object_t * object, int
 
 // proofs/tla/RNSendRotation.tla BeginFlush and Visit: the first round over every connection, later rounds over the last round's writers, the capacity test, the cursor at i + 1.
 // proofs/tla/RNServerSendFair.tla BeginFlush, FirstVisit and LaterVisit: the same rounds at this loop's index arithmetic (send_writers, count, kept, previous, the stored cursors).
-// proofs/tla/RNWriterFinish.tla SendPackets: the main thread's walk finds nothing a writer's finish left.
+// proofs/tla/RNWriterFinish.tla SendPackets: the main thread's walk finds no packet a writer left open, and takes what the writers queued or held as far as the capacity carries.
 void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
     rocketnet_fill_phase_main_scope_t phase( object ? object->fill_phase : NULL );
@@ -2687,35 +2736,38 @@ struct rocketnet_message_server_t * rocketnet_message_server_create( void * cont
 
 // resolved_memory_budget NULL: the transport create reads the environment
 // (rocketnet_message_server_create_internal); set: transport_config is already
-// resolved and start reads nothing (rocketnet_message_server_create_resolved)
+// resolved and start reads nothing (rocketnet_message_server_create_resolved).
+// retained_transport: NULL, or the caller's slot for a transport whose failed
+// create could not wait out its worker (rocketnet_server_transport_create_resolved)
 static struct rocketnet_message_server_t * rn_message_server_create( void * context, const char * address,
                                                                      const struct rocketnet_server_transport_config_t * transport_config,
                                                                      const struct rocketnet_message_config_t * message_config,
                                                                      void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited,
-                                                                     const uint64_t * resolved_memory_budget );
+                                                                     const uint64_t * resolved_memory_budget, struct rocketnet_server_transport_t ** retained_transport );
 
 struct rocketnet_message_server_t * rocketnet_message_server_create_internal( void * context, const char * address,
                                                                               const struct rocketnet_server_transport_config_t * transport_config,
                                                                               const struct rocketnet_message_config_t * message_config,
                                                                               void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited )
 {
-    return rn_message_server_create( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, status, reserve_unlimited, NULL );
+    return rn_message_server_create( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, status, reserve_unlimited, NULL, NULL );
 }
 
 struct rocketnet_message_server_t * rocketnet_message_server_create_resolved( void * context, const char * address,
                                                                               const struct rocketnet_server_transport_config_t * transport_config,
                                                                               const struct rocketnet_message_config_t * message_config,
                                                                               void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited,
-                                                                              uint64_t memory_budget_bytes )
+                                                                              uint64_t memory_budget_bytes, struct rocketnet_server_transport_t ** retained_transport )
 {
-    return rn_message_server_create( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, status, reserve_unlimited, &memory_budget_bytes );
+    return rn_message_server_create( context, address, transport_config, message_config, memory, memory_bytes, per_client_send_kbps, status, reserve_unlimited, &memory_budget_bytes,
+                                     retained_transport );
 }
 
 static struct rocketnet_message_server_t * rn_message_server_create( void * context, const char * address,
                                                                      const struct rocketnet_server_transport_config_t * transport_config,
                                                                      const struct rocketnet_message_config_t * message_config,
                                                                      void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited,
-                                                                     const uint64_t * resolved_memory_budget )
+                                                                     const uint64_t * resolved_memory_budget, struct rocketnet_server_transport_t ** retained_transport )
 {
     int ignored = ROCKETNET_STATUS_OK;
     if ( !status )
@@ -2790,7 +2842,7 @@ static struct rocketnet_message_server_t * rn_message_server_create( void * cont
         return NULL;
     }
 
-    rocketnet_server_transport_t * transport = ( resolved_memory_budget && transport_config ) ? rocketnet_server_transport_create_resolved( context, address, transport_config, *resolved_memory_budget, status ) : rocketnet_server_transport_create_current_internal( context, address, transport_config, 0.0, status );
+    rocketnet_server_transport_t * transport = ( resolved_memory_budget && transport_config ) ? rocketnet_server_transport_create_resolved( context, address, transport_config, *resolved_memory_budget, status, retained_transport ) : rocketnet_server_transport_create_current_internal( context, address, transport_config, 0.0, status );
     if ( !transport )
     {
         return NULL;

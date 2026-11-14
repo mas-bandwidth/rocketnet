@@ -157,16 +157,40 @@ static void test_resend_requeue_keeps_the_number_linked()
     const uint32_t slot = (uint32_t) ( number % f.region->window );
     check( f.region->resend_fifo[slot].prev & resend_generations_linked );
 
+    // a second number behind it, so the first number's position in the
+    // sequence (head, tail) can be seen in the slot links
+
+    uint32_t d2 = RN_DESCRIPTOR_NONE;
+    const uint64_t number2 = resend_generations_write( &f, 2, 1000.1, &d2 );
+    const uint32_t slot2 = (uint32_t) ( number2 % f.region->window );
+    const uint32_t head_mark = 0x7FFFFFFFu;
+    check( ( f.region->resend_fifo[slot].prev & 0x7FFFFFFFu ) == head_mark );
+    check( ( f.region->resend_fifo[slot].next & 0x7FFFFFFFu ) == slot2 );
+    check( ( f.region->resend_fifo[slot2].prev & 0x7FFFFFFFu ) == slot );
+    check( ( f.region->resend_fifo[slot2].next & 0x7FFFFFFFu ) == head_mark );
+
+    // a resend relinks the number at the tail: the second number is the head now
+
     uint64_t n = number;
-    rn_window_ack_commit_packet( &f.ordered.ack, 2, &n, 1, 1000.5 );
+    rn_window_ack_commit_packet( &f.ordered.ack, 3, &n, 1, 1000.5 );
     check( f.region->resend_fifo[slot].prev & resend_generations_linked );
+    check( ( f.region->resend_fifo[slot2].prev & 0x7FFFFFFFu ) == head_mark );
+    check( ( f.region->resend_fifo[slot2].next & 0x7FFFFFFFu ) == slot );
+    check( ( f.region->resend_fifo[slot].prev & 0x7FFFFFFFu ) == slot2 );
+    check( ( f.region->resend_fifo[slot].next & 0x7FFFFFFFu ) == head_mark );
+
+    // a failed send relinks it at the head again
 
     rn_window_ack_packet_failed( &f.ordered.ack, &n, 1, 1000.6 );
     check( f.region->resend_fifo[slot].prev & resend_generations_linked );
+    check( ( f.region->resend_fifo[slot].prev & 0x7FFFFFFFu ) == head_mark );
+    check( ( f.region->resend_fifo[slot].next & 0x7FFFFFFFu ) == slot2 );
+    check( ( f.region->resend_fifo[slot2].prev & 0x7FFFFFFFu ) == slot );
 
-    check( rn_window_ack_on_ack( &f.ordered.ack, 2, 1000.7 ) == 1 );
+    check( rn_window_ack_on_ack( &f.ordered.ack, 3, 1000.7 ) == 1 );
     check( f.region->send_numbers[slot].acked );
     check( !( f.region->resend_fifo[slot].prev & resend_generations_linked ) );
+    check( f.region->resend_fifo[slot2].prev & resend_generations_linked );
 
     rn_unit_arena_destroy( f.arena );
 }

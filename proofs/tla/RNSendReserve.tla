@@ -159,6 +159,9 @@ Checking == {"sized", "loaded", "claimed", "read1", "read2", "read3", "raise", "
 ChunkHold(g) == IF pc[g] \in Checking /\ size[g] > 1 THEN size[g] ELSE 0
 \* what the code's tails_held reads on line l: its tail and its chunk claims
 TailsOn(l) == tail[l] + SumOver([g \in Fillers |-> IF LineOf(g) = l THEN ChunkHold(g) ELSE 0], Fillers)
+\* the sum tails_held returns, were every line read at once (Retest reads
+\* it one line a step)
+TailHeld == SumOver([l \in Lines |-> TailsOn(l)], Lines)
 
 \* another filler's hold on the room: the claim it has added and not taken
 \* back, its granted frame not yet staged, the frame it staged and has not

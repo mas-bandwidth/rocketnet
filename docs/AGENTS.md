@@ -41,7 +41,7 @@ Follow [Production integration](PRODUCTION.md). The essential boundaries are:
 - A server generates a key by default, or copies a supplied `server_secret_key`
   at create. Always start from `rocketnet_server_default_config`: create takes
   any nonzero bytes in that field as the key, including uninitialized ones.
-  Wipe your own copy of a supplied secret once create returns. Register its public key and actual bound addresses through an
+  Wipe your own copy of a supplied secret once create returns. Register its public key and its advertised addresses, with the bound port, through an
   authenticated application channel. [Keys](KEYS.md) owns the rotation rules.
 - Add authentication and authorization to the example backend before deployment.
 - Qualify the chosen client count, transport, workload, and host resources.
@@ -84,7 +84,7 @@ Use [Configuration](USAGE.md#configuration), [Environment](ENVIRONMENT.md),
 and the public header. Precedence at create is defaults, then struct, then
 documented environment overrides. Keep planning and create inputs identical.
 
-## The eight channel types
+## The eight reliability modes
 
 Use [Channels](CHANNELS.md#reliability) and the
 [reliability example](examples/reliability.md). Ordering and sequencing
@@ -129,8 +129,11 @@ thread makes the server's calls, game threads may start, finish and abort
 client messages between two main thread calls (one thread per client index),
 and the split update runs `update_receive` on the main thread, then
 `update_client` on game threads, then `update_finish` on the main thread with
-nothing else called between receive and finish. A call that breaks these rules
-is refused and counted in every build once the server has opted in. Allocator
+nothing else called between receive and finish. Once the server has opted in,
+a send call or a call that changes the server and breaks these rules is
+refused and logged in every build. The calls that only read the server, and
+`rocketnet_server_destroy`, are not checked: join the game threads before
+them. Allocator
 and logging callbacks may run on I/O threads. Follow the complete
 [threading contract](USAGE.md#threads).
 
@@ -147,7 +150,7 @@ frame and assert it did not move.
 
 ### Reviewing implementation changes
 
-For SDK work, use [CLAUDE.md](CLAUDE.md), [contributor build checks](BUILD-REFERENCE.md),
+For SDK work, use the [code style](STYLE.md), [contributor build checks](BUILD-REFERENCE.md),
 and the [standards](STANDARD.md). Inspect widths and ownership at each boundary.
 [Sequence buffers](SEQUENCE-BUFFERS.md) records the container policy and
 approved fixed-array index links; do not restate it as a blanket ban on all links.
