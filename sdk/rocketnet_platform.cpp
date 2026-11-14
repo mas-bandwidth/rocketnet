@@ -1975,8 +1975,11 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
 // EHOSTUNREACH, EHOSTDOWN, ENONET, ENOPROTOOPT, EPROTO; for IPv6
 // (icmpv6_err_convert): ECONNREFUSED, EACCES, EPROTO; and EMSGSIZE for a
 // fragmentation-needed or packet-too-big, a hard error under the
-// IP_PMTUDISC_PROBE and IPV6_PMTUDISC_PROBE every socket sets here (xnu maps
-// it to EMSGSIZE too). An unconnected socket never holds one, so only a
+// IP_PMTUDISC_PROBE and IPV6_PMTUDISC_PROBE every Linux socket sets here. xnu
+// (inetctlerrmap) queues EMSGSIZE, EHOSTDOWN, EHOSTUNREACH, ECONNREFUSED and,
+// for a parameter problem, ENOPROTOOPT; its too-big maps to EMSGSIZE whatever
+// the socket sets (macOS sockets here set IP_DONTFRAG or IPV6_DONTFRAG, no
+// probing). An unconnected socket never holds one, so only a
 // connected socket's sends retry; a local refusal of these errnos costs one
 // more call before it drops, counted, as before.
 
@@ -2013,13 +2016,18 @@ static void rocketnet_platform_send_failed( rocketnet_platform_socket_t * socket
 #endif // #if defined( __APPLE__ )
 }
 
-static void rocketnet_platform_send_one( rocketnet_platform_socket_t * socket, const rocketnet_address_t * to, const void * packet_data, int packet_bytes, uint64_t * failures )
+// attempts is 2 for a fresh send (a pending error gets the one more call) and
+// 1 for a resend whose first attempt was a failed sendmsg_x: no message gets a
+// third
+
+static void rocketnet_platform_send_one( rocketnet_platform_socket_t * socket, const rocketnet_address_t * to, const void * packet_data, int packet_bytes, uint64_t * failures, int attempts )
 {
     rocketnet_assert( socket );
     rocketnet_assert( to );
     rocketnet_assert( to->type == ROCKETNET_ADDRESS_IPV6 || to->type == ROCKETNET_ADDRESS_IPV4 );
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 );
+    rocketnet_assert( attempts == 1 || attempts == 2 );
 
     const int call = failures == &socket->send_failures ? ROCKETNET_PLATFORM_SEND_CALL_SENDTO : ROCKETNET_PLATFORM_SEND_CALL_REPLAY;
 
@@ -2032,7 +2040,7 @@ static void rocketnet_platform_send_one( rocketnet_platform_socket_t * socket, c
     }
 
     int error = 0;
-    for ( int attempt = 0; attempt < 2; attempt++ )
+    for ( int attempt = 0; attempt < attempts; attempt++ )
     {
         error = 0;
 #if ROCKETNET_DEV
@@ -2064,7 +2072,7 @@ static void rocketnet_platform_send_one( rocketnet_platform_socket_t * socket, c
 void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket, const rocketnet_address_t * to, const void * packet_data, int packet_bytes )
 {
     rocketnet_assert( socket );
-    rocketnet_platform_send_one( socket, to, packet_data, packet_bytes, &socket->send_failures );
+    rocketnet_platform_send_one( socket, to, packet_data, packet_bytes, &socket->send_failures, 2 );
 }
 
 // ---------------------------------------------------
@@ -2780,13 +2788,13 @@ static int rocketnet_msgx_send_names_refused = 0;
 
 // errnos a routine bad destination or a full buffer also produces on the
 // per-packet path: these never pause the pump, or one forged source port
-// would be a kill switch for it
+// would be a kill switch for it. Every errno a forged ICMP error can queue is
+// one of these, through the one predicate the send paths retry on
 
 static bool rocketnet_msgx_send_weather( int error )
 {
-    return error == EINTR || error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS || error == ECONNREFUSED ||
-           error == EHOSTUNREACH || error == ENETUNREACH || error == EMSGSIZE || error == EADDRNOTAVAIL ||
-           error == EPERM || error == EACCES || error == EHOSTDOWN || error == ENETDOWN;
+    return rocketnet_platform_send_error_is_pending( error ) || error == EINTR || error == EAGAIN || error == EWOULDBLOCK ||
+           error == ENOBUFS || error == EADDRNOTAVAIL || error == EPERM || error == ENETDOWN;
 }
 
 void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socket, const rocketnet_platform_send_t * sends, int num_packets )
@@ -2871,11 +2879,30 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
 
             const int error = errno;
 
+            // A pending ICMP error on a connected socket (see
+            // rocketnet_platform_send_error_is_pending): the call failed, not
+            // the chunk. Its tail goes once more per packet, the one more try
+            // each message gets; a second pending error drops that one
+            // message, counted in send_failures. Nothing else is counted, and
+            // the pump stays batched.
+
+            if ( socket->connected && rocketnet_platform_send_error_is_pending( error ) )
+            {
+                rocketnet_debug( "sendmsg_x returned a pending error (%s). chunk finishes per-packet", strerror( error ) );
+                for ( int i = offset; i < count; i++ )
+                {
+                    const rocketnet_platform_send_t * send = &sends[map[i]];
+                    rocketnet_platform_send_one( socket, send->to, send->packet_data, send->packet_bytes, &socket->send_failures, 1 );
+                }
+                offset = count;
+                continue;
+            }
+
             const uint64_t replay_failures_before = rocketnet_platform_atomic_load_u64( &socket->send_replay_failures );
             for ( int i = offset; i < count; i++ )
             {
                 const rocketnet_platform_send_t * send = &sends[map[i]];
-                rocketnet_platform_send_one( socket, send->to, send->packet_data, send->packet_bytes, &socket->send_replay_failures );
+                rocketnet_platform_send_one( socket, send->to, send->packet_data, send->packet_bytes, &socket->send_replay_failures, 1 );
             }
 
             // EINVAL on an unconnected socket whose every destination the

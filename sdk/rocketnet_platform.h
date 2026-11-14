@@ -343,7 +343,8 @@ void rocketnet_platform_socket_apply_dont_fragment( bool ipv6, void ( *set_optio
 uint64_t rocketnet_platform_receive_empties( void );
 uint64_t rocketnet_platform_receive_refused_sources( void );
 
-// counts each dropped datagram and each refused sendmsg_x chunk once; the replay's refusals count in send_replay_failures
+// counts each dropped datagram and each refused sendmsg_x chunk once; the replay's refusals count in send_replay_failures.
+// a chunk that only returned a connected socket's pending ICMP error is not refused: each datagram its resend drops counts here
 uint64_t rocketnet_platform_socket_send_failures( struct rocketnet_platform_socket_t * socket );
 
 #if ROCKETNET_DEV
