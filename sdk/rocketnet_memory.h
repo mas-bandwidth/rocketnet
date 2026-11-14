@@ -79,12 +79,34 @@ inline void rocketnet_red_zone_poison( const void * p, uint64_t bytes )
 // of its size in shadow pages at free (example_soak's peak memory check).
 // So the region goes a shadow page's span at a time, and only a span that
 // holds poison, whose shadow page is already in memory, is unpoisoned.
+//
+// On Windows the asking is not free either: ASan reserves the shadow and
+// commits a shadow page on any access to it, a read included, so asking
+// whether a never-touched span holds poison commits its shadow page, an
+// eighth of a sparse block at free (Linux maps the shared zero page for that
+// read). A shadow page that is not committed holds no poison, so on Windows
+// the walk first skips every span whose shadow is not committed
+// (rocketnet_red_zone_uncommitted_end, sdk/rocketnet_platform.cpp).
+#if defined( _WIN32 )
+// at when the shadow page of at is committed (or cannot be read), else the
+// first address past the run of uncommitted shadow that holds it
+uintptr_t rocketnet_red_zone_uncommitted_end( uintptr_t at );
+#endif // #if defined( _WIN32 )
+
 inline void rocketnet_red_zone_unpoison( const void * p, uint64_t bytes )
 {
     const uintptr_t end = (uintptr_t) p + (uintptr_t) bytes;
     uintptr_t at = (uintptr_t) p;
     while ( at < end )
     {
+#if defined( _WIN32 )
+        const uintptr_t uncommitted_end = rocketnet_red_zone_uncommitted_end( at );
+        if ( uncommitted_end > at )
+        {
+            at = uncommitted_end < end ? uncommitted_end : end;
+            continue;
+        }
+#endif // #if defined( _WIN32 )
         const uintptr_t span_end = ( at | ( (uintptr_t) ROCKETNET_RED_ZONE_SHADOW_PAGE_SPAN - 1 ) ) + 1;
         const uintptr_t next = span_end < end ? span_end : end;
         if ( __asan_region_is_poisoned( (void *) at, (size_t) ( next - at ) ) )
