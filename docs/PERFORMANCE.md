@@ -9,7 +9,9 @@ A harness PASS alone does not establish all three.
 
 The following results are the measurement owner's current reported results
 for the specified configurations. Some were measured on fixes awaiting
-integration; they do not qualify an unmeasured assembled release. Raw run
+integration; they do not qualify an unmeasured assembled release. The GSO receive-handoff fix is on main; the XDP, RIO and IOCP
+receive-handoff fixes are awaiting the hot-path integration. io_uring does
+not require that receive-delay repair. Raw run
 receipts are not published in this repository. Treat the numbers as scoped
 measurement records, not a guarantee for another machine or workload.
 
@@ -18,13 +20,13 @@ measurement records, not a guarantee for another machine or workload.
 | XDP | Linux, AMD EPYC 9254 / Intel X710, one XDP thread | The 1000-player peak rate is established on this rig | Receive-handoff changes require the corresponding final-tree measurement record before claiming that the current build also meets the receive-delay target |
 | io_uring | AWS c8gn.8xlarge server / c7gn.16xlarge clients, two workers | All twelve rows passed: four workloads, three repetitions; about 900.3k packets/s at peak, 480.3k at average, zero refused starts or lost messages | Reported receive delay mean 6.3–10.5 ms, p99 14.5–18.8 ms; measured tree and placement only |
 | GSO | Linux X710 pair, one worker, receive-handoff fix | All four workloads passed in three repetitions | Reported receive wait mean 5.9–12.3 ms, p99 13.8–19.3 ms; this does not establish the same capacity on the AWS rig |
-| GSO | AWS pair, one worker | Loaded peak misses the offered rate: 845–877k packets/s; one sample refused 44,696 starts. Two workers passed loaded peak in three later samples | Two-worker result covers that workload, not a complete four-workload qualification. The supplied summary does not identify a full commit pair for this follow-up |
+| GSO | AWS pair, one worker | Loaded peak misses the offered rate: 845–877k packets/s; one sample refused 44,696 starts. Each average workload also failed one of three samples (772 and 807 refused starts). Two workers passed loaded peak in three samples | Two-worker result covers that workload, not a complete four-workload qualification. The supplied summary does not identify a full commit pair for this follow-up |
 | RIO | Windows m7i.16xlarge server, configured RSS, receive-handoff fix | Six lanes passed all four workloads in three repetitions with zero refused starts. Five-lane follow-up samples also passed | Reported receive wait mean 5.5–11.1 ms at six lanes; five-lane samples 4.8–8.8 ms. Placement and NIC interrupt load matter |
 | IOCP | Windows m7i.16xlarge, two completion workers and two send threads, receive-handoff fix | Approximately 898–900k packets/s, but loaded peak still refuses 18.7k–56.5k starts per run | Reported receive delay mean 7–11 ms. Lower receive delay does not close the peak refusal limit |
 | msgx | Mac Studio M3 Ultra, Aquantia 10GBASE-T, three transmit workers | Average reaches about 480k packets/s without refused starts. No measured peak row reaches 900k | Address topology and interface contention affect throughput; the macOS timing column below is state-to-send, not receive delay |
 
 **RIO is the Windows choice for this peak workload**, with the measured RSS
-and worker placement. IOCP's remaining peak refusals make its near-target
+and worker placement; IOCP is the fallback. IOCP's remaining peak refusals make its near-target
 packet rate insufficient for the same qualification. Configure and verify
 placement using [Windows](WINDOWS.md); a default wildcard bind is not a
 substitute for the measured setup. Windows measurements used Windows Server
