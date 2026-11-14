@@ -220,6 +220,7 @@ MCRNChannelTypesChannels.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchann
 MCRNChannelTypesBlocks.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelBrokenBlockInTurnHeld.cfg	MCRNChannelTypes.tla	invariant	InTurnDeliveredWhenComplete	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelBrokenInTurnStaleSilent.cfg	MCRNChannelTypes.tla	invariant	SequencedArrivedAccounted	ignore-terminal	rnchanneltypes	required	-
+MCRNChannelBrokenStaleBlockSilent.cfg	MCRNChannelTypes.tla	invariant	SequencedArrivedAccounted	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelBrokenNoPromotion.cfg	MCRNChannelTypes.tla	invariant	PromotedNeverUnreliable	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelBrokenPromoteSequencedToReliable.cfg	MCRNChannelTypes.tla	invariant	PromotedIsTwin	ignore-terminal	rnchanneltypes	required	-
 MCRNChannelTypesRefused.cfg	MCRNChannelTypes.tla	pass	-	ignore-terminal	rnchanneltypes	required	-

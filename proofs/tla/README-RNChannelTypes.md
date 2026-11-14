@@ -121,6 +121,16 @@ it, and `MCRNChannelBrokenInTurnStaleSilent.cfg` fails
 `SequencedArrivedAccounted`. (The former `DrainStaleSilent` witness reached
 the invariant only through another path and is removed.)
 
+Code-4 blocks are accounted too (MA018): a block counts once any fragment of
+it has arrived, and every path that drops one releases it. Stale blocks (a
+fragment of a closed epoch, an in-turn block behind the watermark, an in-turn
+block still collecting when the next ordered record closes its epoch) count
+SEQUENCED_STALE; blocks superseded by a newer block or record, in turn or in
+the future-state slot, count SEQUENCED_SUPERSEDED. `MCRNChannelTypesBlocks.cfg`
+now declares `SequencedArrivedAccounted`, and `Broken = "StaleBlockSilent"`
+(`MCRNChannelBrokenStaleBlockSilent.cfg`) drops the stale blocks without a
+count and fails it.
+
 `OpenPacket` no longer ends the connection on a sequenced or unreliable
 overflow: a full hold pool, an oversize future record and a spent `Du` are
 dropped and counted, as the code does. Two receive-side overflows still end

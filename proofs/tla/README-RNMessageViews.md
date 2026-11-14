@@ -34,7 +34,9 @@ Each entry's data pointer is distinct, so a pointer names its entry. One
 connection: the object's queue across connections (`receive_connection`, and
 the release trying the queue's connection first) is not modelled. A
 delivery still `WAITING` at the next update kicks the connection
-(`MESSAGE_NOT_RECEIVED`, in `rn_message_object_update`); the model leaves that to `RNSlots`.
+(`MESSAGE_NOT_RECEIVED`, in `rn_message_object_update`); this model leaves
+that to `RNChannel` (`NotReceivedEndsConnection`) and `ServerSession`
+(`MessageEnd`). `RNSlots` has no such reason.
 
 ## Invariants
 

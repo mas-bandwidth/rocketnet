@@ -177,9 +177,15 @@ InTurnCollecting(r,c) ==
     IF Broken = "BlockInTurnHeld"
     THEN {n \in r.heldSequenced : Channel(n)=c /\ Order(n)=r.ordered_read[c]}
     ELSE {n \in r.inTurn : Channel(n)=c}
+\* The superseded in-turn block is released and counted (SEQUENCED_SUPERSEDED).
 ReleaseInTurn(r,cur) ==
-    IF Broken = "BlockInTurnHeld" THEN [r EXCEPT !.heldSequenced = @ \ cur]
-    ELSE [r EXCEPT !.inTurn = @ \ cur]
+    IF Broken = "BlockInTurnHeld" THEN [r EXCEPT !.heldSequenced = @ \ cur, !.released = @ \cup cur]
+    ELSE [r EXCEPT !.inTurn = @ \ cur, !.released = @ \cup cur]
+\* A stale block (its epoch closed, or in turn behind the watermark) is
+\* released and counted SEQUENCED_STALE (rn_sequenced_block,
+\* rn_channels_drain_sequenced). Broken = "StaleBlockSilent" drops it and
+\* counts nothing.
+StaleBlocks(r,ms) == IF Broken = "StaleBlockSilent" THEN r ELSE [r EXCEPT !.released = @ \cup ms]
 \* The rule's precondition: m is in turn, newer than the watermark, and no
 \* other in-turn block at least as new is collecting.
 Deliverable(r,m) ==
@@ -220,8 +226,8 @@ Drain(input,c,fuel,du) ==
     CHOOSE output \in {
         LET stale == {m \in r.heldSequenced : Channel(m)=c /\ Order(m)<r.ordered_read[c]}
             staleTurn == {m \in r.inTurn : Channel(m)=c /\ Order(m)<r.ordered_read[c]}
-            s == [r EXCEPT !.heldSequenced = @ \ stale, !.inTurn = @ \ staleTurn,
-                  !.released = @ \cup stale]
+            s == StaleBlocks([r EXCEPT !.heldSequenced = @ \ stale, !.inTurn = @ \ staleTurn,
+                  !.released = @ \cup stale], staleTurn)
             turn == {m \in s.heldSequenced : Channel(m)=c /\ Order(m)=s.ordered_read[c]}
             readyS == {m \in turn : Complete(s,m)}
             openS == turn \ readyS
@@ -326,22 +332,24 @@ DispatchFragment(r0,m,f) ==
     LET c == Channel(m)
         anchor == [r0 EXCEPT !.counted = (@ \ ({m} \X Fragments)) \cup {<<m,f>>}]
         more == [r0 EXCEPT !.counted = @ \cup {<<m,f>>}]
-    IN IF Order(m) < r0.ordered_read[c] THEN r0
+    IN IF Order(m) < r0.ordered_read[c] THEN StaleBlocks(r0, {m})
        ELSE IF Order(m) = r0.ordered_read[c] /\ Sequence(m) < r0.sequenced_watermark[c] THEN
-         [r0 EXCEPT !.inTurn = @ \ {m}]
+         StaleBlocks([r0 EXCEPT !.inTurn = @ \ {m}], {m})
        ELSE IF Order(m) = r0.ordered_read[c] /\ Broken # "BlockInTurnHeld" THEN
          LET cur == {n \in r0.inTurn : Channel(n)=c}
          IN IF m \in cur THEN
               IF Complete(more,m) THEN Drain(TLCEval(DeliverMessage([more EXCEPT !.inTurn = @ \ {m}],m,FALSE)), c, MaxMessages+1, FALSE)
               ELSE more
-            ELSE IF \E n \in cur : Sequence(n) >= Sequence(m) THEN r0
-            ELSE LET t == [anchor EXCEPT !.inTurn = @ \ cur]
+            \* superseded by the in-turn block (SEQUENCED_SUPERSEDED)
+            ELSE IF \E n \in cur : Sequence(n) >= Sequence(m) THEN [r0 EXCEPT !.released = @ \cup {m}]
+            ELSE LET t == [anchor EXCEPT !.inTurn = @ \ cur, !.released = @ \cup cur]
                  IN IF Complete(t,m) THEN Drain(TLCEval(DeliverMessage(t,m,FALSE)), c, MaxMessages+1, FALSE)
                     ELSE [t EXCEPT !.inTurn = @ \cup {m}]
        ELSE LET held == {n \in r0.heldSequenced : Channel(n)=c}
                 t == IF m \in held THEN more
-                     ELSE IF \A n \in held : Newer(m,n) THEN [anchor EXCEPT !.heldSequenced = (@ \ held) \cup {m}]
-                     ELSE r0
+                     ELSE IF \A n \in held : Newer(m,n) THEN [anchor EXCEPT !.heldSequenced = (@ \ held) \cup {m},
+                                                                         !.released = @ \cup held]
+                     ELSE [r0 EXCEPT !.released = @ \cup {m}]
             IN IF m \in t.heldSequenced /\ Complete(t,m) /\ Order(m) = t.ordered_read[c] THEN
                  Drain(TLCEval(DeliverMessage([t EXCEPT !.heldSequenced = @ \ {m}],m,FALSE)), c, MaxMessages+1, FALSE)
                ELSE t
@@ -625,10 +633,13 @@ RefusalLeavesStateUnchanged ==
           /\ sendRefused'=(sendRefused+1) % CountMod
           /\ (maxPayload' # maxPayload => NextCode \in UnreliableSources)]_vars
 \* m7.4 (nothing is silent): every sequenced record that arrived is delivered,
-\* still held, superseded, refused, or released and counted. Broken =
-\* "InTurnStaleSilent" drops an in-turn stale record without counting it.
+\* still held, superseded, refused, or released and counted; a code-4 block
+\* counts once any fragment of it has arrived. Broken = "InTurnStaleSilent"
+\* drops an in-turn stale record without counting it; Broken =
+\* "StaleBlockSilent" drops a stale block without counting it.
 SequencedArrivedAccounted == connected =>
-    \A m \in {n \in {PacketMessage(pid) : pid \in opened} : Sequenced(Code(n)) /\ ~Block(n)} :
+    \A m \in {n \in {PacketMessage(pid) : pid \in opened} : Sequenced(Code(n)) /\ ~Block(n)}
+             \cup {n \in DOMAIN queue : Block(n) /\ \E f \in Fragments : <<n,f>> \in receiver.arrived} :
         m \in Values(receiver.trace) \/ m \in receiver.heldSequenced \/
         m \in receiver.inTurn \/ m \in receiver.released \/ m \in receiver.refused
 \* standard/MESSAGES.md m6.3: a refused code-1 record leaves the channel
