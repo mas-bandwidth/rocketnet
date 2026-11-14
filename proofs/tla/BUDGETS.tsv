@@ -6,4 +6,3 @@ MCServerSessionTwoClients.cfg	240	75.202	110.0	vision
 MCServerConnectionTwoSlots.cfg	200	91.002	91.002	record
 MCClientConnectionReachSFirstkind.cfg	240	72.408	75.7	bench-xdp-9
 MCServerStopSpreadBrokenNoAbandon.cfg	150	69.749	72.586	bench-xdp-9
-MCRNSendReserveCodeTailsNamed.cfg	240	97.491	97.491	aws-mut-3

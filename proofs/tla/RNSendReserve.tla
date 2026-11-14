@@ -57,15 +57,15 @@
 (* granted and not yet staged or counted, the claims being given back, an  *)
 (* own frame not yet staged), past every line's tail, and past what they   *)
 (* claimed since; nor refused for good while the claims its retest loaded  *)
-(* leave a frame under the budget.  TailsNamed: a refusal the code counts  *)
-(* as SEND_RESERVE_REFUSED_TAILS_HELD had, while its read of the lines     *)
-(* ran (after its retest), another filler holding frames for its next      *)
-(* packets (a chunk claim in flight, or granted frames not yet taken), by  *)
-(* the fillers' own state.  The tails row is then a lower bound on the     *)
-(* refusals made while other threads held frames: a frame held at the      *)
-(* decision but taken, staged or given back before the read is not seen,   *)
-(* and that refusal is counted SEND_RESERVE_REFUSED.  Every refusal counts *)
-(* one of the two rows, so together they are exact.                        *)
+(* leave a frame under the budget.  TailsNamed: a refusal is counted       *)
+(* SEND_RESERVE_REFUSED_TAILS_HELD exactly when, as its read of the lines  *)
+(* (after its retest, one line a step) reached each line, another filler   *)
+(* on that line held frames for its next packets (a chunk claim in flight, *)
+(* or granted frames not yet taken), by the fillers' own state; else       *)
+(* SEND_RESERVE_REFUSED.  So the split is as of that read: a frame held at *)
+(* the test but taken, staged or given back before the read is not seen,   *)
+(* and one claimed after the test is.  Every refusal counts one of the two *)
+(* rows, so together they are exact.                                       *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -124,16 +124,16 @@ VARIABLES
     seenS,          \* the recompute's reads: grants staged,
     seenO,          \*   own frames used,
     seenR,          \*   room, with ownTaken, every other filler's hold and the lines' tails at that read
-    sawHeld,        \* another filler held frames while this filler's read of the lines ran
+    sawHeld,        \* another filler held frames on a line as this filler's read reached it
     starved,        \* history: a refusal NeverStarved forbids
-    overnamed,      \* history: a refusal TailsNamed forbids
+    misnamed,      \* history: a refusal TailsNamed forbids
     claimsDone,
     retired,
     phases
 
 vars == <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, tail, pc, size,
           claim, ret, uncounted, ld, rpos, racc, seenS, seenO, seenR, sawHeld, starved,
-          overnamed, claimsDone, retired, phases>>
+          misnamed, claimsDone, retired, phases>>
 
 Steps == {"idle", "sizing", "sized", "loaded", "claimed", "read1", "read2", "read3",
           "raise", "test", "refused", "retest", "retestb", "naming", "granted",
@@ -189,10 +189,10 @@ Acquired(g, n) == [f \in Fillers |-> IF f /= g /\ pc[f] \in Window
                                         THEN [seenR[f] EXCEPT !.a = IF @ + n > MaxFree THEN MaxFree + 1 ELSE @ + n]
                                         ELSE seenR[f]]
 
-\* another filler holds frames for its next packets, by the fillers' own
-\* state, not the line words: a chunk claim in flight, or granted frames
-\* not yet taken on its line
-OthersHeld(f) == \E g \in Fillers \ {f} : ChunkHold(g) > 0 \/ tail[LineOf(g)] > 0
+\* another filler on line l holds frames for its next packets, by the
+\* fillers' own state, not the line's word: its chunk claim in flight, or
+\* granted frames not yet taken on its line
+OthersOn(f, l) == \E g \in Fillers \ {f} : LineOf(g) = l /\ (ChunkHold(g) > 0 \/ tail[l] > 0)
 \* a decision on the room s.r read with s: that room was above what the
 \* protocol still needed (the reserve less the own frames taken), with a
 \* frame for f past every other filler's hold and the lines' tails at the
@@ -222,7 +222,7 @@ TypeOK ==
     /\ seenR \in [Fillers -> [r : Nat, o : Nat, b : Nat, t : Nat, a : Nat, h : Nat]]
     /\ sawHeld \in [Fillers -> BOOLEAN]
     /\ starved \in BOOLEAN
-    /\ overnamed \in BOOLEAN
+    /\ misnamed \in BOOLEAN
     /\ claimsDone \in [Fillers -> 0..MaxClaims]
     /\ retired \in 0..MaxRetire
     /\ phases \in 0..MaxPhases
@@ -250,7 +250,7 @@ Init ==
     /\ seenR = [f \in Fillers |-> NoSnap]
     /\ sawHeld = [f \in Fillers |-> FALSE]
     /\ starved = FALSE
-    /\ overnamed = FALSE
+    /\ misnamed = FALSE
     /\ claimsDone = [f \in Fillers |-> 0]
     /\ retired = 0
     /\ phases = 1
@@ -276,7 +276,7 @@ OpenFill ==
     /\ phases' = phases + 1
     /\ claimsDone' = [f \in Fillers |-> 0]
     /\ UNCHANGED <<pc, size, claim, ret, ld, rpos, racc, seenS, seenO, seenR, sawHeld,
-                   starved, overnamed, retired>>
+                   starved, misnamed, retired>>
 
 \* a start begins: what a BatchCount filler staged last is counted now
 Flush(f) ==
@@ -298,7 +298,7 @@ OwnClaim(f) ==
     /\ pc' = [pc EXCEPT ![f] = "ownio"]
     /\ claimsDone' = [claimsDone EXCEPT ![f] = @ + 1]
     /\ UNCHANGED <<free, claims, budget, tail, size, claim, ret, ld, rpos, racc, seenS,
-                   seenO, seenR, sawHeld, starved, overnamed, retired, phases>>
+                   seenO, seenR, sawHeld, starved, misnamed, retired, phases>>
 
 \* staged; or the transport refuses it (no room, or its own reason): the
 \* client's keep-alive stays due and its frame stays in the reserve
@@ -313,7 +313,7 @@ OwnIo(f) ==
           /\ UNCHANGED free
     /\ UNCHANGED <<started, ownUsed, ownLeft, claims, budget, tail, size, claim, ret,
                    uncounted, ld, rpos, racc, seenS, seenO, seenR, sawHeld, starved,
-                   overnamed, claimsDone, retired, phases>>
+                   misnamed, claimsDone, retired, phases>>
 
 OwnCount(f) ==
     /\ pc[f] = "owncount"
@@ -321,7 +321,7 @@ OwnCount(f) ==
     /\ pc' = [pc EXCEPT ![f] = "idle"]
     /\ UNCHANGED <<free, started, ownTaken, ownLeft, claims, budget, tail, size, claim,
                    ret, uncounted, ld, rpos, racc, seenS, seenO, seenR, sawHeld, starved,
-                   overnamed, claimsDone, retired, phases>>
+                   misnamed, claimsDone, retired, phases>>
 
 (***************************************************************************)
 (* A frame of the line's tail: one compare-and-swap takes it, with no      *)
@@ -336,7 +336,7 @@ Continue(f) ==
     /\ pc' = [pc EXCEPT ![f] = "granted"]
     /\ claimsDone' = [claimsDone EXCEPT ![f] = @ + 1]
     /\ UNCHANGED <<free, ownUsed, ownTaken, ownLeft, claims, budget, size, claim, ret,
-                   ld, rpos, racc, seenS, seenO, seenR, sawHeld, starved, overnamed, retired,
+                   ld, rpos, racc, seenS, seenO, seenR, sawHeld, starved, misnamed, retired,
                    phases>>
 
 (***************************************************************************)
@@ -366,7 +366,7 @@ Size(f) ==
           /\ ld' = [ld EXCEPT ![f] = 0]
           /\ UNCHANGED <<started, uncounted, claimsDone>>
     /\ UNCHANGED <<free, ownUsed, ownTaken, ownLeft, claims, budget, tail, claim, ret,
-                   rpos, racc, seenS, seenO, seenR, sawHeld, starved, overnamed, retired,
+                   rpos, racc, seenS, seenO, seenR, sawHeld, starved, misnamed, retired,
                    phases>>
 
 Claim(f) ==
@@ -380,7 +380,7 @@ Claim(f) ==
     /\ seenR' = Acquired(f, size[f])
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, budget, tail, size, ret,
                    uncounted, ld, rpos, racc, seenS, seenO, sawHeld, starved,
-                   overnamed, claimsDone, retired, phases>>
+                   misnamed, claimsDone, retired, phases>>
 
 ClaimStore(f) ==
     /\ pc[f] = "loaded"
@@ -388,7 +388,7 @@ ClaimStore(f) ==
     /\ claims' = claim[f] + size[f]
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, budget, tail, size, claim,
                    ret, uncounted, ld, rpos, racc, seenS, seenO, seenR, sawHeld, starved,
-                   overnamed, claimsDone, retired, phases>>
+                   misnamed, claimsDone, retired, phases>>
 
 \* granted: this start's frame, and the rest of a chunk onto the line's
 \* tail (one add on the line's word, which also drops the chunk claim)
@@ -423,7 +423,7 @@ Check(f) ==
                   ELSE /\ pc' = [pc EXCEPT ![f] = IF RoomFirst THEN "read2" ELSE "read1"]
                        /\ UNCHANGED <<tail, starved, sawHeld, seenR>>
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, size,
-                   claim, ret, uncounted, ld, rpos, racc, seenS, seenO, overnamed,
+                   claim, ret, uncounted, ld, rpos, racc, seenS, seenO, misnamed,
                    claimsDone, retired, phases>>
 
 \* the first read of the counts: each line's grants staged, one line a
@@ -441,7 +441,7 @@ Read1(f) ==
                /\ rpos' = [rpos EXCEPT ![f] = 0]
                /\ pc' = [pc EXCEPT ![f] = IF RoomFirst THEN "raise" ELSE "read2"]
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, tail, size,
-                   claim, ret, uncounted, ld, seenR, sawHeld, starved, overnamed, claimsDone,
+                   claim, ret, uncounted, ld, seenR, sawHeld, starved, misnamed, claimsDone,
                    retired, phases>>
 
 \* the room (RoomFirst: before the counts)
@@ -451,7 +451,7 @@ Read2(f) ==
     /\ pc' = [pc EXCEPT ![f] = IF RoomFirst THEN "read1" ELSE IF NoReread THEN "raise" ELSE "read3"]
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, tail, size,
                    claim, ret, uncounted, ld, rpos, racc, seenS, seenO, sawHeld, starved,
-                   overnamed, claimsDone, retired, phases>>
+                   misnamed, claimsDone, retired, phases>>
 
 \* the counts again, the lines one a step then the own frames used: either
 \* moved, start over; else on to the raise.  Each line only grows within a
@@ -468,7 +468,7 @@ Read3(f) ==
                                              THEN "read1" ELSE "raise"]
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, tail, size,
                    claim, ret, uncounted, ld, seenS, seenO, seenR, sawHeld, starved,
-                   overnamed, claimsDone, retired, phases>>
+                   misnamed, claimsDone, retired, phases>>
 
 \* the atomic max of the budget with what the reads allow; then the test:
 \* the claims outstanding against the budget loaded after the max.  The
@@ -486,7 +486,7 @@ Decide(f) ==
        /\ pc' = [pc EXCEPT ![f] = "test"]
        /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claims, tail, size,
                       claim, ret, uncounted, rpos, racc, seenS, seenO, seenR, sawHeld,
-                      starved, overnamed, claimsDone, retired, phases>>
+                      starved, misnamed, claimsDone, retired, phases>>
     \/ /\ pc[f] = "test"
        /\ \/ /\ Ok(f, budget)
              /\ Grant(f)
@@ -499,7 +499,7 @@ Decide(f) ==
        /\ seenO' = [seenO EXCEPT ![f] = 0]
        /\ seenR' = [seenR EXCEPT ![f] = NoSnap]
        /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, claims, budget, size,
-                      claim, ret, uncounted, rpos, racc, overnamed, claimsDone, retired,
+                      claim, ret, uncounted, rpos, racc, misnamed, claimsDone, retired,
                       phases>>
 
 \* a claim refused for good, the claims c its last load saw: starved too if
@@ -524,35 +524,35 @@ TakeBack(f) ==
                   ELSE /\ pc' = [pc EXCEPT ![f] = "retest"]
                        /\ UNCHANGED <<starved, size>>
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, budget, tail, claim, ret,
-                   uncounted, ld, rpos, racc, seenS, seenO, seenR, sawHeld, overnamed,
+                   uncounted, ld, rpos, racc, seenS, seenO, seenR, sawHeld, misnamed,
                    claimsDone, retired, phases>>
 
 \* the retest: the claims loaded, then the budget; a frame under the budget
 \* is claimed again (the claim counts as the same start), else the claim is
 \* refused.  Then the counter: every line's tail and chunk claims read, one
-\* line a step: any read is SEND_RESERVE_REFUSED_TAILS_HELD, which TailsNamed
-\* holds to another filler holding frames while the read ran (NameAll:
-\* every refusal counted that way)
+\* line a step: any read is SEND_RESERVE_REFUSED_TAILS_HELD; TailsNamed holds
+\* the counter to what the other fillers held on each line as it was read
+\* (NameAll: every refusal counted on the tails row)
 Retest(f) ==
     \/ /\ pc[f] = "retest"
        /\ ld' = [ld EXCEPT ![f] = claims]
        /\ pc' = [pc EXCEPT ![f] = "retestb"]
-       /\ UNCHANGED <<starved, overnamed, sawHeld, rpos, racc>>
+       /\ UNCHANGED <<starved, misnamed, sawHeld, rpos, racc>>
     \/ /\ pc[f] = "retestb"
        /\ ld' = [ld EXCEPT ![f] = 0]
        /\ IF ld[f] + size[f] <= budget
              THEN /\ pc' = [pc EXCEPT ![f] = "sized"]
                   /\ UNCHANGED starved
              ELSE FinalRefuse(f, ld[f])
-       /\ UNCHANGED <<overnamed, sawHeld, rpos, racc>>
+       /\ UNCHANGED <<misnamed, sawHeld, rpos, racc>>
     \/ /\ pc[f] = "naming"
        /\ LET acc == racc[f] + TailsOn(rpos[f] + 1)
           IN IF rpos[f] + 1 < L
                 THEN /\ racc' = [racc EXCEPT ![f] = acc]
                      /\ rpos' = [rpos EXCEPT ![f] = @ + 1]
-                     /\ sawHeld' = [sawHeld EXCEPT ![f] = @ \/ OthersHeld(f)]
-                     /\ UNCHANGED <<pc, overnamed>>
-                ELSE /\ overnamed' = (overnamed \/ ((NameAll \/ acc > 0) /\ ~(sawHeld[f] \/ OthersHeld(f))))
+                     /\ sawHeld' = [sawHeld EXCEPT ![f] = @ \/ OthersOn(f, rpos[f] + 1)]
+                     /\ UNCHANGED <<pc, misnamed>>
+                ELSE /\ misnamed' = (misnamed \/ ((NameAll \/ acc > 0) # (sawHeld[f] \/ OthersOn(f, rpos[f] + 1))))
                      /\ racc' = [racc EXCEPT ![f] = 0]
                      /\ rpos' = [rpos EXCEPT ![f] = 0]
                      /\ sawHeld' = [sawHeld EXCEPT ![f] = FALSE]
@@ -580,7 +580,7 @@ Stage(f) ==
           /\ pc' = [pc EXCEPT ![f] = "returning"]
           /\ UNCHANGED <<free, uncounted>>
     /\ UNCHANGED <<started, ownUsed, ownTaken, ownLeft, claims, budget, size, claim, ld,
-                   rpos, racc, seenS, seenO, seenR, sawHeld, starved, overnamed, claimsDone,
+                   rpos, racc, seenS, seenO, seenR, sawHeld, starved, misnamed, claimsDone,
                    retired, phases>>
 
 Count(f) ==
@@ -589,7 +589,7 @@ Count(f) ==
     /\ pc' = [pc EXCEPT ![f] = "idle"]
     /\ UNCHANGED <<free, ownUsed, ownTaken, ownLeft, claims, budget, tail, size, claim,
                    ret, uncounted, ld, rpos, racc, seenS, seenO, seenR, sawHeld, starved,
-                   overnamed, claimsDone, retired, phases>>
+                   misnamed, claimsDone, retired, phases>>
 
 \* the frame's claim and the tail it took leave the claims in one add
 End(f) ==
@@ -599,7 +599,7 @@ End(f) ==
     /\ pc' = [pc EXCEPT ![f] = "idle"]
     /\ UNCHANGED <<free, started, ownUsed, ownTaken, ownLeft, budget, tail, size, claim,
                    uncounted, ld, rpos, racc, seenS, seenO, seenR, sawHeld, starved,
-                   overnamed, claimsDone, retired, phases>>
+                   misnamed, claimsDone, retired, phases>>
 
 \* the transport retires a staged frame (an asynchronous send completes)
 Retire ==
@@ -609,7 +609,7 @@ Retire ==
     /\ retired' = retired + 1
     /\ UNCHANGED <<started, ownUsed, ownTaken, ownLeft, claims, budget, tail, pc, size,
                    claim, ret, uncounted, ld, rpos, racc, seenS, seenO, seenR, sawHeld,
-                   starved, overnamed, claimsDone, phases>>
+                   starved, misnamed, claimsDone, phases>>
 
 Done ==
     /\ \A f \in Fillers : pc[f] = "idle"
@@ -643,9 +643,9 @@ ReserveKept ==
 \* frame for it under the budget
 NeverStarved == ~starved
 
-\* a refusal counted SEND_RESERVE_REFUSED_TAILS_HELD had another filler
-\* holding frames, by the fillers' own state, while its read of the lines
-\* ran: the tails row is a lower bound, and with the plain row exact
-TailsNamed == ~overnamed
+\* a refusal is counted SEND_RESERVE_REFUSED_TAILS_HELD exactly when another
+\* filler held frames on a line, by the fillers' own state, as its read
+\* reached that line: the split is as of the read; the two rows sum exactly
+TailsNamed == ~misnamed
 
 =============================================================================
