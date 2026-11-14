@@ -103,10 +103,6 @@ its stated abstraction; unit and functional gates still verify the C++ seam.
 Deliberately broken configurations remain negative controls and are named as
 such in the run inventory.
 
-`RNRioDriver` describes the earlier caller-driven two-phase RIO design; its
-recorded results are historical, and the shipped worker is modeled by
-`RNRioWorker`.
-
 Each `Trace<Module>` module (for example `TraceRNSendReserveCalls`) binds the
 code's recorded calls to its module through the trace check
 ([proofs/tla/README-TraceCheck.md](../proofs/tla/README-TraceCheck.md));

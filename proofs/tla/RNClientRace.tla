@@ -370,9 +370,11 @@ SendFailedMonotonic == ~dipped
    every family freed, by the caller, once. *)
 EverythingFreed == <>(destroyed /\ \A f \in Families : memory[f] = "freed")
 (* A commit leads to the reading thread closing the losing family: its step
-   at the first sight of the commit, or its exit when it is stopped first.
-   It is stated over the ghost closer, so the close every family gets at
-   destroy (CallerDestroy) does not satisfy it. *)
+   at the first sight of the commit, or its exit when it is stopped first
+   (the I/O thread's exit; the legacy receive worker's exit closes nothing
+   and is not modelled, see ReaderExit). It is stated over the ghost closer,
+   so the close every family gets at destroy (CallerDestroy) does not
+   satisfy it. *)
 LoserClosed == committed >= 0 ~> closer \in {"step", "exit"}
 (* While the reader has not exited, a reader that has seen the commit closed
    the losing family in that step: the exit's close does not count. *)

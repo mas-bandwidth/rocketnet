@@ -23,6 +23,44 @@ already said so). The status belongs to R:
   bindings. Proposed: check_tla_coverage skips a citation to a module whose
   every row is `owed` or historical, or R rewords those citations with C.
 
+### For package C: RNClientIo cited as current (MM117, strengthened by M3)
+
+These comments cite RNClientIo actions as if they were the current design.
+The ones already marked "(historical two-ring design)" or "(historical
+two-buffer design)" in sdk/rocketnet_client_io.h and
+rocketnet_client_transport_update are left out. Each needs one of two
+rewrites: mark the citation historical, or re-cite the current model
+(RNBufferHandoff for the send banks and the I/O thread's lifecycle,
+RNReceiveHandoff for the receive, RNClientIoShutdown for stop and destroy,
+RNClientSendCursorLayout for the ring sends, RNClientIocp for the posted
+receives). Sites are listed by the symbol the comment sits above or inside,
+with the count when one symbol has more than one, and the actions named.
+
+sdk/rocketnet_client_transport.cpp (24 sites):
+- rocketnet_client_transport_create_impl (3): "every RNClientIo action named here"; OnThread; IoSend, IoFinishRing, IoReceive, IoWait, IoWake.
+- rocketnet_client_transport_stop: Stop.
+- rocketnet_client_transport_destroy (2): Join and Free; Done.
+- rocketnet_client_transport_io_hand_off (5): HandOff and Defer; HandOffTo, DeferTo and Reopen; WaitDone; Reopen (in the body).
+- rocketnet_client_transport_io_commit_packet (2): Write, Commit, Disconnect.
+- rocketnet_client_transport_update (3): StepBegin, StepEnd and OnCaller; CallerStep twice, as trailing comments on the calls to rocketnet_client_io_step.
+- rocketnet_client_transport_start_packet (2): Write and OnGame; Write.
+- rocketnet_client_transport_finish_packet_unchecked (2): Commit, twice.
+- rocketnet_client_transport_send_packets (2): HandOff or Defer; CallerStep, a trailing comment on the call to rocketnet_client_io_step.
+- rocketnet_client_transport_disconnect (2): Disconnect; Disconnect, Write, Commit.
+
+Other sdk files (the backends' I/O-thread contract):
+- sdk/rocketnet_client_io.h: the file header ("models the two-ring, two-buffer design this code"); rocketnet_client_io_discard_at_stop (IoSend, IoReceive, IoWait, IoWake, IoClearWake and IoExit).
+- sdk/rocketnet_client_gso.h: the header comment on the I/O thread owning the socket.
+- sdk/rocketnet_client_gso_linux.cpp: the file header; rocketnet_client_gso_create (Init, Stop, Join, Free); rocketnet_client_gso_destroy (Stop, Join, Free, FreedOnlyAfterJoin); rocketnet_client_gso_send_batch_operation (IoSend); rocketnet_client_gso_receive_batch_operation (IoReceive); rocketnet_client_gso_wait (IoWait, IoWake, FullWaitsOnWake).
+- sdk/rocketnet_client_iocp.h (2): the header comments (the I/O thread; a buffer never copied while posted).
+- sdk/rocketnet_client_iocp_windows.cpp: the file header; rocketnet_client_iocp_wait (IoWait); rocketnet_client_iocp_create (initial); rocketnet_client_iocp_destroy (Stop and destroy order); rocketnet_client_iocp_send_batch (IoSend); rocketnet_client_iocp_receive_batch_operation (IoReceive); rocketnet_client_iocp_wait_operation (IoWait, the wake).
+- sdk/rocketnet_client_protocol.cpp: rocketnet_client_protocol_process_record ("RNClientIo as an abstraction of the receive handoff: IoPublish stands for ..."; this one already says abstraction and may only need RNReceiveHandoff named).
+- sdk/rocketnet_counters.h: the ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED entry (Defer). It is in a generated counter table, so the change belongs to the counter registry's source.
+- sdk/rocketnet_driver_builtin.cpp: struct portable_io_client_t (the I/O thread of docs/CLIENT-IO.md); portable_io_client_create (Init, Stop, Join, Free); portable_io_client_destroy (Stop, Join, Free, FreedOnlyAfterJoin); portable_io_client_send and portable_io_client_send_batch (IoSend, IoReceive); portable_io_client_wait (IoWait, IoWake, FullWaitsOnWake).
+- sdk/rocketnet_platform.cpp: rocketnet_platform_sendmmsg (IoSend and IoReceive); struct rocketnet_platform_wake_t (3: IoWait, IoWake; IoWake, IoWait; IoWait and IoWake); rocketnet_platform_wake_create (Init: wake = FALSE); rocketnet_platform_wake_wait (IoWait and IoWake); rocketnet_platform_wake_set (HandOffTo, wake' = TRUE).
+
+tests/ also names RNClientIo actions in comments (tests/test_unit_client_io_step.cpp, tests/test_unit_client_io_stop.cpp, tests/test_unit_client_io_transport.cpp, tests/test_unit_fake_client_driver.cpp, tests/fake_client_driver.h, tests/public_step_pair.h, tests/test_unit_client_msgx.cpp, tests/functional/rocketnet_functional_tests.cpp, tests/functional/live_matrix.cpp). The same rewrite applies, and `git grep -n "RNClientIo[^A-Za-z]" -- tests` lists them.
+
 Roadmap entry (sexp text; R adds it to docs/roadmap.sexp):
 
 ```

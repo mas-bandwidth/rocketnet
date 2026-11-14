@@ -77,7 +77,7 @@ losing server after the commit is the `commitkeepsring` defect.
 | `EverythingFreed` | liveness | with fair threads, destroy frees every family |
 | `PostCommitSlotsKept` | invariant | no slot committed after the commit leaves for the losing family, where the race's send drops it |
 | `SendFailedMonotonic` | invariant | SEND_FAILED never goes down between two reads |
-| `LoserClosed` | liveness | a commit leads to the reading thread closing the losing family, at its step or its exit; stated over the ghost `closer`, so destroy's close of every family does not satisfy it |
+| `LoserClosed` | liveness | a commit leads to the reading thread closing the losing family, at its step or at the I/O thread's exit; stated over the ghost `closer`, so destroy's close of every family does not satisfy it. The legacy receive worker's exit is not modelled: it closes nothing, so a commit it never steps past leaves the losing family to destroy |
 | `StepClosesAtSight` | invariant | before its exit, a reader that has seen the commit closed the losing family in that step (`closer = "step"`) |
 
 ## Cases
@@ -94,7 +94,7 @@ losing server after the commit is the `commitkeepsring` defect.
 | `MCRNClientRaceBrokenNoLiveCheck.cfg` | `FreedOnce`: the reader frees the losing family and destroy frees every family without `rocketnet_client_transport_io_close`'s instance check, so the losing family is freed twice |
 | `MCRNClientRaceBrokenDestroyTwice.cfg` | `FreedOnce`: the transport destroyed twice, without the instance check, so the caller frees each family twice, a repeat by the same owner that only the counting `frees` can see |
 | `MCRNClientRaceBrokenNoReaderClose.cfg` | `LoserClosed` (temporal): the reading thread closes nothing at a step or its exit, as a backend with no close operation would, so only destroy closes the losing family |
-| `MCRNClientRaceBrokenNoStepClose.cfg` | `StepClosesAtSight`: the step that first sees the commit does not close the losing family; the exit still does, so `LoserClosed` alone would pass |
+| `MCRNClientRaceBrokenNoStepClose.cfg` | `StepClosesAtSight`: the step that first sees the commit does not close the losing family; the exit still does, so `LoserClosed` alone would pass. The same trace also breaks `SeenMeansClosed`, which had no reversed witness before |
 
 Each counterexample was checked by hand against the code: the reader-frees
 trace is commit, then one reading step whose `rocketnet_client_race_kept`
@@ -120,7 +120,11 @@ closes nothing, the join and destroy, which closes the losing family
 (`closer = "destroy"`) and stutters: the old form of `LoserClosed`, over
 the handle alone, held on this trace. In the code that is a backend with no
 close operation, whose losing socket stays open until
-`rocketnet_client_race_destroy`; every built-in backend that races has one.
+`rocketnet_client_race_destroy` (the code still sets `race->closed` and keeps
+the failures there, which the defect leaves out and `LoserClosed` does not
+read); every built-in backend that races has one. The same trace is real on
+the legacy receive worker's path, whose exit closes nothing: the model's
+reader is the I/O thread and the caller's own step.
 The no-step-close trace is a commit and one reading step that loads it
 (`seen = 0`) and closes nothing, where `rocketnet_client_race_kept` closes
 the losing family's handles at its first sight of the commit.

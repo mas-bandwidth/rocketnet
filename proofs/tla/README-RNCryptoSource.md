@@ -24,8 +24,11 @@ from starving term.
 
 `rocketnet_random_uint64` and `rocketnet_random_bytes` hold the source as a
 generator does (`rocketnet_random_draw`: `rocketnet_crypto_acquire`, the draw,
-`rocketnet_crypto_release`), so they are generator calls here. The other draws
-(every draw the transports, protocols and token tables make) take no hold.
+`rocketnet_crypto_release`), so they are generator calls here; when the
+source cannot open they draw anyway, unheld, and sodium aborts with its misuse
+line. The other draws (every draw the transports and protocols make,
+including the hash keys of the client slots, encryption map and token tables)
+take no hold.
 The model assumes they run between `rocketnet_init` and `rocketnet_term`, when
 the source is open and no term can close it, and does not model them.
 
