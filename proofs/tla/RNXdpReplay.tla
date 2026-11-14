@@ -5,7 +5,8 @@
 (* The XDP program (sdk/xdp/server_xdp.c) holds a BPF hash map,         *)
 (* server_xdp_replay_map, keyed by the source address and port.  For the   *)
 (* session packet types (keep-alive, payload, disconnect, ack)            *)
-(* it looks the source up and, with an entry, drops a packet whose         *)
+(* it looks the source up, drops the packet when there is no entry, and,   *)
+(* with an entry, drops a packet whose                                     *)
 (* sequence is KernelWindow or more behind the entry's high_water; the     *)
 (* design's KernelWindow is W, the userspace replay window.  The kernel    *)
 (* never writes the map.  Userspace writes it once per server update: the  *)
@@ -25,12 +26,11 @@
 (* the same forget as a release, for the old address.  A slot reused at   *)
 (* another address while its old address's forget is still owed (refused  *)
 (* by a full pending buffer) is a slot, not an address, and this model     *)
-(* cannot express it.  At this branch's code the walk skips such a slot    *)
-(* with no mark for the new address; that is closed by                     *)
-(* fix/v1.1.x/hostile-input-cost db2dd94c1 (in review), whose skip asks    *)
-(* the sink for a zero mark at the new address and records it as the       *)
-(* slot's skip mark, modelled slot-keyed in RNServerReplaySlots there      *)
-(* (MarkWhileSkipped, RecordSkip, KeepSkipOwner, GreetedSlotHasEntry).     *)
+(* cannot express it.  The walk skips such a slot, asks the sink for a     *)
+(* zero mark at the new address and records it as the slot's skip mark     *)
+(* (closed by db2dd94c1); that is modelled slot-keyed in                   *)
+(* RNServerReplaySlots (MarkWhileSkipped, RecordSkip, KeepSkipOwner,       *)
+(* GreetedSlotHasEntry).                                                   *)
 (*                                                                         *)
 (* A reconnect may come before the old session's forget is queued or       *)
 (* while the kernel refuses it.  The new session's client sends no session *)
@@ -46,9 +46,12 @@
 (* 2^32 - W, which a session whose sequences start at 1 does not reach     *)
 (* while the zero mark stands (the development seam                        *)
 (* ROCKETNET_DEV_SESSION_SEQUENCE_START can start one there; left out,     *)
-(* with the wrap).  A disconnect burst a client sends before its first     *)
-(* keep-alive is left out: a dropped one costs the server a timeout, not   *)
-(* the session.                                                            *)
+(* with the wrap).  With no entry at all the kernel drops a session packet *)
+(* (DROPPED_NO_SESSION): a source with no live session has nothing a       *)
+(* session packet could open.  A disconnect burst a client sends before    *)
+(* its first keep-alive is left out: it can meet no entry and be dropped,  *)
+(* which is accepted, the same outcome as a lost disconnect: the server    *)
+(* times the slot out instead.                                             *)
 (*                                                                         *)
 (* Sequences are naturals: the 32-bit wrap of (int32_t)(high_water -       *)
 (* sequence) is left out, and so is the truncation of the 64-bit           *)
@@ -180,8 +183,9 @@ SessionIds == 1..Sessions
 Seqs == 1..MaxSeq
 
 (* NoEntry is distinct from a real zero mark, whose sess names a session. *)
-(* Both admit genuine sequences in this bounded nonwrapping model; this   *)
-(* is not a claim about arbitrary uint32 wire wrap in the kernel rule.     *)
+(* The kernel drops a session packet with no entry, and a zero mark admits *)
+(* every genuine sequence in this bounded nonwrapping model; this is not a *)
+(* claim about arbitrary uint32 wire wrap in the kernel rule.              *)
 NoEntry == [hw |-> 0, sess |-> NoSession]
 Entries == [hw : 0..MaxSeq, sess : 0..Sessions]
 
@@ -352,12 +356,17 @@ Duplicate(p) ==
     /\ UNCHANGED replyVars
 
 (***************************************************************************)
-(* KernelFilter(p): THE KERNEL RULE.  With an entry for the source, drop   *)
-(* when (high_water - sequence) >= KernelWindow, counting                  *)
-(* DROPPED_REPLAYED; a genuine drop is recorded with the session of the    *)
-(* mark it was dropped against.  An entry is any value but NoEntry, a     *)
-(* zero mark included (server_xdp.c tests the lookup for NULL).            *)
-(* With no entry, or a sequence inside or ahead of the window, the packet  *)
+(* KernelFilter(p): THE KERNEL RULE.  With no entry for the source, drop,  *)
+(* counting DROPPED_NO_SESSION: every packet here is a session packet, and *)
+(* in this model a live greeted session has an entry (its first mark is   *)
+(* applied before its greeting leaves; RNServerReplaySlots names the one   *)
+(* error-path gap of the slot walk).  With an entry, drop when             *)
+(* (high_water - sequence) >= KernelWindow, counting DROPPED_REPLAYED.  An *)
+(* entry is any value but NoEntry, a zero mark included (server_xdp.c      *)
+(* tests the lookup for NULL); a zero mark drops nothing.  A genuine drop  *)
+(* is recorded with the session of the mark it was dropped against,        *)
+(* NoSession for no entry.                                                 *)
+(* With an entry and a sequence inside or ahead of the window, the packet  *)
 (* goes on to userspace.  The kernel runs beside the update, so it is      *)
 (* enabled in every phase.  The design never writes kmap here; the broken  *)
 (* shape KernelAdvances writes kmap[a] := seq on every pass.               *)
@@ -365,7 +374,7 @@ Duplicate(p) ==
 KernelFilter(p) ==
     /\ p.stage = "wire"
     /\ LET e == kmap[p.addr]
-       IN  IF e # NoEntry /\ e.hw - p.seq >= KernelWindow
+       IN  IF e = NoEntry \/ e.hw - p.seq >= KernelWindow
              THEN /\ net' = net \ {p}
                   /\ dropped' = IF p.genuine
                                   THEN dropped \cup {[addr |-> p.addr,
@@ -428,7 +437,10 @@ Release(a) ==
 (* the walk saw the release still has the old session's marked[a], and    *)
 (* its highest_opened is 0 until it is greeted, so it is marked at 0.  The *)
 (* broken shape WalkForgets = FALSE never forgets a released slot; the     *)
-(* broken shape MarkNewSessions = FALSE marks only a nonzero value.        *)
+(* broken shape MarkNewSessions = FALSE marks a reconnect only at a        *)
+(* nonzero value: a slot the walk never saw still takes its zero mark (a   *)
+(* first session with no entry at all would lose every packet as           *)
+(* DROPPED_NO_SESSION, which is GreetBeforeEntry's harm, not this one).    *)
 (***************************************************************************)
 Forgets == IF WalkForgets
              THEN IF WalkForgetsUnmarked
@@ -439,7 +451,7 @@ Forgets == IF WalkForgets
 MarkTaken(b) ==
     IF MarkNewSessions
       THEN opened[b] # marked[b] \/ ~seen[b] \/ markOwed[b]
-      ELSE opened[b] # 0 /\ opened[b] # marked[b]
+      ELSE (opened[b] # 0 /\ opened[b] # marked[b]) \/ ~seen[b]
 
 Marks == {[addr |-> a, hw |-> opened[a], sess |-> session[a]] :
             a \in {b \in Addresses : /\ session[b] # NoSession
@@ -451,12 +463,19 @@ AdmittedNewForgets == {accepted \in SUBSET (Forgets \ pendingForget) :
        \/ Cardinality(pendingForget \cup accepted) = ForgetCapacity}
 
 (* The marks the pending buffer may refuse to queue: a mark of an address  *)
-(* with a kept mark replaces it in place and is never refused.             *)
-QueueRefusable == {m \in Marks : \A k \in pendingMark : k.addr # m.addr}
+(* with a kept mark replaces it in place and is refused only when it is a  *)
+(* zero mark and the forget storage is full after this walk's forgets      *)
+(* (rocketnet_xdp_replay_sink_mark: a new session's zero mark waits for    *)
+(* the forgets, kept key or not).  A refused mark leaves the kept mark of  *)
+(* its address as it was.                                                  *)
+QueueRefusable(accepted) ==
+    {m \in Marks : \/ \A k \in pendingMark : k.addr # m.addr
+                   \/ /\ m.hw = 0
+                      /\ Cardinality(pendingForget \cup accepted) >= ForgetCapacity}
 
 Walk ==
     /\ phase = "run"
-    /\ \E accepted \in AdmittedNewForgets, queueRefused \in SUBSET QueueRefusable :
+    /\ \E accepted \in AdmittedNewForgets : \E queueRefused \in SUBSET QueueRefusable(accepted) :
       LET queued == Marks \ queueRefused
           advanced == IF AdvanceOnQueueRefusal THEN Marks ELSE queued
       IN
@@ -464,7 +483,7 @@ Walk ==
         /\ markFailures' = markFailures + Cardinality(queueRefused)
         /\ pendingForget' = pendingForget \cup accepted
         /\ pendingMark' = queued \cup
-               {m \in pendingMark : /\ \A k \in Marks : k.addr # m.addr
+               {m \in pendingMark : /\ \A k \in queued : k.addr # m.addr
                                     /\ ForgetDropsKeptMark => m.addr \notin accepted}
         /\ pendingMacForget' = accepted
         \* the sink drops an accepted forget's learned reply MAC as it queues
@@ -718,6 +737,13 @@ FreshGenuineNeverDropped ==
                                /\ d.against = d.session)
             => d.seq <= opened[d.addr] - W
 
+(* LiveSessionNeverDroppedForNoEntry: no genuine packet of a live session  *)
+(* is dropped for want of an entry.  Session ids are never reused, so a    *)
+(* drop of a session that has since ended never matches session[a].       *)
+LiveSessionNeverDroppedForNoEntry ==
+    \A d \in dropped :
+        d.against = NoSession => d.session # session[d.addr]
+
 (* NewSessionNeverDroppedByOldMark: no genuine packet of a session is      *)
 (* dropped against a mark taken in an earlier session, whether or not the  *)
 (* earlier session's forget had been queued or accepted.                   *)
@@ -725,9 +751,11 @@ NewSessionNeverDroppedByOldMark ==
     \A d \in dropped : ~(d.against # NoSession /\ d.against < d.session)
 
 (* MarkOwedUntilApplied: a greeted live session's entry is the walk's     *)
-(* last mark for it (an entry of 0 drops nothing, whichever session it     *)
-(* came from), or that mark is still pending, kept across every commit the *)
-(* kernel refused it, so a refused mark is retried until it is applied.    *)
+(* last mark for it (a zero mark drops nothing, whichever session it came  *)
+(* from; hw = 0 here admits NoEntry too, whose drops are                   *)
+(* LiveSessionNeverDroppedForNoEntry's), or that mark is still pending,    *)
+(* kept across every commit the kernel refused it, so a refused mark is    *)
+(* retried until it is applied.                                            *)
 MarkOwedUntilApplied ==
     \A a \in Addresses :
         (greeted[a] /\ phase = "run")

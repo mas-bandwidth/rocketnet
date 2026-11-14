@@ -251,13 +251,20 @@ static inline bool rocketnet_segment_refused_add( struct rocketnet_segment_refus
 #define ROCKETNET_SERVER_GSO_DISABLE_SEGMENT                    (1<<0)
 #define ROCKETNET_SERVER_GSO_DISABLE_GRO                        (1<<1)
 
+// a placement flag, not a probe: cpu 0 is not reserved for the OS, so worker
+// q pins to cpu q and num_os_cpus is not applied (the server's
+// gso_reserve_cpu_0 set to ROCKETNET_CPU_0_NOT_RESERVED)
+
+#define ROCKETNET_SERVER_GSO_CPU_0_NOT_RESERVED                 (1<<2)
+
 // bind_address is read for family and port and written back when the port
 // was zero, the same contract as rocketnet_platform_socket_create. an ipv6
 // bind is dual stack: ipv4 senders arrive as native ipv4 addresses,
 // normalized exactly once at this boundary per the standard's law.
 // num_queues <= 0 selects the default. max_clients is the server's configured
 // client count, which sizes the receive view and each socket's receive
-// buffer request. flags is the DISABLE set above, zero for production.
+// buffer request. flags is the set above, zero for production (and
+// CPU_0_NOT_RESERVED when the server's config asks for it).
 // packet_filter is the server's ROCKETNET_FILTER_VALUE_BYTES filter value,
 // copied: each queue worker runs the server's stateless prefilter on every
 // segment before banking it. NULL drives the transport directly (raw
@@ -267,22 +274,26 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
                                                              const uint8_t * packet_filter = NULL );
 
 // the same, and each queue's worker pins itself to cpu num_os_cpus + queue
-// (rocketnet_gso_pin.h, the XDP transport's rule) and then sets its own
-// SCHED_RR (rocketnet_platform_network_thread_rr_priority) unless the platform
-// priority switch is off or it was left on cpu 0 (its pin and the
-// confinement after it both failed). A num_os_cpus below 1
+// (rocketnet_gso_pin.h, the XDP transport's rule) and then, only when that
+// pin was granted, sets its own SCHED_RR
+// (rocketnet_platform_network_thread_rr_priority) unless the platform
+// priority switch is off. A num_os_cpus below 1
 // is read as 1 (the OS keeps cpu 0 on Linux), which is what
 // rocketnet_server_gso_create passes: the transport driven directly pins from
 // cpu 1 too. The server's num_os_cpus (default 1) reaches this through
-// the builtin driver. A refused pin (cpu outside the set or not online, or
-// affinity refused) is a warning naming the queue and the cpu, is counted in
-// rocketnet_server_gso_pin_refusals, and the worker is never reported pinned;
-// a refused priority is counted in the platform's priority refusals. A
-// refused worker is confined to the online cpus from num_os_cpus up
-// (rocketnet_gso_pin_fallback). A confinement that fails (the system refuses
-// it, or no cpu but cpu 0 is online) is counted too and leaves the worker on
-// a mask that includes cpu 0, with one warning naming the queue and the mask,
-// and without SCHED_RR; the worker carries on.
+// the builtin driver. With ROCKETNET_SERVER_GSO_CPU_0_NOT_RESERVED in flags
+// worker q pins to cpu q instead and num_os_cpus is not read. A refused pin
+// (cpu outside the set or not online, or affinity refused) is a warning
+// naming the queue and the cpu, is counted in
+// rocketnet_server_gso_pin_refusals, the worker is never reported pinned and
+// asks for no real-time scheduling, on whatever cpus it is left; a refused
+// priority is counted in the platform's priority refusals. With cpu 0
+// reserved, a refused worker is confined to the online cpus from num_os_cpus
+// up (rocketnet_gso_pin_fallback). A confinement that fails (the system
+// refuses it, or no cpu but cpu 0 is online) is counted too and leaves the
+// worker on a mask that includes cpu 0, with one warning naming the queue
+// and the mask; the worker carries on. Not reserved, a refused worker stays
+// on the mask it inherited.
 
 struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * context, struct rocketnet_address_t * bind_address, int num_queues, int max_clients, int flags, int num_os_cpus,
                                                                     int * status = NULL, const uint8_t * packet_filter = NULL );
@@ -512,7 +523,12 @@ bool rocketnet_server_gso_test_send_lane( struct rocketnet_server_gso_t * gso, i
 // when refuse_pin, every affinity set when refuse_all; online is the online
 // count the pin reads. The priority switch is on for the call and restored.
 // No thread's affinity or priority changes. Writes whether the queue is left
-// on cpu 0 and the SCHED_RR requests made; false for a bad queue index.
+// on cpu 0 and the SCHED_RR requests made; false for a bad queue index. The
+// cpu the pin took reads back through rocketnet_server_gso_worker_cpu.
+// rocketnet_server_gso_test_set_reserve_cpu_0 sets the fixture's placement
+// as ROCKETNET_SERVER_GSO_CPU_0_NOT_RESERVED (false) or its absence (true)
+// would at create.
+void rocketnet_server_gso_test_set_reserve_cpu_0( struct rocketnet_server_gso_t * gso, bool reserve_cpu_0 );
 bool rocketnet_server_gso_test_place_worker( struct rocketnet_server_gso_t * gso, int queue_index, int num_os_cpus, int online, int cpus, bool without_cpu_zero,
                                              bool refuse_pin, bool refuse_all, bool * left_on_core_zero, int * round_robin_requests );
 // Where queue queue_index's running worker may run, read from the thread

@@ -33,6 +33,22 @@ static inline int rocketnet_gso_pin_cpu( int queue, int num_os_cpus )
     return num_os_cpus + queue;
 }
 
+// The cpu a Linux transport's network thread number worker takes (xdp, gso,
+// io_uring and portable): with cpu 0 reserved for the OS (the default, the
+// transport's *_reserve_cpu_0 field 0 or ROCKETNET_CPU_0_RESERVED) it is
+// num_os_cpus + worker, a num_os_cpus below 1 read as 1; not reserved
+// (ROCKETNET_CPU_0_NOT_RESERVED) it is worker itself, from cpu 0, and
+// num_os_cpus is not applied
+
+static inline int rocketnet_network_thread_cpu( int worker, int num_os_cpus, bool reserve_cpu_0 )
+{
+    if ( !reserve_cpu_0 )
+    {
+        return worker;
+    }
+    return ( num_os_cpus < 1 ? 1 : num_os_cpus ) + worker;
+}
+
 // whether the cpu can be pinned to: in the set and online. The refusal is
 // returned, never clamped: a worker on a cpu the config did not name is a
 // different server

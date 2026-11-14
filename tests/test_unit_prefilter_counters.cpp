@@ -37,6 +37,7 @@ static const int prefilter_kernel_counters[] = {
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_FIRST_FRAGMENT,
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_NO_SOCKET,
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION,
+    ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_NO_SESSION,
 };
 static_assert( sizeof( prefilter_kernel_counters ) / sizeof( prefilter_kernel_counters[0] ) == ROCKETNET_SERVER_XDP_NUM_COUNTERS,
                "every kernel prefilter counter needs a test mapping" );
@@ -91,6 +92,7 @@ static void test_prefilter_counters_are_assigned_not_added()
         1009,
         1103,
         1201,
+        1303,
     };
     rocketnet_counters_apply_prefilter( &counters, first );
 
@@ -120,6 +122,7 @@ static void test_prefilter_counters_are_assigned_not_added()
         2203,
         2309,
         2411,
+        2503,
     };
     rocketnet_counters_apply_prefilter( &counters, second );
 

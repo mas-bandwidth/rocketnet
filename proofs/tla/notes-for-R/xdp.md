@@ -27,7 +27,7 @@ none of the files named below except where it says so.
 - `MCRNXdpReceiveRingPendBinds.cfg` (passing control, the pending term binds)
   and `MCRNXdpReceiveRingBrokenPeekPastPending.cfg` (reversed witness,
   PendingInBounds); new rule switch PeekPendingRoom.
-- `MCRNXdpReplayInFlight.cfg`: passing control, MaxInFlight = 2 (a genuine
+- `MCRNXdpReplayReorder.cfg`: passing control, MaxInFlight = 2 (a genuine
   packet overtaken). New invariant ForgetQueuedAfterWalk, in every passing
   control; MCRNXdpReplayBrokenNoForget.cfg now fails it instead of
   ReleasedSlotForgetsItsReplyMac. New definition ZeroMarkUnqueued in Commit
@@ -86,23 +86,29 @@ prints []. A later merge of the same heads should take the same records.
    :date "2026-11-13" :origin "models review MM174; proofs/tla/RNXdpReceiveRing.tla; sdk/rocketnet_xdp_frame.h")
 ```
 
-MM162 needs no roadmap entry: Rowan ruled it closed by
-fix/v1.1.x/hostile-input-cost db2dd94c1 (in review), whose skip asks the
-sink for a zero mark at the new address and whose RNServerReplaySlots
-carries MarkWhileSkipped and GreetedSlotHasEntry. RNXdpReplay, its README
-and COVERAGE rows 32 and 257 say so on this branch. When db2dd94c1 merges,
-it edits RNXdpReplay.tla, its README, MCRNXdpReplay*.cfg (it adds its own
-MCRNXdpReplayInFlight.cfg) and tests/tla_trace_xdp_replay.cpp: expect
-conflicts with this branch there.
+MM162 needs no roadmap entry: it is closed by
+fix/v1.1.x/hostile-input-cost db2dd94c1, now merged into this branch, whose
+skip asks the sink for a zero mark at the new address and whose
+RNServerReplaySlots carries MarkWhileSkipped and GreetedSlotHasEntry.
 
-## MA001: the COVERAGE.tsv line for R
+## The merge of db2dd94c1 (settled here, by the module's owner)
 
-COVERAGE.tsv row xdp-replay-high-water (row 32) says "the model's integer
-difference becomes modulo 2^32 there, and the model's hw = 0 stands for no
-entry." Replace with: "the model's integer difference becomes modulo 2^32
-there; a zero mark is an entry in both (KernelFilter tests NoEntry, the
-code tests the lookup for NULL), and it drops nothing while the session's
-sequences stay below 2^31, which a session starting at 1 does not leave
-while the zero mark stands (ROCKETNET_DEV_SESSION_SEQUENCE_START can start
-one past it; left out with the wrap)." The same row's "keep-alive, payload,
-disconnect, ack, fragment" is MA004, R's.
+Both sides added MCRNXdpReplayInFlight.cfg. db2dd94c1's (two addresses,
+MaxSeq 2) keeps the name; this branch's reordering control (one address,
+MaxSeq 4, a genuine packet overtaken until it falls behind the raised
+mark, which MaxSeq 2 never reaches) is renamed MCRNXdpReplayReorder.cfg.
+KernelFilter keeps db2dd94c1's no-entry drop and this branch's MA001
+correction: `e = NoEntry \/ e.hw - p.seq >= KernelWindow` (db2dd94c1 had
+`e.hw # 0 /\` before the window test, which treated a zero mark as
+dropping nothing by fiat). QueueRefusable(accepted) is db2dd94c1's. Every
+passing control now checks both LiveSessionNeverDroppedForNoEntry and
+ForgetQueuedAfterWalk. The trace harness keeps this branch's connect
+guard (no all-greeted condition, MM165) with db2dd94c1's comment. The two
+COVERAGE rows xdp-replay-high-water the line merge left are one row; it
+carries MA001's text (a zero mark is an entry in both, drops nothing below
+2^31, the DEV sequence seam left out with the wrap), so the COVERAGE line
+that was R's for MA001 is done in that row. The same row's "keep-alive,
+payload, disconnect, ack, fragment" is MA004, R's.
+
+For the inventory: MCRNXdpReplayReorder.cfg is a new passing control
+(rnxdpreplay); MCRNXdpReplayInFlight.cfg's line is db2dd94c1's.
