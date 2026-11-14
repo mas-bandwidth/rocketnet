@@ -3730,10 +3730,15 @@ static bool rocketnet_rio_lane_processors( void * context, int lanes, rocketnet_
         error = GetLastError();
     }
     int count = 0;
+    int cores = 0;
     // pass 0 takes each core's first logical processor, pass 1 the others
     for ( int pass = 0; ok && pass < 2; ++pass )
     {
         const int first = count;
+        if ( pass == 1 )
+        {
+            cores = count;
+        }
         for ( DWORD offset = 0; offset < bytes; )
         {
             const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX * entry = (const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX *) ( info + offset );
@@ -3798,12 +3803,13 @@ static bool rocketnet_rio_lane_processors( void * context, int lanes, rocketnet_
     {
         out[i] = order[i % count];
     }
-    if ( ok && lanes > count )
+    if ( ok && rocketnet_rio_lanes_share_cores( lanes, cores ) )
     {
-        // a fallback: named at warn, and each lane's processor is readable
-        // after start (rocketnet_server_rio_lane_placement)
-        rocketnet_warn( "rio transport: %d lanes asked for %d logical processors; lanes %d..%d share processors with lanes 0..%d", lanes, count, count,
-                        lanes - 1, lanes - 1 - count );
+        // never a clamp: one line at warn, and each lane's processor is
+        // readable after start (rocketnet_server_rio_lane_placement)
+        rocketnet_warn( "rio transport: %d lanes on %d physical cores (%d logical processors): lanes %d..%d share a core with earlier lanes%s; "
+                        "num_rio_lanes (ROCKETNET_SERVER_NUM_RIO_LANES) sets the lanes",
+                        lanes, cores, count, cores, lanes - 1, lanes > count ? ", and lanes past the logical processors share a processor" : "" );
     }
     if ( !ok )
     {

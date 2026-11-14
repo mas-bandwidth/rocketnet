@@ -72,7 +72,7 @@ static void test_network_threads_defaults_by_value()
     check( ROCKETNET_XDP_DEFAULT_THREADS == 1 );
     check( ROCKETNET_GSO_DEFAULT_WORKERS == 1 );
     check( ROCKETNET_IO_URING_DEFAULT_WORKERS == 2 );
-    check( ROCKETNET_RIO_DEFAULT_LANES == 5 );
+    check( ROCKETNET_RIO_DEFAULT_LANES == 6 );
     check( ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS == 2 );
     check( ROCKETNET_IOCP_DEFAULT_SEND_THREADS == 2 );
     check( ROCKETNET_MSGX_DEFAULT_TRANSMIT_WORKERS == 3 );
@@ -177,6 +177,26 @@ static void test_network_threads_rio_lanes_one_answer()
 }
 
 REGISTER_UNIT_TEST( test_network_threads_rio_lanes_one_answer );
+
+// the RIO warning at create is decided against physical cores, never logical
+// processors (pure, every platform, counts fed in): the default 6 lanes on 4
+// cores of 8 logical processors share cores and warn; as many lanes as cores,
+// or fewer, do not
+static void test_network_threads_rio_lanes_share_cores()
+{
+    check( rocketnet_rio_lanes_share_cores( ROCKETNET_RIO_DEFAULT_LANES, 4 ) == 1 );
+    check( rocketnet_rio_lanes_share_cores( 6, 4 ) == 1 );
+    check( rocketnet_rio_lanes_share_cores( 5, 4 ) == 1 );
+    check( rocketnet_rio_lanes_share_cores( 9, 4 ) == 1 );
+    check( rocketnet_rio_lanes_share_cores( 4, 4 ) == 0 );
+    check( rocketnet_rio_lanes_share_cores( 6, 6 ) == 0 );
+    check( rocketnet_rio_lanes_share_cores( 6, 32 ) == 0 );
+    check( rocketnet_rio_lanes_share_cores( 1, 1 ) == 0 );
+    check( rocketnet_rio_lanes_share_cores( 2, 1 ) == 1 );
+    check( rocketnet_rio_lanes_share_cores( ROCKETNET_RIO_MAX_LANES, ROCKETNET_RIO_MAX_LANES - 1 ) == 1 );
+}
+
+REGISTER_UNIT_TEST( test_network_threads_rio_lanes_share_cores );
 
 // one table row per transport: its own field, its own variable, zero is the
 // default, the range is 1 .. the transport's limit

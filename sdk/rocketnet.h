@@ -2036,9 +2036,10 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_NUM_RIO_LANES sets the Windows rio transport's
     /// network threads: lanes, each a socket, a registered region and an I/O
-    /// worker. Default is 5 (zero selects it). At that count the server held
+    /// worker. Default is 6 (zero selects it). At that count the server held
     /// 1000 players at 60 Hz, about 900,000 messages a second at peak (an
-    /// estimated 9.39 Gb/s), on the machine PERFORMANCE.md records.
+    /// estimated 9.39 Gb/s), with and without the game threads busy, on an
+    /// AWS m7i.16xlarge measured on 2026-11-14.
     /// Range is 1 .. 32. More
     /// than one lane needs a specific local address in bind_ipv4_address or
     /// bind_ipv6_address: the sockets share the port, one per processor, and

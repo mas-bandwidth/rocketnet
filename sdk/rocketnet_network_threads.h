@@ -45,15 +45,17 @@
 #define ROCKETNET_IO_URING_DEFAULT_WORKERS                               2
 #define ROCKETNET_IO_URING_MAX_WORKERS                                  32
 
-// RIO lanes, a socket, a registered region and an I/O worker each. 5:
-// measured from main 3218cf5f6 on 2026-11-13, AWS m7i.16xlarge server and
-// c8gn.8xlarge players in one zone and subnet: all four rows (peak and
-// average, each with and without a game load) pass at 5 lanes and at 6; 4
-// lanes fails the peak row on rate (545k of 900k packets/s). Rows R1-R9 under
-// "# RIO" in the 2026-11-13 re-measure of main. More than one lane needs a
-// specific bind address: with the wildcard and nothing asked, RIO runs one
-// lane and says so.
-#define ROCKETNET_RIO_DEFAULT_LANES                                      5
+// RIO lanes, a socket, a registered region and an I/O worker each. 6:
+// measured on integration/v1.2.0 4468b68c9 on 2026-11-14, AWS m7i.16xlarge
+// server and c8gn.8xlarge players in one zone and subnet, 1000 players at
+// 60 Hz: 6 lanes passed all four rows (peak and average, each with the game
+// threads half busy and idle) 12 of 12, its lane workers 75-79% busy; 5
+// lanes, on its own 5-queue RSS layout, passed 8 of 9, one peak row with
+// the game threads half busy refusing starts, its busiest lane worker 94%
+// busy. 4 lanes fails the peak row on rate (545k of 900k packets/s, main
+// 3218cf5f6, 2026-11-13). More than one lane needs a specific bind address:
+// with the wildcard and nothing asked, RIO runs one lane and says so.
+#define ROCKETNET_RIO_DEFAULT_LANES                                      6
 #define ROCKETNET_RIO_MAX_LANES                                         32
 
 // IOCP completion workers (a socket and completion port each) and send
@@ -143,6 +145,16 @@ static inline int rocketnet_rio_lanes_for( int asked, int several, int test_lane
         return test_lanes;
     }
     return ROCKETNET_RIO_DEFAULT_LANES;
+}
+
+// Whether the RIO transport warns at create that its lanes share physical
+// cores: more lanes than the machine's cores (lane l takes the first logical
+// processor of core l, and a lane past the last core takes a processor on a
+// core an earlier lane and its worker already use). Never a clamp: the lanes
+// still run. Pure; any thread.
+static inline int rocketnet_rio_lanes_share_cores( int lanes, int cores )
+{
+    return lanes > cores ? 1 : 0;
 }
 
 #endif // ROCKETNET_SDK_ROCKETNET_NETWORK_THREADS_H

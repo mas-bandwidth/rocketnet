@@ -50,7 +50,7 @@ the SDK into a game's own build.
 | --- | --- | --- | --- |
 | `portable` | server and client | server: development 30, production 50; client 30 | one UDP socket; two workers on the server, one I/O worker on the client |
 | `iocp` | server and client | server 40; client 10 | server: `num_iocp_completion_workers` completion workers (2 on a bind address, 1 on the wildcard) and `num_iocp_send_threads` send threads (2); client: one I/O worker on its own completion port |
-| `rio` | server | 45 | Winsock Registered I/O: per lane (`num_rio_lanes`: 5 on a bind address, 1 on the wildcard) one socket, one registered memory region and one I/O worker polling its completion queues |
+| `rio` | server | 45 | Winsock Registered I/O: per lane (`num_rio_lanes`: 6 on a bind address, 1 on the wildcard) one socket, one registered memory region and one I/O worker polling its completion queues |
 | `loopback` | server and client | pin only | in-process, no socket; for tests and tools |
 
 A production server's `auto` is **iocp, then rio, then portable**; a
@@ -89,11 +89,13 @@ processor each on the cores after the workers'.
 `rio` loads the Registered I/O function table from Winsock, allocates and
 registers one memory region for every send and receive buffer of each lane,
 and starts one I/O worker for each lane. The lanes are `num_rio_lanes`
-(`ROCKETNET_SERVER_NUM_RIO_LANES`, 1 to 32; default 5 on a specific bind
+(`ROCKETNET_SERVER_NUM_RIO_LANES`, 1 to 32; default 6 on a specific bind
 address, 1 on the wildcard). With more than one lane, lane `l` takes the
 first logical processor of core `l` from core 0 up, in the same order as
-`iocp`, and its worker the other logical processors of that core; more lanes
-than cores share processors, with a warning. All of this happens when the
+`iocp`, and its worker the other logical processors of that core. More lanes
+than physical cores still run: a lane past the last core takes a processor on
+a core an earlier lane already uses, and the server logs one warning at start
+naming the lane count, the core count and `num_rio_lanes`. All of this happens when the
 server starts, and the line it logs then names each lane's region size:
 
 ```text
@@ -106,7 +108,7 @@ TRANSPORTS.md, "The RIO server transport".
 
 ### To reach 10 Gb/s on Windows set a bind address
 
-The defaults are 5 RIO lanes, or 2 IOCP completion workers with 2 send
+The defaults are 6 RIO lanes, or 2 IOCP completion workers with 2 send
 threads: the counts that sent the peak load to 1000 players at 60 Hz, about
 900,000 packets a second (an estimated 9.39 Gb/s, from the packet rate), on
 the machines in [PERFORMANCE.md](PERFORMANCE.md). Measure yours. More than
@@ -123,7 +125,7 @@ Without one, the server binds the wildcard and `rio` and `iocp` run one lane
 or one completion worker, and say so once at warning level:
 
 ```text
-rio transport: running 1 lane because the bind address is the wildcard or IPv4-mapped. The default of 5 lanes needs a specific local address: to reach 10 Gb/s set bind_ipv4_address or bind_ipv6_address (ROCKETNET_SERVER_BIND_IPV4_ADDRESS, ROCKETNET_SERVER_BIND_IPV6_ADDRESS) to the network card's address. To run 1 lane without this warning, set num_rio_lanes (ROCKETNET_SERVER_NUM_RIO_LANES) to 1
+rio transport: running 1 lane because the bind address is the wildcard or IPv4-mapped. The default of 6 lanes needs a specific local address: to reach 10 Gb/s set bind_ipv4_address or bind_ipv6_address (ROCKETNET_SERVER_BIND_IPV4_ADDRESS, ROCKETNET_SERVER_BIND_IPV6_ADDRESS) to the network card's address. To run 1 lane without this warning, set num_rio_lanes (ROCKETNET_SERVER_NUM_RIO_LANES) to 1
 ```
 
 A count above 1 asked for on the wildcard (`num_rio_lanes` or
@@ -136,32 +138,52 @@ Do the same.
 
 ### Worked example: RIO at 10 Gb/s
 
-1. Choose the lane count, or take the default of 5. Lane `l` sits on the first
+1. Choose the lane count, or take the default of 6. Lane `l` sits on the first
    logical processor of core `l` from core 0 and its I/O worker on the other
    processor of that core; on a machine with two logical processors a core,
    lane `l` is on processor `2l` and its worker on `2l + 1`, and the lanes use
    processors 0 to `2 x lanes - 1`. Keep the main thread and game threads
    above them (the measured rows ran the main thread on processor
-   `2 x lanes`).
+   `2 x lanes`). This needs at least as many cores as lanes (6 for the
+   default); with fewer, the lanes past the last core share cores, and the
+   server warns at start.
 2. Set a specific bind address (above):
 
    ```bat
    set ROCKETNET_SERVER_BIND_IPV4_ADDRESS=10.0.0.5
-   set ROCKETNET_SERVER_NUM_RIO_LANES=5
+   set ROCKETNET_SERVER_NUM_RIO_LANES=6
    ```
 
 3. Steer receive to the lanes' processors, one RSS queue a lane, from an
    elevated PowerShell (the adapter name is the one `Get-NetAdapter` lists for
-   that address). For 5 lanes on a machine with two logical processors a core:
+   that address). For 6 lanes on a machine with two logical processors a core:
 
    ```powershell
-   Set-NetAdapterRss -Name "Ethernet 2" -BaseProcessorNumber 0 -MaxProcessorNumber 8 -MaxProcessors 5 -NumberOfReceiveQueues 5
+   Set-NetAdapterRss -Name "Ethernet 2" -BaseProcessorNumber 0 -MaxProcessorNumber 10 -MaxProcessors 6 -NumberOfReceiveQueues 6
    Get-NetAdapterRss -Name "Ethernet 2"
    ```
 
    For `L` lanes: `-BaseProcessorNumber 0 -MaxProcessorNumber (2L - 2)
-   -MaxProcessors L -NumberOfReceiveQueues L`. The 6-lane rows used
-   `-MaxProcessorNumber 10 -MaxProcessors 6 -NumberOfReceiveQueues 6`.
+   -MaxProcessors L -NumberOfReceiveQueues L`.
+
+   Then check where the adapter's queue interrupts land: none may be on a
+   lane I/O worker's processor (`2l + 1`) or the main thread's. Read them as
+   Administrator with `Get-NetAdapterHardwareInfo -Name "Ethernet 2"` and
+   expand `MsixMessageAffinityArray`; each message's `ProcessorAffinityMask`
+   is one processor. Each time the adapter initialises the messages move:
+   `Restart-NetAdapter` initialises it once, and a `Set-NetAdapterRss` that
+   changes values does so several times, so read them after the RSS command
+   and restart the adapter until they are clear (each restart drops its
+   connections for a few seconds). In the bad placement the server shows it
+   from the first seconds of load: `MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY`
+   counts, `RIO_SEND_WAITS` runs in the thousands rather than the tens, and
+   one lane worker's processor sits near 100% with interrupt time on it. This
+   was measured on AWS ENA (m7i.16xlarge, driver 2.11.0.0) on 2026-11-14, 6
+   of 6 observations as predicted: there the 12 messages sit on 12
+   consecutive processors, the queues on messages 1 to `L`, and each
+   initialise moves them on by 12, wrapping at the processor count. It is
+   what was seen on that adapter, not a rule of Windows: other adapters may
+   place them differently.
 4. Start the server. Its log names each lane's processors (socket on `2l`,
    worker on `2l + 1`); check them against the RSS processors read back in
    step 3.
@@ -267,7 +289,7 @@ client object can be reused, is the separate inventory in
 
 A server's socket count depends on its transport: one for `portable`, one for
 each completion worker for `iocp` (2 on a bind address by default, 1 on the
-wildcard; its send threads add none) and one for each lane for `rio` (5 on a
+wildcard; its send threads add none) and one for each lane for `rio` (6 on a
 bind address by default, 1 on the wildcard). That is a few sockets, not one a
 client, so there is no descriptor limit to raise. The limit that matters is
 memory: per-client state grows with `max_clients`, the send staging and receive buffers of each
@@ -293,7 +315,7 @@ the `rocketnet_server_required_memory` of every server, and the
 `rocketnet_client_required_memory` of every client, in the process fits.
 Threads are two for
 `portable`; for `iocp` the completion workers plus the send threads (4 on a
-bind address by default, 3 on the wildcard); for `rio` one a lane (5 on a bind
+bind address by default, 3 on the wildcard); for `rio` one a lane (6 on a bind
 address by default, 1 on the wildcard); each with the executable's default
 stack reserve (1 MiB unless the game links with another). Each RIO lane has
 its own registered region, so more lanes raise the plan: ask for the figure
