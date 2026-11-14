@@ -10529,35 +10529,63 @@ void rocketnet_test_transport_reply_opens_a_later_update()
 
     // Each request and each answer is one datagram over a real socket unless
     // a pin names loopback, and loopback can drop one (tests/kernel_drops.h).
-    // The passes run until every request is answered; when the client has
-    // seen no new answer for the wait while some are missing, the missing
-    // requests are opened again, one per pass like the first sends, only when
-    // the kernel counted that many receive drops. A request opened again
-    // records its new update, so the strictly-later check holds the answer to
-    // the open it actually answers. A datagram the library lost fails at the
-    // gate by name.
+    //
+    // The passes run in rounds. Each round has the budget the case always had,
+    // rounds * 60 passes, and also at most round_seconds of wall clock: the
+    // slowest whole 12000-pass run recorded on a loaded macOS runner took
+    // 9.8 s (PR #1124's CI, 2026-11-13). The 1.5x headroom over that is a
+    // guess. A reply later than its round's budget is missing, as before:
+    // progress does not extend a round.
+    //
+    // At the end of a round with requests missing, the case fails by name
+    // when the client is no longer connected, or when requests the gate
+    // already admitted could not all be opened again. Otherwise it asks the
+    // loss gate, and the missing requests are opened again, one per pass like
+    // the first sends, only when the gate's count covers them. That count is
+    // the kernel's count of lost datagrams since the case began:
+    // - macOS: the datagrams this process's own sockets sent that none of them
+    //   received, plus udps_fullsock. udps_fullsock is machine-wide, so
+    //   another process's drops raise it too.
+    // - Linux: the drops of this process's own sockets.
+    // - Elsewhere: nothing, and the gate refuses every resend.
+    //
+    // The gate admits at most ROCKETNET_LOSS_GATE_RESENDS resends. The case
+    // therefore ends, red by name or green, within (1 + resends) rounds:
+    // 48000 passes and 60 s, inside the runner's 120 s case limit. A request
+    // opened again records its new update, so the strictly-later check holds
+    // the answer against the open it answers.
+
+    const int round_passes = rounds * 60;
+    const double round_seconds = 15.0;
 
     struct rocketnet_loss_gate_t gate;
     rocketnet_loss_gate_begin( &gate, __func__ );
     std::vector<int> reopen;
-    double wait = 5.0;
-    double progress = rocketnet_platform_time();
+    int round_start_update = 1;
+    double round_start_time = rocketnet_platform_time();
 
     for ( int update = 1; observed < rounds; update++ )
     {
-        if ( reopen.empty() && rocketnet_platform_time() - progress >= wait )
+        if ( update - round_start_update >= round_passes || rocketnet_platform_time() - round_start_time >= round_seconds )
         {
-            printf( "%s: %d of %d requests answered after %d updates\n", __func__, observed, sent, update - 1 );
-            rocketnet_check( rocketnet_loss_gate_resend( &gate, sent - observed ) );
-            for ( int request = 1; request <= sent; request++ )
+            const int state = rocketnet_client_transport_state( client );
+            printf( "%s: round %d ended (%s) after %d passes, %.3f s: %d sent, %d answered, %d admitted still unopened, client state %d\n", __func__,
+                    gate.resends + 1, update - round_start_update >= round_passes ? "pass budget" : "time budget", update - round_start_update,
+                    rocketnet_platform_time() - round_start_time, sent, observed, (int) reopen.size(), state );
+            fflush( stdout );
+            rocketnet_check( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+            rocketnet_check( sent == rounds );
+            rocketnet_check( reopen.empty() );
+            rocketnet_check( rocketnet_loss_gate_resend( &gate, rounds - observed ) );
+            for ( int request = 1; request <= rounds; request++ )
             {
                 if ( reply_seen_update.find( request ) == reply_seen_update.end() )
                 {
                     reopen.push_back( request );
                 }
             }
-            wait = ROCKETNET_LOSS_GATE_WAIT;
-            progress = rocketnet_platform_time();
+            round_start_update = update;
+            round_start_time = rocketnet_platform_time();
         }
 
         // the client's update for this pass: swap the receive buffers and take
@@ -10580,7 +10608,6 @@ void rocketnet_test_transport_reply_opens_a_later_update()
                 {
                     reply_seen_update[request] = update;
                     observed++;
-                    progress = rocketnet_platform_time();
                 }
             }
         }
@@ -10601,7 +10628,6 @@ void rocketnet_test_transport_reply_opens_a_later_update()
                 {
                     request_opened_update[request] = update;
                     sent++;
-                    progress = rocketnet_platform_time();
                     rocketnet_client_transport_send_packets( client );
                 }
             }
