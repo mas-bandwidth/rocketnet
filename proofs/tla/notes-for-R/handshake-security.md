@@ -120,3 +120,9 @@ Line numbers at this branch's head.
 - `sdk/rocketnet_server_protocol.cpp:1237-1239` (the -1 from
   rocketnet_client_slots_assign) and `:1972-1976` (the publish): add
   "proofs/tla/ServerConnection.tla HeldSlotNotReused" to each. (MM100)
+- `sdk/rocketnet_server_protocol.h:170-171`: "(TIMED_OUT,
+  CLIENT_DISCONNECTED, SERVER_DISCONNECTED, NONE for the integrity limit)".
+  The integrity-limit teardown passes PROTOCOL_VIOLATION
+  (`rocketnet_server_protocol.cpp:1334-1340`). New text: "(TIMED_OUT,
+  CLIENT_DISCONNECTED, SERVER_DISCONNECTED, PROTOCOL_VIOLATION for the
+  integrity limit)". One commit with STANDARD-ADDENDUM SA013. (MA016 part 2)

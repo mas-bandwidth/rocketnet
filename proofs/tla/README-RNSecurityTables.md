@@ -68,7 +68,9 @@ replaying `tf` is the on-path attacker of STANDARD.md's replay paragraph.
   past the verify; a same-address request after a disconnect finds its own
   live claim, records nothing and releases it from wherever it sits in the
   order list); a mapping swept by `Tick` at its handshake deadline
-  releases nothing, as its claim expires at the same instant. The table's
+  releases its claim (`ReleaseAddrs`), as the code's sweep calls
+  `rocketnet_server_release_mapping_claim`, which retires the slot and pushes it on the
+  free list. The table's
   `ClaimRecord` then reclaims an expired order head directly, matching
   `rocketnet_used_token_history_claim_record`; no intermediate free-list
   push is needed and no slot leaks. Claim deadlines are held at

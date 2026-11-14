@@ -40,11 +40,9 @@ numbers below are at `3ad4179` (origin/main at the time of writing).
 | `smap[a]` | `rocketnet_encryption_map_t`, one `rocketnet_encryption_mapping_t` per address | `live`; `est` (`established`, `client_index != -1`); the keys as `[salt, nonce]` (`connection_salt`, `session_nonce`); `tok` (`token_identifier`, `client_id`); `slot` (`client_index`); `age` (the fixed `handshake_deadline`); `sinceRecv` (`last_receive_time`, the idle clock in either state); `sinceKA` (`last_keep_alive_send_time`); `acked` (`keep_alive_acked`) |
 | `slot[i]` | `rocketnet_client_slots_t` | `used` (`connected[i]`), `addr` (the mapping's address, which the code reaches through `mapping_index[i]`), `tok` (`client_id[i]`), `confirmed` |
 | `bound[t]` | the used-token history | the first address that presented `t`, or none |
-| `admitted` | the admitted-token set | tokens that admitted a connection |
-| `admits[t]` | ghost | how many connections `t` admitted, saturating at 2 |
 | `sDiscPending`, `sDiscPkt` | the disconnect burst | copies still to send after `disconnect_client` |
 
-Capacities: `MaxSlots` is `max_clients`; `MapCap` and `AdmittedCap` are the code's
+Capacities: `MaxSlots` is `max_clients`; `MapCap` is the code's
 `max_clients * 2` (`sdk/rocketnet_server_transport.cpp`).
 
 **The clients, as the server sees them**: one record per client with the ClientConnection
@@ -60,8 +58,8 @@ host vanishes with nothing sent.
 
 | Action | Who | Code |
 |---|---|---|
-| `ServerRecvRequest` | a request arrives | `rocketnet_server_protocol_process_connection_request`: a connected address is silent; a half-open mapping resends its stored challenge whatever the request's salt; no cookie, or one issued to another address, gets a cookie; a token bound elsewhere in the history (or, on a request that would replace this address's half-open mapping, bound to any address, its own included: the second `rocketnet_used_token_history_check`, against the zero address), a connected client id or an admitted token is silent; the history records the binding; no free slot is a denied under fresh keys with no mapping; a full map is silent; else a mapping at a fresh nonce and its challenge |
-| `ServerRecvResponse` | a response opens under the mapping's handshake keys | a half-open mapping's idle clock is refreshed before the check sequence (a connected mapping's is not: the code refreshes only while `client_index` is -1); `rocketnet_server_process_connection_response`: already connected or the client id connected is silent; no slot or the admitted set full of other tokens is a denied, mapping kept; when every free slot was released in this update and is held until it is published, the response is ignored, mapping kept (`rocketnet_client_slots_assign` returns -1); else the token is admitted, a free slot that is not held assigned (`rocketnet_client_slots_assign` in `sdk/rocketnet_client_slots.cpp`, the top of the published part of its LIFO free stack; the model takes the lowest assignable slot) and the first keep-alive sent |
+| `ServerRecvRequest` | a request arrives | `rocketnet_server_protocol_process_connection_request`: a connected address is silent; a half-open mapping resends its stored challenge whatever the request's salt; no cookie, or one issued to another address, gets a cookie; a token bound elsewhere in the history (or, on a request that would replace this address's half-open mapping, bound to any address, its own included: the second `rocketnet_used_token_history_check`, against the zero address), or a connected client id is silent; the history records the binding; no free slot is a denied under fresh keys with no mapping; a full map is silent; else a mapping at a fresh nonce and its challenge |
+| `ServerRecvResponse` | a response opens under the mapping's handshake keys | a half-open mapping's idle clock is refreshed before the check sequence (a connected mapping's is not: the code refreshes only while `client_index` is -1); `rocketnet_server_process_connection_response`: already connected or the client id connected is silent; no slot is a denied, mapping kept; when every free slot was released in this update and is held until it is published, the response is ignored, mapping kept (`rocketnet_client_slots_assign` returns -1); else the history binds the token to the address (`History = "kept"`, an unexpired token), a free slot that is not held assigned (`rocketnet_client_slots_assign` in `sdk/rocketnet_client_slots.cpp`, the top of the published part of its LIFO free stack; the model takes the lowest assignable slot) and the first keep-alive sent |
 | `ServerRecvSession` | a keep-alive or disconnect opens under the session keys | a mapping without a slot ignores it; a keep-alive refreshes the idle clock, confirms the slot and its block sets the keep-alive-acknowledged latch; a disconnect releases the slot and removes the mapping at once |
 | `ServerKeepAlive(i)` | the server's timer | `rocketnet_server_protocol_write_keep_alive_if_due`: paced off the keep-alive's own clock |
 | `ServerAppDisconnect(i)`, `ServerDiscCopy` | the server application | `rocketnet_server_protocol_disconnect_client`: the burst, then the slot released and the mapping removed; a released slot is held (`rocketnet_client_slots_release`) until the update publishes it |
@@ -97,7 +95,7 @@ and are not committed:
 | `NoSlotBeforeResponse` | a live mapping holds a slot only once established: no amount of requests consumes one (S:2712-2715) |
 | `HeldSlotNotReused` | a slot released since the last update is not given to a new connection before the update publishes it, so the end of its old connection is reported first |
 | `MappingsBounded` | the map stays inside its capacity (S:2760-2764, the 2x table; `sdk/rocketnet_server_transport.cpp`) |
-| `OneConnectionPerToken` | the same token never admits two clients (S:2648, S:2788-2791) |
+| `OneConnectionPerToken` | the alias of `OneTokenOneLiveConnection`: one token never holds two live connections (S:2648, S:2788-2791) |
 | `NonceFresh` | no two live mappings share keys (S:32-33, no key or nonce outlives one connection; S:2656-2658) |
 | `StoredChallengeNeverReplaced` | every live mapping holds the one challenge fixed at its creation: the salt and nonce a request sees are the stored ones, never replaced (S:2691-2697) |
 | `TimeoutHonoured`, `DeadlineHonoured`, `HalfOpenIdleHonoured` | the idle timeout and the handshake deadline fire when due, for an established mapping and for a half-open one |
@@ -145,10 +143,10 @@ the establishing keep-alive once at the response and never again. The code's beh
   again. That weakens nothing above (a copy on the wire is finite) and is `RNReplayWindow`'s
   business; F7 (a byte-identical response refreshes an established slot) is in the model as
   the code has it, the refresh before the check sequence.
-- **The tokens** do not expire inside a run, so the admitted set never forgets (the code's
-  entries leave only by expiry); the used-token history binds without eviction, and
+- **Token expiry** is the fixed set `ExpiredTokens` (a token expired at its request is never
+  mapped and never bound); the used-token history binds without eviction, and
   `History = "none"` is the flush the standard documents (S:2782-2786), checked as a separate
-  run so the admitted set is seen to carry the rule alone.
+  run so `OneTokenOneLiveConnection` is seen to hold without the history.
 - **The client id** is a function of the token: `IdOf(t) = t`, or `1` for every token with
   `SameId = TRUE` (one player holding two tokens).
 - **Payloads and the standalone ack** are not here: a payload confirms a slot and refreshes
