@@ -327,6 +327,7 @@ MCRNClientIoDecryptReachTooOld.cfg	MCRNClientIoDecrypt.tla	invariant	NoTooOldRef
 MCRNClientIoDecryptReachCountedFailure.cfg	MCRNClientIoDecrypt.tla	invariant	NoCountedFailure	check	rnclientiodecrypt	required	-
 MCRNClientIoDecryptBrokenNoRetireLive.cfg	MCRNClientIoDecrypt.tla	temporal	RetiredEventuallyZeroed	check	rnclientiodecrypt	required	-
 MCRNClientIoDecryptBrokenSharedWindowLive.cfg	MCRNClientIoDecrypt.tla	temporal	GenuineEventuallyAccepted	check	rnclientiodecrypt	required	-
+MCRNClientIoDecryptBrokenForgedReplay.cfg	MCRNClientIoDecrypt.tla	action	ReplayedForgeryNotCounted	check	rnclientiodecrypt	required	-
 MCRNLiveFleetRun.cfg	MCRNLiveFleetRun.tla	pass	-	check	rnlivefleetrun	required	-
 MCRNLiveFleetRunBrokenXdpLeftAttached.cfg	MCRNLiveFleetRun.tla	invariant	TeardownDetaches	check	rnlivefleetrun	required	-
 MCRNLiveFleetRunBrokenServerOrphaned.cfg	MCRNLiveFleetRun.tla	invariant	XdpNeverOrphaned	check	rnlivefleetrun	required	-

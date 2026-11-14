@@ -89,8 +89,13 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   is refused by the state check before any open, touching neither window
   (`earlyRefused`); a replay record is counted as already received; a
   zero-sequence or wrong-size record is refused and counted; a forged record
-  runs `rocketnet_client_integrity_failure` in its position while the state
-  accepts its type, and at the limit retires the keys and ends the session; a
+  whose type the state accepts gets `update`'s own replay check on `mainWin`
+  first (`rocketnet_client_open_session` checks a record the I/O thread did
+  not open for zero sequence and already received after the state check and
+  before the verdict switch): a
+  sequence `mainWin` holds is counted as already received and nothing more,
+  and any other runs `rocketnet_client_integrity_failure` in its position,
+  which at the limit retires the keys and ends the session; a
   raw record is processed as at BASE (a handshake record outside the handshake
   is wrong state; a session record gets the state check, the size and
   zero-sequence rungs, the replay check on `mainWin` and the AEAD on the main
@@ -166,6 +171,11 @@ the design, and `proofs/tla/COVERAGE.tsv` marks the client-io-decrypt row curren
   also counts the new steps that move records toward `update`: `IoCheck`,
   `IoOpen`, `UpdateConsume` and `PublishKeys`.
 - **`TypeOK`**.
+- **`ReplayedForgeryNotCounted`** (an action property, checked by the full
+  instance and the reduced control): a forged record whose sequence `mainWin`
+  already holds changes neither the integrity count nor the session. Such a
+  record reaches `update`: a payload `update` accepted raw is in `mainWin` and
+  not in `ioWin`, so a forgery with its sequence passes the I/O replay check.
 
 ## Liveness
 
@@ -377,6 +387,36 @@ distinct).
   arrival position. A counter written by both threads is a data race on the
   counter block, and a count that runs ahead of `update`'s processing order.
 
+### `MCRNClientIoDecryptBrokenForgedReplay.cfg`
+
+`ForgedReplayFails = TRUE`: a forged record whose sequence `mainWin` already
+holds is counted as an integrity failure, the rule this model had before it
+followed the code. TLC exits 13: **`Action property ReplayedForgeryNotCounted
+is violated`** (1,456,929 states generated, 559,245 distinct; 30 states).
+
+- **The trace:**
+  1. The challenge, `PublishKeys`, the I/O thread takes its copy; genuine
+     keep-alive 1 opens on the I/O thread (`ioWin` = {1}) and `update`
+     accepts it: connected, `mainWin` = {1}.
+  2. `update` stores the payloads word; the I/O thread has not read it yet
+     (`ioPayloads` FALSE), so genuine payload 2 is passed raw, and a forged
+     keep-alive with sequence 2 follows it into the same buffer: the I/O
+     replay check on `ioWin` = {1} lets it through, the AEAD fails, verdict
+     forged.
+  3. `update` opens payload 2 raw and accepts it: `mainWin` = {2}, `ioWin`
+     still {1}.
+  4. `update` consumes the forged record: the state accepts a keep-alive and
+     the old rule counts an integrity failure; at the limit of one the keys
+     retire and the session ends (`integrity` = 1, `session` = "ended").
+- **Against the code, by hand:** `rocketnet_client_open_session`
+  (`sdk/rocketnet_client_protocol.cpp`), for a verdict other than opened,
+  checks the sequence for zero and then `rocketnet_replay_already_received`
+  on `replay_session` (`mainWin`) before the verdict switch; sequence 2 is
+  there since step 3, so the record is counted `already_received` and the
+  function returns before `rocketnet_client_integrity_failure`. The code keeps
+  the session the old rule ended. With the rule, step 4 changes neither the
+  integrity count nor the session.
+
 ### `MCRNClientIoDecryptBrokenPayloadGate.cfg`
 
 `NoPayloadGate = TRUE`: `IoCheck` does not read `payloadsOpen`, so a payload
@@ -554,8 +594,9 @@ states generated, 4,286 distinct).
 
 ## Runs
 
-The thirteen rows are in `proofs/tla/RUNS.tsv` from `tlacheck run` on a Linux bench
+The fourteen rows are in `proofs/tla/RUNS.tsv` from `tlacheck run` on a Linux bench
 (TLC 2.19, the pinned JAR): the reduced control passes with exit 0, the full
 instance is the declared bench-debt timeout (exit 124), each reversed safety
-witness and each reach witness exits 12 naming the declared invariant, and
-each liveness witness exits 13.
+witness and each reach witness exits 12 naming the declared invariant, each
+liveness witness exits 13, and the forged-replay witness exits 13 naming its
+action property.

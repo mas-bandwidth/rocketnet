@@ -24,17 +24,27 @@
 # Nightly debt: timeout debt that finishes in minutes (over the pinned
 # tlacheck's 110 s record cap, so its bounded record stays FAIL/124) is listed
 # in proofs/tla/NIGHTLY-DEBT.tsv and runs in every slice, first, each under
-# `timeout` at its budget_s (at least twice its slowest measurement; 900 s for
-# the three listed, measured 292 to 380 s), held to the completed result and
-# counts its row records. That adds about 1010 s of measured time a night,
-# about 505 s at two at once (they ran in 167 to 178 s each on a 4-CPU bench
-# slot). tools/check_tla_records.py checks the file on every commit.
+# `timeout` at its budget_s (at least twice its slowest measurement, taken in
+# a slice at the job's own parallelism: nproc/2 cases on 16 CPUs on aws-mut-3,
+# the CI runner's size), held to the completed result and counts its row
+# records. Measured 2026-11-14 for v1.1.58's models, alone / in the slice:
+# ReplayWindowMid 335 / 400 s (budget 900), RNClientIoDecrypt 484 / 540 s
+# (1260), ClientConnectionLCrash 1093 / 1156 and 1191 s (2390; the
+# measured_s column is the alone time, as for the others; its state space grew
+# fivefold with W2-51 and W2-113, past the old 900). The slowest night on the
+# runner so far (run 43542939752, deep CI beside it) ran ReplayWindowMid in
+# 678 s, 1.7 times its slice time; each budget keeps that factor. That adds
+# about 1900 s of measured time a night, run beside the slice's other cases.
+# tools/check_tla_records.py checks the file on every commit.
 #
 # Budget margin: a PASS record over 60% of its 110 s budget (66 s) is refused
 # on every commit (tools/check_tla_records.py) unless proofs/tla/BUDGETS.tsv
 # declares a budget of at least twice its seconds for it, or it becomes
 # nightly debt. A declared case runs in its own slice under `timeout` at that
-# budget_s and is held to its record like any other.
+# budget_s and is held to its record like any other. Its slowest_s is taken in
+# a slice as above where one was measured: MCRNXdpReplayReconnect ran 96 s
+# alone and 154 s in the slice on aws-mut-3, and stopped at its old 200 s
+# (twice its 97.6 s record) on the slowest night; 310 s is twice 154.
 #
 # Neither job runs any other timeout-debt case: those have taken up to 87
 # hours each (run 41337755290). They run in tlc-debt.yml, a weekly watch that

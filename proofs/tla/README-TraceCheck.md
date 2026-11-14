@@ -222,13 +222,20 @@ predicates for the edges (below), so a walk that never gets there is red.
 - **The clean trace:** TLC rejects it; times out (`--tlc-timeout`, 100 s) or errs on
   it; or found fewer distinct states than the trace has records, so it never reached
   the end. The clean walk reports the planted effect.
-- **The plant:** the effect never happened; the planted trace is the clean one; the
-  first record it changed is not one the walk reports in `PLANT-AT`; TLC accepts it;
-  or TLC rejects it anywhere but at that first changed record. The walk is the same in
-  both builds, so the two traces agree until the planted code acts, and the rejection
-  must land exactly where it does: the plant is the cause.
+- **The plant:** the effect happened and the planted trace is the clean one; the
+  planted trace differs and the effect never happened; the first record it changed is
+  not one the walk reports in `PLANT-AT`; TLC accepts it; or TLC rejects it anywhere
+  but at that first changed record. The walk is the same in both builds, so the two
+  traces agree until the planted code acts, and the rejection must land exactly where
+  it does: the plant is the cause. A random walk can miss the planted line on a seed
+  (on seeds 21352-21415, 2 of 64 for receive-handoff-xdp, xdp-reply-macs and
+  msgxsendruns, 1 of 64 for receive and fillphase): the effect never happened and the
+  planted trace is the clean one byte for byte, so that seed's clean trace is checked
+  alone and its log says `PLANT-UNFIRED`.
 - **Across the seeds:** an action of `Next` that is not `untraced`, or a `reach`
-  predicate, that no accepted clean trace took or reached.
+  predicate, that no accepted clean trace took or reached; or a layer none of whose
+  seeds in the run fired its plant and met every check above. A shard that holds one
+  seed of a layer therefore still needs that seed's plant to fire.
 
 `tools/planted_violations.tsv` plants these on the example layer, each red with its
 reason. The sdk-include rules are planted on the example with its `self_contained`
@@ -267,7 +274,13 @@ hand-written traces:
   FAILED reruns=N` after the failures). `reruns` counts the plant TLC runs past each
   seed's first over the whole run (a plant whose violation TLC reports without
   printing a behaviour is run again, up to five times; each seed's log says
-  `PLANT-ATTEMPTS` when it was).
+  `PLANT-ATTEMPTS` when it was). When all five print none, the last matched record
+  is read from TLC's own counts, only when its state graph is one chain (states
+  generated, distinct states and depth equal, outdegree exactly 1, nothing left on
+  the queue): the states are `ti` = 1 .. k and the rejecting state, so k is the
+  distinct count less one; the log says `PLANT-TI-FROM-COUNTS`. Early rejections miss
+  the behaviour most: msgxsendruns seeds 21360 and 21377 (rejected at records 5 and
+  8) printed none in 5 of 5 runs on aws-mut-3 and on the CI runner.
 - **Shards are (layer, seed) pairs:** `--shard I/10` runs row I of `SHARDS` in
   `tools/tla_trace_check.py`, where an entry is `layer:seed` or a whole `layer`. A heavy
   layer (msgx, xdp-reply-macs) is spread by seed; its action coverage and reach
