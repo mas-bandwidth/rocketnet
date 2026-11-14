@@ -14,8 +14,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-// A check state is about 70 MB (the per-session ledgers). Each case holds its
-// own on the heap for the length of the case: held as static locals, the 23
+// A check state is about 70 MB (the per-session ledgers). Every case holds its
+// own on the heap for the length of the case: held as static locals, the
 // states made 1.7 GB of the unit binary's image, and the MSVC Debug image went
 // past what Windows will load (CreateProcessW error 193, "not a valid Win32
 // application"). rocketnet_dst_check_init clears the state, as before.
@@ -586,11 +586,6 @@ static void test_dst_check_sequenced_later_type4_raises_the_requirement()
 }
 REGISTER_UNIT_TEST( test_dst_check_sequenced_later_type4_raises_the_requirement );
 
-// One state for the cases below: each starts it with
-// rocketnet_dst_check_init, and a state is tens of megabytes, so they share
-// one rather than add one each to the test binary.
-static struct rocketnet_dst_check_state_t dst_check_state;
-
 // The end-of-run row by step: a reliable send is owed once it is
 // ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS old, however few sequences follow it
 // (a stream that stalls before the end leaves its last sends owed), and is
@@ -616,7 +611,7 @@ static void dst_check_stalled_stream( struct rocketnet_dst_check_state_t * st, u
 
 static void test_dst_check_reliable_owed_by_step_fails()
 {
-    struct rocketnet_dst_check_state_t & st = dst_check_state;
+    DST_CHECK_STATE( st );
     dst_check_stalled_stream( &st, ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS, 0 );
     rocketnet_unit_check( st.failed == 1 );
     rocketnet_unit_check( strcmp( st.check, "liveness_delivered" ) == 0 );
@@ -625,7 +620,7 @@ REGISTER_UNIT_TEST( test_dst_check_reliable_owed_by_step_fails );
 
 static void test_dst_check_reliable_in_flight_slack_passes()
 {
-    struct rocketnet_dst_check_state_t & st = dst_check_state;
+    DST_CHECK_STATE( st );
     dst_check_stalled_stream( &st, ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS - 1, 0 );
     rocketnet_unit_check( st.failed == 0 );
 
@@ -637,13 +632,45 @@ static void test_dst_check_reliable_in_flight_slack_passes()
 }
 REGISTER_UNIT_TEST( test_dst_check_reliable_in_flight_slack_passes );
 
+// A stream that starts late: all of its sends are younger than the in-flight
+// slack at the end, so the step rule owes none of them, and the count rule
+// (every sequence but the newest 20) owes none while it has sent 20 or
+// fewer. With 21 sends the count rule owes the oldest, however young.
+
+static void dst_check_young_stream( struct rocketnet_dst_check_state_t * st, uint32_t last )
+{
+    rocketnet_dst_check_init( st, 1, 1000 );
+    for ( uint32_t seq = 0; seq <= last; seq++ )
+    {
+        rec_sent( st, 0, 0, 2, seq );
+    }
+    st->step = 1000 + ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS - 1;
+    rocketnet_unit_check( st->failed == 0 );
+    rec_end( st, 0 );
+}
+
+static void test_dst_check_reliable_young_stream_owes_nothing()
+{
+    DST_CHECK_STATE( st );
+    dst_check_young_stream( &st, 0 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    dst_check_young_stream( &st, 19 );
+    rocketnet_unit_check( st.failed == 0 );
+
+    dst_check_young_stream( &st, 20 );
+    rocketnet_unit_check( st.failed == 1 );
+    rocketnet_unit_check( strcmp( st.check, "liveness_delivered" ) == 0 );
+}
+REGISTER_UNIT_TEST( test_dst_check_reliable_young_stream_owes_nothing );
+
 // no_unscheduled_end: a session's end is explained only by the script that
 // ended that same generation (explained), and the first connect (generation
 // 0) ends nothing.
 
 static void test_dst_check_unscheduled_end_fails()
 {
-    struct rocketnet_dst_check_state_t & st = dst_check_state;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 100 );
     rocketnet_dst_check_session_end( &st, 0, 0, 0, "first connect", 0 );
     rocketnet_dst_check_session_end( &st, 0, 3, 3, "drawn churn", 1 );
@@ -660,7 +687,7 @@ REGISTER_UNIT_TEST( test_dst_check_unscheduled_end_fails );
 
 static void test_dst_check_refusals_agree_and_floor()
 {
-    struct rocketnet_dst_check_state_t & st = dst_check_state;
+    DST_CHECK_STATE( st );
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
     counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] = 5;
@@ -692,7 +719,7 @@ REGISTER_UNIT_TEST( test_dst_check_refusals_agree_and_floor );
 
 static void test_dst_check_probe_paced_bound()
 {
-    struct rocketnet_dst_check_state_t & st = dst_check_state;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 100 );
     rocketnet_dst_check_probe_paced( &st, 0, 0, 5, 0.25, 0.0, 0 );
     rocketnet_dst_check_probe_paced( &st, 0, 0, 8, 0.25, 0.0, 3 );
@@ -716,7 +743,7 @@ REGISTER_UNIT_TEST( test_dst_check_probe_paced_bound );
 
 static void test_dst_check_bright_and_outage_end()
 {
-    struct rocketnet_dst_check_state_t & st = dst_check_state;
+    DST_CHECK_STATE( st );
     rocketnet_dst_check_init( &st, 1, 100 );
     rocketnet_dst_check_bright_unaffected( &st, 0, 0, 10, 35, 25 );
     rocketnet_dst_check_outage_end( &st, 0, 1, -7, -7, 5.0, 5.0 );

@@ -185,10 +185,12 @@ static void test_dst_duplicate_server_ack_explained()
 
 // Every fault schedule (docs/DST.md, "Fault schedules") replays: the same
 // seed gives the same trace twice, and the schedule's trace differs from the
-// run with no schedule, which stays the run it was. Each schedule but the
-// seq-wrap pair fires in this run; those two need the process's
-// ROCKETNET_DEV_SESSION_SEQUENCE_START, which ./bin/dst sets and the unit
-// suite does not, so here they fire only when the seam holds their start.
+// run with no schedule, which stays the run it was (run again after them, it
+// gives the same trace). Each schedule but the seq-wrap pair fires in this
+// run; those two need the process's ROCKETNET_DEV_SESSION_SEQUENCE_START,
+// which ./bin/dst sets and the unit runner clears before every case, so here
+// they must not fire. Their firing is judged by ./bin/dst, which fails a
+// schedule's seed range that fired on no seed.
 
 static void test_dst_schedule_same_seed_same_trace()
 {
@@ -219,11 +221,21 @@ static void test_dst_schedule_same_seed_same_trace()
             rocketnet_unit_check( a.schedule_fired > 0 );
             rocketnet_unit_check( a.trace_hash != plain.trace_hash );
         }
-        else if ( rocketnet_dev_session_sequence_start() != start )
+        else
         {
+            rocketnet_unit_check( rocketnet_dev_session_sequence_start() == 1 );
             rocketnet_unit_check( a.schedule_fired == 0 );
         }
     }
+
+    // the run with no schedule stays the run it was: the schedules above
+    // leave nothing behind that moves it
+    options.schedule = ROCKETNET_DST_SCHEDULE_NONE;
+    struct rocketnet_dst_result_t again;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &again ) );
+    rocketnet_unit_check( again.passed == plain.passed );
+    rocketnet_unit_check( again.schedule_fired == 0 );
+    rocketnet_unit_check( again.trace_hash == plain.trace_hash );
 }
 
 // clock-back steps one endpoint's clock back by a drawn 10 ms .. 5 s: the
@@ -493,6 +505,24 @@ static void test_dst_witness_outage_bright_fails()
     rocketnet_unit_check( strcmp( planted.check, "bright_unaffected" ) == 0 );
 }
 
+// The outage run's control (the same seed with no client dark) is judged by
+// every check too: CONTROL_FAIL forces a failure in the control alone, and the
+// seed must fail naming it, never pass on the clean outage run that follows.
+
+static void test_dst_witness_outage_control_fails()
+{
+    struct rocketnet_dst_options_t options = dst_outage_options( ROCKETNET_DST_SCHEDULE_OUTAGE );
+    options.witness = ROCKETNET_DST_WITNESS_CONTROL_FAIL;
+
+    struct rocketnet_dst_result_t planted;
+    rocketnet_unit_check( rocketnet_dst_run_seed_with_options( DST_OUTAGE_SEED, &options, &planted ) );
+    rocketnet_unit_check( !planted.passed );
+    rocketnet_unit_check( strcmp( planted.check, "forced" ) == 0 );
+    rocketnet_unit_check( strstr( planted.detail, "outage control run" ) != NULL );
+}
+
+REGISTER_UNIT_TEST( test_dst_witness_outage_control_fails );
+UNIT_TEST_SKIPPED_UNLESS( test_dst_witness_outage_control_fails, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_outage_holds_dark_sessions );
 UNIT_TEST_SKIPPED_UNLESS( test_dst_outage_holds_dark_sessions, ROCKETNET_MAX_CHANNELS >= 16 ); // runs at 16 channels, not at 8
 REGISTER_UNIT_TEST( test_dst_outage_past_times_out_both_ends );
