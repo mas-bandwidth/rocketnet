@@ -1165,7 +1165,8 @@ static void rocketnet_server_transport_return_fill_tails( struct rocketnet_serve
 
 
 
-// The io's send queue count: a transport that is not staged, or without all
+// The io's send queue count: a transport with no operations (a unit test
+// swaps a NULL table in to read the instance), that is not staged, or without all
 // three queue operations, is one queue. Read when the io opens, when a unit
 // test swaps one in, and at every opening of the budget, so every judgement
 // of room from the first update on (the sweep, the drains, a stop before any
@@ -1173,7 +1174,7 @@ static void rocketnet_server_transport_return_fill_tails( struct rocketnet_serve
 static int rocketnet_server_transport_io_send_queues( const struct rocketnet_server_transport_t * server_transport )
 {
     const struct rocketnet_server_transport_io_operations_t * operations = server_transport->io.operations;
-    if ( !rocketnet_server_transport_staged( server_transport ) || !operations || !operations->send_queues ||
+    if ( !operations || !rocketnet_server_transport_staged( server_transport ) || !operations->send_queues ||
          !operations->send_queue_of || !operations->send_room_queue )
     {
         return 1;
