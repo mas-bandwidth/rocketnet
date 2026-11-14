@@ -13,8 +13,9 @@ platform has. Linux production servers have xdp (privileged), gso (SO_REUSEPORT 
 sendmmsg/recvmmsg + UDP GSO/GRO, non-root) and io_uring; macOS production
 servers have msgx; Windows production servers have iocp and rio. Portable
 servers and clients are also available on every platform; the portable server
-is a fallback, not a production server transport. Production server
-auto selection ranks portable after the native transports. Loopback is on every platform and is selected
+is a fallback, not a production server transport. Server auto selection
+ranks portable after the native transports in development and production
+builds alike (Windows: iocp, rio, then portable). Loopback is on every platform and is selected
 only by name. The transport walks an ordered candidate
 list when client connect or server start activates I/O. Public create parses
 and resolves the configured list before that activation. The list rides the config's transport field or the
@@ -22,7 +23,7 @@ per-endpoint `ROCKETNET_SERVER_TRANSPORT` and `ROCKETNET_CLIENT_TRANSPORT`
 environment variables (precedence: default < struct < env):
 
     ./bin/functional                                # auto: the platform's recommended transport order
-                                                #   (production linux: xdp,gso,io_uring,portable — falls on refusal)
+                                                #   (linux, either build: xdp,gso,io_uring,portable — falls on refusal)
     ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional
                                                 #   portable server is available in both build modes
                                                 # a one-element list is a pin: that transport

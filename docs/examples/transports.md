@@ -65,8 +65,9 @@ The environment overrides the config struct at create, with precedence
 default < struct < environment:
 
 `portable` is available to clients and servers in development and production
-builds on every platform. Production server auto selection prefers native
-transports, with portable as the final fallback.
+builds on every platform. Server auto selection prefers native transports,
+with portable as the final fallback, in development and production builds
+alike.
 
 ```sh
 ROCKETNET_SERVER_TRANSPORT=portable ./my_server
