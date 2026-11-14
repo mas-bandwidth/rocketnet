@@ -22,11 +22,14 @@ measurement records, not a guarantee for another machine or workload.
 | GSO | Linux X710 pair, one worker, receive-handoff fix | All four workloads passed in three repetitions | Reported receive wait mean 5.9–12.3 ms, p99 13.8–19.3 ms; this does not establish the same capacity on the AWS rig |
 | GSO | Same AWS pair, one worker | Loaded peak fails all six samples: 842.0–871.6k packets/s, 56.67–58.57 frames/s. Average with game work passes two of three; other workloads pass three of three. Zero refused starts and zero lost messages in all samples | Receive delay is fixed on main; the one-worker loaded-peak limit is rate/frame time. Two workers pass loaded peak three of three; other two-worker workloads were not measured |
 | RIO | Windows m7i.16xlarge server, configured RSS, six lanes, receive-handoff fix | All four workloads pass in three repetitions with zero refused starts and zero lost messages | Receive wait mean 5.5–11.1 ms; loaded-peak late_1ms 1.05–2.72%, other workloads 0.02–0.34%. Five-lane default remains placement-sensitive |
+| RIO | Windows pair 2, m7i.16xlarge server / c7gn.8xlarge players, specific bind, default five lanes | Peak without game work: 900.3k packets/s and zero refused starts in three of three; one run loses two client-to-server packets. Half game work: zero refused in two of three; the other records 75,322 refused starts at 897.7k packets/s | Input delay mean 6.8–12.2 ms, p99 20.5–52.2 ms across these six rows. See the individual P13 results below; this is a different rig from the six-lane record |
 | IOCP | Windows m7i.16xlarge, two completion workers and two send threads, receive-handoff fix | Peak is MARGINAL: 898.4–900.3k packets/s, with loaded-peak 18,663–56,479 and unloaded-peak 1,558–8,999 refused starts per run. Both average workloads pass | Receive wait mean 4.6–10.6 ms; late_1ms 0.16–0.48%. Peak refusal limit remains |
 | msgx | Mac Studio M3 Ultra, Aquantia 10GBASE-T, three transmit workers | Average reaches about 480k packets/s without refused starts. No measured peak row reaches 900k | Address topology and interface contention affect throughput; the macOS timing column below is state-to-send, not receive delay |
 
-**RIO is the Windows choice for this peak workload**, with the measured RSS
-and worker placement; IOCP is the fallback. IOCP's remaining peak refusals make its near-target
+**Explicitly selected RIO with a specific bind address is the Windows choice
+for this peak workload**, with verified RSS and worker placement. Production
+`auto` still tries `iocp,rio,portable`; IOCP is the default and fallback.
+IOCP's remaining peak refusals make its near-target
 packet rate insufficient for the same qualification. Configure and verify
 placement using [Windows](WINDOWS.md); a default wildcard bind is not a
 substitute for the measured setup. Windows measurements used Windows Server
@@ -51,6 +54,120 @@ its final measurement on both throughput and receive delay.
 These figures also do not establish the less-than-100-microsecond main-call
 target at 1000 players. A mean of per-second p99 readings is not the whole
 run's p99. Keep whole-run percentiles, per-second samples and maxima distinct.
+
+## Windows bind, fallback and adapter measurements
+
+The P13 rows use Windows pair 2: an AWS m7i.16xlarge server with 64 logical
+processors and adapter `Ethernet 2`, and **c7gn.8xlarge Linux players** with
+32 vCPUs and device `ens5`, in the same subnet and cluster placement group in
+us-east-1c. These players differ from the c8gn.8xlarge players in the linked
+Windows receive-handoff record. Do not combine the two rigs' repetitions.
+
+The measurement owner reports MSVC Release on the server and GCC Release on
+the players, using tree `cfd75ce15` with the input-stamp harness. The tool
+links `rocketnet_dev`; these are not production-library measurements.
+Each row explicitly selects its transport list, so it does not measure or
+change the production `auto` preference. Runs were recorded on November 14,
+2026, from 00:23 to 00:39 UTC; the raw receipts are not published here.
+
+Each run has 1000 players, 32 client threads and a 60-second duration.
+Throughput, frames, refusals, overruns and main work below use the server
+ticks in the **25–55 second window**. Loss and reconciliation are separate
+reported run outcomes. “Harness verdict” preserves the owner's result; it
+does not mean zero refusals, zero loss, or qualification under another
+record's pass rule.
+
+| Row | Bind / granted transport | Game work | Packets/s | Frames/s | Refused starts | Overruns | Main p99 / max (ms) | Loss server-to-client / client-to-server | Harness verdict |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- | --- |
+| P13-A1 | specific / RIO, five lanes | none | 900.3k | 60.67 | 0 | 0 | 0.566 / 0.680 | 0 / 0 | PASS |
+| P13-A2 | specific / RIO, five lanes | none | 900.3k | 60.67 | 0 | 0 | 0.568 / 0.778 | 0 / 0 | PASS |
+| P13-A3 | specific / RIO, five lanes | none | 900.3k | 60.67 | 0 | 0 | 0.585 / 1.023 | 0 / 2 | FAIL: unexplained client-to-server chain loss |
+| P13-G1 | specific / RIO, five lanes | half | 900.1k | 60.57 | 0 | 1 | 0.938 / 1.126 | 0 / 0 | PASS |
+| P13-G2 | specific / RIO, five lanes | half | 897.7k | 60.63 | 75,322 | 2 | 0.878 / 1.291 | 0 / 0 | PASS, with the displayed refusals |
+| P13-G3 | specific / RIO, five lanes | half | 900.3k | 60.63 | 0 | 0 | 0.907 / 1.033 | 0 / 0 | PASS |
+| P13-F1 | specific / IOCP after RIO budget refusal | none | 899.9k | 60.53 | 14,840 | 0 | 0.783 / 1.336 | 0 / 0 | PASS, with the displayed refusals |
+| P13-N1 | wildcard / RIO, one lane | none | 241.4k | 57.60 | 18,614,564 | 10 | 1.815 / 2.197 | 0 / 123,093 | FAIL |
+| P13-N2 | wildcard / IOCP, one socket | none | 899.5k | 60.53 | 25,097 | 0 | 0.828 / 1.645 | 0 / 0 | PASS, with the displayed refusals |
+
+P13-G2's refused starts arrived in bursts. The sample-window count is
+75,322; the final run counter is 83,508, including a burst after the sample
+window. Neither value is a per-second rate. Five of the six specifically
+bound RIO rows have zero refused starts, but only two of the three unloaded
+rows have clean reconciliation. Wildcard RIO does not sustain peak here.
+IOCP's wildcard and budget-fallback rows approach the offered rate with
+nonzero refusals; they are not clean zero-refusal qualifications.
+
+Input delay is measured from the player's input stamp to the server update
+that reads it. The owner supplies these values in milliseconds at 60 Hz,
+converted from update units; this is distinct from main-thread work and the
+`late_1ms` metric in the other record.
+
+| Row | Delay mean / p50 / p99 / max (ms at 60 Hz) |
+| --- | --- |
+| P13-A1 | 6.8 / 5.2 / 22.8 / 44.5 |
+| P13-A2 | 7.8 / 5.8 / 20.5 / 47.4 |
+| P13-A3 | 8.4 / 7.2 / 22.5 / 40.0 |
+| P13-G1 | 12.0 / 13.7 / 33.3 / 62.2 |
+| P13-G2 | 12.2 / 9.5 / 52.2 / 106.1 |
+| P13-G3 | 9.6 / 6.8 / 28.3 / 46.5 |
+| P13-F1 | 10.3 / 11.5 / 16.5 / 37.7 |
+| P13-N1 | 44.3 / 43.3 / 83.3 / 112.4 |
+| P13-N2 | 10.1 / 10.0 / 16.7 / 35.6 |
+
+### P13 settings and selection checks
+
+All rows read back this RSS setting on the server:
+
+```powershell
+Set-NetAdapterRss -Name 'Ethernet 2' -BaseProcessorNumber 0 -MaxProcessorNumber 8 -MaxProcessors 5 -NumberOfReceiveQueues 5
+```
+
+The `scripts/harden-pair` recipe uses `--row space --seconds 60 --clients
+1000 --threads 32`, `--client-dev ens5`, and client arguments `--input-bytes
+256 --input-stamp 40001`. Server arguments are `--frame-shape space
+--space-send wide --space-update split --space-net task --space-split top
+--load peak --input-stamp 40001`, plus the following settings:
+
+| Granted transport | Game threads / first CPU | Game-work arguments |
+| --- | --- | --- |
+| RIO | `--game-threads 54 --pin-first-cpu 10` | none: `--game-load 0 --world-ms 0`; half: `--game-load 0.5 --world-ms 10` |
+| IOCP | `--game-threads 56 --pin-first-cpu 8` | none: `--game-load 0 --world-ms 0` |
+
+Set `ROCKETNET_SERVER_BIND_IPV4_ADDRESS` to the server's private address for
+the bound rows; omit it for the wildcard rows. RIO rows and the fallback row
+use `ROCKETNET_SERVER_TRANSPORT=rio,iocp,portable`; the wildcard IOCP row uses
+`iocp`. The harness's `--transport` names the transport required to be
+granted, including `iocp` for the fallback row. Read the startup grant.
+
+In P13-F1, `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES=700000000` rejects RIO's
+904,379,943-byte allocator plan; IOCP's 534,051,687-byte plan fits. The
+resulting IOCP layout has two completion workers, two send threads and eight
+send lanes of 4096 slots. This demonstrates fallback on a valid budget
+refusal, not recovery from an invalid configuration. Wildcard RIO logs one
+lane, one worker and one socket, with a 491,349,431-byte plan.
+
+### Adapter observations
+
+These supplied adapter observations describe measured configurations; they
+are not additional repetitions of P13 and do not establish causation between
+interrupt placement and a throughput shortfall. Read back both RSS settings
+and actual per-processor activity, as described in [Windows](WINDOWS.md).
+
+| Configuration or operation | Reported observation |
+| --- | --- |
+| Five-lane RIO at about 900k packets/s, RSS on processors 0, 2, 4, 6, 8 | Socket processors spend 38–47% in DPCs, about 40k–47k DPCs/s each. Worker processors 1, 3, 5, 7, 9 spend 0.0% in DPCs and at most 0.7% in interrupts |
+| Six-lane RIO, RSS range 0–10, six processors and receive queues, measured interrupt overlap | Worker processors 7 and 9 spend 21.6–23.1% in interrupts, about 48k–50k interrupts/s each; processor 11 spends about 15%. Three runs record about 685k–740k packets/s and 165k–225k refused starts/s from ramp to finish. Per-processor counters were captured in two of the three |
+| Same six-lane shortfall configuration | About 9,900 `RIO_SEND_WAITS` by 80 seconds and 59–79% lane-worker thread time. The interrupt and throughput observations occur together; this does not identify the cause |
+| Normal-priority busy loops on all RIO worker processors for three seconds | No measured change in the supplied rows. The implementation requests `THREAD_PRIORITY_TIME_CRITICAL`; the requested priority alone does not establish what the OS granted |
+| Forced three-second stall using realtime-class busy loops on every RIO worker processor | The stall costs those three seconds and about one further second; reported recovery reaches 900k packets/s with zero refused starts. This is an observation, not a recovery-time guarantee |
+| IOCP development override `ROCKETNET_TEST_IOCP_LAYOUT=2,4/3,5`, RSS on processors 2 and 4 | 54–57% DPC time on those processors. Two supplied runs with this layout report 738 and 7,405 refused starts; the layout is not a zero-refusal result or a production override |
+| Applying `Set-NetAdapterRss` | The adapter reset interrupts its SSH connection for about 15 seconds in the supplied observations; do not treat that duration as a bound |
+
+The six-lane shortfall rows and the six-lane passing receive-handoff rows in
+the qualification table have different measurement conditions. Lane count
+alone does not determine capacity. These observations support verifying the
+actual worker/interrupt placement rather than assuming an RSS request proves
+it. They do not change the production transport order.
 
 ## Workload and measurement
 
@@ -203,7 +320,7 @@ one latency figure.
 
 ## Evidence scope
 
-The current summaries were supplied on November 13, 2026. The AWS
+The current summaries were supplied on November 13–14, 2026. The AWS
 record identifies main `e0f1a0fae` with the measurement harness merged as
 `74e7be243`, identical on server and clients;
 the Windows receive-fix series identifies `8c58f1946` plus its harness. The
