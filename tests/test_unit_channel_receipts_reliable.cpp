@@ -236,7 +236,8 @@ static void test_reliable_receipt_waits_for_every_number()
     rocketnet_unit_check( f.transport.sent_count >= 3 );
 
     rocketnet_message_reader_t first_reader, retry_reader;
-    rocketnet_message_record_t first_record, retry_record;
+    rocketnet_message_record_t first_record;
+    rocketnet_message_record_t retry_record = {}; // the check below fails before it is read unset; MSVC cannot see through the && (C4701)
     const rn_message_connection_t * connection = &f.client->object.connections[0];
     rocketnet_unit_check( rocketnet_message_reader_begin( &first_reader, f.transport.sent_payloads[0], f.transport.sent_bytes[0],
                                                           &connection->ordered.limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
