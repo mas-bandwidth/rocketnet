@@ -454,6 +454,55 @@ void rocketnet_test_windows_lifecycle_memory_accounting()
     windows_library_heap_end();
 }
 
+// Freeing a large block the library barely touched leaves the working set
+// where it was. The block comes from VirtualAlloc, demand-zero pages resident
+// only once touched, as a sparse plan block is in a Release heap or under the
+// debug CRT scale allocator (tests/msan_scale_allocator.h). In an ASan build
+// rocketnet_free makes the block addressable again (rocketnet_red_zone_unpoison,
+// sdk/rocketnet_memory.h), and Windows ASan commits a shadow page on any
+// access, a read included: reading the shadow of every span commits an eighth
+// of the block (128 MiB here), which is what a 1000-slot world's sparse
+// 36 GiB plan did at destroy (test_server_stats_current_every_update, 3.7 GB
+// against 2 GB). The allowance is 1/64 of the block, an eighth of that cost.
+#define WINDOWS_SPARSE_BLOCK_BYTES ( (size_t) 1 << 30 )
+
+static void * windows_sparse_malloc( void *, size_t bytes )
+{
+    return VirtualAlloc( NULL, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
+}
+
+static void windows_sparse_free( void *, void * p )
+{
+    if ( p )
+    {
+        windows_lifecycle_check( VirtualFree( p, 0, MEM_RELEASE ) != 0 );
+    }
+}
+
+static int64_t windows_working_set_bytes()
+{
+    PROCESS_MEMORY_COUNTERS memory;
+    windows_lifecycle_check( GetProcessMemoryInfo( GetCurrentProcess(), &memory, sizeof( memory ) ) != 0 );
+    return (int64_t) memory.WorkingSetSize;
+}
+
+void rocketnet_test_windows_free_sparse_block_working_set()
+{
+    windows_lifecycle_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    windows_lifecycle_check( rocketnet_init( NULL, windows_sparse_malloc, windows_sparse_free ) == ROCKETNET_STATUS_OK );
+    void * block = rocketnet_malloc( NULL, WINDOWS_SPARSE_BLOCK_BYTES );
+    windows_lifecycle_check( block != NULL );
+    memset( block, 0x5A, 64 );
+    const int64_t before = windows_working_set_bytes();
+    rocketnet_free( NULL, block );
+    const int64_t after = windows_working_set_bytes();
+    const int64_t allowance = (int64_t) ( WINDOWS_SPARSE_BLOCK_BYTES / 64 );
+    printf( "windows free sparse block: %" PRId64 " KiB working set before the free, %" PRId64 " KiB after, allowance %" PRId64 " KiB\n",
+            before / 1024, after / 1024, allowance / 1024 );
+    windows_lifecycle_check( after - before <= allowance );
+    windows_lifecycle_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+}
+
 // ---------------------------------------------------------------
 // the cells
 // ---------------------------------------------------------------
