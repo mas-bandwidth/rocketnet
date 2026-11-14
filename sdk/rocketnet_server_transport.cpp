@@ -1316,7 +1316,10 @@ static uint64_t rocketnet_server_transport_tails_held( const struct rocketnet_se
 // back whole and claimed again as one frame (witness NoFallback). Below the
 // guard, one frame. A single claim refused is counted
 // SEND_RESERVE_REFUSED_TAILS_HELD while any line holds a tail or a chunk
-// claim (TailsNamed), else SEND_RESERVE_REFUSED. Returns the queue (with
+// claim when it reads the lines after its retest (TailsNamed), else
+// SEND_RESERVE_REFUSED; a frame taken, staged or given back before that read
+// is not seen and one claimed after the refusal's test is, so the split is as
+// of that read. Returns the queue (with
 // *own set for an own frame), or -1 refused.
 static int rocketnet_server_transport_fill_claim( struct rocketnet_server_transport_t * server_transport, struct rocketnet_server_fill_line_t * line,
                                                   int client_index, const rocketnet_address_t * to, bool * own )
