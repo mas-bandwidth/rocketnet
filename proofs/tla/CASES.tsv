@@ -330,6 +330,8 @@ MCRNClientIoDecryptBrokenSharedWindowLive.cfg	MCRNClientIoDecrypt.tla	temporal	G
 MCRNLiveFleetRun.cfg	MCRNLiveFleetRun.tla	pass	-	check	rnlivefleetrun	required	-
 MCRNLiveFleetRunBrokenXdpLeftAttached.cfg	MCRNLiveFleetRun.tla	invariant	TeardownDetaches	check	rnlivefleetrun	required	-
 MCRNLiveFleetRunBrokenServerOrphaned.cfg	MCRNLiveFleetRun.tla	invariant	XdpNeverOrphaned	check	rnlivefleetrun	required	-
+MCRNLiveFleetRunBrokenHeartbeatLate.cfg	MCRNLiveFleetRun.tla	invariant	WatchdogKillsOnlyOnFault	check	rnlivefleetrun	required	-
+MCRNLiveFleetRunBrokenTeardownUnchecked.cfg	MCRNLiveFleetRun.tla	invariant	TeardownDetaches	check	rnlivefleetrun	required	-
 MCServerConnectionHoldUntilExpire.cfg	MCServerConnection.tla	invariant	ChurnNeverDenied	ignore-terminal	serverconnection	required	-
 MCServerConnectionClientIdNoCheck.cfg	MCServerConnection.tla	invariant	OneTokenOneLiveConnection	ignore-terminal	serverconnection	required	-
 MCServerConnectionExpiredToken.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	required	-
@@ -499,6 +501,7 @@ MCSplitStart.cfg	MCSplitStart.tla	pass	-	ignore-terminal	splitstart	required	-
 MCSplitStartBrokenPerPhase.cfg	MCSplitStart.tla	invariant	ServerIsTheAuthority	ignore-terminal	splitstart	required	-
 MCSplitStartBrokenNoRun.cfg	MCSplitStart.tla	invariant	ServerIsTheAuthority	ignore-terminal	splitstart	required	-
 MCSplitStartCompletes.cfg	MCSplitStart.tla	invariant	NotAllRunning	ignore-terminal	splitstart	required	-
+MCSplitStartReadyLease.cfg	MCSplitStart.tla	invariant	PopulationWindowDecides	ignore-terminal	splitstart	required	-
 MCRNPortableRx.cfg	MCRNPortableRx.tla	pass	-	check	rnportablerx	required	-
 MCRNPortableRxTwoBanks.cfg	MCRNPortableRx.tla	pass	-	check	rnportablerx	required	-
 MCRNPortableRxBrokenOverwrite.cfg	MCRNPortableRx.tla	invariant	ExactDelivery	check	rnportablerx	required	-

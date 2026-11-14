@@ -10,7 +10,15 @@
 (* attached) and must fail TeardownDetaches;                               *)
 (* MCRNLiveFleetRunBrokenServerOrphaned.cfg sets                           *)
 (* WatchdogPresent <- WatchdogPresentBroken (no watchdog) and must fail    *)
-(* XdpNeverOrphaned.                                                       *)
+(* XdpNeverOrphaned;                                                       *)
+(* MCRNLiveFleetRunBrokenHeartbeatLate.cfg sets                            *)
+(* HeartbeatFromArm <- HeartbeatFromArmBroken (the heartbeat loop starts   *)
+(* only after every client start, as before MM205) and must fail           *)
+(* WatchdogKillsOnlyOnFault;                                               *)
+(* MCRNLiveFleetRunBrokenTeardownUnchecked.cfg sets                        *)
+(* TeardownChecksStatus <- TeardownChecksStatusBroken (a failed stop or    *)
+(* restore still reports the run complete, as before MM206) and must fail  *)
+(* TeardownDetaches.                                                       *)
 (***************************************************************************)
 EXTENDS RNLiveFleetRun
 
@@ -18,4 +26,6 @@ CONSTANTS C1, C2, S1
 
 TeardownDetachesOnCrashBroken == FALSE
 WatchdogPresentBroken         == FALSE
+HeartbeatFromArmBroken        == FALSE
+TeardownChecksStatusBroken    == FALSE
 =============================================================================

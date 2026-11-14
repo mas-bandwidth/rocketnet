@@ -240,7 +240,8 @@ cmd_preflight()
 
 # ------------------------------------------------------------------------
 # arm: the dead-man timer and the watchdog, before anything loads
-# (section 9, steps 2 and 3; XDP SAFETY 2)
+# (section 9, steps 2 and 3; XDP SAFETY 2; proofs/tla/RNLiveFleetRun.tla
+# ArmDeadman, WatchdogFires, DeadmanFires)
 # ------------------------------------------------------------------------
 
 cmd_arm()
