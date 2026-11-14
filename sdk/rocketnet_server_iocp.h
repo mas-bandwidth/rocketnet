@@ -175,8 +175,10 @@ static inline int rocketnet_server_iocp_send_queue_size( int max_clients )
 // (rocketnet_server_receive_packets_per_update, 16000 at 1000 clients), so a
 // flood the worker prefilter cannot name is still taken at the rate the main
 // thread processes. A bank holds at least the worker's posted receives
-// (ROCKETNET_IOCP_RECEIVES_PER_WORKER), so one round of its completions always
-// fits: a structure minimum, which the budget share passes from 512 clients up
+// (ROCKETNET_IOCP_RECEIVES_PER_WORKER), so one round of its per-datagram
+// completions always fits (a URO completion splits into several datagrams,
+// and a datagram past a full bank is counted as a bank-full drop): a structure
+// minimum, which the budget share passes from 512 clients up
 // at every worker count (8192 / 32 workers is 256). Both are sized at create.
 #define ROCKETNET_IOCP_RECEIVES_PER_WORKER 128
 

@@ -735,7 +735,7 @@ static void session_run_isolation_pair( const char * server_transport, const cha
 // "Per-server sizing"): a server of 1, 8 or 15 clients holds that many slots'
 // buffers and no 512-client floor. Each run creates a server of exactly that
 // many clients, connects that many clients, exchanges messages in all eight
-// reliability modes both ways (each client on its own channel, one reliable
+// reliability modes both ways (each mode on its own channel, one reliable
 // ordered message of three fragments each way), disconnects every client,
 // waits for every slot to empty, and does it all again on the same server.
 // The reliable modes must arrive complete (the ordered ones in order), the
