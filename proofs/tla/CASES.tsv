@@ -240,6 +240,7 @@ MCRNSchedulerBrokenStallEndsPass.cfg	MCRNScheduler.tla	invariant	UnreliableNotBl
 MCRNSchedulerReservedLevels.cfg	MCRNScheduler.tla	pass	-	check	rnscheduler	required	-
 MCRNSchedulerKeepsSending.cfg	MCRNScheduler.tla	pass	-	check	rnscheduler	required	-
 MCRNSchedulerBrokenReadyKeepsTurn.cfg	MCRNScheduler.tla	temporal	NoStarvation	check	rnscheduler	required	-
+MCRNSchedulerBrokenUnreliableFirstClassOrder.cfg	MCRNScheduler.tla	invariant	ClassOrderBeforePriority	check	rnscheduler	required	-
 MCRNResendTiming.cfg	MCRNResendTiming.tla	pass	-	check	rnresendtiming	required	-
 MCRNResendTimingBrokenBackoff.cfg	MCRNResendTiming.tla	invariant	AttemptsBeforeTimeout	check	rnresendtiming	required	-
 MCRNResendTimingBrokenOneFifo.cfg	MCRNResendTiming.tla	invariant	NoDueRecordHeld	check	rnresendtiming	required	-

@@ -730,8 +730,9 @@ static void reference_take_level( struct reference_scheduler_t * scheduler, int 
 
 // BASE's rn_packet_builder_write with no budget (the budget's answers are the
 // other tests' business): the class loop, the packet limits, the fit, the
-// clock step and Tick's reset. The plans below are code 0 (UNRELIABLE), whose
-// record carries its length alone, so the record is the item's bytes.
+// clock step and the reset at the end of a drained call (RNScheduler Write).
+// The plans below are code 0 (UNRELIABLE), whose record carries its length
+// alone, so the record is the item's bytes.
 
 static int reference_write( struct reference_scheduler_t * scheduler, struct rn_packet_item_t * items, int num_items, uint8_t ** payloads, int num_payloads, uint32_t * out_payload_bytes )
 {

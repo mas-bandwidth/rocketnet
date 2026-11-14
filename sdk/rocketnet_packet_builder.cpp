@@ -653,8 +653,9 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
         builder->packets++;
     }
 
-    // RNScheduler!Tick's reset: every item taken, nothing queued, the clocks
-    // go back to the seeds. Every group range spent is every writable item
+    // RNScheduler!Write's reset: every item of this call's plan taken, the
+    // clocks go back to the seeds, even with messages still queued behind
+    // the window or the room. Every group range spent is every writable item
     // taken, unless a refused packet gave its items back or an item's class
     // is none of the four.
 

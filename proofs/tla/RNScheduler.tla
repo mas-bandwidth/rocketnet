@@ -27,8 +27,15 @@
 (*      smallest virtual clock goes next and its clock advances by its     *)
 (*      stride, 1, 5, 14, 35 for IMMEDIATE, HIGH, MEDIUM, LOW.  A level    *)
 (*      whose clock fell behind the last level taken is pulled forward to  *)
-(*      it.  When nothing is queued at all the clocks reset to their      *)
-(*      seeds.                                                             *)
+(*      it.  The clocks reset to their seeds at the end of each builder    *)
+(*      call whose plan was all taken (no packet refused): the plan holds  *)
+(*      only the lost and the numbered items, so the reset comes while     *)
+(*      messages still wait queued behind a stalled window or the room,    *)
+(*      and, the endpoint calling rn_ordered_write once per packet, in     *)
+(*      the middle of an update.  Write resets when a reliable write       *)
+(*      leaves no item numbered or lost.  A loss arriving between two      *)
+(*      writes of one call can only delay the model's reset, never add    *)
+(*      one.                                                               *)
 (*   3. Round robin across channels inside a level, one item per turn.     *)
 (*                                                                         *)
 (* Priorities in v1.1.x: every reliable message is MEDIUM                  *)
@@ -367,7 +374,11 @@ Number ==
 (* clock behind it is pulled forward to zero (the pull-forward).  A        *)
 (* reliable item written, first or resent, moves to the resend FIFO's tail *)
 (* (rn_window_ack_commit -> rn_resend_fifo_push_tail); an ack unlinks it   *)
-(* (rn_resend_fifo_unlink).                                                *)
+(* (rn_resend_fifo_unlink).  A reliable write that leaves no item numbered *)
+(* or lost spends the call's plan, and the clocks go back to the seeds     *)
+(* (rn_packet_builder_write's reset at the end of a call whose every       *)
+(* group range was taken), whatever is still queued behind a stalled       *)
+(* window or the room.                                                     *)
 (***************************************************************************)
 Write ==
     /\ ~CanNumber
@@ -375,10 +386,16 @@ Write ==
     /\ LET x == Pick
            c == Order[ClassIdx]
            e == clock[x.lv]
+           \* the call's plan (rn_ordered_write: the lost and the numbered
+           \* items) is spent by this write: rn_packet_builder_write's reset
+           drained == c # "unrel" /\
+                      \A j \in Ids : j # x.id => st[j] \notin {"numbered", "lost"}
        IN
        /\ classBad' = (classBad \/ \E k \in 1..3 :
                             DesignOrder[k] = c /\ \E j \in 1..(k - 1) : HasItem(DesignOrder[j]))
-       /\ clock' = [p \in Levels |-> IF p = x.lv THEN Stride(p) ELSE Max(clock[p] - e, 0)]
+       /\ clock' = IF drained
+                   THEN Seeds
+                   ELSE [p \in Levels |-> IF p = x.lv THEN Stride(p) ELSE Max(clock[p] - e, 0)]
        /\ rr' = x.ch
        /\ budget' = budget - 1
        /\ IF c = "unrel"
@@ -401,8 +418,8 @@ Write ==
 (***************************************************************************)
 (* Tick: the update ends when nothing more can be numbered or written.     *)
 (* The unreliable items left are dropped and counted, the budget refills,  *)
-(* the next update's unreliable items arrive.  With nothing queued at all  *)
-(* the clocks reset to the seeds.                                          *)
+(* the next update's unreliable items arrive.  The clocks are left as they *)
+(* are: their reset is per builder call, in Write.                         *)
 (***************************************************************************)
 Tick ==
     /\ ~CanNumber
@@ -411,8 +428,7 @@ Tick ==
     /\ drops' = Min(drops + unrelQ, DropCap)
     /\ unrelQ' = UPerTick
     /\ budget' = Cap
-    /\ clock' = IF \A i \in Ids : st[i] \notin {"queued", "numbered", "lost"} THEN Seeds ELSE clock
-    /\ UNCHANGED << sent, st, q, ready, numQ, rr, losses, written, classBad, resendQ >>
+    /\ UNCHANGED << sent, st, q, ready, numQ, clock, rr, losses, written, classBad, resendQ >>
 
 Ack(i) ==
     /\ st[i] = "inflight"
