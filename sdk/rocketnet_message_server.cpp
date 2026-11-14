@@ -2204,11 +2204,14 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
     // the end alike: every connection before it in the first round was
     // visited, and every one after it either written or held too, so it is
     // the first left unserved this update, and is served first next update.
-    // One full queue delays no connection of another queue and starves none
-    // of its own. A connection held before any frame was
-    // written does not hold the cursor: a queue full for many updates would
-    // pin the rotation there, and the clients of the other queues would be
-    // served in the same order every update.
+    // One full queue delays no connection of another queue. A connection held
+    // before any frame was written does not hold the cursor: a queue full for
+    // many updates would pin the rotation there, and the clients of the other
+    // queues would be served in the same order every update. So with a fixed
+    // capacity per queue no connection of the full queue starves, but the room
+    // is read live: a queue whose room alternates between spent and free in
+    // step with the rotation can skip the same connection every update
+    // (docs/roadmap.sexp send-pass-hold-alternating-room).
 
     const int num_connections = object->num_connections;
     const int start = num_connections > 0 ? object->send_next_connection % num_connections : 0;
