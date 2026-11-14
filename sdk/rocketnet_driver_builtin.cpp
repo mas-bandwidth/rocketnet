@@ -2985,11 +2985,11 @@ static void * iocp_create( void * context, const rocketnet_server_transport_io_c
     if ( asked == 0 && !several )
     {
         rocketnet_warn( "iocp transport: running 1 completion worker because the bind address is the wildcard or IPv4-mapped. "
-                        "The default of %d completion workers and %d send threads needs a specific local address: to reach 10 Gb/s set "
-                        "bind_ipv4_address or bind_ipv6_address (ROCKETNET_SERVER_BIND_IPV4_ADDRESS, ROCKETNET_SERVER_BIND_IPV6_ADDRESS) to the "
-                        "network card's address. To run 1 completion worker without this warning, set num_iocp_completion_workers "
-                        "(ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS) to 1",
-                        ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS, ROCKETNET_IOCP_DEFAULT_SEND_THREADS );
+                        "The default of %d completion workers needs a specific local address (the send threads run either way): to reach "
+                        "10 Gb/s set bind_ipv4_address or bind_ipv6_address (ROCKETNET_SERVER_BIND_IPV4_ADDRESS, "
+                        "ROCKETNET_SERVER_BIND_IPV6_ADDRESS) to the network card's address. To run 1 completion worker without this "
+                        "warning, set num_iocp_completion_workers (ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS) to 1",
+                        ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS );
     }
     const int send_threads = config->transport->num_iocp_send_threads;
 
