@@ -52,7 +52,8 @@
 (*     rule (m9.1: one sample per acknowledged send, receipt-only sends     *)
 (*     included, since 9905e855), not a defect.  With receipt-only packets  *)
 (*     the bound is NumberSamplesNeverPoison: no sample from a packet that  *)
-(*     carried a number is outage-sized (MCRNRttFilterReceiptOnlyPoisons).  *)
+(*     carried a number raises the estimate to outage size                  *)
+(*     (MCRNRttFilterReceiptOnlyPoisons).                                   *)
 (*                                                                          *)
 (* What is checked, against definitions that do not read the code's state: *)
 (* owedQuiet counts the ticks in which some number was on the wire          *)
@@ -67,7 +68,7 @@
 (*     outage of a second or more never reaches it (without receipt-only    *)
 (*     packets, whose samples m9.1 requires, above).                        *)
 (*   NumberSamplesNeverPoison: with receipt-only packets, no sample from a  *)
-(*     packet that carried a number is outage-sized.                        *)
+(*     packet that carried a number raises the estimate to outage size.     *)
 (*   SlowPathRaisesEstimate: after the path slows (and the bad intervals    *)
 (*     end), the estimate reaches the new round trip at the model's grain   *)
 (*     (rounded to ticks, above), for a sparse sender too.                  *)
@@ -133,7 +134,7 @@ VARIABLES
     owedQuiet,  \* ticks with a number on the wire, unacknowledged, and no ack (to Probe)
     realEndAge, \* age of the last ack that ended a run of Probe such ticks
     badSample, badRefusal,
-    numPoison   \* a sample from a packet that carried a reliable number was outage-sized
+    numPoison   \* a sample from a packet that carried a reliable number raised srtt to outage size
 
 codeVars == <<srtt, hasRtt, lastAckAge, hasLastAck, silenceEndAge, hasOldest, oldestNum, oldestFirstAge>>
 sendVars == <<ubase, nums, pkts>>
@@ -282,7 +283,8 @@ AckPacket(s) ==
        /\ badSample' = (badSample \/ (sampled /\ hasRtt /\ take /\ across))
        /\ badRefusal' = (badRefusal \/ (sampled /\ hasRtt /\ ~take /\ ~across))
        /\ numPoison' = (numPoison \/ (sampled /\ (~hasRtt \/ take) /\ p.num # RO
-                                       /\ Min(p.age, SrttMax) >= RttHigh + Probe))
+                                       /\ Min(p.age, SrttMax) >= RttHigh + Probe
+                                       /\ (~hasRtt \/ Min(p.age, SrttMax) > srtt)))
     /\ UNCHANGED pathVars
 
 \* An acknowledgement batch whose ids match no live entry (an id evicted from
@@ -382,9 +384,15 @@ RefuseOnlyAfterOwedSilence == ~badRefusal
 OutageNeverPoisons == srtt < RttHigh + Probe
 
 \* The rule with receipt-only packets (m9.1 and m9.2): no sample taken from a
-\* packet that carried a reliable number is outage-sized (a round trip of
-\* the path plus Probe ticks or more), whatever the receipt-only packets did
-\* to the estimate.  Receipt-only samples are left free, as m9.1 requires.
+\* packet that carried a reliable number raises the estimate to an
+\* outage-sized value (a round trip of the path plus Probe ticks or more).
+\* Receipt-only samples are left free, as m9.1 requires, and may already
+\* have raised it: then the filter (a packet sent before silence_end - srtt
+\* gives no sample) still takes a number's sample no larger than srtt, which
+\* raises nothing.  TLC found that first statement, "no such sample is
+\* outage-sized", false on exactly that path (a receipt-only sample of 4
+\* ticks, then a number acked across an owed outage of 4 ticks, sampled at
+\* srtt = 4), so the property is stated on the raise.
 \* MCRNRttFilterReceiptOnlyPoisons.cfg checks it beside receipt-only packets
 \* across outages; MCRNRttFilterBrokenNoFilterReceiptOnly.cfg (Rule "none")
 \* is its reversed witness.

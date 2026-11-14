@@ -28,7 +28,7 @@ Line 33, `message blocks`, replace the third cell with:
 
 Line 39, `round-trip filter`, append to the third cell:
 
-> ; the estimate is the code's rounded to the tick; receipt-only packets and ack batches of nothing are modelled; a receipt-only packet sent before an outage is sampled, as m9.1 requires, and no sample from a packet that carried a number is outage-sized (`NumberSamplesNeverPoison`, `MCRNRttFilterReceiptOnlyPoisons.cfg`; witness `MCRNRttFilterBrokenNoFilterReceiptOnly.cfg`)
+> ; the estimate is the code's rounded to the tick; receipt-only packets and ack batches of nothing are modelled; a receipt-only packet sent before an outage is sampled, as m9.1 requires, and no sample from a packet that carried a number raises the estimate to outage size (`NumberSamplesNeverPoison`, `MCRNRttFilterReceiptOnlyPoisons.cfg`; witness `MCRNRttFilterBrokenNoFilterReceiptOnly.cfg`)
 
 Line 34 (or wherever the `message window` row sits), append to the third cell:
 
