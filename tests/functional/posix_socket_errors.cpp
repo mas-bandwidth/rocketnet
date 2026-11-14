@@ -1385,6 +1385,99 @@ static void posix_send_seam_socket( int ipv6, const char * pump )
     rocketnet_platform_socket_destroy( socket );
 }
 
+// a connected socket hands back an ICMP error an earlier datagram drew from
+// its next send call, which sends nothing and clears it (the seam plays that
+// call): the message goes again once, arrives, and nothing is counted. Two
+// back to back drop that one message, counted once, and the rest arrive. The
+// client's sockets are the connected ones; here the socket is connected to
+// its own loopback address, so what it sends it receives.
+
+static void posix_connected_send_pending_icmp( int ipv6 )
+{
+    rocketnet_address_t bind_address;
+    posix_check( rocketnet_address_parse( &bind_address, ipv6 ? "::1" : "127.0.0.1" ) );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
+                                                                             ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    posix_check( socket != NULL );
+
+    rocketnet_address_t to;
+    posix_check( rocketnet_address_parse( &to, ipv6 ? "::1" : "127.0.0.1" ) );
+    to.port = bind_address.port;
+    posix_check( rocketnet_platform_socket_connect( socket, &to ) );
+
+    uint8_t packets[8][64];
+    struct rocketnet_platform_send_t sends[8];
+    for ( int i = 0; i < 8; i++ )
+    {
+        memset( packets[i], 0x40 + i, sizeof( packets[i] ) );
+        sends[i].to = &to;
+        sends[i].packet_data = packets[i];
+        sends[i].packet_bytes = (int) sizeof( packets[i] );
+    }
+
+    static uint8_t data[8 * ROCKETNET_RECEIVE_CEILING];
+    rocketnet_address_t from[8];
+    int bytes[8];
+
+    const int calls = 3;
+    for ( int call = 0; call < calls; call++ )
+    {
+        // 0: the per-packet send; 1: the batch send; 2: the batch progress send (linux)
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX
+        if ( call != 0 )
+        {
+            continue;
+        }
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX
+        const int count = call == 0 ? 1 : 8;
+
+        for ( int pending = 1; pending <= 2; pending++ )
+        {
+            const uint64_t before = rocketnet_platform_socket_send_failures( socket );
+
+            rocketnet_platform_socket_fail_next_sends( socket, pending, ECONNREFUSED );
+            int consumed = count;
+            if ( call == 0 )
+            {
+                rocketnet_platform_socket_send_packet( socket, sends[0].to, sends[0].packet_data, sends[0].packet_bytes );
+            }
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+            else if ( call == 1 )
+            {
+                rocketnet_platform_socket_send_packets_mmsg( socket, sends, count );
+            }
+            else
+            {
+                consumed = rocketnet_platform_socket_send_packets_mmsg_progress( socket, sends, count );
+            }
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+            rocketnet_platform_socket_fail_next_sends( socket, 0, 0 );
+
+            // one pending error: all arrive, none counted. Two: the first
+            // message is dropped, counted once, and the rest arrive
+
+            const uint64_t failed = rocketnet_platform_socket_send_failures( socket ) - before;
+            const int lost = pending == 2 ? 1 : 0;
+            printf( "  ipv%d connected send %d, %d pending ECONNREFUSED: consumed %d of %d, counted %llu\n", ipv6 ? 6 : 4, call, pending, consumed, count,
+                    (unsigned long long) failed );
+            fflush( stdout );
+            posix_check( consumed == count );
+            posix_check( failed == (uint64_t) lost );
+
+            if ( count - lost > 0 )
+            {
+                struct rocketnet_loss_gate_t gate;
+                rocketnet_loss_gate_begin( &gate, "posix_connected_send_pending_icmp" );
+                posix_check( posix_receive_each( socket, &gate, sends + lost, count - lost ) == count - lost );
+            }
+            rocketnet_platform_sleep( 0.01 );
+            posix_check( rocketnet_platform_socket_receive_packets( socket, from, data, ROCKETNET_RECEIVE_CEILING, bytes, 8 ) == 0 );
+        }
+    }
+
+    rocketnet_platform_socket_destroy( socket );
+}
+
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 static void test_mmsg_progress_retries_original_suffix( int ipv6, int error, int prefix, bool holes );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -1394,6 +1487,7 @@ void rocketnet_test_posix_platform_send_seam()
     for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
     {
         posix_send_seam_socket( ipv6, "portable" );
+        posix_connected_send_pending_icmp( ipv6 );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
         test_mmsg_progress_retries_original_suffix( ipv6, EAGAIN, 2, true );
         test_mmsg_progress_retries_original_suffix( ipv6, ENOBUFS, 65, false );
