@@ -259,4 +259,10 @@ HeldAhead == \A h \in held : U24(h - read) \in 1..W-1
 \* make (the channel's sequenced hold counted as released), does not fit,
 \* a record that releases nothing (held, a duplicate, a partial fragment) counted one
 NoOverReservation == ~wasted
+\* The former name, kept only so that the code's comments that cite it
+\* (rn_receive_delivery_reservation in sdk/rocketnet_channel.cpp, and
+\* tests/test_unit_channel_reliable_sequenced.cpp) still name a declared
+\* operator until they are re-cited to NoOverReservation; it means exactly
+\* NoOverReservation, not "never deferred with room".
+NeverDeferWithRoom == NoOverReservation
 =============================================================================

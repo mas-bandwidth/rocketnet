@@ -89,7 +89,7 @@ MM039, RNChannelQueues Rotate:
   FIFO head, rejoin the back if more is queued, which is what the code there
   does (the pop is `rn_channel_queue_pop`, the rejoin test at 1970).
 
-MM044, `NeverDeferWithRoom` renamed `NoOverReservation`:
+MM044, `NeverDeferWithRoom` renamed `NoOverReservation` (the module keeps `NeverDeferWithRoom` as an alias so these citations stay valid; drop the alias once they are re-cited):
 
 - `sdk/rocketnet_channel.cpp line 2105`: "(proofs/tla/RNOrderingWrap.tla Receive,
   NeverDeferWithRoom)" -> "(proofs/tla/RNOrderingWrap.tla Receive,
