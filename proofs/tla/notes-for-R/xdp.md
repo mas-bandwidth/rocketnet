@@ -96,7 +96,9 @@ RNServerReplaySlots carries MarkWhileSkipped and GreetedSlotHasEntry.
 Both sides added MCRNXdpReplayInFlight.cfg. db2dd94c1's (two addresses,
 MaxSeq 2) keeps the name; this branch's reordering control (one address,
 MaxSeq 4, a genuine packet overtaken until it falls behind the raised
-mark, which MaxSeq 2 never reaches) is renamed MCRNXdpReplayReorder.cfg.
+mark, which MaxSeq 2 never reaches) is renamed MCRNXdpReplayReorder.cfg
+and runs one session (with two, the no-entry drop took it to 8.5M states,
+92 s; the reconnect beside packets in flight is InFlight's).
 KernelFilter keeps db2dd94c1's no-entry drop and this branch's MA001
 correction: `e = NoEntry \/ e.hw - p.seq >= KernelWindow` (db2dd94c1 had
 `e.hw # 0 /\` before the window test, which treated a zero mark as

@@ -411,25 +411,28 @@ with up to two refused forgets anywhere in the run
 refused again in the commit that lands a newer session's mark): 282,058
 distinct states (709,319 generated), and `TypeOK`,
 `ForgetOwedUntilApplied`, `MarkNeverAhead`, `MarksTakenFromTheTruth`,
-`FreshGenuineNeverDropped`, `NewSessionNeverDroppedByOldMark`,
-`ReleasedSlotForgetsItsReplyMac`, `RetryNeverDeletesNewerMark`,
-`MarkOwedUntilApplied`, `ForgetQueuedAfterWalk` and `KernelNeverWrites`
-hold. The measured records are in `proofs/tla/RUNS.tsv`.
+`FreshGenuineNeverDropped`, `LiveSessionNeverDroppedForNoEntry`,
+`NewSessionNeverDroppedByOldMark`, `ReleasedSlotForgetsItsReplyMac`,
+`RetryNeverDeletesNewerMark`, `MarkOwedUntilApplied`,
+`ForgetQueuedAfterWalk` and `KernelNeverWrites` hold. The measured records
+are in `proofs/tla/RUNS.tsv`.
 
 `MCRNXdpReplayReorder.cfg`: one address, `MaxSeq = 4`, `W = 2`,
-`Sessions = 2` and `MaxInFlight = 2`, so a genuine packet can sit on the
+`Sessions = 1` and `MaxInFlight = 2`, so a genuine packet can sit on the
 wire behind a later one of its session that userspace opens first, and the
 kernel meets it behind the raised mark. The other controls set
 `MaxInFlight = 1`, where no genuine packet is reordered, or, in the two
 in-flight controls below, `MaxSeq = 2`, where no genuine packet falls `W`
 behind a mark, so `FreshGenuineNeverDropped` has its reordered case here
-only. 2,205,932 distinct states
-(6,673,554 generated), every property of the control holding.
+only. One session: with two, the drop of a packet with no entry took the
+case to 8,456,276 distinct states and 92 s, and the reconnect beside
+packets in flight is `MCRNXdpReplayInFlight.cfg`'s. 93,702 distinct states
+(293,011 generated), every property of the control holding.
 
-`MCRNXdpReplayReconnect.cfg`: the same, with `Sessions = 3`, so a reconnect
-at one address can meet a release, a full pending buffer or a refused
-delete at the other: 4,490,030 distinct states (11,823,585 generated, depth
-49), every property of the control holding.
+`MCRNXdpReplayReconnect.cfg`: `MCRNXdpReplay.cfg` with `Sessions = 3`, so a
+reconnect at one address can meet a release, a full pending buffer or a
+refused delete at the other: 7,837,646 distinct states (20,496,771
+generated), every property of the control holding.
 
 `MCRNXdpReplayRefusedMark.cfg`: two addresses, `MaxSeq = 3`, `W = 2`,
 `Sessions = 2`, `MaxInFlight = 1`, `ForgetCapacity = 1`, one refused forget
