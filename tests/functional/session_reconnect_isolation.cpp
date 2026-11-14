@@ -788,7 +788,7 @@ static void small_server_fill( uint8_t * out, int bytes, uint8_t tag, int client
 static void small_server_send( rocketnet_server_t * server, rocketnet_client_t * client, int slot, int c, int mode, int sequence, uint8_t tag )
 {
     const int bytes = small_server_message_bytes( mode, sequence );
-    const int channel = c;          // each client on its own ordering channel (the default config has 32)
+    const int channel = mode;       // each mode on its own channel (channels are per connection; the default config has 32): a sequenced resend never shares a channel with the ordered modes
     uint8_t * out = server ? rocketnet_server_start_message( server, (uint64_t) slot, channel, (enum rocketnet_reliability_t) mode, bytes )
                            : rocketnet_client_start_message( client, channel, (enum rocketnet_reliability_t) mode, bytes );
     session_check( out != NULL );
