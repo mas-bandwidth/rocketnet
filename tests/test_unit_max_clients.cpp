@@ -47,7 +47,7 @@
 #define check( condition )                                                                               \
 do                                                                                                       \
 {                                                                                                        \
-    const bool check_passed = ( condition );                                                             \
+    bool check_passed = ( condition );                                                                   \
     if ( !check_passed && rocketnet_dev_hash_key_seed() != 0 )                                           \
     {                                                                                                    \
         printf( "hash key seed 0x%016llx\n", (unsigned long long) rocketnet_dev_hash_key_seed() );       \
@@ -156,7 +156,7 @@ static void test_max_clients_derived_limits()
     // a server of 1000 clients is sized as it was when ROCKETNET_MAX_CLIENTS
     // was a fixed 1000, in every build that holds 1000
 
-    if ( clients >= 1000 )
+#if ROCKETNET_MAX_CLIENTS >= 1000
     {
         check( rocketnet_server_receive_packets_per_update( 1000 ) == 16000 );
         check( rocketnet_server_send_batch_packets( 1000 ) == 1000 );
@@ -171,10 +171,11 @@ static void test_max_clients_derived_limits()
         check( rocketnet_server_uring_bank_packets( 1000 ) == 16000 );
         check( rocketnet_loopback_server_queue_packets( 1000 ) == 16384 );
     }
+#endif // #if ROCKETNET_MAX_CLIENTS >= 1000
 
     // the default build's fixed tables are unchanged
 
-    if ( clients == 1000 )
+#if ROCKETNET_MAX_CLIENTS == 1000
     {
         check( ROCKETNET_LOOPBACK_QUEUE_PACKETS == 2048 );
         check( ROCKETNET_XDP_REPLAY_MAX_ENTRIES == 1024 );
@@ -182,6 +183,7 @@ static void test_max_clients_derived_limits()
         check( ROCKETNET_GSO_SEND_QUEUE_SIZE == 16384 );
         check( ROCKETNET_URING_SEND_QUEUE_SIZE == 4096 );
     }
+#endif // #if ROCKETNET_MAX_CLIENTS == 1000
 }
 
 REGISTER_UNIT_TEST( test_max_clients_derived_limits );
@@ -313,7 +315,7 @@ static void test_server_plan_follows_configured_max_clients()
     check( at_max > 0 && at_half > 0 );
     check( 8 * at_half <= 5 * at_max );
 
-    if ( ROCKETNET_MAX_CLIENTS >= 1000 )
+#if ROCKETNET_MAX_CLIENTS >= 1000
     {
         config.max_clients = 1000;
         const uint64_t at_1000 = (uint64_t) rocketnet_server_required_memory( &config );
@@ -324,6 +326,7 @@ static void test_server_plan_follows_configured_max_clients()
         check( at_999 <= at_1000 && at_1000 <= at_max );
         check( 4 * at_1000 * (uint64_t) ROCKETNET_MAX_CLIENTS <= 5 * 1000 * at_max );
     }
+#endif // #if ROCKETNET_MAX_CLIENTS >= 1000
 }
 
 REGISTER_UNIT_TEST( test_server_plan_follows_configured_max_clients );
