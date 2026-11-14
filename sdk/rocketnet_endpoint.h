@@ -147,6 +147,13 @@ bool rn_endpoint_send_room( const struct rn_endpoint_t * endpoint, int channel, 
 uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_t serial );
 void rn_endpoint_abort( struct rn_endpoint_t * endpoint );
 
+// The pending start of an unreliable message whose reservation took the
+// channel route (over one record) and whose bytes, finished now, one record
+// carries: where its bytes are, and its channel; NULL for every other start
+// (rn_endpoint_finish would send it under the form it was started with).
+// Pure: changes nothing.
+const uint8_t * rn_endpoint_short_unreliable( const struct rn_endpoint_t * endpoint, int bytes, int * channel );
+
 // The in-place send of a fitting unreliable message (docs/OUTGOING-BUILD.md,
 // proofs/tla/RNOutgoingBuild.tla StartInPlace and FinishInPlace): the owner starts a
 // transport frame and the message is written in it, with no copy between the

@@ -4,7 +4,8 @@
 The inventory, results and harness comments under proofs/cbmc state a bound
 tied to an SDK constant as the constant's expression followed by its value in
 parentheses: `ROCKETNET_RECEIVE_CEILING + 1` (1453) in Markdown, or
-ROCKETNET_RECEIVE_PAYLOAD_BYTES (1416) in a C comment; or as the value with
+ROCKETNET_RECEIVE_PAYLOAD_BYTES (1416) in a C or C++ comment (.c, .cpp, .h);
+or as the value with
 the expression after it in parentheses: 1452 (`ROCKETNET_RECEIVE_CEILING`),
 [0, 1416] (`ROCKETNET_RECEIVE_PAYLOAD_BYTES`). This compiles a probe
 against sdk/ that prints every such expression and fails, naming file:line,
@@ -85,6 +86,16 @@ def evaluate(expressions):
     return [values[index] for index in range(len(expressions))]
 
 
+# every kind of record file under proofs/cbmc: the Markdown records and the
+# C and C++ harnesses and their headers (a .cpp harness left out is a stated
+# bound nobody checks)
+RECORD_PATTERNS = ("**/*.md", "**/*.c", "**/*.cpp", "**/*.h")
+
+
+def collect(proofs):
+    return sorted({path for pattern in RECORD_PATTERNS for path in Path(proofs).glob(pattern)})
+
+
 def check(files):
     found = [(path, number, expression, stated) for path in files for number, expression, stated in statements(path)]
     if not found:
@@ -116,12 +127,20 @@ def self_test():
             if check([planted]):
                 print(f"FAIL: a stale statement passed the check: {text.strip()}", file=sys.stderr)
                 return False
+        tree = Path(directory) / "tree" / "sub"
+        tree.mkdir(parents=True)
+        for name in ("harness.c", "harness.cpp", "harness.h", "notes.md"):
+            (tree / name).write_text("// ROCKETNET_RECEIVE_PAYLOAD_BYTES (1)\n", encoding="utf-8")
+        found = {path.name for path in collect(tree.parent)}
+        if found != {"harness.c", "harness.cpp", "harness.h", "notes.md"}:
+            print(f"FAIL: the record walk read {sorted(found)}, not every .md, .c, .cpp and .h", file=sys.stderr)
+            return False
         empty = Path(directory) / "empty.md"
         empty.write_text("no statements\n", encoding="utf-8")
         if check([empty]):
             print("FAIL: a tree with no statements passed the check", file=sys.stderr)
             return False
-    print("OK self-test: stale statements in both forms and an empty tree are refused")
+    print("OK self-test: stale statements in both forms and an empty tree are refused; .md, .c, .cpp and .h are read")
     return True
 
 
@@ -133,8 +152,7 @@ def main():
     args = parser.parse_args()
     if args.self_test:
         return 0 if self_test() else 1
-    files = sorted(path for pattern in ("**/*.md", "**/*.c") for path in args.proofs.glob(pattern))
-    return 0 if check(files) else 1
+    return 0 if check(collect(args.proofs)) else 1
 
 
 if __name__ == "__main__":

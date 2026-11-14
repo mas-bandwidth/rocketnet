@@ -9,9 +9,13 @@ multiplication, AEAD seal or open, signature verification and sealed-box open
 are crypto.
 
 The request path runs in the ruled order. `Pos` puts the rungs in the code's
-order: used, verifybudget, claim, capacity, claimfull (t12 rule 9 steps 1 to
-5), then the per-update handshake work budget immediately before the signature
-(t12 rule 8). `WorkBudgetOnlyForVerify` says a request refused at any rung above
+order: used, verifybudget, claim, capacity, claimfull, repeat (t12 rule 9
+steps 1 to 6), then the per-update handshake work budget immediately before the
+signature (t12 rule 8). Past the seal, clientid then slots refuse (t12 rules 10
+and 11); each records its token for the repeat rung until the update ends
+(`repeated`, emptied by MCReceiveOrder's `UpdateStart`), and
+`RepeatSpendsNoVerify` says a request whose token was so recorded never
+reaches the signature. `WorkBudgetOnlyForVerify` says a request refused at any rung above
 the signature has not been charged that budget. Each rung maps to its code and
 STANDARD step in _Processing Connection Requests_:
 
@@ -27,9 +31,11 @@ STANDARD step in _Processing Connection Requests_:
 | claim | cheap | ClaimCheck: rocketnet_used_token_history_claim_check in sdk/rocketnet_token_tables.cpp; ClaimWrite: rocketnet_used_token_history_claim_record, run only after the signature verifies | the first request whose signature verifies claims its token for its source address until the handshake deadline; a second address is refused (t12 rule 9 step 3) |
 | capacity | cheap | rocketnet_encryption_map_full in sdk/rocketnet_server_protocol.cpp | a full encryption mapping table refuses before any signature, seal or keypair work (t12 rule 9 step 4) |
 | claimfull | cheap | the read-only rocketnet_used_token_history_claim_can_record in sdk/rocketnet_token_tables.cpp, run after the mapping-capacity rung | a request-claim table with no free or expired slot refuses with its own counter, CONNECTION_REQUEST_CLAIM_TABLE_FULL, and not as a mapping failure (t12 rule 9 step 5) |
+| repeat | cheap | the repeat table scan in rocketnet_server_protocol_process_connection_request (sdk/rocketnet_server_protocol.cpp), written by rocketnet_server_record_repeat and emptied in rocketnet_server_protocol_update | a token verified earlier in the update and refused by the clientid or slots rung is refused again, unanswered, counted by that reason (t12 rule 9 step 6) |
 | workbudget | cheap | the handshakes_processed_this_update check and charge in sdk/rocketnet_server_protocol.cpp, immediately before the verify | refuse, unanswered, when the per-update handshake work budget is spent; only a request that reaches it spends budget (t12 rule 8) |
 | signature | crypto | crypto_sign_verify_detached in sdk/rocketnet_connect_token.cpp | verify the signature |
 | seal | crypto | crypto_box_seal_open in sdk/rocketnet_connect_token.cpp | open the sealed private block |
+| clientid | cheap | rocketnet_client_slots_find in rocketnet_server_process_opened_request | ignore a request whose client id already holds a slot (t12 rule 10) |
 | slots | cheap | rocketnet_client_slots_num_free in sdk/rocketnet_server_protocol.cpp | no client slots available |
 | keypair | crypto | crypto_box_keypair in sdk/rocketnet_server_protocol.cpp | obtain the server ephemeral keypair |
 
@@ -45,6 +51,7 @@ them with the invariant each names:
 | VersionNotFirst | only version moves from 2 to 12; restart remains 1, signature 8, slots 10 and keypair 11 | a version refusal decided only after signature work; restoring version to 2 restores the healthy order, without a slots-after-keypair defect |
 | TokenManyAddresses | claim removed (ClaimAtRequest FALSE) | BASE: the token was not claimed at the request, so one token from many addresses bought many half-open mappings and full crypto until the map filled; OneLiveMappingPerToken fails |
 | WorkBudgetAtCookie | workbudget at 51, just after the cookie gate (WorkBudgetAtVerify FALSE) | BASE before 2026-10-31: the budget was charged after the cookie validated, so a request the used, failed-signature-budget, claim or capacity rungs then refused had spent budget; one source past its failed-signature budget, refused at no cost to itself, kept the default 16-per-update budget full at about 1000 requests per second and honest requests were refused as HANDSHAKE_BUDGET_EXCEEDED. WorkBudgetOnlyForVerify fails |
+| RepeatRungOff | the repeat rung refuses nothing (RepeatRungRefuses FALSE); repeated still records the tokens the clientid and slots rungs refuse | BASE before 2026-11-13: a request refused past the verify because its client id held a slot, or denied because the server was full, charged nothing and recorded nothing, so the same request from the same source was verified again at once; one valid token took every verify of every update (default 16, about 1.3 ms of main thread) and honest requests were refused as HANDSHAKE_BUDGET_EXCEEDED. RepeatSpendsNoVerify fails |
 | ClaimBeforeSignature | claim written at its check rung (ClaimWriteRung "claim") | BASE before the split: rocketnet_used_token_history_claim_record ran at the claim rung, ahead of rocketnet_verify_signed_connect_data, and a failed signature released it after; every unauthenticated request past the cookie wrote (and then released) a claim-table entry. ClaimOnlyAfterSignature fails |
 
 `VersionNotFirst` retains the healthy positions of every other rung and
@@ -61,6 +68,20 @@ releasing it on the failed verify. With the split the write happens on
 passing the signature rung, the same request is refused with
 `claimWritten` FALSE, and test_claim_written_only_after_signature_verifies
 pins it in the code (no claim-table entry after a forged signature).
+
+Replayed by hand: in RepeatRungOff (30 states) a request from `A` for `t1`
+with fault `clientid` passes every rung through the signature (position 80)
+and the seal and is refused at the clientid rung (111), which records `t1` in
+`repeated`; with no `UpdateStart` between, the next request from `A` for `t1`
+begins with `wasRepeat`, passes the repeat rung at 78 (it refuses nothing)
+and the work budget at 79, and reaches the signature, so
+`RepeatSpendsNoVerify` fails. That is the BASE code: after a
+CLIENT_ID_ALREADY_CONNECTED refusal nothing is recorded and the same request
+is verified again in the same update.
+test_handshake_client_id_connected_never_limits and
+test_handshake_full_server_denial_never_limits pin it in the code: the first
+request of an update is verified, its repeats are refused before the work
+budget (each fails at its first repeat with the rung's loop taken out).
 
 Replayed by hand: in WorkBudgetAtCookie a request with fault `budget` (a
 source past its failed-signature budget) passes the workbudget rung at 51 and

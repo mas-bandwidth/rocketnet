@@ -61,7 +61,7 @@ normal traffic, while the disconnect burst is sent from the library's receive
 worker thread (`rocketnet_client_transport_flush_disconnect`); this
 compatibility path does not provide the built-in send offload guarantee, and a
 custom `BASE` driver's `send` callback can be called on the library's thread.
-Built-in loopback uses the same I/O core and bounded worker-side idle polling.
+Built-in loopback uses the same I/O core with its own wait and wake: an event-only wake per client, set by a send that makes the client's queue non-empty, so an idle loopback client sleeps until a datagram is queued for it, it is handed work or stopped.
 The optional development link simulator is also an explicit exception to the
 built-in worker-offload guarantee: while running, its frame work and backend
 sends remain caller-owned, and its shutdown drain runs either on the legacy

@@ -70,7 +70,7 @@ static const rn_standard_vector_t standard_handshake_client_table[] = {
                                                  "3340ab8399b98561ac6881fc7aa2bb60"
                                                  "ffe07732ea7121fe5044ebb5f53dbe76"
                                                  "8b800c30d75370eb9beb4914ae133da6"
-                                                 "4ea6b09e760d0000b75901002cfaac68"
+                                                 "4ea6b09e760d0000b759010003f9ac68"
                                                  "000000000fb2b28f32dbd6c9eb364f57"
                                                  "7486f3e953414c54303030313a553d74"
                                                  "792d727efa9b9a4cde3da1ad93f1a2d0"
@@ -115,7 +115,7 @@ static const rn_standard_vector_t standard_handshake_client_table[] = {
                                                  "81fc7aa2bb60ffe07732ea7121fe5044"
                                                  "ebb5f53dbe768b800c30d75370eb9beb"
                                                  "4914ae133da64ea6b09e760d0000b759"
-                                                 "01002cfaac68000000000fb2b28f32db"
+                                                 "010003f9ac68000000000fb2b28f32db"
                                                  "d6c9eb364f577486f3e953414c543030"
                                                  "30313a553d74792d727efa9b9a4cde3d"
                                                  "a1ad93f1a2d0c09cb639b1a3c0fda14c"
@@ -209,11 +209,13 @@ static int standard_handshake_client_generate( const char * id, uint8_t * out, i
 
     written += packet_bytes;
 
-    // a cookie arrives; the client stores it and moves to state 2
+    // a cookie arrives; the client stores it and moves to state 2. It is the
+    // cookie of t12.cookie, a server's at 1756166400 with lifetime 3 to
+    // 198.51.100.7:56789, so its expire and its MAC belong together
 
     uint8_t cookie[ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES];
     rocketnet_write_connection_cookie_packet( cookie, tag, rocketnet_test_salt,
-                                              ROCKETNET_TEST_EXPIRE_TS, rocketnet_test_cookie_mac );
+                                              ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_mac );
     rocketnet_unit_check( rocketnet_client_protocol_process_packet( &client, cookie, sizeof( cookie ), 1000.05,
                                                                     payload, sizeof( payload ), &payload_bytes ) == 1 );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );

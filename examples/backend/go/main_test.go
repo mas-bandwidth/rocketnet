@@ -17,6 +17,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"strconv"
 	"testing"
@@ -289,5 +290,49 @@ func TestListenAddress(t *testing.T) {
 	}
 	if _, err := readConfigMode(environment(map[string]string{"ROCKETNET_BACKEND_LISTEN_ADDRESS": "localhost"}), false); err == nil {
 		t.Fatal("a non-IP listen address was accepted")
+	}
+}
+
+// failingReader writes 0x5a over what it is asked for and keeps each slice it
+// was handed; from its fail-th read on it fails, after writing half
+type failingReader struct {
+	reads  int
+	fail   int
+	handed [][]byte
+}
+
+func (r *failingReader) Read(p []byte) (int, error) {
+	r.reads++
+	r.handed = append(r.handed, p)
+	if r.reads >= r.fail {
+		copy(p[:len(p)/2], bytes.Repeat([]byte{0x5a}, len(p)/2))
+		return len(p) / 2, errors.New("planted random failure")
+	}
+	copy(p, bytes.Repeat([]byte{0x5a}, len(p)))
+	return len(p), nil
+}
+
+// a failed read of either session key leaves no key byte in the minter's copy
+func TestFailedKeyReadWipesTheKeys(t *testing.T) {
+	config, err := readConfig(environment(map[string]string{
+		"ROCKETNET_BACKEND_SERVER_PUBLIC_KEY": base64.StdEncoding.EncodeToString(devServerPublicKey[:]),
+		"ROCKETNET_BACKEND_SERVER_ADDRESSES":  "127.0.0.1:40000",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fail := range []int{1, 2} {
+		random := &failingReader{fail: fail}
+		if _, err := generateConnectToken(config, 1, 1000, random, sealAnonymous); err == nil {
+			t.Fatalf("read %d failed and the mint did not", fail)
+		}
+		if len(random.handed) != fail {
+			t.Fatalf("read %d: the minter made %d reads", fail, len(random.handed))
+		}
+		for i, p := range random.handed {
+			if !bytes.Equal(p, make([]byte, len(p))) {
+				t.Fatalf("read %d failed: the key read %d still holds %x", fail, i+1, p)
+			}
+		}
 	}
 }

@@ -90,8 +90,13 @@ A supported row promises three things, and only these three:
    in the row and runs the unit and functional suite, or the platform-specific
    subset the row describes, on the operating system and architecture in the
    row.
-2. A red leg on that platform is a merge blocker. It is not a nightly finding
-   that may wait for morning.
+2. The leg runs on every pull request. A red light job on that platform
+   (build, unit suite, checks) blocks the landing. A red job that
+   `tools/release_gates.txt` marks `full` (the functional suites, the
+   transport matrix, the happy path, the sanitizer legs) is printed and
+   does not block a landing by `tools/land.py`; `tools/land.py --full` and a
+   minor, major or pre-release hold it, and the nightly tier runs it again
+   ([RELEASING.md](RELEASING.md), "Landing on main").
 3. The workflow file and runner operating-system and architecture tokens in
    the row correspond to labels present in that file.
 
@@ -117,7 +122,7 @@ What is built and tested on big-endian (s390x), and what is not.
 | The embedded XDP object is big-endian (`cmake/CheckXdpObjectByteOrder.cmake`) | `ci.yml`, `big-endian` (any big-endian build with XDP) | every commit | a cross build embedding the build machine's object |
 | The XDP program compiles for `bpfeb` against the s390x kernel headers | `ci.yml`, `big-endian` | every commit | a header or macro only one byte order has |
 | `tools/bigendian/wire_check.cpp` and `test_sodium` under qemu-user | `ci.yml`, `big-endian` | every commit | the endian helpers, address parses, a same-host seal and open |
-| The standard's byte vectors, 59 cases, and 31 XDP filter cases (`tools/bigendian/run_byte_cases.sh`) | `ci.yml`, `big-endian`, qemu-user | every commit | a field written or read in host order that has a vector |
+| The standard's byte vectors, 60 cases, and 31 XDP filter cases (`tools/bigendian/run_byte_cases.sh`) | `ci.yml`, `big-endian`, qemu-user | every commit | a field written or read in host order that has a vector |
 | The XDP filter compiled as host C for s390x, 30 cases | `ci.yml`, `big-endian`, qemu-user; and `./bin/test` in the guest | every commit; nightly | a conversion in the XDP program that swaps whatever the byte order is |
 | `./bin/test`, `./bin/functional` (automatic transport order, then portable pinned) | nightly guest | nightly | big-endian to big-endian behaviour of the rungs the guest grants |
 | Cross-endian interoperability, three clients each way (`tools/bigendian/run_interop.sh`) | nightly guest against the x86-64 runner | nightly | a wire field in host order that has no vector |

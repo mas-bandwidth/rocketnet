@@ -208,10 +208,10 @@ static void test_rtt_estimator_moves_five_percent()
     check( fabs( f.ack.resend_delay - 1.230 ) < 1e-12 );
 
     const uint64_t second = resend_timing_send( &f, t0 + 0.300, NULL );
-    check( rn_window_ack_on_ack( &f.ack, second, t0 + 0.700 ) == 1 );
-    check( fabs( f.ack.srtt - 0.210 ) < 1e-12 );
-    check( fabs( f.ack.rttvar - 0.200 ) < 1e-12 );
-    check( fabs( f.ack.resend_delay - 1.250 ) < 1e-12 );
+    check( rn_window_ack_on_ack( &f.ack, second, t0 + 0.900 ) == 1 );
+    check( fabs( f.ack.srtt - 0.220 ) < 1e-12 );
+    check( fabs( f.ack.rttvar - 0.210 ) < 1e-12 );
+    check( fabs( f.ack.resend_delay - 1.310 ) < 1e-12 );
 
     resend_timing_close( &f );
 

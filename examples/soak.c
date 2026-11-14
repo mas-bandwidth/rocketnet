@@ -551,6 +551,23 @@ struct soak_lifecycle_t
 static struct soak_lifecycle_t g_life;
 
 // every client stopped and destroyed, then the server stopped, then destroyed
+// Every update must find the receive queue empty, or the connection ends in
+// MESSAGE_NOT_RECEIVED (rocketnet_client_update in sdk/rocketnet.h). The
+// connect and shutdown phases check no message, so they drain and drop.
+static void soak_drain_client( struct rocketnet_client_t * client )
+{
+    while ( rocketnet_client_receive_messages( client ) != NULL )
+    {
+    }
+}
+
+static void soak_drain_server( struct rocketnet_server_t * server )
+{
+    while ( rocketnet_server_receive_messages( server ) != NULL )
+    {
+    }
+}
+
 static void soak_shutdown( struct rocketnet_client_t ** clients, int num_clients, struct rocketnet_server_t * server, double time )
 {
     g_life.running_peak_rss = soak_peak_rss_bytes();
@@ -896,10 +913,12 @@ int main( int argc, char ** argv )
             for ( int c = base; c < end; c++ )
             {
                 rocketnet_client_update( clients[c], sim_time );
+                soak_drain_client( clients[c] );
                 rocketnet_client_send_packets( clients[c] ); // send last so this frame's messages leave this frame
             }
 
             rocketnet_server_update( server, sim_time );
+            soak_drain_server( server );
             rocketnet_server_send_packets( server ); // send last so this frame's messages leave this frame
         }
 
@@ -1177,6 +1196,7 @@ int main( int argc, char ** argv )
         for ( int c = 0; c < num_clients; c++ )
         {
             rocketnet_client_update( clients[c], sim_time );
+            soak_drain_client( clients[c] );
             if ( c >= next_disconnect || !rocketnet_client_disconnected( clients[c] ) )
             {
                 disconnected = 0;
@@ -1192,6 +1212,7 @@ int main( int argc, char ** argv )
         // Keep processing frames until both sides have finished disconnecting.
 
         rocketnet_server_update( server, sim_time );
+        soak_drain_server( server );
         rocketnet_server_send_packets( server );
         if ( disconnected && rocketnet_server_num_connected_clients( server ) == 0 )
         {

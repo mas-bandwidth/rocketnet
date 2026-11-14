@@ -39,7 +39,7 @@ struct rn_message_object_t;
     X( RESET, client_index ) X( RESET, max_clients ) \
     X( RESET, send_sequence_handshake ) X( RESET, send_sequence_session ) \
     X( RESET, handshake_highest_opened ) X( RESET, replay_session ) X( RESET, accepted_session ) \
-    X( RESET, integrity_failures ) X( RESET, attempt_start_time ) X( RESET, last_send_time ) \
+    X( RESET, integrity_failures ) X( RESET, attempt_start_time ) X( RESET, last_send_time ) X( RESET, handshake_early_send ) \
     X( RESET, last_receive_time ) X( RESET, total_deadline_seconds ) X( RESET, timeout_seconds ) \
     X( RESET, state_first_send_time ) X( RESET, rtt_estimate ) X( RESET, rtt_session_sampled ) \
     X( RESET, received_session_sequence ) X( RESET, ack ) X( RESET, num_acked ) \

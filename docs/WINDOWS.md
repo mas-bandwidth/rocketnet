@@ -21,7 +21,10 @@ the transport matrix below, and the functional suite
 (`.github/workflows/ci.yml`, `build-and-test-windows`, run by
 `nightly-ci.yml`). clang-cl
 on x86_64 is a nightly row; Windows on arm64 is build-checked only and
-unsupported.
+unsupported. The Windows rows in [PERFORMANCE.md](PERFORMANCE.md) ran on
+Windows Server 2025, which is not a row of the support table in PLATFORMS.md:
+they record what those machines reached, and do not add Windows Server to the
+supported platforms.
 
 ## Build
 
@@ -58,14 +61,15 @@ development server's is **portable, iocp, rio**. The client's `auto` order is
 
 `iocp` probes UDP send offload (`UDP_SEND_MSG_SIZE`) and receive offload
 (`UDP_RECV_MAX_COALESCED_SIZE`) on its bound socket. A stack without either is
-a slower tier, not a refusal: the create line says which it got,
+a slower tier, not a refusal: the line it logs when the server starts says
+which it got,
 
 ```text
 iocp transport: 1 completion workers, 2 send threads and 8 send lanes of 4096 on port 40000, USO yes, URO yes
 ```
 
 with `no (WSASendTo per datagram)` or `no (WSARecvFrom per datagram)` in
-place of `yes`. A send offload the stack accepted at create but refuses later
+place of `yes`. A send offload the stack accepted at start but refuses later
 logs a warning and falls back to one send per datagram. `iocp` runs
 `num_iocp_completion_workers` completion workers
 (`ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS`, 1 to 32; default 2 on a
@@ -85,8 +89,8 @@ and starts one I/O worker for each lane. The lanes are `num_rio_lanes`
 address, 1 on the wildcard). With more than one lane, lane `l` takes the
 first logical processor of core `l` from core 0 up, in the same order as
 `iocp`, and its worker the other logical processors of that core; more lanes
-than cores share processors, with a warning. Its create line names the
-region's size:
+than cores share processors, with a warning. All of this happens when the
+server starts, and the line it logs then names each lane's region size:
 
 ```text
 rio transport: port 40000, 1 lane (one socket and I/O worker each), 4096 receive slices and 16384 send frames per phase per lane, <n> registered bytes per lane
@@ -98,10 +102,12 @@ TRANSPORTS.md, "The RIO server transport".
 
 ### To reach 10 Gb/s on Windows set a bind address
 
-The defaults that hold 1000 players at 10 Gb/s are 5 RIO lanes, or 2 IOCP
-completion workers with 2 send threads. More than one lane or worker shares
-the port by processor, and Windows allows that only on a specific local
-address, so those defaults need a bind address. Set the network card's address
+The defaults are 5 RIO lanes, or 2 IOCP completion workers with 2 send
+threads: the counts that sent the peak load to 1000 players at 60 Hz, about
+900,000 packets a second (an estimated 9.39 Gb/s, from the packet rate), on
+the machines in [PERFORMANCE.md](PERFORMANCE.md). Measure yours. More than
+one lane or worker shares the port by processor, and Windows allows that only
+on a specific local address, so those defaults need a bind address. Set the network card's address
 in the config, `bind_ipv4_address` (or `bind_ipv6_address`), or in the
 environment:
 
@@ -207,10 +213,14 @@ refusal of a name no build knows.
 - **iocp:** Winsock overlapped I/O on a UDP socket. Send and receive offload
   are used when the network stack offers them and skipped when it does not.
 - **rio:** the Registered I/O extension functions, which Winsock hands out per
-  socket. A host whose stack refuses them, or that cannot commit and register
-  the region, refuses `rio` at create with
-  `rio transport create failed (Winsock <n>, Win32 <n>, test stage <n>)`, and
-  the next candidate in the list is tried.
+  socket. A host whose stack refuses them, or refuses to register a lane's
+  region, refuses `rio` when the server starts with
+  `rio transport create failed (Winsock <n> <name>, Win32 <n>)` (a
+  development library adds `, test stage <n>`), and the next candidate in the
+  list is tried. A region the allocator cannot supply, or a registration
+  Windows refuses for want of memory, logs the same line but ends the start
+  with `OUT_OF_MEMORY`: a failure for want of memory never falls to the next
+  candidate.
 - **Every transport:** the process's own memory budget, if one is set with
   `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`; a transport whose memory plan does
   not fit is refused before anything is allocated.
@@ -226,9 +236,9 @@ the timer period and priorities itself (`sdk/rocketnet.h`).
 
 ## The firewall
 
-A server binds the wildcard address, so the first run of a server, of
-`functional.exe` or of the example server on an interactive desktop raises the
-Windows Defender Firewall prompt. Loopback traffic works whatever is chosen
+A server binds the wildcard address by default, so the first run of a server,
+of `functional.exe` or of the example server on an interactive desktop raises
+the Windows Defender Firewall prompt. Loopback traffic works whatever is chosen
 there. A headless server host needs an inbound rule that allows UDP on the
 server's port from the networks clients connect from; the client needs no
 inbound rule. Creating that rule is the host's provisioning, not the
@@ -251,21 +261,33 @@ client object can be reused, is the separate inventory in
 
 ## Limits for 1000 clients
 
-A server is one socket on every Windows transport, so there is no descriptor
-limit to raise. The limit that matters is memory: per-client state grows with
-`max_clients`, the send staging and receive buffers of each transport are sized
-from the same configured `max_clients` (1000 by default), and `rio` registers
-(and so locks) its whole registered region at create.
+A server's socket count depends on its transport: one for `portable`, one for
+each completion worker for `iocp` (2 on a bind address by default, 1 on the
+wildcard; its send threads add none) and one for each lane for `rio` (5 on a
+bind address by default, 1 on the wildcard). That is a few sockets, not one a
+client, so there is no descriptor limit to raise. The limit that matters is
+memory: per-client state grows with `max_clients`, the send staging and receive buffers of each
+transport are sized from the same configured `max_clients` (1000 by default),
+and `rio` registers (and so locks) each lane's registered region when the
+server starts.
 
-Windows commits memory when it is allocated, touched or not, and every block
-the library uses comes from the caller's allocator at create, the registered
-region included. So the whole plan, `rocketnet_server_required_memory`, is
-charged against the machine's commit limit (RAM plus the page file) the moment
-the server is created: about 19.4 GB for a default 1000-client server, though
-far less of it is ever resident. A host near its commit limit refuses the
-create with `OUT_OF_MEMORY` (or, with a system-managed page file, grows the
-page file first); size the page file, or `max_clients` and the profile, so
-the plan of every server and client in the process fits. Threads are two for
+Every block the library uses comes from the caller's allocator, in two steps.
+`rocketnet_server_create` allocates the server's own block.
+`rocketnet_server_start` then allocates the transport, before any traffic:
+its sockets, workers, send and receive buffers and each `rio` lane's
+registered region, and the per-client tables. Windows commits memory when it
+is allocated, touched or not, so once the server has started all of it is
+charged against the machine's commit limit (RAM plus the page file), though
+far less of it is ever resident. `rocketnet_server_required_memory` returns
+the most the allocator holds for a config over create, start, stop, restart
+and destroy, plus 1 MiB of slack. This page gives no figure for it: query it
+for the config you deploy. With a system-managed page file Windows may grow
+the page file first; a create or start the host still cannot commit is
+refused with `OUT_OF_MEMORY`, and a start refused for memory does not fall to
+another transport. Size the page file, or `max_clients` and the profile, so
+the `rocketnet_server_required_memory` of every server, and the
+`rocketnet_client_required_memory` of every client, in the process fits.
+Threads are two for
 `portable`; for `iocp` the completion workers plus the send threads (4 on a
 bind address by default, 3 on the wildcard); for `rio` one a lane (5 on a bind
 address by default, 1 on the wildcard); each with the executable's default
