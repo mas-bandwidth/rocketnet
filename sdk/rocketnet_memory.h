@@ -44,6 +44,8 @@ inline bool rocketnet_memory_add( uint64_t & total, uint64_t count, uint64_t str
 // addressable). The plans count the pads through the same layout functions,
 // so a plan stays exact in every build. In every other build the size is 0
 // and none of this is compiled: layouts, plans and the library are unchanged.
+// (rocketnet_shadow_walk below is defined in every build for its unit test
+// and called only from an ASan build.)
 #if defined( __SANITIZE_ADDRESS__ )
 #define ROCKETNET_RED_ZONES 1
 #elif defined( __has_feature )
@@ -56,6 +58,44 @@ inline bool rocketnet_memory_add( uint64_t & total, uint64_t count, uint64_t str
 #define ROCKETNET_RED_ZONES 0
 #endif // #ifndef ROCKETNET_RED_ZONES
 
+// the bytes whose shadow fills one shadow page: 8 bytes to a shadow byte, 4096
+// shadow bytes to a page
+#define ROCKETNET_RED_ZONE_SHADOW_PAGE_SPAN ( (uint64_t) 4096 * 8 )
+
+// The walk rocketnet_red_zone_unpoison makes over [begin, end), with no OS call
+// of its own, so the unit suite checks it in every build
+// (tests/test_unit_red_zone_walk.cpp); only an ASan build calls it. run
+// answers for the run of shadow that holds at's shadow: whether it is
+// committed, and the first application address past it (at itself when that
+// is not known). A run not committed holds no poison and is skipped whole. In
+// a committed run, or one not known, span is called for each shadow page's
+// span that starts in the run (at least one), so run is asked once per run.
+typedef uintptr_t rocketnet_shadow_run_t( void * context, uintptr_t at, bool * committed );
+typedef void rocketnet_shadow_span_t( void * context, uintptr_t begin, uintptr_t end );
+
+inline void rocketnet_shadow_walk( uintptr_t begin, uintptr_t end, rocketnet_shadow_run_t * run, rocketnet_shadow_span_t * span, void * context )
+{
+    uintptr_t at = begin;
+    while ( at < end )
+    {
+        bool committed = true;
+        const uintptr_t run_end = run( context, at, &committed );
+        if ( !committed && run_end > at )
+        {
+            at = run_end < end ? run_end : end;
+            continue;
+        }
+        const uintptr_t limit = run_end > at ? run_end : at + 1;
+        do
+        {
+            const uintptr_t span_end = ( at | ( (uintptr_t) ROCKETNET_RED_ZONE_SHADOW_PAGE_SPAN - 1 ) ) + 1;
+            const uintptr_t next = span_end < end ? span_end : end;
+            span( context, at, next );
+            at = next;
+        } while ( at < limit && at < end );
+    }
+}
+
 #if ROCKETNET_RED_ZONES
 
 #include <sanitizer/asan_interface.h>
@@ -67,10 +107,6 @@ inline void rocketnet_red_zone_poison( const void * p, uint64_t bytes )
 {
     ASAN_POISON_MEMORY_REGION( p, (size_t) bytes );
 }
-
-// the bytes whose shadow fills one shadow page: 8 bytes to a shadow byte, 4096
-// shadow bytes to a page
-#define ROCKETNET_RED_ZONE_SHADOW_PAGE_SPAN ( (uint64_t) 4096 * 8 )
 
 // Makes the whole region addressable, writing only the shadow pages that hold
 // poison. ASan's unpoison writes the shadow of every byte it is given, and a
@@ -85,36 +121,32 @@ inline void rocketnet_red_zone_poison( const void * p, uint64_t bytes )
 // whether a never-touched span holds poison commits its shadow page, an
 // eighth of a sparse block at free (Linux maps the shared zero page for that
 // read). A shadow page that is not committed holds no poison, so on Windows
-// the walk first skips every span whose shadow is not committed
-// (rocketnet_red_zone_uncommitted_end, sdk/rocketnet_platform.cpp).
+// the walk skips every run of shadow that is not committed, asking once per
+// run (rocketnet_red_zone_shadow_run, sdk/rocketnet_platform.cpp). Asked once
+// per span of a committed run, destroying a 1000-slot world took about two
+// hours under msvc-asan, its stack samples in VirtualQuery.
 #if defined( _WIN32 )
-// at when the shadow page of at is committed (or cannot be read), else the
-// first address past the run of uncommitted shadow that holds it
-uintptr_t rocketnet_red_zone_uncommitted_end( uintptr_t at );
+uintptr_t rocketnet_red_zone_shadow_run( void * context, uintptr_t at, bool * committed );
+#else
+// the whole address space one committed run: every span is asked
+inline uintptr_t rocketnet_red_zone_shadow_run( void *, uintptr_t, bool * committed )
+{
+    *committed = true;
+    return UINTPTR_MAX;
+}
 #endif // #if defined( _WIN32 )
+
+inline void rocketnet_red_zone_unpoison_span( void *, uintptr_t begin, uintptr_t end )
+{
+    if ( __asan_region_is_poisoned( (void *) begin, (size_t) ( end - begin ) ) )
+    {
+        ASAN_UNPOISON_MEMORY_REGION( (void *) begin, (size_t) ( end - begin ) );
+    }
+}
 
 inline void rocketnet_red_zone_unpoison( const void * p, uint64_t bytes )
 {
-    const uintptr_t end = (uintptr_t) p + (uintptr_t) bytes;
-    uintptr_t at = (uintptr_t) p;
-    while ( at < end )
-    {
-#if defined( _WIN32 )
-        const uintptr_t uncommitted_end = rocketnet_red_zone_uncommitted_end( at );
-        if ( uncommitted_end > at )
-        {
-            at = uncommitted_end < end ? uncommitted_end : end;
-            continue;
-        }
-#endif // #if defined( _WIN32 )
-        const uintptr_t span_end = ( at | ( (uintptr_t) ROCKETNET_RED_ZONE_SHADOW_PAGE_SPAN - 1 ) ) + 1;
-        const uintptr_t next = span_end < end ? span_end : end;
-        if ( __asan_region_is_poisoned( (void *) at, (size_t) ( next - at ) ) )
-        {
-            ASAN_UNPOISON_MEMORY_REGION( (void *) at, (size_t) ( next - at ) );
-        }
-        at = next;
-    }
+    rocketnet_shadow_walk( (uintptr_t) p, (uintptr_t) p + (uintptr_t) bytes, rocketnet_red_zone_shadow_run, rocketnet_red_zone_unpoison_span, NULL );
 }
 
 #if ROCKETNET_DEV
