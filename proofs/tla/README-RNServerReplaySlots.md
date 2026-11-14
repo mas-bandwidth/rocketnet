@@ -82,10 +82,11 @@ array is full, and holds every greeting. A forget refused in a walk means the
 array is full for the rest of that walk, so a skipped slot's mark, which the
 walk asks at zero whatever the session opened before its greeting, is
 refused: with the XDP sink no skip mark is ever recorded, and the session's
-greeting waits for the old forget. A zero mark that replaces a kept mark of
-its key in place is not refused (RNXdpReplay's `QueueRefusable`). The rule
-covers every new session, not only skipped slots: while kernel deletes keep
-failing and the forget array stays full, no new session is greeted.
+greeting waits for the old forget. A zero mark of a key the sink keeps a
+mark of is refused too, and the kept mark stays as it was (RNXdpReplay's
+`QueueRefusable`; `KeptKeyZeroMarkWaits`, whose witness is 11 below). The
+rule covers every new session, not only skipped slots: while kernel deletes
+keep failing and the forget array stays full, no new session is greeted.
 msgx (`sdk/rocketnet_driver_builtin.cpp`, macOS) is a sink without the rule:
 there a skip mark can be recorded, and a slot that keeps its skip mark's
 owner waits unmarked for its forgets. The
@@ -270,6 +271,19 @@ counterexample below was checked against the C by hand.
     checks the rule on the socket: a zero mark refused while the forget
     array is full, every keep-alive held, a nonzero mark still queued; red
     before the fix.
+11. **`MCRNServerReplaySlotsBrokenKeptKeyZeroMark.cfg`** (the XDP sink's
+    rule with `KeptKeyZeroMarkWaits = FALSE`, three addresses, checking
+    `GreetedSlotHasEntry`): 7307f183e's exception, a zero mark that replaces
+    a kept mark of its key taken although the forget array is full. The
+    model carries no kept marks, so the witness lets the sink take any
+    skipped slot's zero mark in such a walk: the skip mark of `a2` is
+    recorded while the forget of `a1` is refused, and at `a3`, with both
+    forgets refused, the Blocked slot asks for no mark, nothing holds its
+    greeting, and it is greeted with no entry.
+    `test_xdp_transport_replay_marks_full_forgets_hold_a_kept_key_zero_mark`
+    (`tests/test_unit_xdp_replay_marks.cpp`) drives the sequence through the
+    walk and the XDP sink's own mark, red before the fix; the socket test
+    checks a kept key's zero mark refused and held.
 
 ## Runs
 

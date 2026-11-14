@@ -442,12 +442,19 @@ AdmittedNewForgets == {accepted \in SUBSET (Forgets \ pendingForget) :
        \/ Cardinality(pendingForget \cup accepted) = ForgetCapacity}
 
 (* The marks the pending buffer may refuse to queue: a mark of an address  *)
-(* with a kept mark replaces it in place and is never refused.             *)
-QueueRefusable == {m \in Marks : \A k \in pendingMark : k.addr # m.addr}
+(* with a kept mark replaces it in place and is refused only when it is a  *)
+(* zero mark and the forget storage is full after this walk's forgets      *)
+(* (rocketnet_xdp_replay_sink_mark: a new session's zero mark waits for    *)
+(* the forgets, kept key or not).  A refused mark leaves the kept mark of  *)
+(* its address as it was.                                                  *)
+QueueRefusable(accepted) ==
+    {m \in Marks : \/ \A k \in pendingMark : k.addr # m.addr
+                   \/ /\ m.hw = 0
+                      /\ Cardinality(pendingForget \cup accepted) >= ForgetCapacity}
 
 Walk ==
     /\ phase = "run"
-    /\ \E accepted \in AdmittedNewForgets, queueRefused \in SUBSET QueueRefusable :
+    /\ \E accepted \in AdmittedNewForgets : \E queueRefused \in SUBSET QueueRefusable(accepted) :
       LET queued == Marks \ queueRefused
           advanced == IF AdvanceOnQueueRefusal THEN Marks ELSE queued
       IN
@@ -455,7 +462,7 @@ Walk ==
         /\ markFailures' = markFailures + Cardinality(queueRefused)
         /\ pendingForget' = pendingForget \cup accepted
         /\ pendingMark' = queued \cup
-               {m \in pendingMark : /\ \A k \in Marks : k.addr # m.addr
+               {m \in pendingMark : /\ \A k \in queued : k.addr # m.addr
                                     /\ ForgetDropsKeptMark => m.addr \notin accepted}
         /\ pendingMacForget' = accepted
         \* the sink drops an accepted forget's learned reply MAC as it queues

@@ -182,7 +182,11 @@ Actions, each against the design sentence it models:
   commit and greets every live session except one whose zero mark is kept
   after a refusal or owed by the walk (`HoldGreetingUntilMarked`); a greeted
   session stays greeted. The walk may find the buffer full for a mark of an
-  address with no kept mark: it then leaves `marked` and sets `markOwed`.
+  address with no kept mark, and the sink refuses a zero mark of any
+  address, a kept one's too, while the forget storage is full after the
+  walk's forgets (`QueueRefusable`, `rocketnet_xdp_replay_sink_mark`): it
+  then leaves `marked` and sets `markOwed`, and a kept mark of that address
+  stays as it was.
   The broken shapes drop every refused forget, keep one over the newer mark,
   drop every refused mark, keep a mark over the forget of its address,
   greet over a refused zero mark, or advance the cache on a refused queue.

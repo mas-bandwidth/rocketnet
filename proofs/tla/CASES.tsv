@@ -786,6 +786,7 @@ MCRNServerReplaySlotsThree.cfg	MCRNServerReplaySlotsThree.tla	pass	-	check	rnser
 MCRNServerReplaySlotsThreeXdpSink.cfg	MCRNServerReplaySlotsThree.tla	pass	-	check	rnserverreplayslots	required	-
 MCRNServerReplaySlotsBrokenSkipOverwritten.cfg	MCRNServerReplaySlotsThree.tla	invariant	KernelEntryOwned	check	rnserverreplayslots	required	-
 MCRNServerReplaySlotsBrokenZeroMarkTaken.cfg	MCRNServerReplaySlotsThree.tla	invariant	GreetedSlotHasEntry	check	rnserverreplayslots	required	-
+MCRNServerReplaySlotsBrokenKeptKeyZeroMark.cfg	MCRNServerReplaySlotsThree.tla	invariant	GreetedSlotHasEntry	check	rnserverreplayslots	required	-
 MCServerStopSpread.cfg	MCServerStopSpread.tla	pass	-	check	serverstopspread	required	-
 MCServerStopSpreadLive.cfg	MCServerStopSpread.tla	pass	-	check	serverstopspread	required	-
 MCServerStopSpreadBrokenSingleShot.cfg	MCServerStopSpread.tla	invariant	FullBurstBeforeStopped	check	serverstopspread	required	-

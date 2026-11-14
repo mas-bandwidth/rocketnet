@@ -10,6 +10,7 @@
 (*                                             invariant                    *)
 (*   MCRNServerReplaySlotsBrokenSkipOverwritten.cfg  KernelEntryOwned       *)
 (*   MCRNServerReplaySlotsBrokenZeroMarkTaken.cfg    GreetedSlotHasEntry    *)
+(*   MCRNServerReplaySlotsBrokenKeptKeyZeroMark.cfg  GreetedSlotHasEntry    *)
 (* (README-RNServerReplaySlots.md)                                          *)
 (***************************************************************************)
 EXTENDS RNServerReplaySlots
@@ -24,5 +25,9 @@ MCKeepSkipOwnerBroken == FALSE
 
 \* MCRNServerReplaySlotsThreeXdpSink.cfg: the XDP sink's zero-mark rule
 MCZeroMarkWaits == TRUE
+
+\* MCRNServerReplaySlotsBrokenKeptKeyZeroMark.cfg: the XDP sink's rule with
+\* 7307f183e's kept-key exception (KeptKeyZeroMarkWaits FALSE)
+MCKeptKeyZeroMarkBroken == FALSE
 
 =============================================================================

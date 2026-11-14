@@ -68,6 +68,9 @@
 (*   ZeroMarkWaitsForForgets (a definition, below) the XDP sink's rule,    *)
 (*                  without which a slot Blocked at a third address is     *)
 (*                  greeted with no entry (GreetedSlotHasEntry)             *)
+(*   KeptKeyZeroMarkWaits (a definition, below) FALSE is the rule's        *)
+(*                  kept-key exception: the same greeting                   *)
+(*                  (GreetedSlotHasEntry)                                   *)
 (*                                                                         *)
 (* A slot's skip mark (skip_marked, skip_address) records the address the *)
 (* mark pass marked while the slot was skipped; the forget pass forgets it *)
@@ -139,6 +142,19 @@ KeepSkipOwner == TRUE
 (* (MCRNServerReplaySlotsBrokenZeroMarkTaken.cfg fails GreetedSlotHasEntry; *)
 (* MCRNServerReplaySlotsThreeXdpSink.cfg, TRUE, passes it).                 *)
 ZeroMarkWaitsForForgets == FALSE
+
+(* KeptKeyZeroMarkWaits: under ZeroMarkWaitsForForgets, a zero mark waits  *)
+(* even when the sink keeps a mark of its address that it would replace in *)
+(* place (the design: TRUE; rocketnet_xdp_replay_sink_mark tests only the  *)
+(* forget array).  The model does not carry the sink's kept marks, so      *)
+(* FALSE lets the sink take a skipped slot's zero mark in such a walk, as  *)
+(* if a kept mark of its address stood (a first-seen slot's zero mark,     *)
+(* which the exception also took, is left refused: such a slot is never    *)
+(* one the walk leaves unmarked): the exception of 7307f183e, which        *)
+(* recorded a skip mark and then left the slot Blocked, unmarked and not   *)
+(* held, at a third address; MCRNServerReplaySlotsBrokenKeptKeyZeroMark.cfg *)
+(* must fail GreetedSlotHasEntry.                                          *)
+KeptKeyZeroMarkWaits == TRUE
 
 (* MarkWhileSkipped: a connected slot the mark pass skips, its record      *)
 (* naming the address whose forget is owed, is still marked at its own     *)
@@ -233,7 +249,7 @@ Walk ==
            \* that refused a forget (ZeroMarkWaitsForForgets); a skipped
            \* slot's mark is always zero
            takeable(i) == ~(ZeroMarkWaitsForForgets /\ refusedAny /\ conn[i].high = 0)
-           skipTakeable == ~(ZeroMarkWaitsForForgets /\ refusedAny)
+           skipTakeable == ~(ZeroMarkWaitsForForgets /\ refusedAny) \/ ~KeptKeyZeroMarkWaits
        IN \E mAcc \in SUBSET { i \in Wants : takeable(i) }, sAcc \in SUBSET { i \in SkipWants : skipTakeable } :
           LET \* the addresses another slot than k marks now
               marked(k) == { conn[i].at : i \in (mAcc \cup sAcc) \ {k} }
