@@ -53,6 +53,9 @@ WILDCARD_ALLOWED = {
     ("tests/functional/posix_socket_errors.cpp",
      'posix_check( rocketnet_address_parse( &bind_address, "[::]:0" ) );'):
         "msgx dual-stack client sockets (macOS): an ipv4 and an ipv6 client socket on the ipv6 wildcard's port",
+    ("tests/functional/windows_lifecycle_stress.cpp",
+     '{ "iocp fails late, rio refuses, portable granted", "0.0.0.0:0", 2, true, "portable", ROCKETNET_STATUS_OK, true, true, false },'):
+        "auto fall case (Windows): rio refuses two lanes on the wildcard, so auto reaches portable",
 }
 
 TIERS = {"supported", "nightly", "unsupported"}
