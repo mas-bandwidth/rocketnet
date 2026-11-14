@@ -32,10 +32,18 @@ The flush runs with no packet between start and finish: the caller's contract
 that an update's sends from game threads end before its flush. A lease left
 open across a flush is RNDriverSendStaging's.
 
+Not modelled: the code's chunk take. `rocketnet_server_payload_ring_take`
+claims `ROCKETNET_SERVER_FILL_CHUNK` slots per fetch-add and installs them on
+a per-line packed word by compare-and-swap, and
+`rocketnet_server_payload_ring_return_chunks` marks a line's unused chunk
+slots empty before the flush. `Acquire` below is one fetch-add per slot; the
+chunk model is owed (`docs/roadmap.sexp` `payload-ring-chunk-layout-model`).
+
 ## Actions and the code they mirror
 
 - **`Acquire(t)`**: the portable branch of
-  `rocketnet_server_transport_start_packet`: `slot =
+  `rocketnet_server_transport_start_packet` on its single-slot path below the
+  chunk guard: `slot =
   rocketnet_platform_atomic_add_u64( &ring->num_packets, 1 )` (fetch-add, the
   old value), refused at `slot >= send_capacity`, else `info[slot]` written
   with `wire_bytes = 0` and the frame at `ring->data + slot *

@@ -1,5 +1,13 @@
 --------------------------- MODULE RNUringSendPhases ---------------------------
 (***************************************************************************)
+(* HISTORICAL DESIGN ONLY: the one-ring io_uring driver before the         *)
+(* per-queue rewrite.  rocketnet_server_uring_submit_phase,                *)
+(* rocketnet_server_uring_reap_cqe and the two-phase staging exist nowhere *)
+(* in sdk/ now (start_packet and                                           *)
+(* send_packets keep their names over the per-queue path);                 *)
+(* the current send path is RNUringQueueBankLayout, RNUringQueueSend and   *)
+(* RNSendGatherLayout (COVERAGE.tsv row io-uring-send-phases).             *)
+(*                                                                         *)
 (* The io_uring server's send staging at the code's layout                *)
 (* (sdk/rocketnet_server_uring_linux.cpp rocketnet_server_uring_start_packet, *)
 (* rocketnet_server_uring_send_packets, rocketnet_server_uring_submit_phase *)

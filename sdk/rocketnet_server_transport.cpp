@@ -5167,7 +5167,9 @@ uint8_t * rocketnet_server_transport_payload( struct rocketnet_server_transport_
     return payloads->payload_data[payload_index];
 }
 
-// proofs/tla/RNServerPayloadRingLayout.tla Acquire, on the calling thread's
+// proofs/tla/RNServerPayloadRingLayout.tla Acquire models one fetch-add per
+// slot; the chunk take below is not modelled (docs/roadmap.sexp
+// payload-ring-chunk-layout-model). On the calling thread's
 // line: a slot of the line's chunk when it holds one (a compare-and-swap on
 // the line). Otherwise, while the ring has ROCKETNET_SERVER_FILL_CHUNK free
 // slots for every line (the guard), one fetch-add of a chunk: its first slot
@@ -5683,9 +5685,10 @@ static void rocketnet_server_transport_flush( struct rocketnet_server_transport_
 
     struct rocketnet_server_payload_ring_t * ring = &server_transport->payload_ring;
 
-    // proofs/tla/RNServerPayloadRingLayout.tla Flush: the lines' unused chunk
-    // slots marked empty, the counter clamped to send_capacity, every
-    // finished slot below it sent, the counter reset
+    // proofs/tla/RNServerPayloadRingLayout.tla Flush: the counter clamped to
+    // send_capacity, every finished slot below it sent, the counter reset; the
+    // lines' unused chunk slots marked empty first is not modelled
+    // (docs/roadmap.sexp payload-ring-chunk-layout-model)
     rocketnet_server_payload_ring_return_chunks( server_transport );
     uint64_t num_packets = ring->num_packets;
     if ( num_packets > (uint64_t) server_transport->send_capacity )

@@ -408,8 +408,10 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
     // (accepted, so ACK-eligible) as it was (standard/MESSAGES.md m6.3). The
     // allowance is proofs/tla/RNChannelTypes.tla SupersederKept, with the reversed
     // witness MCRNChannelBrokenReleaseBeforeRefuse.cfg releasing first; the
-    // stale drop at the half range is not in the model (its indexes are
-    // small) and is test_stale_code_1_at_the_half_range_keeps_the_in_turn_block.
+    // stale drop at the half range is proofs/tla/RNSequencingWrap.tla InTurn
+    // at Slack = 1, with the reversed witness
+    // MCRNSequencingWrapBrokenReleaseBeforeRefuse.cfg, and is
+    // test_stale_code_1_at_the_half_range_keeps_the_in_turn_block.
 
     bool supersedes = false;
     if ( current != RN_DESCRIPTOR_NONE )

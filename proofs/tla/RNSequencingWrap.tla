@@ -33,6 +33,13 @@
 (* sender's next index (a send drops from the network what falls out).     *)
 (* Under it every compare's operands lie in -Half .. Half - 1 of each      *)
 (* other, so the modular verdict equals the true one.                      *)
+(* Slack = 1 lets one sequenced send run exactly Half ahead of the epoch's *)
+(* watermark, one step outside that assumption: an in-turn block at       *)
+(* watermark + Half - 1 is then superseded by a record at watermark + Half *)
+(* that the watermark test refuses (the code's test                        *)
+(* test_stale_code_1_at_the_half_range_keeps_the_in_turn_block).  It       *)
+(* exists to reach that one rule; under it a truly newer record is dropped *)
+(* stale by design, so NewerNeverDiscarded is checked only at Slack = 0.   *)
 (*                                                                         *)
 (* A block is two fragments of one (ordering, sequencing); the second to   *)
 (* arrive completes it (rn_sequenced_block).  The delivery table's room    *)
@@ -46,6 +53,9 @@
 (*   "watermarkBoundary" in-turn stale test sequence_gap > Half, not >=    *)
 (*   "holdGapUnmasked"   future-hold gap without & mask                    *)
 (*   "drainGapUnmasked"  drain's hold gap without & mask                   *)
+(*   "releaseBeforeRefuse" in-turn: the superseding release before the     *)
+(*                       watermark test, so a stale superseder drops the   *)
+(*                       in-turn block (the code releases after it)        *)
 (* An unmasked difference is uint32 arithmetic: modulo CounterMod (2^32 in *)
 (* the code), a multiple of Mod.                                           *)
 (***************************************************************************)
@@ -58,6 +68,7 @@ CONSTANTS
     MaxSeqSends,  \* sequenced messages a behaviour sends
     MaxOrdSends,  \* ordered messages a behaviour sends
     Starts,       \* the read index and sequencing index a behaviour may start from
+    Slack,        \* 0: the honest network; 1: a sequenced send may run Half ahead (below)
     Broken        \* "none", or the one compare written wrong (above)
 
 Half == Mod \div 2
@@ -70,6 +81,7 @@ ASSUME /\ Mod >= 4 /\ Mod % 2 = 0
        /\ CounterMod % Mod = 0 /\ CounterMod > Mod /\ CounterMod > MaxO
        /\ Net >= 2 /\ MaxSeqSends >= 0 /\ MaxOrdSends >= 0
        /\ Starts \subseteq 0..Mod-1
+       /\ Slack \in {0, 1}
 
 U24(x) == x % Mod
 
@@ -97,9 +109,10 @@ VARIABLES
     outOfOrder,  \* ghost: a sequenced delivery out of its epoch or behind the watermark
     silent,      \* ghost: a record dropped with no count (DISPATCH_NONE)
     seqSent,     \* ghost: sequenced sends so far
-    ordSent      \* ghost: ordered sends so far
+    ordSent,     \* ghost: ordered sends so far
+    staleReleased \* ghost: a record refused at the watermark released another state's in-turn block
 
-vars == <<read, wm, inTurn, hold, ow, sw, net, wmT, lostNewer, outOfOrder, silent, seqSent, ordSent>>
+vars == <<read, wm, inTurn, hold, ow, sw, net, wmT, lostNewer, outOfOrder, silent, seqSent, ordSent, staleReleased>>
 
 TypeOK ==
     /\ read \in 0..MaxO
@@ -115,6 +128,7 @@ TypeOK ==
     /\ silent \in BOOLEAN
     /\ seqSent \in 0..MaxSeqSends
     /\ ordSent \in 0..MaxOrdSends
+    /\ staleReleased \in BOOLEAN
 
 \* a quiescent channel anywhere on the ring: every earlier record delivered
 Init ==
@@ -131,6 +145,7 @@ Init ==
     /\ silent = FALSE
     /\ seqSent = 0
     /\ ordSent = 0
+    /\ staleReleased = FALSE
 
 \* rn_channels_deliver_sequenced (sdk/rocketnet_channel.cpp): in this epoch and
 \* not behind the watermark, both masked
@@ -149,18 +164,27 @@ InTurn(r) ==
     IN
     IF older
       THEN /\ lostNewer' = (lostNewer \/ r.s > inTurn.s)                 \* SEQUENCED_SUPERSEDED
-           /\ UNCHANGED <<wm, wmT, inTurn, hold, outOfOrder, silent>>
+           /\ UNCHANGED <<wm, wmT, inTurn, hold, outOfOrder, silent, staleReleased>>
     ELSE IF Behind(wg, "watermarkBoundary")
-      THEN /\ lostNewer' = (lostNewer \/ dropB \/ r.s >= wmT)            \* SEQUENCED_STALE
-           /\ inTurn' = NoTurn
+      THEN \* SEQUENCED_STALE.  The code tests the watermark before the
+           \* superseding release: a superseder refused here leaves the
+           \* in-turn block as it was (m6.3); only a continuation (or a
+           \* record with no block in turn) releases it.  "releaseBeforeRefuse"
+           \* releases first, as the model did before.
+           /\ IF Broken = "releaseBeforeRefuse"
+                THEN /\ lostNewer' = (lostNewer \/ dropB \/ r.s >= wmT)
+                     /\ inTurn' = NoTurn
+                ELSE /\ lostNewer' = (lostNewer \/ r.s >= wmT)
+                     /\ inTurn' = IF vsBlk THEN inTurn ELSE NoTurn
+           /\ staleReleased' = (staleReleased \/ (vsBlk /\ inTurn.s >= wmT /\ ~inTurn'.on))
            /\ UNCHANGED <<wm, wmT, hold, outOfOrder, silent>>
     ELSE IF blk /\ ~after.on
       THEN /\ lostNewer' = (lostNewer \/ dropB)                          \* rn_sequenced_block: the anchor
            /\ inTurn' = [on |-> TRUE, s |-> r.s, have |-> 1]
-           /\ UNCHANGED <<wm, wmT, hold, outOfOrder, silent>>
+           /\ UNCHANGED <<wm, wmT, hold, outOfOrder, silent, staleReleased>>
     ELSE \* a whole record, or the block's last fragment
          /\ lostNewer' = (lostNewer \/ dropB)
-         /\ UNCHANGED hold
+         /\ UNCHANGED <<hold, staleReleased>>
          /\ IF DeliverOK(r.o, r.s, read, wm)
               THEN /\ wm' = U24(U24(r.s) + 1)
                    /\ wmT' = r.s + 1
@@ -179,7 +203,7 @@ Future(r) ==
         older == hold.on /\ (g >= Half \/ (g = 0 /\ (sg >= Half \/ (sg = 0 /\ ~cont))))
         newer == ~hold.on \/ r.o > hold.o \/ (r.o = hold.o /\ r.s > hold.s)
     IN
-    /\ UNCHANGED <<wm, wmT, inTurn, outOfOrder, silent>>
+    /\ UNCHANGED <<wm, wmT, inTurn, outOfOrder, silent, staleReleased>>
     /\ IF older
          THEN /\ lostNewer' = (lostNewer \/ newer)                       \* SEQUENCED_SUPERSEDED
               /\ UNCHANGED hold
@@ -197,7 +221,7 @@ Arrive(r) ==
     /\ LET delta == Sub(U24(r.o), read, "deltaUnmasked") IN
        IF Behind(delta, "deltaBoundary")
          THEN /\ lostNewer' = (lostNewer \/ r.o >= read)                 \* SEQUENCED_STALE
-              /\ UNCHANGED <<wm, wmT, inTurn, hold, outOfOrder, silent>>
+              /\ UNCHANGED <<wm, wmT, inTurn, hold, outOfOrder, silent, staleReleased>>
        ELSE IF delta = 0
          THEN InTurn(r)
          ELSE Future(r)
@@ -208,7 +232,7 @@ Arrive(r) ==
 OpenEpoch ==
     /\ read < ow
     /\ read' = read + 1
-    /\ UNCHANGED <<ow, sw, net, seqSent, ordSent, silent>>
+    /\ UNCHANGED <<ow, sw, net, seqSent, ordSent, silent, staleReleased>>
     /\ LET g == Sub(U24(hold.o), read + 1, "drainGapUnmasked") IN
        IF ~hold.on \/ (g # 0 /\ g < Half)
          THEN /\ wm' = 0 /\ wmT' = 0 /\ inTurn' = NoTurn
@@ -244,7 +268,7 @@ Base == IF ow = read THEN wmT ELSE 0
 CanSeq(n) ==
     /\ seqSent < MaxSeqSends
     /\ Cardinality(net) + n <= Net
-    /\ sw - Base <= Half - 1
+    /\ sw - Base <= Half - 1 + Slack
 
 CanOrd ==
     /\ ordSent < MaxOrdSends
@@ -258,14 +282,14 @@ SendOne ==
     /\ net' = Fresh(net) \cup {[o |-> ow, s |-> sw, k |-> "one"]}
     /\ sw' = sw + 1
     /\ seqSent' = seqSent + 1
-    /\ UNCHANGED <<read, wm, inTurn, hold, ow, wmT, lostNewer, outOfOrder, silent, ordSent>>
+    /\ UNCHANGED <<read, wm, inTurn, hold, ow, wmT, lostNewer, outOfOrder, silent, ordSent, staleReleased>>
 
 SendBlock ==
     /\ CanSeq(2)
     /\ net' = Fresh(net) \cup {[o |-> ow, s |-> sw, k |-> "f0"], [o |-> ow, s |-> sw, k |-> "f1"]}
     /\ sw' = sw + 1
     /\ seqSent' = seqSent + 1
-    /\ UNCHANGED <<read, wm, inTurn, hold, ow, wmT, lostNewer, outOfOrder, silent, ordSent>>
+    /\ UNCHANGED <<read, wm, inTurn, hold, ow, wmT, lostNewer, outOfOrder, silent, ordSent, staleReleased>>
 
 \* rn_channels_send_ordered: ordered_write + 1, sequenced_write = 0; the ordered
 \* record itself is delivered in order by OpenEpoch
@@ -275,12 +299,12 @@ SendOrdered ==
     /\ sw' = 0
     /\ net' = {x \in net : x.o + Half >= ow + 1}
     /\ ordSent' = ordSent + 1
-    /\ UNCHANGED <<read, wm, inTurn, hold, wmT, lostNewer, outOfOrder, silent, seqSent>>
+    /\ UNCHANGED <<read, wm, inTurn, hold, wmT, lostNewer, outOfOrder, silent, seqSent, staleReleased>>
 
 Lose(r) ==
     /\ r \in net
     /\ net' = net \ {r}
-    /\ UNCHANGED <<read, wm, inTurn, hold, ow, sw, wmT, lostNewer, outOfOrder, silent, seqSent, ordSent>>
+    /\ UNCHANGED <<read, wm, inTurn, hold, ow, sw, wmT, lostNewer, outOfOrder, silent, seqSent, ordSent, staleReleased>>
 
 \* nothing in flight, every ordered record delivered, the sender spent or paced out
 Done ==
@@ -319,4 +343,8 @@ InTurnBlockFresh == inTurn.on => inTurn.s >= wmT
 
 \* the 24-bit watermark is the true watermark's low bits
 WatermarkAligned == wm = U24(wmT)
+
+\* a record refused at the watermark leaves another state's in-turn block,
+\* still at or past the true watermark, as it was (standard/MESSAGES.md m6.3)
+StaleKeepsInTurnBlock == ~staleReleased
 =============================================================================

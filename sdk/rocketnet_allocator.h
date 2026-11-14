@@ -224,7 +224,7 @@ struct rn_resend_link_t                 // 8 bytes: resend sequence entry, index
     uint32_t next;                      // next slot in its sequence in bits 0..30 (0x7FFFFFFF: the tail), chunk-class flag in bit 31
 };
 
-// Queue scheduling (proofs/tla/RNChannelQueues.tla). A descriptor's enqueue ticket is
+// Queue scheduling (proofs/tla/RNChannelQueuesLayout.tla, proofs/tla/RNUnreliableRingLayout.tla). A descriptor's enqueue ticket is
 // unique on the connection until the counter wraps, and nonzero while the
 // descriptor is queued. The unreliable ring names an entry by it, so an entry
 // whose descriptor took another ticket is a tombstone; the per-channel reliable
