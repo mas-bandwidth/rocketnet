@@ -289,6 +289,37 @@ class TestCheckFrameBudget(unittest.TestCase):
             self.assertIn("verdict=VOID", report_void)
             self.assertNotIn("verdict=FAIL", report_void)
 
+    def test_probe_timeout_under_load_voids_and_on_a_quiet_host_fails(self) -> None:
+        # A correct bench can be slow on a loaded host: a probe that does not
+        # finish in the run timeout there is VOID with the reason named, never a
+        # traceback with no verdict line. On a quiet host the same timeout is a
+        # FAIL that names it.
+        def fake_run_slow(binary: str, transport: str):
+            raise cfb.subprocess.TimeoutExpired(cmd=[binary, transport], timeout=300)
+
+        for report_only in (False, True):
+            code, report = cfb.run_benchmark_with_load_checks(
+                binary="/fake/client_main_thread_cost",
+                transport="msgx",
+                report_only=report_only,
+                load_fn=lambda: (30.0, 32),
+                run_fn=fake_run_slow,
+            )
+            self.assertEqual(code, 0 if report_only else 3, msg=report)
+            self.assertIn("verdict=VOID (run 1/3 did not finish in 300 s under host load 30.00)", report)
+            self.assertIn("::warning title=UNMEASURED::", report)
+            self.assertNotIn("verdict=FAIL", report)
+
+            code_quiet, report_quiet = cfb.run_benchmark_with_load_checks(
+                binary="/fake/client_main_thread_cost",
+                transport="msgx",
+                report_only=report_only,
+                load_fn=lambda: (1.0, 32),
+                run_fn=fake_run_slow,
+            )
+            self.assertEqual(code_quiet, 1, msg=report_quiet)
+            self.assertIn("verdict=FAIL (run 1/3 did not finish in 300 s)", report_quiet)
+
 
 if __name__ == "__main__":
     unittest.main()

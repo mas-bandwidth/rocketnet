@@ -11,9 +11,14 @@ Before each of the three runs, reads the 1-minute load average (os.getloadavg
 where available; on Windows prints load=unavailable and does not void). If
 load > cores / 4.0, that run is a probe and the last: when it exits nonzero or
 prints no P=32 line the verdict is FAIL (exit 1, with --report-only too), since
-load voids a timing and never a broken binary; otherwise it prints
-"VOID load=<x> cores=<n>" and a VOID verdict line and exits 3 (unless
+load voids a timing and never a broken binary; otherwise, including a probe
+that did not finish within the run timeout (named in the verdict line), it
+prints "VOID load=<x> cores=<n>" and a VOID verdict line and exits 3 (unless
 --report-only is set, which exits 0). A void is never a pass.
+
+--report-only exits 0 on PASS, on a timing FAIL (the median over the gate) and
+on VOID; a broken run (nonzero exit, no P=32 line, or a quiet-host run that did
+not finish in time) is FAIL and exit 1 with it too.
 """
 
 import argparse
@@ -89,14 +94,18 @@ def evaluate_gate(
     report_only: bool = False,
     load_samples: Optional[List[Tuple[Optional[float], int]]] = None,
     run_errors: Optional[List[Optional[str]]] = None,
+    probe_timeout: Optional[str] = None,
 ) -> Tuple[int, str]:
     """
     Evaluate the frame-budget gate from pre-collected or synthetic inputs.
     Returns (exit_code, formatted_report).
     Exit codes:
-      0: PASS (or --report-only on PASS/FAIL/VOID)
-      1: FAIL (median > gate_us, or missing/malformed output line)
-      3: VOID (host load > cores / 4)
+      0: PASS, or with --report-only a timing FAIL (median > gate_us) or a VOID
+      1: FAIL: median > gate_us without --report-only, or, with --report-only
+         too, a broken run (nonzero exit, missing/malformed output line, or a
+         quiet-host run that did not finish in time)
+      3: VOID (host load > cores / 4: the probe worked or did not finish in
+         time) without --report-only
     """
     lines_out: List[str] = []
     samples: List[float] = []
@@ -132,10 +141,12 @@ def evaluate_gate(
                 return 1, "\n".join(lines_out)
 
         if loaded:
+            timed_out = probe_timeout is not None and idx >= len(run_outputs)
             lines_out.append(f"VOID load={cur_load:.2f} cores={cur_cores}")
             lines_out.append(
                 f"frame_budget transport={transport} P=32 total_us_p99_median=VOID "
                 f"runs=- gate={gate_us:g} verdict=VOID"
+                + (f" ({probe_timeout} under host load {cur_load:.2f})" if timed_out else "")
             )
             # the nightly watch reads this annotation: a void is its own outcome, never green
             # (tools/check_nightly_dispositions.py, UNMEASURED)
@@ -143,6 +154,7 @@ def evaluate_gate(
                 f"::warning title=UNMEASURED::frame budget VOID: host load {cur_load:.2f} over "
                 f"{cur_cores / 4.0:g} ({cur_cores} cores / 4) before run {idx + 1}; nothing measured"
                 + (" (the probe run worked; its timing is not judged)" if idx < len(run_outputs) else "")
+                + (f" (the probe run did not finish: {probe_timeout})" if timed_out else "")
             )
             return (0 if report_only else 3), "\n".join(lines_out)
 
@@ -221,6 +233,7 @@ def run_benchmark_with_load_checks(
     load_samples: List[Tuple[Optional[float], int]] = []
     run_outputs: List[str] = []
     run_errors: List[Optional[str]] = []
+    probe_timeout: Optional[str] = None
 
     for i in range(runs):
         load1, cores = load_fn()
@@ -229,7 +242,18 @@ def run_benchmark_with_load_checks(
 
         # on a loaded host the run is a probe: it must work, and its timing is
         # not judged (evaluate_gate)
-        rc, stdout, stderr = runner(binary, transport)
+        try:
+            rc, stdout, stderr = runner(binary, transport)
+        except subprocess.TimeoutExpired as exc:
+            # a slow bench under load voids the timing like any other loaded
+            # run; on a quiet host not finishing is a FAIL that names it
+            timed_out = f"run {i + 1}/{runs} did not finish in {float(exc.timeout):g} s"
+            if loaded:
+                probe_timeout = timed_out
+            else:
+                run_outputs.append("")
+                run_errors.append(timed_out)
+            break
         if loaded:
             run_outputs.append(stdout)
             run_errors.append(f"run {i + 1}/{runs} exited {rc}: {(stderr or stdout or '').strip()}" if rc != 0 else None)
@@ -256,6 +280,7 @@ def run_benchmark_with_load_checks(
         report_only=report_only,
         load_samples=load_samples,
         run_errors=run_errors,
+        probe_timeout=probe_timeout,
     )
 
 
@@ -288,7 +313,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--report-only",
         action="store_true",
-        help="Print results and exit 0 on PASS, FAIL, or VOID (for non-quiet or report-only legs).",
+        help="Print results and exit 0 on PASS, a timing FAIL or VOID; a broken run (nonzero exit, no P=32 line, "
+        "or a quiet-host run that did not finish in time) still exits 1 (for report-only legs).",
     )
     args = parser.parse_args(argv)
 
