@@ -64,10 +64,19 @@ unsigned char nondet_uchar( void );
 #define PROOF_REACHED( harness ) ( (void) 0 )
 #endif // #if defined( REACHABILITY_CONTROL )
 
-/* the tally lives in the sdk unit that is compiled in the library; the proof,
-   like that unit, holds the one definition */
+/* the crypto tally: static to sdk/rocketnet_protocol.cpp, which the proof does
+   not compile, and reached from every other unit through
+   rocketnet_crypto_tally_this_thread (sdk/rocketnet_crypto_tally.h). The proof
+   holds the tally and its accessor in the same form, so each counted call
+   increments a real object; without the accessor's body the checker returns
+   a nondet pointer and the increment fails as a dereference. */
 
-thread_local struct rocketnet_crypto_tally_t rocketnet_crypto_tally;
+static thread_local struct rocketnet_crypto_tally_t rocketnet_crypto_tally;
+
+struct rocketnet_crypto_tally_t * rocketnet_crypto_tally_this_thread( void )
+{
+    return &rocketnet_crypto_tally;
+}
 
 /* the signed data the open model is called with, so it can check the exact
    sealed-block offset the reader passes */
