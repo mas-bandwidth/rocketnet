@@ -571,7 +571,7 @@ ServerRecvRequest(p) ==
            fresh == Fresh(p.tok)
        IN CASE m.live /\ m.slot # 0 ->
                  ServerSilent /\ UNCHANGED <<smap, bound, churnDenied>>
-            [] m.live /\ (p.salt = m.salt \/ p.tok = m.tok) ->
+            [] m.live /\ m.slot = 0 /\ (p.salt = m.salt \/ p.tok = m.tok) ->
                  \* salt or token: the stored challenge (the code copies
                  \* mapping->challenge_packet). The idle deadline moves only
                  \* when the salt matches (sdk/rocketnet_server_protocol.cpp).
@@ -885,8 +885,8 @@ NonceFresh == \A a, b \in LiveAddrs : a # b => KeysOf(smap[a]) # KeysOf(smap[b])
 
 \* Each live mapping retains the challenge chosen at its creation: csalt and
 \* cnonce, the per-mapping ghost of the stored challenge packet, written only
-\* by OpenMapping. On its own this holds by construction; the check that can
-\* fail is StoredChallengeResent below.
+\* by OpenMapping. On its own this holds by construction; the check on the
+\* challenge put on the wire is StoredChallengeResent below.
 StoredChallengeNeverReplaced ==
     \A a \in LiveAddrs :
         /\ smap[a].csalt = smap[a].salt
@@ -894,11 +894,14 @@ StoredChallengeNeverReplaced ==
         /\ smap[a].csalt # NoSalt
 
 \* the challenge a half-open mapping actually resends to a request carrying
-\* its salt or its token is the one fixed at the mapping's creation: the
-\* packet the step put on the wire (none when the send was lost) carries the
-\* mapping's csalt and cnonce, so the client derives the keys the mapping
-\* opens under. Reversed witness MCServerConnectionBrokenResendFromRequest.cfg
-\* (ResendFromRequest: the request's salt).
+\* its salt or its token carries the salt and nonce the mapping opens the
+\* response under (salt, nonce), so the client derives those keys: the
+\* packet the step put on the wire (none when the send was lost). In the
+\* passing cases the resend arm sends csalt and cnonce, so this holds with
+\* StoredChallengeNeverReplaced; binding it to the code's copy of
+\* mapping->challenge_packet would need a trace check. Reversed witness
+\* MCServerConnectionBrokenResendFromRequest.cfg (ResendFromRequest: the
+\* request's salt).
 StoredChallengeResent ==
     [][\A p \in ClientPackets :
          (/\ p.type = "request" /\ C2S!Deliver(p)
@@ -907,8 +910,8 @@ StoredChallengeResent ==
           /\ s2cWire' # s2cWire)
            => LET q == s2cWire'[Len(s2cWire')].pkt
               IN /\ q.type = "challenge"
-                 /\ q.salt = smap[p.from].csalt
-                 /\ q.nonce = smap[p.from].cnonce]_vars
+                 /\ q.salt = smap[p.from].salt
+                 /\ q.nonce = smap[p.from].nonce]_vars
 
 \* the timeouts fire when they are due
 TimeoutHonoured  == \A a \in Addrs : (smap[a].est /\ Timeout > 0) => smap[a].sinceRecv < Timeout
