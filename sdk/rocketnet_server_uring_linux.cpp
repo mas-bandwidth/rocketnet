@@ -191,8 +191,7 @@ static std::atomic<int> rocketnet_server_uring_probed{ -1 };
 static std::atomic<int> rocketnet_server_uring_probe_step{ 0 };
 static std::atomic<int> rocketnet_server_uring_probe_errno{ 0 };
 
-static const char * const rocketnet_server_uring_probe_steps[] =
-{
+static const char * const rocketnet_server_uring_probe_steps[] = {
     "none",
     "the ring (io_uring_setup)",
     "the opcode probe (io_uring_register)",
@@ -1025,12 +1024,12 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
         if ( step_errno != 0 )
         {
             rocketnet_warn( "io_uring transport refused: this kernel does not accept the io_uring ring, opcodes, provided buffer ring or multishot receive (Linux 6.0) the transport needs: %s failed, %s",
-                step_name, rocketnet_platform_socket_error_text( step_errno ).text );
+                            step_name, rocketnet_platform_socket_error_text( step_errno ).text );
         }
         else
         {
             rocketnet_warn( "io_uring transport refused: this kernel does not accept the io_uring ring, opcodes, provided buffer ring or multishot receive (Linux 6.0) the transport needs: %s failed (no errno: the kernel answered no)",
-                step_name );
+                            step_name );
         }
         return NULL;
     }
