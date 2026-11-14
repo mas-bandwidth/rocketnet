@@ -102,7 +102,7 @@ static_assert( ROCKETNET_XDP_FRAME_SIZE == 4096, "ROCKETNET_XDP_FRAME_SIZE must 
 struct alignas( 64 ) rocketnet_server_socket_send_packet_info_t
 {
     rocketnet_address_t to;
-    size_t packet_bytes;                // main stores it and the stall count reads the producer's through __atomic builtins; owner-thread reads are plain
+    size_t packet_bytes;
     uint8_t destination_mac[ETH_ALEN];  // chosen at start by the reply-MAC rule
     bool mac_learned;                   // destination_mac is the client's learned MAC
 };
@@ -2970,7 +2970,7 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     // packet; the xdp thread sends this copy and never reads the table
 
     send_buffer->packet_info[packet_index].to = *to;
-    __atomic_store_n( &send_buffer->packet_info[packet_index].packet_bytes, (size_t) 0, __ATOMIC_RELAXED );
+    send_buffer->packet_info[packet_index].packet_bytes = 0;
     memcpy( send_buffer->packet_info[packet_index].destination_mac, destination_mac, ETH_ALEN );
 
     const uintptr_t learned_begin = (uintptr_t) &server_socket->reply_macs.entries[0];
@@ -3206,7 +3206,7 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     // is prepended here -- the xdp thread adds the ethernet, ip and udp
     // headers when it copies the packet into its umem frame
 
-    __atomic_store_n( &info->packet_bytes, (size_t) packet_bytes, __ATOMIC_RELAXED );
+    info->packet_bytes = (size_t) packet_bytes;
 }
 
 void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data )
@@ -3233,7 +3233,7 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
         return;
     }
 
-    __atomic_store_n( &send_buffer->packet_info[packet_index].packet_bytes, (size_t) 0, __ATOMIC_RELAXED );
+    send_buffer->packet_info[packet_index].packet_bytes = 0;
 }
 
 // proofs/tla/RNXdpReplay.tla Commit, HoldGreetingUntilMarked: before a producer
@@ -3266,7 +3266,7 @@ static void rocketnet_server_socket_hold_greetings( struct rocketnet_server_sock
         }
         if ( rocketnet_xdp_replay_sink_holds_greeting( server_socket->replay_marks, hold_all, &info->to ) )
         {
-            __atomic_store_n( &info->packet_bytes, (size_t) 0, __ATOMIC_RELAXED );
+            info->packet_bytes = 0;
             server_socket->replay_greetings_held++;
         }
     }
@@ -3457,10 +3457,7 @@ static uint32_t rocketnet_server_xdp_buffer_staged( const rocketnet_server_socke
     uint32_t count = 0;
     for ( int i = first; i < staged; i++ )
     {
-        // packet_bytes is stored atomically by its writers (start, finish,
-        // abort, hold_greetings) because this count reads the producer
-        // buffer while main may still be staging into it during a stop
-        if ( __atomic_load_n( &buffer->packet_info[i].packet_bytes, __ATOMIC_RELAXED ) > 0 )
+        if ( buffer->packet_info[i].packet_bytes > 0 )
         {
             count++;
         }
@@ -3469,17 +3466,15 @@ static uint32_t rocketnet_server_xdp_buffer_staged( const rocketnet_server_socke
 }
 
 // what a stalled queue abandons when the stop gives up on it, counted once
-// (MA027): the frames on the TX ring and the worker's copied batch, the
-// staged packets it has not copied in the buffer it claimed, the staged
-// packets in the buffers main published, and the producer buffer main was
-// filling. Every started packet is in exactly one of these once main's
-// staging is seen; the published and claimed buffers are stable (publish
-// and claim move them under the mutex, and only the worker copies from
-// its claim), while the producer is still main's during a stop, so its
-// byte counts are read atomically and a finish landing in that same
-// instant may not be seen. send_idle releases the queue after the stall,
-// so none of them is sent or counted again. The handoff is read under
-// its mutex, once per stall.
+// at the worker's exit (MA027): the frames on the TX ring and the worker's
+// copied batch, the staged packets it has not copied in the buffer it
+// claimed, the staged packets in the buffers main published, and the
+// producer buffer main was filling. The count runs only after main set
+// quit (its release store is the barrier: every staging store main made
+// is visible), the worker has stopped sending on the queue since the
+// stall latched, and send_idle releases the queue after the stall, so
+// every started packet is in exactly one of these and none is sent or
+// counted again. The handoff is read under its mutex, once, at exit.
 
 static uint32_t rocketnet_server_xdp_stall_abandoned( rocketnet_server_xdp_socket_t * socket, int worker_index, int batch_packets, uint32_t on_ring )
 {
@@ -5247,9 +5242,12 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             xsk_ring_cons__release( &socket->complete_queue, num_completed );
         }
 
-        // if we don't already have a batch of packets to send, get one
+        // if we don't already have a batch of packets to send, get one. A
+        // stalled queue sends nothing more: the stall latched during the
+        // stop, and what it holds is counted once at this thread's exit
 
-        if ( num_batch_packets == 0 )
+        const bool send_stalled_now = socket->send_stalled.load( std::memory_order_relaxed );
+        if ( num_batch_packets == 0 && !send_stalled_now )
         {
             // the lock only when main has published a buffer: an idle pass
             // reads one atomic, so the busy poll does not hold the lock
@@ -5400,7 +5398,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
         // actually send the packets
 
-        if ( num_batch_packets > 0 )
+        if ( num_batch_packets > 0 && !send_stalled_now )
         {
             // reserve entries in the send queue
 
@@ -5475,13 +5473,10 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
             }
             const bool draining = socket->send_draining.load( std::memory_order_relaxed );
             const double now = draining && pending ? rocketnet_platform_time() : 0.0;
-            if ( rocketnet_xdp_send_stall_pass( send_stall, consumer, pending, draining, now, ROCKETNET_XDP_SEND_STALL_SECONDS, socket->send_stalled ) )
-            {
-                const uint32_t abandoned = rocketnet_server_xdp_stall_abandoned( socket, send_worker_index, num_batch_packets, on_ring );
-                socket->send_wakeup_failures.fetch_add( abandoned, std::memory_order_relaxed );
-                rocketnet_error( "xdp queue %d tx ring has not drained for %.1f s during the stop; stop gives up on its %u queued frames",
-                                 socket->queue, ROCKETNET_XDP_SEND_STALL_SECONDS, abandoned );
-            }
+            // on a stall the flag latches and this thread stops sending on
+            // the queue (the gates above); what it abandons is counted and
+            // logged once at this thread's exit, after main's quit store
+            rocketnet_xdp_send_stall_pass( send_stall, consumer, pending, draining, now, ROCKETNET_XDP_SEND_STALL_SECONDS, socket->send_stalled );
         }
 
         // The SCHED_RR worker spins on its dedicated isolated queue CPU by
@@ -5520,6 +5515,21 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         {
             break;
         }
+    }
+
+    // a stalled queue's abandoned frames, counted once here: main has set
+    // quit (its release store orders every staging store before this read),
+    // this thread has sent nothing on the queue since the stall latched,
+    // and packets staged into it after the stall are in its buffers
+
+    if ( socket->send_stalled.load( std::memory_order_relaxed ) )
+    {
+        const uint32_t consumer = __atomic_load_n( socket->send_queue.consumer, __ATOMIC_ACQUIRE );
+        const uint32_t on_ring = *socket->send_queue.producer - consumer;
+        const uint32_t abandoned = rocketnet_server_xdp_stall_abandoned( socket, send_worker_index, num_batch_packets, on_ring );
+        socket->send_wakeup_failures.fetch_add( abandoned, std::memory_order_relaxed );
+        rocketnet_error( "xdp queue %d tx ring has not drained for %.1f s during the stop; stop gives up on its %u queued frames",
+                         socket->queue, ROCKETNET_XDP_SEND_STALL_SECONDS, abandoned );
     }
 
     // Last access to queue storage, acquired by stopped before destruction.

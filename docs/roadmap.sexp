@@ -116,11 +116,6 @@
    :text "Under kernel memory pressure io_uring ring setup can fail with ENOMEM, and create treats it as an ordinary refusal: auto falls to gso and a pinned io_uring ends NO_TRANSPORT_FOUND. Reporting an out-of-memory status instead would stop that fallback, a behaviour change, so it belongs in a minor release. Decide which, then pin it with a test."
    :date "2026-11-11" :origin "v1.0.1 CI: io_uring ENOMEM on a loaded bench, errno now logged by posix_check")
 
-  (item "xdp-stop-abandoned-buffers" :group "after-v1-0-1" :area "rocketnet"
-   :title "xdp stop: count the handoff buffers it abandons"
-   :text "When xdp stop gives up on a transmit ring that has stopped draining, the handoff buffers it abandons are counted in no counter. Count them, so a stop that dropped packets says so."
-   :date "2026-11-11" :origin "v1.0.1 xdp worker fixes (stop bound for a stalled TX ring)")
-
   (item "linux-send-ip-recverr" :group "after-v1-0-1" :area "rocketnet"
    :title "Linux UDP sends: count interface queue drops per socket"
    :text "On Linux a datagram a full interface queue drops is reported to the send call only with IP_RECVERR set; without it the kernel counts the drop per host (Udp SndbufErrors) and SEND_FAILED never sees it (docs/LINUX.md section 7). Set IP_RECVERR on the portable, gso and io_uring sockets, so the send call returns ENOBUFS and the drop counts in SEND_FAILED, and drain the socket's error queue (MSG_ERRQUEUE). Cost: with IP_RECVERR every ICMP error for a destination (port or host unreachable) is queued on the socket and reported by its next receive call, so each receive path needs an error-queue drain (one more call per drain while the queue is not empty) and a classification of what it reads, where today those errors never reach the socket (section 7)."

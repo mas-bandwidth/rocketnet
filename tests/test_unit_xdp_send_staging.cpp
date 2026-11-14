@@ -293,8 +293,9 @@ REGISTER_UNIT_TEST( test_xdp_transport_stop_waits_for_a_ring_that_drains_slowly 
 
 // The watch itself: no stall outside a stop, however long the ring has not
 // moved; during a stop the timing starts at the first pass, and the stall is
-// reported once the bound has passed, once; the consumer moving, or nothing
-// pending, clears it, and a new stall is a new report. Time is the argument.
+// reported once the bound has passed, once; during the stop it then latches,
+// while outside a stop the consumer moving, or nothing pending, clears it,
+// and a new stall is a new report. Time is the argument.
 static void test_xdp_send_stall_watch()
 {
     rocketnet_xdp_send_stall_t stall = { 0, false, 0.0 };
@@ -314,14 +315,23 @@ static void test_xdp_send_stall_watch()
     rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 5, true, true, 1030.0, 1.0, stalled ) );
     rocketnet_unit_check( stalled.load() );
 
+    // during the stop the stall latches: the consumer moving, or nothing
+    // pending, does not clear it, and no second stall is reported
+
     rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, true, true, 1030.5, 1.0, stalled ) );
-    rocketnet_unit_check( !stalled.load() );
-    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, true, true, 1030.75, 1.0, stalled ) );
-    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, true, true, 1031.5, 1.0, stalled ) );
-    rocketnet_unit_check( rocketnet_xdp_send_stall_pass( stall, 6, true, true, 1031.75, 1.0, stalled ) );
+    rocketnet_unit_check( stalled.load() );
+    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, true, true, 1031.75, 1.0, stalled ) );
+    rocketnet_unit_check( stalled.load() );
 
     rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 6, false, true, 1032.0, 1.0, stalled ) );
+    rocketnet_unit_check( stalled.load() );
+
+    // outside a stop it clears as before, and a new stall is a new report
+
+    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 7, true, false, 1033.0, 1.0, stalled ) );
     rocketnet_unit_check( !stalled.load() );
+    rocketnet_unit_check( !rocketnet_xdp_send_stall_pass( stall, 7, true, true, 1034.0, 1.0, stalled ) );
+    rocketnet_unit_check( rocketnet_xdp_send_stall_pass( stall, 7, true, true, 1035.0, 1.0, stalled ) );
 }
 
 REGISTER_UNIT_TEST( test_xdp_send_stall_watch );

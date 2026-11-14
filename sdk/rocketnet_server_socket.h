@@ -94,9 +94,11 @@ inline bool rocketnet_xdp_send_queue_released( int hard_send_error, bool stalled
 // (draining) the watch starts timing at the first pass that finds frames
 // pending and the consumer where it was, and once bound_seconds have passed
 // since then with the consumer still there, stalled is set and the call
-// returns true, once per stall, for the worker to count and log what it
-// abandons; the consumer moving again, or nothing pending, clears it and
-// stops the timing. Outside a stop nothing is timed, and now is not read.
+// returns true, once per stall; during a stop the stall then latches (the
+// worker stops sending on the queue and counts what it abandons once, at
+// its exit), while outside a stop the consumer moving again, or nothing
+// pending, clears it and stops the timing. Outside a stop nothing is
+// timed, and now is not read.
 // now is the platform monotonic clock (rocketnet_platform_time), an
 // argument so a unit case drives it (proofs/tla/RNXdpSendDrain.tla Pass).
 struct rocketnet_xdp_send_stall_t
@@ -112,7 +114,11 @@ inline bool rocketnet_xdp_send_stall_pass( rocketnet_xdp_send_stall_t & stall, u
     {
         stall.consumer = consumer;
         stall.timing = false;
-        if ( stalled.load( std::memory_order_relaxed ) )
+        // during a stop a stall latches: the worker has stopped sending on
+        // this queue and counts what it abandons once, at its exit, so a
+        // consumer that moves again must not clear it and let the frames be
+        // counted (or sent) twice; outside a stop it clears as before
+        if ( !draining && stalled.load( std::memory_order_relaxed ) )
         {
             stalled.store( false, std::memory_order_relaxed );
         }
