@@ -385,8 +385,16 @@ ReliableNeverDropped ==
     \A r \in 1..(nextRel - 1) :
         r \in Range(rtx) \cup Range(rel) \cup inflight \cup acked
 
-\* an unreliable item is dropped only when it does not fit the bytes its
-\* class may spend
+\* an unreliable item is dropped only when the item at the head of its class
+\* does not fit the bytes that class may spend. Every unreliable item here has
+\* the one size UnrelSize, so once the head does not fit, Drop repeats until
+\* the class is empty: the update's remaining unreliable items all go, as the
+\* code's rn_endpoint_unreliable_drop_all drops every unreliable message still
+\* queued once one packed unreliable packet is refused. That is the packed
+\* path only. The code's whole-payload UNRELIABLE_SEQUENCED path
+\* (rn_endpoint_plan_large_sequenced) drops only its refused head and goes
+\* on, so a smaller later packet may fit; one size cannot express that, and
+\* this model does not cover it
 UnreliableDroppedOnlyOverBudget == ~dropBad
 
 \* retransmits and ordered progress, then new reliable, then unreliable

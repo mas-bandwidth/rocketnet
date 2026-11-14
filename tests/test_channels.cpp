@@ -910,8 +910,9 @@ static void channels_test_round_trip_and_never_overreads()
 
 // Armed for the soak. While armed, the first call to any allocation function
 // ends the process with a line naming it. Three nets: the rocketnet allocator
-// hooks (installed before init), the global operator new and delete, and on
-// glibc without a sanitizer the C allocation functions themselves.
+// hooks (installed before init), the global operator new and delete (where no
+// sanitizer runtime defines them, RN_TEST_TRAP_NEW), and on glibc without a
+// sanitizer the C allocation functions themselves.
 
 #if defined( __SANITIZE_ADDRESS__ ) || defined( __SANITIZE_THREAD__ ) || defined( __SANITIZE_MEMORY__ )
 #define RN_TEST_SANITIZED 1
@@ -926,6 +927,26 @@ static void channels_test_round_trip_and_never_overreads()
 #else
 #define RN_TEST_TRAP_LIBC 0
 #endif // #if defined( __GLIBC__ ) && !defined( RN_TEST_SANITIZED ) && !defined( __clang_analyzer__ )
+
+// clang's thread sanitizer links its runtime statically off Apple and Windows,
+// and that runtime's tsan_new_delete defines the global operator new and
+// delete itself: bin/test did not link beside these (multiple definition). There
+// the sanitizer owns them and the trap keeps its other nets. gcc's runtime is a
+// shared library, which these definitions interpose as they do glibc's; the
+// other clang sanitizers keep these (MSan links its runtime without the C++ part)
+#if defined( __SANITIZE_THREAD__ )
+#define RN_TEST_TSAN 1
+#elif defined( __has_feature )
+#if __has_feature( thread_sanitizer )
+#define RN_TEST_TSAN 1
+#endif // #if __has_feature( thread_sanitizer )
+#endif // #if defined( __SANITIZE_THREAD__ )
+
+#if defined( RN_TEST_TSAN ) && defined( __clang__ ) && !defined( __APPLE__ ) && !defined( _WIN32 )
+#define RN_TEST_TRAP_NEW 0
+#else
+#define RN_TEST_TRAP_NEW 1
+#endif // #if defined( RN_TEST_TSAN ) && defined( __clang__ ) && !defined( __APPLE__ ) && !defined( _WIN32 )
 
 static volatile int rn_trap_armed = 0;
 static const char * volatile rn_trap_phase = "idle";
@@ -1080,6 +1101,8 @@ extern "C" int posix_memalign( void ** out, size_t alignment, size_t bytes )
 
 #endif // #if RN_TEST_TRAP_LIBC
 
+#if RN_TEST_TRAP_NEW
+
 void * operator new( size_t bytes )
 {
     if ( rn_trap_armed )
@@ -1166,6 +1189,8 @@ void operator delete[]( void * p, size_t ) noexcept
     free( p );
 }
 
+#endif // #if RN_TEST_TRAP_NEW
+
 // ----------------------------------------------------------------
 //                           test plumbing
 // ----------------------------------------------------------------
@@ -1233,7 +1258,7 @@ static const uint64_t RN_RED_ZONES_PER_REGION = (uint64_t) RN_NUM_PARTS * ROCKET
 
 static void test_channels_allocator_layout()
 {
-    // docs/LOAD.md Table 3's formula, part by part, at the defaults: 6,706,560 bytes, no padding
+    // docs/LOAD.md Table 3's formula, part by part, at the defaults, with the free stack added after v1.1.0: 6,763,840 bytes, no padding
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -1245,12 +1270,13 @@ static void test_channels_allocator_layout()
 
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
-    check( layout.formula_bytes == 6706560 );
-    check( layout.region_bytes == 6706560 + RN_RED_ZONES_PER_REGION );       // ASan builds: a red zone after each part (sdk/rocketnet_memory.h)
-    check( rocketnet_message_connection_bytes( &config ) == 6706560 + RN_RED_ZONES_PER_REGION );
-    check( rocketnet_message_connection_bytes( NULL ) > 6706560 + RN_RED_ZONES_PER_REGION );
+    check( layout.formula_bytes == 6763840 );
+    check( layout.region_bytes == 6763840 + RN_RED_ZONES_PER_REGION );       // ASan builds: a red zone after each part (sdk/rocketnet_memory.h)
+    check( rocketnet_message_connection_bytes( &config ) == 6763840 + RN_RED_ZONES_PER_REGION );
+    check( rocketnet_message_connection_bytes( NULL ) > 6763840 + RN_RED_ZONES_PER_REGION );
 
-    const uint64_t C = 32, W = 1024, B = 1048576, Q = 1024, S = 4194304, P = 1024, Du = 1024, Ru = 16, Rq = 256;
+    const uint64_t C = 32, W = 1024, B = 1048576, Q = 1024, S = 4251584, P = 1024, Du = 1024, Ru = 16, Rq = 256;
+    // S: the three classes of 4,194,304 / 3 bytes, each chunk with its meta word, plus one free-stack word a chunk (sdk/rocketnet_allocator.cpp rn_store_class_bytes)
     check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 88 * C );
     check( layout.bytes[RN_PART_SEND_NUMBERS] == 32 * W );
     check( layout.bytes[RN_PART_RECEIVE_DESCRIPTORS] == 32 * W );
@@ -1892,10 +1918,10 @@ static void test_channels_allocator_sizing()
     check( (int) strlen( text ) == length );
     check( strstr( text, "88C + 112.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq" ) != NULL );
     char expected[128];
-    snprintf( expected, sizeof( expected ), "region bytes %llu", (unsigned long long) ( 6706560 + RN_RED_ZONES_PER_REGION ) );
+    snprintf( expected, sizeof( expected ), "region bytes %llu", (unsigned long long) ( 6763840 + RN_RED_ZONES_PER_REGION ) );
     check( strstr( text, expected ) != NULL );
-    check( strstr( text, "formula bytes 6706560" ) != NULL );
-    snprintf( expected, sizeof( expected ), "1000 connections %llu", (unsigned long long) ( 1000 * ( 6706560 + RN_RED_ZONES_PER_REGION ) ) );
+    check( strstr( text, "formula bytes 6763840" ) != NULL );
+    snprintf( expected, sizeof( expected ), "1000 connections %llu", (unsigned long long) ( 1000 * ( 6763840 + RN_RED_ZONES_PER_REGION ) ) );
     check( strstr( text, expected ) != NULL );
 
     // too small a buffer truncates and still reports the full length, as snprintf does
@@ -1931,7 +1957,7 @@ static void test_channels_allocator_trap_witness()
 
     for ( int net = 0; net < 4; net++ )
     {
-        if ( net == 2 && !RN_TEST_TRAP_LIBC )
+        if ( ( net == 1 && !RN_TEST_TRAP_NEW ) || ( net == 2 && !RN_TEST_TRAP_LIBC ) )
         {
             continue;
         }

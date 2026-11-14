@@ -93,7 +93,8 @@ static int append_transport_name( char * list, int capacity, const char * name )
 // Appendix C create-time reserve, from the literals in that note:
 // R = ceil(kbps * 125 * delay_ms / 1000), the larger of the two budgets;
 // Q adds ceil(R/128); the 128/512/1152 pools add ceil(R/128), ceil(R/512)
-// and ceil(R/1024), each chunk carrying a four-byte link, aligned to 64;
+// and ceil(R/1024), each chunk carrying four bytes of metadata and four of
+// free stack, aligned to 64;
 // the span adds R plus 15 bytes per 1153 payload bytes, aligned to 64.
 static void check_resend_reserve( int client_kbps, int server_kbps, int delay_ms, int queue, int receive_bytes, int send_bytes )
 {
@@ -120,7 +121,7 @@ static void check_resend_reserve( int client_kbps, int server_kbps, int delay_ms
     {
         const uint64_t count = (uint64_t) rn_send_store_chunks_for( (uint64_t) send_bytes, c ) + ( reserve + typical_payload[c] - 1u ) / typical_payload[c];
         chunks[c] = (uint32_t) count;
-        store += appendix_align64( count * ( (uint64_t) pool_bytes[c] + 4u ) );
+        store += appendix_align64( count * ( (uint64_t) pool_bytes[c] + 8u ) );
     }
 
     if ( store < (uint64_t) send_bytes )

@@ -1364,6 +1364,114 @@ static void test_unreliable_refused_start_counts_once()
     ip_pair_teardown( &pair );
 }
 
+// The writer's finish (rocketnet_server_finish_client_message) of an
+// unreliable reservation larger than one packet, finished at a size one packet
+// carries: the finish decides the form from the bytes written, so the message
+// is a small unreliable one, and the writer's finish sends it from the call or
+// refuses it as for any other (sdk/rocketnet.h; proofs/tla/RNWriterFinish.tla
+// Restart). It is not queued for send_packets, so it holds no later small send
+// behind it; at no capacity it is refused and counted
+// (MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY). A finish whose bytes_written is
+// outside 1..reserved is refused as bad, whatever the start found: the
+// no-capacity count does not move.
+static void test_writer_finish_short_reservation_sent_or_refused()
+{
+    const int cap = 3;
+    ip_pair_t pair;
+    ip_pair_setup( &pair, cap );
+    ip_step( &pair, NULL, NULL );
+    ip_step( &pair, NULL, NULL );                         // settle the initial CONFIG exchange
+    pair.time += 0.01;
+    check( rocketnet_message_server_update( pair.server, pair.time ) == ROCKETNET_UPDATE_OK );
+
+    ip_end_t * server = &pair.net->server;
+    rn_message_connection_t * connection = rn_message_object_connection( &pair.server->object, 0 );
+    const rocketnet_counters_t * counters = rocketnet_message_server_counters( pair.server );
+    const uint64_t fallback_before = ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
+    const uint64_t no_capacity_before = ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY );
+
+    // reserved 2000, finished with 100: sealed in the call, nothing queued
+
+    size_t finished = server->finished.size();
+    uint8_t * p = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 2000 );
+    check( p != NULL );
+    if ( p )
+    {
+        ip_fill( p, 600, 100 );
+    }
+    check( rocketnet_message_server_finish_client( pair.server, 0, 100 ) != 0 );
+    check( server->finished.size() == finished + 1 );
+    check( connection->unreliable_count == 0 );
+    check( !connection->open.pending );
+
+    // the next small send is not held behind it: in place, sealed in the call
+
+    finished = server->finished.size();
+    p = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 50 );
+    check( p != NULL );
+    if ( p )
+    {
+        ip_fill( p, 601, 50 );
+    }
+    check( rocketnet_message_server_finish_client( pair.server, 0, 50 ) != 0 );
+    check( server->finished.size() == finished + 1 );
+    check( ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) == fallback_before );
+
+    // spend the rest of the update's packets, then the same short finish is refused
+
+    for ( int i = 0; connection->written < cap && i < cap; i++ )
+    {
+        p = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 40 );
+        check( p != NULL );
+        if ( p )
+        {
+            ip_fill( p, 602 + (uint32_t) i, 40 );
+        }
+        check( rocketnet_message_server_finish_client( pair.server, 0, 40 ) != 0 );
+    }
+    check( connection->written == cap );
+    check( ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY ) == no_capacity_before );
+
+    finished = server->finished.size();
+    p = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 2000 );
+    check( p != NULL );
+    if ( p )
+    {
+        ip_fill( p, 610, 100 );
+    }
+    check( rocketnet_message_server_finish_client( pair.server, 0, 100 ) == 0 );
+    check( ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY ) == no_capacity_before + 1 );
+    check( server->finished.size() == finished );
+    check( connection->unreliable_count == 0 );
+    check( !connection->open.pending );
+
+    // a bad bytes_written on a start that found no capacity: refused as bad, not counted as no capacity
+
+    const int bad[2] = { 0, 99999 };
+    for ( int i = 0; i < 2; i++ )
+    {
+        p = rocketnet_message_server_start( pair.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 100 );
+        check( p != NULL );
+        check( connection->open.pending == RN_MESSAGE_OPEN_PENDING_NO_CAPACITY );
+        check( rocketnet_message_server_finish_client( pair.server, 0, bad[i] ) == 0 );
+        check( !connection->open.pending );
+        check( ip_counter( counters, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_WRITER_NO_CAPACITY ) == no_capacity_before + 1 );
+    }
+
+    // delivered: the two sent in the call, nothing refused
+
+    std::vector<ip_received_t> client_got;
+    rocketnet_message_server_send_packets( pair.server );
+    rocketnet_message_client_send_packets( pair.client );
+    ip_step( &pair, NULL, &client_got );
+    ip_step( &pair, NULL, &client_got );
+    check( ip_got( client_got, 0, 600, 100 ) );
+    check( ip_got( client_got, 0, 601, 50 ) );
+    check( !ip_got( client_got, 0, 610, 100 ) );
+
+    ip_pair_teardown( &pair );
+}
+
 // Abort and short finish must reuse the uncommitted suffix without moving the
 // committed prefix. Verify the final frame identity as well as delivery.
 static void test_unreliable_packing_abort_and_short_finish()
@@ -1935,3 +2043,4 @@ REGISTER_UNIT_TEST( test_message_burst_start_finish_delivers_every_message );
 UNIT_TEST_SKIPPED_UNLESS( test_message_burst_start_finish_delivers_every_message, ROCKETNET_MAX_CHANNELS >= 2 ); // runs at 2 channels, not at 1
 REGISTER_UNIT_TEST( test_start_past_packet_allowance_falls_back_to_the_region );
 REGISTER_UNIT_TEST( test_unreliable_refused_start_counts_once );
+REGISTER_UNIT_TEST( test_writer_finish_short_reservation_sent_or_refused );

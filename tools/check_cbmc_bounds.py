@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Check that the bounds the CBMC records state match the SDK.
 
-The inventory, results and harness comments under proofs/cbmc (the .md
-records, the .c harnesses and the .cpp harnesses, ESBMC's and the native
-exhaustive check's) state a bound
+The inventory, results and harness comments under proofs/cbmc state a bound
 tied to an SDK constant as the constant's expression followed by its value in
 parentheses: `ROCKETNET_RECEIVE_CEILING + 1` (1453) in Markdown, or
-ROCKETNET_RECEIVE_PAYLOAD_BYTES (1416) in a C or C++ comment; or as the value with
+ROCKETNET_RECEIVE_PAYLOAD_BYTES (1416) in a C or C++ comment (.c, .cpp, .h);
+or as the value with
 the expression after it in parentheses: 1452 (`ROCKETNET_RECEIVE_CEILING`),
 [0, 1416] (`ROCKETNET_RECEIVE_PAYLOAD_BYTES`). This compiles a probe
 against sdk/ that prints every such expression and fails, naming file:line,
@@ -15,8 +14,8 @@ leave the records stating a bound the harnesses no longer run at. It also
 fails when it finds no statement at all.
 
 --self-test plants a stale statement and requires the check to refuse it,
-including one in a .cpp harness comment found by the same file search the
-check uses. Prints one OK line per file with statements; exits 1 on a refusal.
+including one in a .cpp harness comment found by the record walk.
+Prints one OK line per file with statements; exits 1 on a refusal.
 """
 
 import argparse
@@ -42,13 +41,6 @@ HEADERS = [
     "rocketnet_constants.h",
     "rocketnet_connect_token.h",
 ]
-
-# the record files: Markdown records, C harnesses and C++ harnesses
-PATTERNS = ("**/*.md", "**/*.c", "**/*.cpp")
-
-
-def record_files(proofs):
-    return sorted(path for pattern in PATTERNS for path in proofs.glob(pattern))
 
 NAME = r"ROCKETNET_[A-Z0-9_]+"
 TERM = rf"(?:{NAME}|\d+)"
@@ -97,6 +89,16 @@ def evaluate(expressions):
     return [values[index] for index in range(len(expressions))]
 
 
+# every kind of record file under proofs/cbmc: the Markdown records and the
+# C and C++ harnesses and their headers (a .cpp harness left out is a stated
+# bound nobody checks)
+RECORD_PATTERNS = ("**/*.md", "**/*.c", "**/*.cpp", "**/*.h")
+
+
+def collect(proofs):
+    return sorted({path for pattern in RECORD_PATTERNS for path in Path(proofs).glob(pattern)})
+
+
 def check(files):
     found = [(path, number, expression, stated) for path in files for number, expression, stated in statements(path)]
     if not found:
@@ -128,29 +130,36 @@ def self_test():
             if check([planted]):
                 print(f"FAIL: a stale statement passed the check: {text.strip()}", file=sys.stderr)
                 return False
-        empty = Path(directory) / "empty.md"
-        empty.write_text("no statements\n", encoding="utf-8")
-        if check([empty]):
-            print("FAIL: a tree with no statements passed the check", file=sys.stderr)
+        tree = Path(directory) / "tree" / "sub"
+        tree.mkdir(parents=True)
+        for name in ("harness.c", "harness.cpp", "harness.h", "notes.md"):
+            (tree / name).write_text("// ROCKETNET_RECEIVE_PAYLOAD_BYTES (1)\n", encoding="utf-8")
+        found = {path.name for path in collect(tree.parent)}
+        if found != {"harness.c", "harness.cpp", "harness.h", "notes.md"}:
+            print(f"FAIL: the record walk read {sorted(found)}, not every .md, .c, .cpp and .h", file=sys.stderr)
             return False
-        # a C++ harness found by the check's own file search: its true
-        # statement passes (so the file was read, not skipped), its stale
-        # one is refused
-        tree = Path(directory) / "cpp_tree"
-        harness = tree / "harness" / "planted.cpp"
-        harness.parent.mkdir(parents=True)
+        # a C++ harness comment found by the walk: its true statement passes
+        # (so the file was read and evaluated), its stale one is refused
+        cpp_tree = Path(directory) / "cpp_tree" / "harness"
+        cpp_tree.mkdir(parents=True)
+        harness = cpp_tree / "planted.cpp"
         for text, want in (("/* exactly ROCKETNET_SIGNED_CONNECT_DATA_BYTES (576) signed bytes */\n", True),
                            ("/* exactly ROCKETNET_SIGNED_CONNECT_DATA_BYTES (577) signed bytes */\n", False)):
             harness.write_text(text, encoding="utf-8")
-            files = record_files(tree)
+            files = collect(cpp_tree.parent)
             if harness not in files:
-                print(f"FAIL: the file search does not read C++ harnesses: {harness.name} not found", file=sys.stderr)
+                print(f"FAIL: the record walk does not read C++ harnesses: {harness.name} not found", file=sys.stderr)
                 return False
             if check(files) != want:
                 print(f"FAIL: a {'true' if want else 'stale'} C++ statement was {'refused' if want else 'passed'}: {text.strip()}",
                       file=sys.stderr)
                 return False
-    print("OK self-test: stale statements in both forms, a stale C++ harness comment and an empty tree are refused")
+        empty = Path(directory) / "empty.md"
+        empty.write_text("no statements\n", encoding="utf-8")
+        if check([empty]):
+            print("FAIL: a tree with no statements passed the check", file=sys.stderr)
+            return False
+    print("OK self-test: stale statements in both forms, a stale C++ harness comment and an empty tree are refused; .md, .c, .cpp and .h are read")
     return True
 
 
@@ -162,7 +171,7 @@ def main():
     args = parser.parse_args()
     if args.self_test:
         return 0 if self_test() else 1
-    return 0 if check(record_files(args.proofs)) else 1
+    return 0 if check(collect(args.proofs)) else 1
 
 
 if __name__ == "__main__":

@@ -839,6 +839,15 @@ static void test_server_calls_refuse_the_index_past_the_slots()
 
     rocketnet_conditions_t conditions;
     check( rocketnet_message_server_conditions( w.server, 0, &conditions ) );
+
+    // a NULL out pointer for a connected client: asserted where asserts are on, refused, nothing written
+
+    {
+        gaps_assert_scope_t asserts;
+        check( !rocketnet_message_server_conditions( w.server, 0, NULL ) );
+        check( g_gaps_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
+    }
+
     const uint32_t serial = rocketnet_message_server_send( w.server, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, message, 16 );
     check( serial != 0 );
     rocketnet_message_server_send_packets( w.server );

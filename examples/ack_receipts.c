@@ -20,6 +20,7 @@
 
 #define NUM_UPDATES 20
 #define MAX_UPDATES 200
+#define RECEIPTS_HELD 256       // the client's max_message_receipts, set below; an environment value above it is caught after each read
 
 int main( void )
 {
@@ -147,6 +148,7 @@ int main( void )
 
     client_config.transport = "loopback";
     client_config.loopback_hub = hub;
+    client_config.max_message_receipts = RECEIPTS_HELD;
 
     enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &client_status );
@@ -177,7 +179,7 @@ int main( void )
     }
 
     uint32_t serials[MAX_UPDATES];
-    int sent = 0, acked = 0, lost = 0;
+    int sent = 0, acked = 0, lost = 0, receipts_over = 0;
     double now = 1000.0;
 
     for ( int frame = 0; frame < 12000 && !( sent >= NUM_UPDATES && acked > 0 && lost > 0 && acked + lost == sent ); frame++, now += 0.005 )
@@ -196,10 +198,10 @@ int main( void )
 
         // receipts resolve at update; match each one to its send by serial
 
-        struct rocketnet_receipt_t receipts[32];
-        const int count = rocketnet_client_receipts( client, receipts, 32 );
-        // count is the receipts available and may exceed the 32 the array holds
-        for ( int r = 0; r < count && r < 32; r++ )
+        struct rocketnet_receipt_t receipts[RECEIPTS_HELD];
+        const int count = rocketnet_client_receipts( client, receipts, RECEIPTS_HELD );
+        receipts_over |= count > RECEIPTS_HELD;      // more than the array holds: some would go unread
+        for ( int r = 0; r < count && r < RECEIPTS_HELD; r++ )
         {
             for ( int update = 0; update < sent; update++ )
             {
@@ -263,7 +265,12 @@ int main( void )
 
     printf( "receipts resolved: %d/%d (acked %d, loss %d)\n", acked + lost, sent, acked, lost );
 
-    const int result = acked + lost == sent && acked > 0 && lost > 0 ? 0 : 1;
+    if ( receipts_over )
+    {
+        printf( "FAIL: an update reported more receipts than the %d the array holds\n", RECEIPTS_HELD );
+    }
+
+    const int result = !receipts_over && acked + lost == sent && acked > 0 && lost > 0 ? 0 : 1;
 
     rn_cli_client_stop_and_destroy( client, now );
     rn_cli_server_stop_and_destroy( server );

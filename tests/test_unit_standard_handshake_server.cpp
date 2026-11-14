@@ -24,6 +24,12 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_test_vectors.h"
 
+#if defined( ROCKETNET_USE_SYSTEM_SODIUM )
+#include <sodium.h>
+#else
+#include "../sodium/sodium.h"
+#endif // #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
+
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -277,6 +283,115 @@ static const rn_standard_vector_t standard_handshake_server_table[] = {
     RN_STANDARD_VECTOR( "t12.token-expired", "0000b759010003f9ac68000000000fb2b28f32dbd6c9eb364f577486f3e953414c54303030313a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24931a7c4e88776655443322119cf8ac6800000000cef8ac68000000000a00000001cb00710a409c0000000000000000000000000000000000003d2490889d374c296fab1d5770cb71476a06f74ef2f2540cf2215f7614f4801c34e42d4af5ef94a07a3a84201b889d4cd1a743cb27b11b6a10438a8feb8e584708dfebb386fe9d3282325914c792005b3f0cbdb60f45eecbe38ea0a72cec1b6ba0e14afd6efb436d00345c404c4de3925786d259cc06b1239e259ca8eb137f9349191a211ca7f01704ae96ddd52c86e16934789b7c3a0774d088e03528a4afa2dac5aa04d241805930ca24ff62b9417c1eb7f36248717557ad340a1a2111eb1f6b5b71abab8f6044450e18005898b6886f8baa2de5bf461ee4f9b32638732e4f4d9ea83761dea2a173c2e74f1383bb450926b3cd3889ef3b4dd3d84fb85aad0a12e5a77be701402d5207057841e35889d99f824309bf6b60e2403c771653beac7b23680070faf4a9195e3169fb4dd83691b77e19bfa6510342216a0349391e2e9cc7c968b016637d9f8ae49c24528a357542aec01ef8324a946af6acd6156b9c177f06cf3b829bfce60ec009d5792d162e6d9b58852d11b4df6c623a1d393ae315c246ed696057f4f8d7b918af57431a7ec50cdd40aa72bfed55c0cf4aa8c9188bd94c0563fe96fecc32277abfcc8bfb18d6e3dbbeb2b58465f35711e62e91411c4d8076ed827432f33d0cf73ba881af00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b289102eed08cc04faf63db4bcfe50bd70e8ef8980a3759f79f55d90ef7c76822564c401681b65ff3781c6cb4d2be96e69dadc39959dd67f85eaf8242b069d06" ),
 };
 
+// The cookie MAC of RN-1 t12, written out from the standard's words and not
+// through rocketnet_generate_cookie_mac: keyed BLAKE2b (crypto_generichash),
+// 16 bytes, keyed by the cookie key, over the family byte (1 IPv4, 2 IPv6),
+// the address (four octets, or eight 16-bit groups each little-endian), the
+// port little-endian, the connection salt and the expire timestamp as a
+// little-endian u64. Both cookie vectors carry such a MAC in their last 16
+// bytes, after the expire the server issued: its time plus the lifetime.
+
+static int handshake_server_cookie_input( uint8_t * input, int family, const uint8_t * address, int address_bytes,
+                                          int port, uint64_t expire )
+{
+    static const uint8_t salt[8] = { 0x53, 0x41, 0x4c, 0x54, 0x30, 0x30, 0x30, 0x31 };
+
+    int n = 0;
+    input[n++] = (uint8_t) family;
+    for ( int i = 0; i < address_bytes; i++ )
+    {
+        input[n++] = address[i];
+    }
+    input[n++] = (uint8_t) ( port & 0xff );
+    input[n++] = (uint8_t) ( ( port >> 8 ) & 0xff );
+    for ( int i = 0; i < 8; i++ )
+    {
+        input[n++] = salt[i];
+    }
+    for ( int i = 0; i < 8; i++ )
+    {
+        input[n++] = (uint8_t) ( ( expire >> ( 8 * i ) ) & 0xff );
+    }
+    return n;
+}
+
+struct handshake_server_cookie_vector_t
+{
+    const char * id;
+    uint8_t address[4];
+    int port;
+};
+
+static void standard_handshake_server_cookie_mac_construction()
+{
+    uint8_t key[32];
+    check( rn_standard_hex_decode( "102030405060708090a0b0c0d0e0f0000f1f2f3f4f5f6f7f8f9fafbfcfdfefff", key, (int) sizeof( key ) ) == 32 );
+
+    const uint64_t server_time = 1756166400;
+    const uint64_t cookie_lifetime = 3;
+    const uint64_t expire = server_time + cookie_lifetime;
+
+    static const handshake_server_cookie_vector_t vectors[] = {
+        { "t12.cookie", { 198, 51, 100, 7 }, 56789 },
+        { "t12.stale-cookie", { 203, 0, 113, 44 }, 40001 },
+    };
+
+    const int table_count = (int) ( sizeof( standard_handshake_server_table ) / sizeof( standard_handshake_server_table[0] ) );
+    const int vector_count = (int) ( sizeof( vectors ) / sizeof( vectors[0] ) );
+
+    for ( int v = 0; v < vector_count; v++ )
+    {
+        const char * twin = NULL;
+        for ( int i = 0; i < table_count; i++ )
+        {
+            if ( strcmp( standard_handshake_server_table[i].id, vectors[v].id ) == 0 )
+            {
+                twin = standard_handshake_server_table[i].hex;
+            }
+        }
+        check( twin != NULL );
+        if ( twin == NULL )
+        {
+            return;
+        }
+
+        // the cookie packet: prefilter header (6), salt (8), expire (8), MAC (16)
+
+        uint8_t packet[64];
+        check( rn_standard_hex_decode( twin, packet, (int) sizeof( packet ) ) == 38 );
+
+        uint8_t input[35];
+        const int input_bytes = handshake_server_cookie_input( input, 1, vectors[v].address, 4, vectors[v].port, expire );
+        check( input_bytes == 23 );
+
+        uint8_t mac[16];
+        crypto_generichash( mac, sizeof( mac ), input, (unsigned long long) input_bytes, key, sizeof( key ) );
+
+        check( memcmp( packet + 6, input + 7, 8 ) == 0 );
+        check( memcmp( packet + 14, input + 15, 8 ) == 0 );
+        check( memcmp( packet + 22, mac, 16 ) == 0 );
+    }
+
+    // an IPv6 source, whose groups the vectors do not reach: the library
+    // computes the same MAC as the standard's words
+
+    {
+        const uint8_t address[16] = { 0x01, 0x20, 0xb8, 0x0d, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x07, 0x00 };
+        uint8_t input[35];
+        const int input_bytes = handshake_server_cookie_input( input, 2, address, 16, 56789, expire );
+        check( input_bytes == 35 );
+
+        uint8_t mac[16];
+        crypto_generichash( mac, sizeof( mac ), input, (unsigned long long) input_bytes, key, sizeof( key ) );
+
+        struct rocketnet_address_t from;
+        check( rocketnet_address_parse( &from, "[2001:db8::7]:56789" ) );
+        uint8_t library_mac[ROCKETNET_COOKIE_MAC_BYTES];
+        check( rocketnet_generate_cookie_mac( library_mac, &from, rocketnet_test_salt, expire, key ) == 1 );
+        check( memcmp( library_mac, mac, 16 ) == 0 );
+    }
+}
+
 #endif // #if ROCKETNET_DEV
 
 static void standard_handshake_server_token_refusals()
@@ -353,6 +468,7 @@ static void test_standard_handshake_server_vectors()
 #if ROCKETNET_DEV
     const int count = (int) ( sizeof( standard_handshake_server_table ) / sizeof( standard_handshake_server_table[0] ) );
     check( rn_standard_vectors_walk( standard_handshake_server_table, count, handshake_server_generate ) == count );
+    standard_handshake_server_cookie_mac_construction();
 #endif // #if ROCKETNET_DEV
 
     standard_handshake_server_token_refusals();
@@ -918,7 +1034,7 @@ REGISTER_UNIT_TEST( test_claim_released_when_response_crosses_token_expiry );
 #endif // #if ROCKETNET_DEV
 
 // Copied-request claim lifecycle (standard/TRANSPORT.md t12 rules 9 and 14;
-// proofs/tla/ReceiveOrder.tla ClaimCheck/ClaimWrite and proofs/tla/MCReceiveOrder.tla
+// proofs/tla/ReceiveOrder.tla AdvanceStep at ClaimWriteRung, and proofs/tla/MCReceiveOrder.tla
 // IdleRemove). Only the signed request bytes are copied and only the
 // address-bound cookie is recomputed for the second address; no ephemeral
 // private key is copied, derived, inspected or used.
