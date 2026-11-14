@@ -49,7 +49,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.61"
+    #define ROCKETNET_VERSION_FULL                         "v1.2.0"
 
     /// The major component of the SDK version.
 
@@ -57,11 +57,11 @@
 
     /// The minor component of the SDK version.
 
-    #define ROCKETNET_VERSION_MINOR                        1
+    #define ROCKETNET_VERSION_MINOR                        2
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        61
+    #define ROCKETNET_VERSION_PATCH                        0
 
 #else // !ROCKETNET_DEV
 
