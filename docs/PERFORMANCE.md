@@ -18,9 +18,9 @@ measurement records, not a guarantee for another machine or workload.
 | Server transport | Measured configuration | Throughput and refusals | Receive result and remaining limit |
 | --- | --- | --- | --- |
 | XDP | Linux, AMD EPYC 9254 / Intel X710, one XDP thread | The 1000-player peak rate is established on this rig | Receive-handoff changes require the corresponding final-tree measurement record before claiming that the current build also meets the receive-delay target |
-| io_uring | AWS c8gn.8xlarge server / c7gn.16xlarge clients, two workers | All twelve rows passed: four workloads, three repetitions; about 900.3k packets/s at peak, 480.3k at average, zero refused starts or lost messages | Reported receive delay mean 6.3–10.5 ms, p99 14.5–18.8 ms; measured tree and placement only |
+| io_uring | AWS c8gn.8xlarge server / c7gn.16xlarge clients, two workers | All eighteen rows passed across four workloads, including nine loaded-peak samples; 899.6–900.3k packets/s at peak, 480.3k at average, zero refused starts or lost messages | Receive delay mean 4.30–10.88 ms, p99 11.00–20.33 ms; late-by-more-than-1-ms share 0.008–0.208% |
 | GSO | Linux X710 pair, one worker, receive-handoff fix | All four workloads passed in three repetitions | Reported receive wait mean 5.9–12.3 ms, p99 13.8–19.3 ms; this does not establish the same capacity on the AWS rig |
-| GSO | AWS pair, one worker | Loaded peak misses the offered rate: 845–877k packets/s; one sample refused 44,696 starts. Each average workload also failed one of three samples (772 and 807 refused starts). Two workers passed loaded peak in three samples | Two-worker result covers that workload, not a complete four-workload qualification. The supplied summary does not identify a full commit pair for this follow-up |
+| GSO | Same AWS pair, one worker | Loaded peak fails all six samples: 842.0–871.6k packets/s, 56.67–58.57 frames/s. Average with game work passes two of three; other workloads pass three of three. Zero refused starts and zero lost messages in all samples | Receive delay is fixed on main; the one-worker loaded-peak limit is rate/frame time. Two workers pass loaded peak three of three; other two-worker workloads were not measured |
 | RIO | Windows m7i.16xlarge server, configured RSS, receive-handoff fix | Six lanes passed all four workloads in three repetitions with zero refused starts. Five-lane follow-up samples also passed | Reported receive wait mean 5.5–11.1 ms at six lanes; five-lane samples 4.8–8.8 ms. Placement and NIC interrupt load matter |
 | IOCP | Windows m7i.16xlarge, two completion workers and two send threads, receive-handoff fix | Approximately 898–900k packets/s, but loaded peak still refuses 18.7k–56.5k starts per run | Reported receive delay mean 7–11 ms. Lower receive delay does not close the peak refusal limit |
 | msgx | Mac Studio M3 Ultra, Aquantia 10GBASE-T, three transmit workers | Average reaches about 480k packets/s without refused starts. No measured peak row reaches 900k | Address topology and interface contention affect throughput; the macOS timing column below is state-to-send, not receive delay |
@@ -33,11 +33,14 @@ substitute for the measured setup. Windows measurements used Windows Server
 2025 and do not expand the Windows 11 support row in
 [Platforms](PLATFORMS.md).
 
-The receive summaries above do not provide a complete timestamp-origin
-formula. Their reported receive wait/delay is not RTT or state-to-send time,
-and a nonzero value does not by itself identify an extra transport update.
-Do not infer a universal zero-added-delay claim from these means. The final
-build must meet both its rate and receive-delay criteria on the target rig.
+The AWS receive-delay measurement uses client input stamps at the server at
+60 Hz; `late_1ms` is the share arriving more than 1 ms later than their
+update. It is not an absolute 1 ms transit-time target. The full
+[AWS measurement record](runs/performance-aws.md) gives every current row,
+commands, machine setup and pass criteria. For the other receive summaries,
+the complete timestamp-origin definition is still needed; do not treat their
+means as RTT or state-to-send. The final build must meet both its rate and
+receive-delay criteria on the target rig.
 
 These figures also do not establish the less-than-100-microsecond main-call
 target at 1000 players. A mean of per-second p99 readings is not the whole
@@ -72,9 +75,10 @@ CPU cost; main-thread network time alone does not account for them.
 For repeatable runs, retain warmup, sample and drain durations and use the
 same analysis window. Report the number of repetitions. Delivery covers the
 drained traffic, while timing and rate may use a steady sample window; do
-not divide a whole-run counter by only the sample duration. The measurement
-criterion used a 99.9% player-delivery bound, with offered rate and frame
-rate checked separately. “1000 connected” does not mean zero packet loss.
+not divide a whole-run counter by only the sample duration. The AWS rows require at least 99.9% of the offered rate, at least 60 frames/s,
+zero refused starts, zero lost messages and passing reconciliation chains.
+Other records state their own acceptance criteria. “1000 connected” does not
+mean zero packet loss.
 
 At an assumed 1304 wire bytes per packet, 900,000 packets/s is approximately
 9.39 Gb/s. This is a conversion from packet rate, not a measured byte counter
@@ -193,8 +197,9 @@ one latency figure.
 
 ## Evidence scope
 
-The current summaries were supplied on November 13, 2026. AWS io_uring's
-record identifies server source `4b9a1591a` plus measurement-harness changes;
+The current summaries were supplied on November 13, 2026. The AWS
+record identifies main `e0f1a0fae` with the measurement harness merged as
+`74e7be243`, identical on server and clients;
 the Windows receive-fix series identifies `8c58f1946` plus its harness. The
 msgx record identifies server `25fca1774` and address-comparison clients
 `aa9d85c50`; the other msgx client rows use `25fca1774`. These identifiers bound
