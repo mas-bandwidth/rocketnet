@@ -61,22 +61,34 @@ inline int rocketnet_send_queue_of_packet( uint64_t packet_id, int num_queues )
     return (int) ( packet_id % (uint64_t) num_queues );
 }
 
-// Claims the next slot of a bank. A claim at or past limit is refused and
-// counted in refused. The count is 64 bits: a bank never takes 2^64 claims
-// without a reset, so it never wraps back onto a slot it handed out
-// (proofs/tla/RNUringQueueBankLayout.tla Start, ClaimCmp "ge",
-// CounterWrap 0). Returns the slot index or -1.
+// Claims the next slot of a bank. A claim at or past limit is refused, and
+// the three-argument form counts it in refused (the gso bank calls the
+// two-argument form: its refusals are the counter past limit). The count is
+// 64 bits: a bank never takes 2^64 claims without a reset, so it never wraps
+// back onto a slot it handed out (proofs/tla/RNUringQueueBankLayout.tla and
+// RNGsoQueueBankLayout.tla Start, ClaimCmp "ge", CounterWrap 0). Returns the
+// slot index or -1.
 
-inline int rocketnet_send_queue_claim( std::atomic<uint64_t> & num_packets, int limit, std::atomic<uint64_t> & refused )
+inline int rocketnet_send_queue_claim( std::atomic<uint64_t> & num_packets, int limit )
 {
     const uint64_t index = num_packets.fetch_add( 1 );
     if ( index >= (uint64_t) limit )
     {
-        refused.fetch_add( 1, std::memory_order_relaxed );
         return -1;
     }
 
     return (int) index;
+}
+
+inline int rocketnet_send_queue_claim( std::atomic<uint64_t> & num_packets, int limit, std::atomic<uint64_t> & refused )
+{
+    const int slot = rocketnet_send_queue_claim( num_packets, limit );
+    if ( slot < 0 )
+    {
+        refused.fetch_add( 1, std::memory_order_relaxed );
+    }
+
+    return slot;
 }
 
 #endif // #if defined( __cplusplus )

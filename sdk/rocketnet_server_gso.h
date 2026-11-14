@@ -341,7 +341,7 @@ uint64_t rocketnet_server_gso_send_finish_refused( struct rocketnet_server_gso_t
 // abort may run on any number of game threads strictly between one
 // send_packets call and the next. start stages the packet in the producer bank
 // of the queue its destination maps to (rocketnet_server_gso_send_queue) with
-// one compare-and-swap on that queue's count; the packet id names the queue
+// one fetch-add on that queue's count; the packet id names the queue
 // and the slot. send_packets try-publishes each queue's main-owned bank to
 // that queue's worker and wakes it. The worker coalesces same-destination
 // equal-size runs and sends on its own socket outside the handoff lock. A
@@ -419,6 +419,10 @@ bool rocketnet_server_gso_test_send_retry_quit();
 // the id naming queue and slot, foreign and unaligned pointers refused, ids
 // distinct across a turn-over, every queue's bank sent.
 bool rocketnet_server_gso_test_send_queues();
+// The fetch-add claim past a bank's end: refused starts move the 64-bit
+// counter past the slots, and the room, the staged count and the worker's
+// take read min(counter, slots).
+bool rocketnet_server_gso_test_claim_past_end();
 // One receive drain fed endless discards returns within its read budget.
 bool rocketnet_server_gso_test_drain_budget();
 bool rocketnet_server_gso_test_socket_overflow_counted();
@@ -459,7 +463,7 @@ struct rocketnet_server_gso_test_send_lane_t
     int ready_banks[ROCKETNET_GSO_TX_BANKS]; // the published banks, oldest at ready_head
     int ready_head;
     int ready_count;
-    int num_packets[ROCKETNET_GSO_TX_BANKS];
+    uint64_t num_packets[ROCKETNET_GSO_TX_BANKS];       // each bank's claim counter, raw: past slots by the starts it refused
     const uint8_t * first[ROCKETNET_GSO_TX_BANKS];      // each bank's slot 0
     size_t bank_bytes;                                  // the bytes of each bank's slots
 };
@@ -527,10 +531,6 @@ void rocketnet_server_gso_test_return_send( struct rocketnet_server_gso_t * gso,
 void rocketnet_server_gso_test_set_send( struct rocketnet_server_gso_t * gso,
                                          int ( *send )( struct mmsghdr * messages, unsigned int count, void * user ),
                                          void * user );
-// The claim seam: hook runs inside start_packet between its load and its compare-and-swap;
-// the losses are the compare-and-swaps that lost, cumulative.
-void rocketnet_server_gso_test_set_claim_hook( struct rocketnet_server_gso_t * gso, void ( *hook )( void * user, int queue ), void * user );
-int rocketnet_server_gso_test_claim_losses( struct rocketnet_server_gso_t * gso );
 void rocketnet_server_gso_test_set_features( struct rocketnet_server_gso_t * gso, int features );
 bool rocketnet_server_gso_test_flush_staged( struct rocketnet_server_gso_t * gso );
 // Bank packets on one queue, each byte set to marker, and commit them. false

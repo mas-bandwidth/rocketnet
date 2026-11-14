@@ -45,17 +45,16 @@ VarsRec == [prod |-> prod, own |-> own, cnt |-> cnt, turn |-> turn, load |-> loa
             oob |-> oob, shared |-> shared, foreign |-> foreign, routeBad |-> routeBad,
             workerWrite |-> workerWrite]
 
-\* the actions each operation of the code can be: start_packet's claim, and
-\* the reload of a compare-and-swap that lost (no call: the walk reads the
-\* counter again, as compare_exchange_weak does inside the one call)
-OpActs == [load |-> {"Load"}, start_packet |-> {"Claim"}, reload |-> {"Claim"},
+\* the actions each operation of the code can be: start_packet is the one
+\* fetch-add claim, granted or refused (the reversed witness's two-step
+\* Load and Claim are no operation of the code)
+OpActs == [start_packet |-> {"Start"},
            finish_packet |-> {"Finish"}, finish_abort |-> {"Finish"},
            send_packets |-> {"Flush"}, take_return_send |-> {"WorkerReturn"}]
 
 \* the action a record names, with the record's arguments; a name this CASE
 \* lacks stops TLC with an error
-Act(a, x) == CASE a = "Load" -> Load(x[1], x[2], x[3])
-               [] a = "Claim" -> Claim(x[1], x[2])
+Act(a, x) == CASE a = "Start" -> Start(x[1], x[2], x[3])
                [] a = "Finish" -> Finish(x[1], x[2])
                [] a = "Flush" -> Flush
                [] a = "WorkerReturn" -> WorkerReturn(x[1], x[2])
@@ -97,6 +96,9 @@ TraceConsistent == ~rejected
 \* the row's reach predicates, the layout's edges a clean trace must show:
 \* a producer bank with every slot claimed (the next start is refused)
 BankFull == \E q \in 0..(Q - 1) : cnt[q][prod[q]] = S
+
+\* a refused start left a producer's counter past S (every reader clamps)
+CounterPastEnd == \E q \in 0..(Q - 1) : cnt[q][prod[q]] > S
 
 \* a queue turned over at least once per bank, so a bank its worker returned
 \* is a producer again

@@ -24,7 +24,7 @@
 //
 // The send side is per queue too, the XDP transport's shape: a destination
 // maps to one queue by the XDP hash, and game threads fill that queue's
-// main-owned TX bank between flushes with one compare-and-swap claim on the
+// main-owned TX bank between flushes with one fetch-add claim on the
 // queue's count. send_packets only try-publishes each queue's bank into that
 // queue's bounded FIFO and wakes its worker; the queue's own worker builds
 // coalesced sendmmsg batches and sends them on its own socket, outside the
@@ -52,6 +52,7 @@
 #include "rocketnet_xdp_frame.h"
 #include "rocketnet_receive_prefilter.h"
 #include "rocketnet_send_gather.h"
+#include "rocketnet_send_queue.h"
 #include "rocketnet_receive_handoff.h"
 #include "rocketnet_read_write.h"
 #if ROCKETNET_DEV
@@ -109,7 +110,13 @@ struct rocketnet_server_gso_send_buffer_t
 {
     uint8_t padding_0[4096];
 
-    std::atomic<int> num_packets{ 0 };
+    // the claim index, taken by one fetch-add per start
+    // (rocketnet_send_queue_claim): 64 bits, so the refused claims that carry
+    // it past the slot count until the bank is reset never wrap it back onto
+    // a slot (proofs/tla/RNGsoQueueBankLayout.tla CounterWrap 0); every
+    // reader takes min(num_packets, send_slots), and the part past
+    // send_slots is the starts the bank refused
+    std::atomic<uint64_t> num_packets{ 0 };
 
     uint8_t padding_1[4096];
 
@@ -143,7 +150,7 @@ struct rocketnet_server_gso_recv_buffer_t
 };
 
 // One queue's send side (layer L2 of the gso push): its own staging banks,
-// filled by the game threads with one compare-and-swap claim per
+// filled by the game threads with one fetch-add claim per
 // packet, handed to the queue's own worker by main at the frame boundary, and
 // sent by that worker on the queue's own socket. A destination always maps to
 // one queue (rocketnet_server_gso_send_queue), so every packet to one client
@@ -385,13 +392,6 @@ struct rocketnet_server_gso_t
     // which fills the queue's messages and answers as recvmmsg would
     int ( *test_receive )( struct rocketnet_server_gso_queue_t * queue, int vlen, void * user ) = NULL;
     void * test_receive_user = NULL;
-    // the claim seam: while set, start_packet calls this between its load of
-    // the producer's count and its compare-and-swap, with the queue; and every
-    // compare-and-swap that lost is counted, so a walk can interleave a second
-    // claimer there and read what the library's own loop did
-    void ( *test_claim_hook )( void * user, int queue ) = NULL;
-    void * test_claim_user = NULL;
-    std::atomic<int> test_claim_losses{ 0 };
 #endif // #if ROCKETNET_DEV
 };
 
@@ -629,6 +629,15 @@ static int rocketnet_server_gso_take_send( struct rocketnet_server_gso_queue_t *
     return index;
 }
 
+// the slots a published bank holds: refused starts leave its counter past the
+// slots handed out, so the staged slots are min(counter, send_slots)
+// (proofs/tla/RNGsoQueueBankLayout.tla StagedMatches)
+static int rocketnet_server_gso_bank_staged( const struct rocketnet_server_gso_t * gso, const rocketnet_server_gso_send_buffer_t * bank )
+{
+    const uint64_t claimed = bank->num_packets.load( std::memory_order_relaxed );
+    return claimed > (uint64_t) gso->send_slots ? gso->send_slots : (int) claimed;
+}
+
 // proofs/tla/RNGsoHandoff.tla TxReturn: a bank rejoins the free FIFO only after
 // its synchronous sends finished (the worker cleared it first).
 // proofs/tla/RNGsoQueueBankLayout.tla WorkerReturn: the bank's counter is reset
@@ -737,11 +746,7 @@ static bool rocketnet_server_gso_send_step( rocketnet_server_gso_t * gso, struct
             {
                 return final;
             }
-            int count = lane->banks[index].num_packets.load( std::memory_order_relaxed );
-            if ( count > ROCKETNET_GSO_SEND_QUEUE_SIZE )
-            {
-                count = ROCKETNET_GSO_SEND_QUEUE_SIZE;
-            }
+            const int count = rocketnet_server_gso_bank_staged( gso, &lane->banks[index] );
             lane->held = index;
             lane->held_slot = 0;
             lane->held_count = rocketnet_server_gso_gather_bank( gso, queue, &lane->banks[index], count );
@@ -2185,8 +2190,8 @@ int rocketnet_server_gso_send_room_queue( struct rocketnet_server_gso_t * gso, i
     {
         return 0;
     }
-    const int used = lane->banks[lane->producer].num_packets.load( std::memory_order_relaxed );
-    return used < 0 || used >= gso->send_slots ? 0 : gso->send_slots - used;
+    const uint64_t used = lane->banks[lane->producer].num_packets.load( std::memory_order_relaxed );
+    return used >= (uint64_t) gso->send_slots ? 0 : gso->send_slots - (int) used;
 }
 
 // ---------------------------------------------------------------------------
@@ -2213,8 +2218,8 @@ int rocketnet_server_gso_send_room( struct rocketnet_server_gso_t * gso )
         {
             return 0;
         }
-        const int used = lane->banks[lane->producer].num_packets.load( std::memory_order_relaxed );
-        const int free = used < 0 || used >= gso->send_slots ? 0 : gso->send_slots - used;
+        const uint64_t used = lane->banks[lane->producer].num_packets.load( std::memory_order_relaxed );
+        const int free = used >= (uint64_t) gso->send_slots ? 0 : gso->send_slots - (int) used;
         if ( free < room )
         {
             room = free;
@@ -2258,14 +2263,14 @@ bool rocketnet_server_gso_send_idle( struct rocketnet_server_gso_t * gso )
 }
 
 // proofs/tla/RNGsoHandoff.tla TxStage and proofs/tla/RNGsoQueueBankLayout.tla
-// Claim: a game thread stages one packet into its destination queue's producer
-// bank, outside the ownership mutex, with one compare-and-swap on that queue's
-// count. The packet id is ( turn * slots + slot ) * queues + queue: unique
-// across queues and turn-overs with no shared counter, and finish and abort
-// read the queue back from it (IdRule). proofs/tla/RNGsoQueueBankLayout.tla
-// Load is the queue, producer and counter read below, and Claim the
-// compare-and-swap: one that loses reloads the counter it found (the model's
-// reload), and an index at send_slots is refused (ClaimCmp).
+// Start: a game thread stages one packet into its destination queue's
+// producer bank, outside the ownership mutex, with one fetch-add on that
+// queue's 64-bit count (rocketnet_send_queue_claim, the io_uring and XDP
+// claim): no retry, and an index at or past send_slots is refused (ClaimCmp)
+// and left past it until the bank is reset (CounterWrap 0). The packet id is
+// ( turn * slots + slot ) * queues + queue: unique across queues and
+// turn-overs with no shared counter, and finish and abort read the queue back
+// from it (IdRule).
 uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso, const struct rocketnet_address_t * to, uint64_t * packet_id )
 {
     rocketnet_assert( gso );
@@ -2285,26 +2290,8 @@ uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso
     }
 
     rocketnet_server_gso_send_buffer_t * bank = &lane->banks[lane->producer];
-    int slot = bank->num_packets.load( std::memory_order_relaxed );
-#if ROCKETNET_DEV
-    if ( gso->test_claim_hook )
-    {
-        gso->test_claim_hook( gso->test_claim_user, q );
-    }
-#endif // #if ROCKETNET_DEV
-    while ( slot >= 0 && slot < gso->send_slots &&
-            !bank->num_packets.compare_exchange_weak( slot, slot + 1, std::memory_order_relaxed ) )
-    {
-#if ROCKETNET_DEV
-        gso->test_claim_losses.fetch_add( 1, std::memory_order_relaxed );
-#endif // #if ROCKETNET_DEV
-    }
-
-    // the same lower bound the xdp transport learned to check: an app that
-    // stages forever without flushing wraps the counter negative, and a
-    // negative index is an out-of-bounds write, not a dropped packet
-
-    if ( slot >= gso->send_slots || slot < 0 )
+    const int slot = rocketnet_send_queue_claim( bank->num_packets, gso->send_slots );
+    if ( slot < 0 )
     {
         rocketnet_spam( "gso transport send staging full. packet dropped" );
         return NULL;
@@ -2317,21 +2304,6 @@ uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso
 
     return bank->data[slot];
 }
-
-#if ROCKETNET_DEV
-void rocketnet_server_gso_test_set_claim_hook( struct rocketnet_server_gso_t * gso, void ( *hook )( void * user, int queue ), void * user )
-{
-    rocketnet_assert( gso );
-    gso->test_claim_user = user;
-    gso->test_claim_hook = hook;
-}
-
-int rocketnet_server_gso_test_claim_losses( struct rocketnet_server_gso_t * gso )
-{
-    rocketnet_assert( gso );
-    return gso->test_claim_losses.load( std::memory_order_relaxed );
-}
-#endif // #if ROCKETNET_DEV
 
 // the queue a packet id names: its low part (the id is ( turn * slots + slot ) * queues + queue)
 static int rocketnet_server_gso_id_queue( const struct rocketnet_server_gso_t * gso, uint64_t packet_id )
@@ -4310,7 +4282,7 @@ bool rocketnet_server_gso_test_send_full_keeps_rest()
     int slot = 0;
     struct rocketnet_server_gso_send_lane_t * lane = &gso->queues[0].send;
     rocketnet_server_gso_send_buffer_t * bank = &lane->banks[taken];
-    const int staged = bank->num_packets.load( std::memory_order_relaxed );
+    const int staged = rocketnet_server_gso_bank_staged( gso, bank );
     valid = valid && staged == count;
     valid = valid && rocketnet_server_gso_gather_bank( gso, &gso->queues[0], bank, staged ) == staged;
     valid = valid && !rocketnet_server_gso_send_bank( gso, &gso->queues[0], bank, &slot, staged );
@@ -4392,11 +4364,7 @@ bool rocketnet_server_gso_test_flush_staged( struct rocketnet_server_gso_t * gso
         any = true;
 
         rocketnet_server_gso_send_buffer_t * bank = &queue->send.banks[taken];
-        int count = bank->num_packets.load( std::memory_order_relaxed );
-        if ( count > ROCKETNET_GSO_SEND_QUEUE_SIZE )
-        {
-            count = ROCKETNET_GSO_SEND_QUEUE_SIZE;
-        }
+        const int count = rocketnet_server_gso_bank_staged( gso, bank );
 
         const int positions = rocketnet_server_gso_gather_bank( gso, queue, bank, count );
         int slot = 0;
@@ -4405,6 +4373,82 @@ bool rocketnet_server_gso_test_flush_staged( struct rocketnet_server_gso_t * gso
     }
 
     return any && sent;
+}
+
+// The claim past the end (proofs/tla/RNGsoQueueBankLayout.tla Start,
+// StagedMatches), on a one-queue fixture of three slots: three starts take
+// slots 0..2, the next two are refused and still move the 64-bit counter
+// (one fetch-add each, no retry), so it reads five; the room is 0, the bank
+// holds three, the worker takes three from the published bank, and the
+// producer that follows starts at slot 0. No socket, no thread, no clock.
+bool rocketnet_server_gso_test_claim_past_end()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_open_slots( 1, 3 );
+    if ( !gso )
+    {
+        return false;
+    }
+
+    bool valid = true;
+
+    struct rocketnet_address_t to;
+    memset( &to, 0, sizeof( to ) );
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.data.ipv4[0] = 10;
+    to.data.ipv4[3] = 9;
+    to.port = 40000;
+
+    struct rocketnet_server_gso_send_lane_t * lane = &gso->queues[0].send;
+    const int first = lane->producer;
+    for ( int i = 0; i < 5; i++ )
+    {
+        uint64_t packet_id = 0;
+        uint8_t * packet = rocketnet_server_gso_start_packet( gso, &to, &packet_id );
+        if ( i < 3 )
+        {
+            valid = valid && packet == lane->banks[first].data[i];
+            if ( packet )
+            {
+                rocketnet_server_gso_finish_packet( gso, packet_id, packet, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+            }
+        }
+        else
+        {
+            valid = valid && !packet;
+        }
+    }
+
+    valid = valid && lane->banks[first].num_packets.load( std::memory_order_relaxed ) == 5;
+    valid = valid && rocketnet_server_gso_bank_staged( gso, &lane->banks[first] ) == 3;
+    valid = valid && rocketnet_server_gso_send_room( gso ) == 0;
+    valid = valid && rocketnet_server_gso_send_room_queue( gso, 0 ) == 0;
+
+    rocketnet_server_gso_send_packets( gso );
+    bool final = false;
+    const int taken = rocketnet_server_gso_take_send( &gso->queues[0], &final );
+    valid = valid && taken == first && !final;
+    if ( taken >= 0 && !final )
+    {
+        const int count = rocketnet_server_gso_bank_staged( gso, &lane->banks[taken] );
+        valid = valid && count == 3;
+        valid = valid && rocketnet_server_gso_gather_bank( gso, &gso->queues[0], &lane->banks[taken], count ) == 3;
+        rocketnet_server_gso_return_send( &gso->queues[0], taken );
+        valid = valid && lane->banks[taken].num_packets.load( std::memory_order_relaxed ) == 0;
+    }
+
+    valid = valid && lane->producer != first;
+    valid = valid && rocketnet_server_gso_send_room( gso ) == 3;
+    uint64_t packet_id = 0;
+    uint8_t * packet = lane->producer >= 0 ? rocketnet_server_gso_start_packet( gso, &to, &packet_id ) : NULL;
+    valid = valid && packet && packet == lane->banks[lane->producer].data[0];
+    if ( packet )
+    {
+        rocketnet_server_gso_abort_packet( gso, packet_id, packet );
+    }
+
+    rocketnet_server_gso_test_close( gso );
+
+    return valid;
 }
 
 // Per-queue staging (proofs/tla/RNGsoQueueBankLayout.tla), on a four-queue
@@ -4471,7 +4515,7 @@ bool rocketnet_server_gso_test_send_queues()
     {
         const struct rocketnet_server_gso_send_lane_t * lane = &gso->queues[q].send;
         valid = valid && expect[q] > 0;
-        valid = valid && lane->banks[lane->producer].num_packets.load( std::memory_order_relaxed ) == expect[q];
+        valid = valid && lane->banks[lane->producer].num_packets.load( std::memory_order_relaxed ) == (uint64_t) expect[q];
         used = expect[q] > used ? expect[q] : used;
     }
     valid = valid && rocketnet_server_gso_send_room( gso ) == ROCKETNET_GSO_SEND_QUEUE_SIZE - used;

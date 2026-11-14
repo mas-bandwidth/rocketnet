@@ -142,8 +142,11 @@ LAYERS = {
     "gso": {
         "modules": ["RNGsoQueueBankLayout.tla", "TraceRNGsoQueueBankLayout.tla"],
         "untraced": {"Done": "the model's stutter once every bound is spent; the walk's flush bound is its length, so it never "
-                             "gets there, and Done is no call of the code"},
-        "reach": ["BankFull", "TurnedOverEveryBank", "NoFreeBank"],
+                             "gets there, and Done is no call of the code",
+                     "Load": "a reversed witness's step (BlindStore: the claim as a load then a store); the code claims by "
+                             "one fetch-add",
+                     "Claim": "a reversed witness's step (BlindStore); the code claims by one fetch-add"},
+        "reach": ["BankFull", "CounterPastEnd", "TurnedOverEveryBank", "NoFreeBank"],
     },
     "receive-handoff": {
         "modules": ["RNReceiveHandoff.tla", "TraceRNReceiveHandoff.tla"],

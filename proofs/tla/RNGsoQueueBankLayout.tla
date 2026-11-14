@@ -13,11 +13,13 @@
 (*                                                                         *)
 (* A game thread's start_packet picks the destination's queue (QueueOf,    *)
 (* the address-and-port hash the XDP transport uses) and claims the next  *)
-(* index of the queue's producer bank with a compare-and-swap that never   *)
-(* moves the counter past S: an index at S is refused (NULL, counted).     *)
+(* index of the queue's producer bank with one fetch-add on its 64-bit    *)
+(* counter (rocketnet_send_queue_claim, as the io_uring and XDP banks      *)
+(* claim): an index at or past S is refused (NULL) and leaves the counter  *)
+(* past S until the bank is reset, so every reader takes min(counter, S).  *)
 (* A destination d stands for an address the hash puts on queue d % Q     *)
-(* (the trace walk picks such addresses); Load takes the queue the hash    *)
-(* returned, and Claim what start_packet returned, so the trace check      *)
+(* (the trace walk picks such addresses); Start and StartFull take the    *)
+(* queue's destination and what start_packet returned, so the trace check *)
 (* compares both with the model's.                                         *)
 (* The packet id is (turn * S + slot) * Q + q, where turn is the queue's   *)
 (* producer turn-over count, written only by main while no fill runs: no   *)
@@ -29,9 +31,10 @@
 (* Skew bytes off the one start returned (a contract violation): it must   *)
 (* fail closed.                                                            *)
 (*                                                                         *)
-(* A claim is two steps, Load (read the counter) and Claim (the CAS), so   *)
-(* another thread's claim can fall between them; the CAS then fails and    *)
-(* the thread loads again.                                                 *)
+(* The fetch-add is one step (Start, StartFull).  Only the reversed        *)
+(* witness ClaimRule "store" splits a claim in two, Load (read the         *)
+(* counter) and Claim (store load + 1), so another thread's claim can fall *)
+(* between them.                                                           *)
 (*                                                                         *)
 (* Flush is send_packets with the game threads joined (the game threads' call  *)
 (* contract): each queue that staged anything hands its producer to its   *)
@@ -51,13 +54,17 @@
 (*   RouteMatches    finish and abort find the queue start chose.          *)
 (*   NoWorkerWrite   no claim or finish writes a bank the worker owns.     *)
 (*   StagedMatches   the claimed slots of each producer bank are exactly   *)
-(*                   0..counter - 1, the slots the worker reads.           *)
+(*                   0..min(counter, S) - 1, the slots the worker reads.   *)
 (*                                                                         *)
 (* Rule switches, each changed in one reversed witness:                    *)
 (*   ClaimCmp   "ge" refuses an index >= S (the code); "gt" hands out S.   *)
-(*   ClaimRule  "cas" (the code); "store" writes load + 1 without the      *)
-(*              compare, so two threads that loaded the same index both    *)
-(*              get it (NoSharedSlot).                                     *)
+(*   ClaimRule  "add" is the one-step fetch-add (the code); "store" reads  *)
+(*              the counter and later writes load + 1, so two threads that *)
+(*              loaded the same index both get it (NoSharedSlot).          *)
+(*   CounterWrap 0 is the code's 64-bit counter, which no fill wraps; k > 0 *)
+(*              counts modulo k, so a counter too narrow for the refused   *)
+(*              claims wraps back to slot 0 while it is claimed            *)
+(*              (NoSharedSlot).                                            *)
 (*   SlotRule   "check" tests the offset before dividing (the code);       *)
 (*              "divide" divides first with C's truncation toward zero, so *)
 (*              an offset of -Stride+1..-1 becomes slot 0 (NoForeignWrite). *)
@@ -81,7 +88,8 @@ CONSTANTS Q,            \* queues (num_queues)
           MaxFlush,     \* bound on flushes
           SkewSpan,     \* a caller may add -SkewSpan..SkewSpan bytes to the pointer it finishes (Skew)
           ClaimCmp,     \* "ge" (the code) or "gt"
-          ClaimRule,    \* "cas" (the code) or "store"
+          ClaimRule,    \* "add" (the code) or "store"
+          CounterWrap,  \* 0: no wrap (the code's uint64); k > 0: counter modulo k
           SlotRule,     \* "check" (the code) or "divide"
           IdRule,       \* "mul" (the code) or "add"
           FlushRule     \* "joined" (the code) or "open"
@@ -89,7 +97,7 @@ CONSTANTS Q,            \* queues (num_queues)
 ASSUME Q >= 1 /\ NB >= 2 /\ S >= 1 /\ Stride >= 2 /\ Demand >= 1 /\ MaxFlush >= 0
 ASSUME SkewSpan \in Nat
 ASSUME Dests \subseteq Nat
-ASSUME ClaimCmp \in {"ge", "gt"} /\ ClaimRule \in {"cas", "store"}
+ASSUME ClaimCmp \in {"ge", "gt"} /\ ClaimRule \in {"add", "store"} /\ CounterWrap \in Nat
 ASSUME SlotRule \in {"check", "divide"} /\ IdRule \in {"mul", "add"}
 ASSUME FlushRule \in {"joined", "open"}
 
@@ -119,6 +127,8 @@ SlotFrom(off) ==
 
 Granted(i) == IF ClaimCmp = "ge" THEN i < S ELSE i <= S
 PidOf(turn, slot, q) == IF IdRule = "mul" THEN (turn * S + slot) * Q + q ELSE turn * S + slot + q
+Bump(c) == IF CounterWrap = 0 THEN c + 1 ELSE (c + 1) % CounterWrap
+Min(a, b) == IF a < b THEN a ELSE b
 
 VARIABLES prod,       \* each queue's producer bank
           own,        \* each bank's owner: "prod", "worker" or "free"
@@ -147,9 +157,51 @@ Init ==
     /\ flushes = 0
     /\ oob = FALSE /\ shared = FALSE /\ foreign = FALSE /\ routeBad = FALSE /\ workerWrite = FALSE
 
-\* start_packet(to = d) on thread t, first half: pick the queue q the hash
-\* returned, read the producer and its counter
+\* what start_packet(to = d) returns: the pointer and id of the slot the
+\* fetch-add hands out, or None when the index it took is refused
+StartResult(d) ==
+    LET q == QueueOf(d)
+        b == prod[q]
+        i == cnt[q][b]
+    IN IF Granted(i)
+         THEN [ptr |-> Addr(q, b) + i * Stride, pid |-> PidOf(turn[q], i, q)]
+         ELSE None
+
+\* the slot i of queue q's producer bank b handed to thread t, and the flags
+\* a slot outside the bank, a slot already handed out this fill or a bank the
+\* worker owns sets
+Grant(t, q, b, i) ==
+    /\ held' = [held EXCEPT ![t] = [q |-> q, b |-> b, slot |-> i,
+                                    ptr |-> Addr(q, b) + i * Stride,
+                                    pid |-> PidOf(turn[q], i, q)]]
+    /\ owner' = [owner EXCEPT ![<<q, b, i>>] = t]
+    /\ oob' = (oob \/ i >= S)
+    /\ shared' = (shared \/ owner[<<q, b, i>>] # -1)
+    /\ workerWrite' = (workerWrite \/ own[q][b] # "prod")
+
+\* start_packet(to = d) on thread t (the code, ClaimRule "add"): one
+\* fetch-add on the counter of the destination queue's producer bank,
+\* returning r. The counter moves whether or not the index it took is
+\* granted: a refused start leaves it past S
+Start(t, d, r) ==
+    /\ ClaimRule = "add"
+    /\ held[t] = None /\ load[t] = None
+    /\ demand[t] < Demand
+    /\ r = StartResult(d)
+    /\ LET q == QueueOf(d)
+           b == prod[q]
+           i == cnt[q][b]
+       IN /\ cnt' = [cnt EXCEPT ![q][b] = Bump(i)]
+          /\ IF Granted(i)
+               THEN Grant(t, q, b, i)
+               ELSE UNCHANGED <<held, owner, oob, shared, workerWrite>>
+    /\ demand' = [demand EXCEPT ![t] = @ + 1]
+    /\ UNCHANGED <<prod, own, turn, load, flushes, foreign, routeBad>>
+
+\* the reversed witness ClaimRule "store", first half: read the producer and
+\* its counter
 Load(t, d, q) ==
+    /\ ClaimRule = "store"
     /\ held[t] = None /\ load[t] = None
     /\ demand[t] < Demand
     /\ q = QueueOf(d)
@@ -158,16 +210,14 @@ Load(t, d, q) ==
     /\ UNCHANGED <<prod, own, cnt, turn, held, owner, flushes, oob, shared, foreign, routeBad, workerWrite>>
 
 \* what the second half gives the thread back: the pointer and id of the
-\* slot it claims, or None for a NULL start and for a CAS that lost the race
+\* slot it loaded, or None when the bound refuses it
 ClaimResult(t) ==
     LET l == load[t]
-    IN IF l = None \/ ~Granted(l.i) \/ (ClaimRule = "cas" /\ cnt[l.q][l.b] # l.i)
+    IN IF l = None \/ ~Granted(l.i)
          THEN None
          ELSE [ptr |-> Addr(l.q, l.b) + l.i * Stride, pid |-> PidOf(turn[l.q], l.i, l.q)]
 
-\* second half: the CAS (or, under "store", a blind store), returning r. A
-\* loaded index the bound refuses is a NULL start; a CAS that lost the race
-\* reloads
+\* second half: store load + 1 whatever the counter now holds, returning r
 Claim(t, r) ==
     /\ load[t] # None
     /\ r = ClaimResult(t)
@@ -176,20 +226,10 @@ Claim(t, r) ==
            b == l.b
            i == l.i
        IN IF ~Granted(i)
-            THEN /\ load' = [load EXCEPT ![t] = None]
-                 /\ UNCHANGED <<cnt, held, owner, oob, shared, workerWrite>>
-          ELSE IF ClaimRule = "cas" /\ cnt[q][b] # i
-            THEN /\ load' = [load EXCEPT ![t] = [q |-> q, b |-> prod[q], i |-> cnt[q][prod[q]]]]
-                 /\ UNCHANGED <<cnt, held, owner, oob, shared, workerWrite>>
-          ELSE /\ cnt' = [cnt EXCEPT ![q][b] = i + 1]
-               /\ load' = [load EXCEPT ![t] = None]
-               /\ held' = [held EXCEPT ![t] = [q |-> q, b |-> b, slot |-> i,
-                                               ptr |-> Addr(q, b) + i * Stride,
-                                               pid |-> PidOf(turn[q], i, q)]]
-               /\ owner' = [owner EXCEPT ![<<q, b, i>>] = t]
-               /\ oob' = (oob \/ i >= S)
-               /\ shared' = (shared \/ owner[<<q, b, i>>] # -1)
-               /\ workerWrite' = (workerWrite \/ own[q][b] # "prod")
+            THEN UNCHANGED <<cnt, held, owner, oob, shared, workerWrite>>
+          ELSE /\ cnt' = [cnt EXCEPT ![q][b] = Bump(i)]
+               /\ Grant(t, q, b, i)
+    /\ load' = [load EXCEPT ![t] = None]
     /\ UNCHANGED <<prod, own, turn, demand, flushes, foreign, routeBad>>
 
 \* finish_packet or abort_packet on thread t, with the pointer k bytes off
@@ -249,6 +289,7 @@ Done ==
     /\ UNCHANGED vars
 
 Next ==
+    \/ \E t \in Threads, d \in Dests : Start(t, d, StartResult(d))
     \/ \E t \in Threads, d \in Dests : Load(t, d, QueueOf(d))
     \/ \E t \in Threads : Claim(t, ClaimResult(t))
     \/ \E t \in Threads, k \in Skew : Finish(t, k)
@@ -260,9 +301,13 @@ Spec == Init /\ [][Next]_vars
 
 -----------------------------------------------------------------------------
 
+\* the most a counter reaches: every start of every fill a producer is kept
+\* through lands on it (a refused start still moves it)
+CntMax == (MaxFlush + 1) * Cardinality(Threads) * Demand
+
 TypeOK ==
     /\ prod \in [Qs -> Bs]
-    /\ \A q \in Qs, b \in Bs : own[q][b] \in {"prod", "worker", "free"} /\ cnt[q][b] \in 0..(S + 1)
+    /\ \A q \in Qs, b \in Bs : own[q][b] \in {"prod", "worker", "free"} /\ cnt[q][b] \in 0..CntMax
     /\ \A q \in Qs : turn[q] \in 0..MaxFlush
     /\ \A t \in Threads : held[t] = None \/ held[t].slot \in 0..S
     /\ owner \in [SlotKeys -> Threads \cup {-1}]
@@ -279,10 +324,11 @@ NoForeignWrite == ~foreign
 RouteMatches == ~routeBad
 NoWorkerWrite == ~workerWrite
 
-\* the claimed slots of each producer bank are exactly the first counter ones
-\* (the worker reads num_packets slots), once every claim in flight landed
+\* the claimed slots of each producer bank are exactly the first
+\* min(counter, S) ones (the worker reads min(num_packets, send_slots)
+\* slots), once every claim in flight landed
 StagedMatches ==
     (\A t \in Threads : load[t] = None) =>
-        \A q \in Qs : {s \in 0..(S - 1) : owner[<<q, prod[q], s>>] # -1} = 0..(cnt[q][prod[q]] - 1)
+        \A q \in Qs : {s \in 0..(S - 1) : owner[<<q, prod[q], s>>] # -1} = 0..(Min(cnt[q][prod[q]], S) - 1)
 
 =============================================================================

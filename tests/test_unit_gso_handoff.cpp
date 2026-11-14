@@ -74,6 +74,16 @@ static void test_server_gso_send_retry_quit()
 
 REGISTER_UNIT_TEST( test_server_gso_send_retry_quit );
 
+// The fetch-add claim past a bank's end (proofs/tla/RNGsoQueueBankLayout.tla
+// Start, StagedMatches): refused starts leave the counter past the slots, and
+// every reader takes min(counter, slots).
+static void test_server_gso_claim_past_end()
+{
+    check( rocketnet_server_gso_test_claim_past_end() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_claim_past_end );
+
 // Per-queue staging (proofs/tla/RNGsoQueueBankLayout.tla): a destination's
 // packets are staged on, and sent from, the queue its address hashes to.
 static void test_server_gso_send_queues()
