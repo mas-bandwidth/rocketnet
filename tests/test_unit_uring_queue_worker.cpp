@@ -1507,6 +1507,60 @@ static void test_uring_queue_worker_refusals_turn_segmentation_off()
 
 REGISTER_UNIT_TEST( test_uring_queue_worker_refusals_turn_segmentation_off );
 
+// the threshold counts destinations, not refused runs: one destination with
+// more runs in the kernel than the threshold, every one refused before the
+// first answer is reaped, is one refusing destination, and the queue keeps
+// segmenting for everyone else (standard/TRANSPORT.md t2.4 rule 7)
+
+static void test_uring_queue_worker_one_destination_refusing_many_runs_keeps_segmentation()
+{
+    const int runs_wanted = ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD + 1;
+    const int packets = 4 * runs_wanted;        // four segments a run (the fixture's send)
+    worker_test_t t( 2 * packets, 2 * packets, 2 );
+    check( t.ok );
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+
+    for ( int i = 0; i < packets; i++ )
+    {
+        t.stage( 1, 100 );
+    }
+    t.publish();
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    std::vector<struct io_uring_sqe> runs = t.sends();
+    check( (int) runs.size() == runs_wanted );
+    for ( size_t i = 0; i < runs.size(); i++ )
+    {
+        check( worker_test_segmented( runs[i] ) );
+        t.post( runs[i].user_data, -EINVAL, 0 );
+    }
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    check( t.counter( ROCKETNET_URING_WORKER_COUNTER_GSO_FALLBACKS ) == 0 );
+    check( t.worker.config.segment );
+    check( t.worker.refused.destinations == 1 );
+
+    // the refuser's packets went out again one a run; drain them
+    std::vector<struct io_uring_sqe> again = t.sends( 0 );
+    check( (int) again.size() == runs_wanted + packets );
+    for ( size_t i = runs.size(); i < again.size(); i++ )
+    {
+        check( !worker_test_segmented( again[i] ) );
+        t.post( again[i].user_data, 100, 0 );
+    }
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    const size_t before = t.kernel.submitted.size();
+
+    // another destination is still sent segmented
+    t.stage( 2, 100 );
+    t.stage( 2, 100 );
+    t.publish();
+    check( t.settle() == ROCKETNET_URING_WORKER_SLEEP );
+    std::vector<struct io_uring_sqe> next = t.sends( before );
+    check( next.size() == 1 );
+    check( worker_test_segmented( next[0] ) );
+}
+
+REGISTER_UNIT_TEST( test_uring_queue_worker_one_destination_refusing_many_runs_keeps_segmentation );
+
 // standard/TRANSPORT.md t2.4 rule 7: segmentation turns off only when the
 // threshold of destinations refused and none was ever accepted, for the
 // transport. A segmented send accepted on one queue keeps another queue
