@@ -23,8 +23,11 @@ block as it is; the OS zero-fills a page before another process gets it.
 - **Remove(m)**: the mapping's session keys, nonce and user data are wiped and
   it leaves live; the slot's release wipes its copy.
 - **Destroy**: the server secret key and both cookie keys are wiped, the
-  secrets of every live mapping, and every slot's user data (an array create
-  zeroed, so no new page); nothing else is written.
+  secrets of every live mapping, and the user data of every connected slot
+  (`rocketnet_client_slots_destroy` writes only those, so no new page);
+  nothing else is written. A slot that is not connected holds no user data:
+  its release wiped it (`rocketnet_client_slots_release`, the only write that
+  clears `connected`), or it was never written since create.
 
 ## Invariants
 

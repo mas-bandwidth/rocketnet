@@ -35,7 +35,7 @@ CONSTANTS Pages,              \* the block's pages
           WipeOnRemove,       \* remove wipes the mapping's secrets
           WipeLiveAtDestroy,  \* destroy wipes the live mappings' secrets
           WipeSlotOnRelease,  \* a slot's release wipes its user data
-          WipeSlotsAtDestroy  \* the slots' destroy wipes every slot's user data
+          WipeSlotsAtDestroy  \* the slots' destroy wipes each connected slot's user data
 
 ASSUME WipeWholeBlock \in BOOLEAN /\ WipeOnRemove \in BOOLEAN /\ WipeLiveAtDestroy \in BOOLEAN
 ASSUME WipeSlotOnRelease \in BOOLEAN /\ WipeSlotsAtDestroy \in BOOLEAN
@@ -94,7 +94,7 @@ Destroy ==
     /\ phase' = "freed"
     /\ serverKeys' = "zero"
     /\ keys' = [ m \in Maps |-> IF m \in live /\ WipeLiveAtDestroy THEN "zero" ELSE keys[m] ]
-    /\ slotData' = IF WipeSlotsAtDestroy THEN [ m \in Maps |-> "zero" ] ELSE slotData
+    /\ slotData' = [ m \in Maps |-> IF m \in live /\ WipeSlotsAtDestroy THEN "zero" ELSE slotData[m] ]
     /\ touched' = IF WipeWholeBlock THEN Pages ELSE touched
     /\ UNCHANGED <<runTouched, live>>
 
