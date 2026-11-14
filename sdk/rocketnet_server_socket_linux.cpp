@@ -3446,38 +3446,6 @@ uint64_t rocketnet_server_socket_replay_greetings_held( struct rocketnet_server_
     return server_socket->replay_greetings_held;
 }
 
-#if ROCKETNET_DEV
-// A fixture's server socket in the caller's raw storage, with its sized parts
-// for the default configuration; the destruct frees them and leaves the
-// storage to the caller. The allocation is a test's, so a refusal asserts.
-static rocketnet_server_socket_t * rocketnet_server_socket_test_construct( void * storage )
-{
-    auto * server = new ( storage ) rocketnet_server_socket_t();
-    const bool sized = rocketnet_server_socket_sized_create( server, NULL, ROCKETNET_DEFAULT_MAX_CLIENTS );
-    rocketnet_assert( sized );
-    (void) sized;
-    return server;
-}
-
-static void rocketnet_server_socket_test_destruct( rocketnet_server_socket_t * server )
-{
-    rocketnet_server_socket_sized_destroy( server, NULL );
-    server->~rocketnet_server_socket_t();
-}
-
-#if ROCKETNET_ASSERTS
-static int rocketnet_server_socket_test_asserts;
-
-static void rocketnet_server_socket_test_count_assert( const char * condition, const char * function, const char * file, int line )
-{
-    (void) condition;
-    (void) function;
-    (void) file;
-    (void) line;
-    rocketnet_server_socket_test_asserts++;
-}
-#endif // #if ROCKETNET_ASSERTS
-
 // the staged packets in one send buffer from slot first to its staged
 // count: the slots a start wrote (a nonzero byte count). The staged count
 // is clamped as the worker clamps it when it claims the buffer.
@@ -3523,6 +3491,38 @@ static uint32_t rocketnet_server_xdp_stall_abandoned( rocketnet_server_xdp_socke
     rocketnet_platform_mutex_release( &socket->send_mutex );
     return abandoned;
 }
+
+#if ROCKETNET_DEV
+// A fixture's server socket in the caller's raw storage, with its sized parts
+// for the default configuration; the destruct frees them and leaves the
+// storage to the caller. The allocation is a test's, so a refusal asserts.
+static rocketnet_server_socket_t * rocketnet_server_socket_test_construct( void * storage )
+{
+    auto * server = new ( storage ) rocketnet_server_socket_t();
+    const bool sized = rocketnet_server_socket_sized_create( server, NULL, ROCKETNET_DEFAULT_MAX_CLIENTS );
+    rocketnet_assert( sized );
+    (void) sized;
+    return server;
+}
+
+static void rocketnet_server_socket_test_destruct( rocketnet_server_socket_t * server )
+{
+    rocketnet_server_socket_sized_destroy( server, NULL );
+    server->~rocketnet_server_socket_t();
+}
+
+#if ROCKETNET_ASSERTS
+static int rocketnet_server_socket_test_asserts;
+
+static void rocketnet_server_socket_test_count_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    rocketnet_server_socket_test_asserts++;
+}
+#endif // #if ROCKETNET_ASSERTS
 
 // Exercise the native staging entry points without creating kernel resources.
 bool rocketnet_server_socket_test_buffer_exchange()
