@@ -107,7 +107,10 @@ values.
   once the slots are used (`L = 2`, `F = 1`, one destination, two starts).
   Fails `NoReissue`: the first start takes lane 0 slot 0, id 0; the second
   takes slot 1, past the lane, and hands id 1, which decodes to lane 1 slot 0,
-  a slot start never reserved. The code refuses at
+  a slot start never reserved. In the code, where a lane's ids span its
+  phases, the slot past a phase is the next phase's slot 0, or past the last
+  phase the next lane's: either way a slot this start did not reserve. The
+  code refuses at
   `slot >= send_queue_size` in `rocketnet_rio_lane_start_packet`
   (`ROCKETNET_COUNTER_RIO_SEND_FULL`).
 
