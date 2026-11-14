@@ -11,17 +11,23 @@ loopbackhublayout) are already edited on this branch. Everything below is for R 
   `loopback-queue-model-full-drop` ("LoopbackQueue cannot reach its full drop, and its Drop
   does not count"). MCLoopbackQueue.cfg now reaches the full drop and the wrap, the Drop
   counts, and MCLoopbackQueueBrokenUncountedDrop.cfg is the reversed witness.
-- Keep `loopback-hub-destroy-check-and-free` (MM194 code half). Its last sentence asks to "make
+- MM194's code half is a roadmap entry (Rowan's decision: caller misuse, low). The entry
+  already exists on main as `loopback-hub-destroy-check-and-free` (group review-v1-2, area
+  sdk), so no new entry is added and it is not duplicated. Keep it. Its last sentence asks to "make
   LoopbackHub.tla's Destroy (atomic today) two steps with a reversed witness": that model half
   is done here (Destroy has the two steps; MCLoopbackHubBrokenDestroyRace.cfg). When the code
   fix lands, the fix keeps CallerSerializesDestroy = FALSE passing for a create that takes the
-  mutex after the check. Suggested replacement of that sentence:
+  mutex after the check. The entry as it should read (same id, so it replaces the existing
+  item in place; only the line numbers and the model sentence change):
 
 ```
-:text "... show it red with two threads through a deterministic seam. LoopbackHub.tla already has Destroy's two steps and MCLoopbackHubBrokenDestroyRace.cfg shows the window; with the fix, a create that takes the mutex after the check is refused, so that case passes with CallerSerializesDestroy = FALSE except for a create already blocked on the mutex when the hub is freed, which stays misuse no flag can catch: say so in rocketnet.h."
+  (item "loopback-hub-destroy-check-and-free" :group "review-v1-2" :area "sdk"
+   :title "Loopback hub destroy checks for endpoints, then frees the hub outside the lock"
+   :text "rocketnet_loopback_hub_destroy (sdk/rocketnet_driver_loopback.cpp about 572-587) reads registered under the hub mutex, releases it, then destroys the mutex and frees the block. A create on another thread in that window registers into memory about to be freed. Creating while destroying is misuse (low), but the in-use guard reads as if it catches it. Make the check and the retirement one step under the mutex (a create after it refused with the hub's in-use or mismatch status) and show it red with two threads through a deterministic seam. LoopbackHub.tla already has Destroy's two steps, and MCLoopbackHubBrokenDestroyRace.cfg (CallerSerializesDestroy = FALSE) shows the window; with the fix, a create that takes the mutex after the check is refused, so the model's retiring hub refuses it and that case passes. A create that is already waiting on the mutex when the hub is freed stays misuse that no flag can catch: say so in rocketnet.h."
+   :date "2026-11-13" :origin "Review before v1.2.0, second wave, o3 finding W2-11 (read, not run); models fix MM194")
 ```
 
-No new roadmap entries: no row of this package was a missing model or binding.
+No other new roadmap entries: no other row of this package was a missing model or binding.
 
 ## proofs/tla/README.md, group table
 

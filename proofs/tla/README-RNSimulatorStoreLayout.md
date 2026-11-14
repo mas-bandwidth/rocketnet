@@ -178,8 +178,9 @@ counterexample below was checked against the C by hand.
 These two rules were added with the bound and the hint (2026-11, the
 `rn-sim-receive-any-scan` card). With them the passing controls hold 231,690
 distinct states (2,491,295 generated; 8 to 9 s at four workers on macOS),
-up from 75,344; whether that fits the 110-second record budget at two
-workers on the Linux bench is not yet measured.
+up from 75,344. On the Linux bench at two workers they fit the 110-second
+record budget: RUNS.tsv records 14.6 s for MCRNSimulatorStoreLayout.cfg and
+13.9 s for MCRNSimulatorStoreLayoutSummaryBits.cfg (linux-amd64, 2026-11-10).
 
 ## Runs
 
