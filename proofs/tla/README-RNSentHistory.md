@@ -77,7 +77,7 @@ From the checkout root, with `tla2tools.jar` (see `proofs/tla/README.md` for the
 JAR and the pinned `tlacheck`):
 
 ```sh
-cd tla
+cd proofs/tla
 java -cp tla2tools.jar tlc2.TLC -workers 4 -config MCRNSentHistory.cfg MCRNSentHistory.tla
 java -cp tla2tools.jar tlc2.TLC -workers 4 -config MCRNSentHistoryBrokenCountEveryUnacked.cfg MCRNSentHistory.tla
 java -cp tla2tools.jar tlc2.TLC -workers 4 -config MCRNSentHistoryBrokenRefuseWhenFull.cfg MCRNSentHistory.tla
@@ -127,7 +127,7 @@ counts sequence 1 lost (`3 >= 1 + 2`) and `overflowSet` stays empty.
 **`MCRNSentHistoryBrokenRefuseWhenFull.cfg`** (`RefuseWhenFull = TRUE`: `Send`
 disabled while every record is unacked) fails `SendNeverRefused`, exit 12, in
 five states: `Send 1` to `Send 4` fill the ring with unacknowledged records, and
-with 5 still unsent no `Send` is enabled. The code never refuses: all eight
+with 5 still unsent no `Send` is enabled. The code never refuses: all six
 callers count the result and still transmit.
 
 **`MCRNSentHistoryBrokenWriteStale.cfg`** (`WriteStale = TRUE`: no stale
@@ -159,7 +159,7 @@ scratch copy and failed on the named property, so each property is not vacuous:
 | the threshold | `ROCKETNET_LOSS_PACKET_THRESHOLD`, `sdk/rocketnet_constants.h` |
 | `largestAcked` fold | `rocketnet_ack_apply_run`, `sdk/rocketnet_ack.cpp` |
 | the counts | `rocketnet_ack_count_sent_result`; `SEND_HISTORY_LOST` and `SEND_HISTORY_OVERFLOW`, `sdk/rocketnet_counters.h` |
-| no refusal | the eight callers in `sdk/rocketnet_server_protocol.cpp` and `sdk/rocketnet_client_protocol.cpp` count and still transmit |
+| no refusal | the six callers in `sdk/rocketnet_server_protocol.cpp` and `sdk/rocketnet_client_protocol.cpp` count and still transmit |
 | unit tests | `rocketnet_test_send_history_lossy_long_path`, `..._silent_receiver_overflows`, `..._late_ack_before_eviction` in `sdk/rocketnet_tests.cpp` |
 | functional run | `scripts/netem-pair-soak` |
 
