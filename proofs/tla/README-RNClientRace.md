@@ -77,7 +77,8 @@ losing server after the commit is the `commitkeepsring` defect.
 | `EverythingFreed` | liveness | with fair threads, destroy frees every family |
 | `PostCommitSlotsKept` | invariant | no slot committed after the commit leaves for the losing family, where the race's send drops it |
 | `SendFailedMonotonic` | invariant | SEND_FAILED never goes down between two reads |
-| `LoserClosed` | liveness | a commit leads to the losing family's close |
+| `LoserClosed` | liveness | a commit leads to the reading thread closing the losing family, at its step or its exit; stated over the ghost `closer`, so destroy's close of every family does not satisfy it |
+| `StepClosesAtSight` | invariant | before its exit, a reader that has seen the commit closed the losing family in that step (`closer = "step"`) |
 
 ## Cases
 
@@ -92,6 +93,8 @@ losing server after the commit is the `commitkeepsring` defect.
 | `MCRNClientRaceBrokenNoKeepAtCommit.cfg` | `SendFailedMonotonic`: only the reader's close keeps the losing family's failures, as the code did before the commit kept them |
 | `MCRNClientRaceBrokenNoLiveCheck.cfg` | `FreedOnce`: the reader frees the losing family and destroy frees every family without `rocketnet_client_transport_io_close`'s instance check, so the losing family is freed twice |
 | `MCRNClientRaceBrokenDestroyTwice.cfg` | `FreedOnce`: the transport destroyed twice, without the instance check, so the caller frees each family twice, a repeat by the same owner that only the counting `frees` can see |
+| `MCRNClientRaceBrokenNoReaderClose.cfg` | `LoserClosed` (temporal): the reading thread closes nothing at a step or its exit, as a backend with no close operation would, so only destroy closes the losing family |
+| `MCRNClientRaceBrokenNoStepClose.cfg` | `StepClosesAtSight`: the step that first sees the commit does not close the losing family; the exit still does, so `LoserClosed` alone would pass |
 
 Each counterexample was checked by hand against the code: the reader-frees
 trace is commit, then one reading step whose `rocketnet_client_race_kept`
