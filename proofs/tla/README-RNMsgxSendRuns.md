@@ -127,7 +127,7 @@ the stamp to carry the fill phase, which is outside the send path.
 ## Reversed witnesses
 
 Each switch is TRUE in the code. Each broken config sets one FALSE and lists
-only `TypeOK` and the property it must fail. The same five defects are
+only `TypeOK` and the property it must fail. The first five defects are
 `ROCKETNET_MSGX_SEND_RUNS_MUTATION` 1 to 4 and 10 in the header, and
 `tests/test_unit_msgx_send_runs.cpp` turns red on each.
 
@@ -138,6 +138,15 @@ only `TypeOK` and the property it must fail. The same five defects are
 | `MCRNMsgxSendRunsBrokenRunCrossesGeneration.cfg` | `GenBreak = FALSE`: a run ends only at a change of slot | `NoCrossClient` | client 1's packet 0 on slot 0 at generation 1 (open), packets 1 and 2 aborted, client 2's packet 3 on slot 0 at generation 0 (stale); the run is [0, 3] and client 2's packet goes on client 1's socket |
 | `MCRNMsgxSendRunsBrokenDeadNoResend.cfg` | `DeadResends = FALSE`: a dead run is skipped | `CursorSafe` | client 1's packet 0 alone on slot 0; the send answers dead; the cursor moves past packet 0, which never left |
 | `MCRNMsgxSendRunsBrokenPartialKeeps.cfg` | `PartialContinues = FALSE`: a partial send keeps the call (the code before R124) | `KeptOnlyWhenNothingLeft` | packets 0 and 3 of client 1 on slot 0 at generation 1 (1 and 2 aborted); the run is [0, 3]; the send takes 1 (packet 0) and the call keeps the bank, the worker's retry wait after the socket took data |
+| `MCRNMsgxSendRunsBrokenNoHeadGuard.cfg` | `HeadGuard = FALSE`: the head asks the resolve for the shared stamp's slot -1 too, and gets a descriptor | `DeadReportsConnected` | client 1's packet 0, the only live one, on the shared stamp (slot -1; 1 to 3 aborted); the head resolves it and builds the run [0]; the connected send answers dead and the report names slot -1 |
+
+`DeadReportsConnected` holds in the code because the head resolves only a
+stamp with `table_slot >= 0` (`fd = head->table_slot >= 0 ? io->resolve(...)
+: -1`), so a shared-socket head never reaches the connected send whose dead
+answer is reported. The model held it only by the same guard inside
+`Resolves`, with no switch, so nothing showed it could fail; `HeadGuard` is
+that guard. This witness is the model's alone: the header has no mutation for
+it, and the unit test has no case.
 
 Each counterexample was read state by state against the header: the steps are
 the header's loop in the order shown, and without the change the code
@@ -162,6 +171,7 @@ linux-amd64 bench (amd-3, 2026-11-13, after R124); the records are in `RUNS.tsv`
 | `MCRNMsgxSendRunsBrokenUnstableSort.cfg` | `ClientOrder` | 27,832 | 32,726 | 4.1 |
 | `MCRNMsgxSendRunsBrokenRunCrossesGeneration.cfg` | `NoCrossClient` | 36,750 | 45,461 | 4.4 |
 | `MCRNMsgxSendRunsBrokenDeadNoResend.cfg` | `CursorSafe` | 36,712 | 45,416 | 4.3 |
+| `MCRNMsgxSendRunsBrokenNoHeadGuard.cfg` | `DeadReportsConnected` | 26,612 | 32,052 | 5.0 |
 | `MCRNMsgxSendRunsBrokenPartialKeeps.cfg` | `KeptOnlyWhenNothingLeft` | 36,719 | 45,423 | 4.3 |
 
 ## Bound to the code
