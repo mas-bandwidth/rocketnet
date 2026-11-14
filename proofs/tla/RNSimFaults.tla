@@ -45,8 +45,11 @@
 (*     at once, so it sends and receives nothing until it is rebuilt;      *)
 (*     FALSE flips the phase but leaves the endpoint running.              *)
 (* The receiver's two compares, each a switch (design TRUE) so a probe     *)
-(* can drop one: CompareGeneration and CompareIncarnation.  With one       *)
-(* global generation counter that a server restart does not reset, the     *)
+(* can drop one: CompareGeneration and CompareIncarnation.  The generation *)
+(* counter is per client, as the DST harness keeps it (client->generation  *)
+(* in tests/dst_harness.h, stepped at each connect, checked per client by  *)
+(* rocketnet_dst_check_generation), and a server restart does not reset    *)
+(* it; packets are matched on the client as well as the generation, so the *)
 (* generation compare alone keeps every delivery on its own session        *)
 (* (dropping it fails DeliverOnlyToLiveGeneration); the incarnation        *)
 (* compare is a second, independent check that no reachable delivery       *)
@@ -110,9 +113,10 @@ VARIABLES
     sid,          \* [Clients -> 0..MaxSessions], ghost tag of its latest session
     cinc,         \* [Clients -> Nat], the incarnation its session was admitted under
     restarted,    \* [Clients -> BOOLEAN], rebuilt and not yet connected since
-    nextGen,      \* the global generation counter (starts at 1)
+    nextGen,      \* [Clients -> 1..MaxSessions+1], each client's generation counter (starts at 1)
     nextSid,      \* the ghost tag counter
-    genFirst,     \* [Gens -> 0..MaxSessions], the tag of the first session to take each generation
+    genFirst,     \* [Clients -> [Gens -> 0..MaxSessions]], the tag of the first session of
+                  \* that client to take each generation
     incarnation,  \* the server incarnation counter (starts at 1)
     srv,          \* the server's session records
     net,          \* packets in the wire
@@ -138,9 +142,9 @@ Init ==
     /\ sid = [c \in Clients |-> 0]
     /\ cinc = [c \in Clients |-> 0]
     /\ restarted = [c \in Clients |-> FALSE]
-    /\ nextGen = 1
+    /\ nextGen = [c \in Clients |-> 1]
     /\ nextSid = 1
-    /\ genFirst = [g \in Gens |-> 0]
+    /\ genFirst = [c \in Clients |-> [g \in Gens |-> 0]]
     /\ incarnation = 1
     /\ srv = {}
     /\ net = {}
@@ -232,12 +236,12 @@ Connect(c) ==
     /\ cst[c] = "idle"
     /\ nextSid <= MaxSessions
     /\ LET keep == ~FreshOnRestart /\ restarted[c] /\ gen[c] # 0
-           g    == IF keep THEN gen[c] ELSE nextGen
+           g    == IF keep THEN gen[c] ELSE nextGen[c]
        IN /\ g \in Gens
           /\ gen' = [gen EXCEPT ![c] = g]
-          /\ nextGen' = IF keep THEN nextGen ELSE nextGen + 1
-          /\ genFirst' = IF genFirst[g] = 0 THEN [genFirst EXCEPT ![g] = nextSid]
-                                            ELSE genFirst
+          /\ nextGen' = IF keep THEN nextGen ELSE [nextGen EXCEPT ![c] = @ + 1]
+          /\ genFirst' = IF genFirst[c][g] = 0 THEN [genFirst EXCEPT ![c][g] = nextSid]
+                                               ELSE genFirst
     /\ sid' = [sid EXCEPT ![c] = nextSid]
     /\ nextSid' = nextSid + 1
     /\ cst' = [cst EXCEPT ![c] = "connecting"]
@@ -391,9 +395,9 @@ TypeOK ==
     /\ sid \in [Clients -> 0..MaxSessions]
     /\ cinc \in [Clients -> Nat]
     /\ restarted \in [Clients -> BOOLEAN]
-    /\ nextGen \in 1..(MaxSessions + 1)
+    /\ nextGen \in [Clients -> 1..(MaxSessions + 1)]
     /\ nextSid \in 1..(MaxSessions + 1)
-    /\ genFirst \in [Gens -> 0..MaxSessions]
+    /\ genFirst \in [Clients -> [Gens -> 0..MaxSessions]]
     /\ incarnation \in 1..(1 + MaxServerCrashes)
     /\ srv \subseteq SrvRecs
     /\ net \subseteq Packets
@@ -407,11 +411,11 @@ TypeOK ==
 CrashedEndpointSilent ==
     lastAct \in {"none", "up"}
 
-\* Every live session's generation was first taken by that session: a
-\* restarted (or reconnecting) client's generation is fresh, never an
-\* earlier one.
+\* Every live session's generation was first taken, among its client's
+\* sessions, by that session: a restarted (or reconnecting) client's
+\* generation is fresh for that client, never an earlier one of its own.
 RestartIsFresh ==
-    \A c \in Clients : cst[c] # "idle" => genFirst[gen[c]] = sid[c]
+    \A c \in Clients : cst[c] # "idle" => genFirst[c][gen[c]] = sid[c]
 
 \* No delivery reaches a session other than the one that sent it: the
 \* receiving session's ghost tag equals the packet's.
