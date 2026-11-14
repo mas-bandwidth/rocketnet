@@ -18,9 +18,15 @@
 // and the client's I/O thread and legacy receive worker
 // (proofs/tla/RNReceiveHandoff.tla, bound to the gso server's code by the
 // trace check tests/tla_trace_receive_handoff.cpp, to the xdp server's by
-// tests/tla_trace_receive_handoff_xdp.cpp, to the msgx server's by
-// tests/tla_trace_msgx_receive_fill.cpp and to the client I/O core's by
-// tests/tla_trace_client_receive_handoff.cpp). Three
+// tests/tla_trace_receive_handoff_xdp.cpp and to the client I/O core's by
+// tests/tla_trace_client_receive_handoff.cpp). The msgx server's use is
+// checked against a different model, proofs/tla/RNMsgxReceiveFill.tla: its
+// trace check tests/tla_trace_msgx_receive_fill.cpp drives this file's
+// commit and the pure sdk/rocketnet_msgx_receive_fill.h (drain step, call,
+// stop count), while the server's glue in rocketnet_server_msgx_apple.cpp
+// (the round's commit rule, the stop count's resets and folds, the early
+// return once stopping) is copied into the walk and bound by citation only.
+// Three
 // preallocated buffers; only indices
 // and counts move, and only through the functions below, which the caller
 // runs with its handoff mutex held. The worker acquires the mutex; main only

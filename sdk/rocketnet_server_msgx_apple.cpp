@@ -1471,7 +1471,10 @@ void rocketnet_server_msgx_receive_packets( struct rocketnet_server_msgx_t * msg
     io.reset = rocketnet_server_msgx_call_reset;
     io.fold = rocketnet_server_msgx_call_fold;
     io.take = rocketnet_server_msgx_call_take;
-    bool busy = false; // a busy mutex leaves main with the limits it holds
+    // the call reports a busy mutex (main then keeps the limits it holds and
+    // the next call catches up); gso counts that case, msgx has no counter
+    // for it and this release adds none, so the flag is not read
+    bool busy = false;
     msgx->packets_received += rocketnet_msgx_receive_call( &receiver->hand, &io, &busy );
 }
 
