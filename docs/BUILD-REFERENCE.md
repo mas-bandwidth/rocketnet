@@ -176,10 +176,11 @@ Many-client load runs use the dedicated load harness:
     ./bin/load <clients> <seconds> [drop-one]
 
 The load tool runs the public API (`rocketnet_server_t` and `rocketnet_client_t`
-from `rocketnet.h`) under the light profile (10 Hz updates, one message per client
-per update in each direction: the client-to-server message rotates through all
-eight reliability modes, and the server-to-client message is reliable-ordered),
-verifying loopback scale up to 1000 concurrent clients across five pass criteria
+from `rocketnet.h`) under the SDK's default sizing (`LOAD_PROFILE=default`, the
+default; `LOAD_PROFILE=light` selects the light profile), with 10 Hz updates
+at 1000 clients and one message per client per update in each direction (the
+client-to-server message rotates through all eight reliability modes, and the
+server-to-client message is reliable-ordered), verifying loopback scale up to 1000 concurrent clients across five pass criteria
 (`connect_within_10s`, `no_unexpected_disconnect`, `reliable_delivery`,
 `unreliable_integrity`, and `counters_agree`).
 
@@ -419,11 +420,19 @@ to the `connected` state once the handshake completes, then counts the echoed
 payloads. Ctrl+C stops either. For a first loopback try from your own project,
 see [Installing and embedding the SDK](BUILDING.md#installing-and-embedding-the-sdk).
 
-Every rocketnet server binds the wildcard address (`0.0.0.0:40000` for the
-example server), so on an interactive desktop the first run of `server.exe`,
+A rocketnet server binds the wildcard address on its port (`0.0.0.0:40000` for
+the example server; `[::]` for a server of both families) unless
+`bind_ipv4_address` or `bind_ipv6_address` names one of the machine's
+addresses, so on an interactive desktop the first run of `server.exe`,
 `functional.exe` or a game server raises the Windows Defender Firewall dialog.
 Loopback traffic works whatever is chosen there; allow access only on the
 networks remote clients connect from.
+
+Each bind field applies only to a server that serves its family alone: start
+refuses either config field on a server of both families, or a field of the
+other family, with `ROCKETNET_STATUS_INVALID_ADDRESS`. The environment forms
+(`ROCKETNET_SERVER_BIND_IPV4_ADDRESS`, `ROCKETNET_SERVER_BIND_IPV6_ADDRESS`)
+are ignored there with one log line instead.
 
 The build compiles `sdk/xdp/server_xdp.c` to `server_xdp.o` with a clang that
 has the BPF target. It embeds the bytes in the library. The server host needs no

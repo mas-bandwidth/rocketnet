@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Refuse RocketNet-owned linked lists, pointer-linked or index-linked.
+"""Refuse RocketNet-owned linked lists, pointer-linked or index-linked, except
+the link sites the manifest approves.
 
 Policy: docs/SEQUENCE-BUFFERS.md, "Owned storage manifest". Bounded
 registries, queues and pools are arrays, rings, stacks or sequence buffers;
-none links its elements to each other. This audit reads every tracked C and
+none links its elements to each other, except at a site that the manifest's
+"Approved index links" table names (below). This audit reads every tracked C and
 C++ source outside the vendored libsodium and enkiTS trees, removes comments, string and
 character literals, and works on tokens. It never matches names such as
 next, head or list: a field is a link only by how the code uses it.
@@ -25,8 +27,11 @@ An integer that is never read back as the next cursor of a walk, such as an
 IPv6 next_header byte, a ring head that advances arithmetically, or a local
 loop counter, is not a link.
 
-A link field declared by a RocketNet struct is owned and always fails: there
-is no allowlist for owned state. A link field that no scanned source declares
+A link field declared by a RocketNet struct is owned and fails, with one
+exception: a traverse or link store that the manifest's "Approved index
+links" table names by file, function and field (a decision recorded beside
+the row) passes. A self-pointer always fails. Every approved
+row must still match a site. A link field that no scanned source declares
 comes from an operating-system header (struct ifaddrs, IP_ADAPTER_ADDRESSES).
 Such a traversal passes only when the manifest's "External ABI traversal
 sites" table names its file, function and field, the function releases the

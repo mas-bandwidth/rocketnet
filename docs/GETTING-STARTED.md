@@ -64,9 +64,11 @@ The client must run from the same directory. On Windows use
 
 The [server source](../examples/client_server_server.c) initializes the
 library, fills a default config, selects one client slot and the portable
-transport, creates a stopped server, and calls `rocketnet_server_start`.
-Create and start are separate operations; check each result. Only after start
-succeeds should a backend advertise the bound addresses.
+transport (a fallback that runs anywhere; production servers use the native
+transports in [Transports](TRANSPORTS.md)), creates a stopped server, and calls
+`rocketnet_server_start`. Create and start are separate operations; check each
+result. Only after start succeeds should a backend register the server's
+advertised address, with the port the server bound.
 
 ## 3. Connect a client with a connect token
 
@@ -102,7 +104,8 @@ Use this order on both endpoints:
    message before another receive or update invalidates its data pointer.
 3. **Simulate** the game.
 4. **Queue** outgoing messages: reserve, check the pointer, write, then finish
-   or abort. Keep only one reservation open per endpoint.
+   or abort. Keep one reservation open at a time (a server whose game threads
+   send keeps at most one per client index).
 5. **Send packets** last, making this frame's queued work available for sending.
 
 This order avoids an unnecessary frame of delay. It does not guarantee delivery
