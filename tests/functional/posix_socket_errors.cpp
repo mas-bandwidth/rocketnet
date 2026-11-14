@@ -153,11 +153,14 @@ static int posix_receive_each( rocketnet_platform_socket_t * socket, struct rock
 
 // ---------------------------------------------------
 // the Linux native server transports (gso, io_uring) own their sockets, so no
-// platform socket appears for them; their size pass runs before the
-// protocol's prefilter and counts in the transport's own RECEIVE_DROPPED_SIZE,
-// and the transport reads the same drops into PREFILTER_TOO_SHORT and
-// PREFILTER_TOO_LARGE through the builtin transport's receive_drops hook
-// (sdk/rocketnet_server_transport.cpp)
+// platform socket appears for them. Each counts its size drops in its own
+// RECEIVE_DROPPED_SIZE: io_uring's size pass drops below the smallest packet
+// a server reads and the server reads those drops into PREFILTER_TOO_SHORT
+// and PREFILTER_TOO_LARGE through the builtin transport's receive_drops hook;
+// gso drops only below a prefilter header or above the ceiling (with a
+// filter set, in its prefilter call) and folds them into the same rows, and
+// PACKETS_RECEIVED, through its own drop tally, as main would
+// (sdk/rocketnet_driver_builtin.cpp)
 
 void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_transport_t * server_transport );
 
@@ -551,7 +554,7 @@ struct posix_expect_t
     uint64_t too_large;
     uint64_t wrong_epoch;
     uint64_t wrong_value;
-    uint64_t transport_size;   // a native transport's size pass: outside [server min, receive ceiling]
+    uint64_t transport_size;   // a native transport's size pass: outside [its floor, receive ceiling] (posix_expect_count)
 };
 
 static int posix_weather_native = POSIX_NATIVE_NONE;
@@ -611,7 +614,14 @@ static void posix_expect_count( const uint8_t * data, int bytes, struct posix_ex
         return;
     }
 
-    if ( posix_weather_native != POSIX_NATIVE_NONE && ( bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES || bytes > ROCKETNET_RECEIVE_CEILING ) )
+    // the size pass's floor: io_uring drops below the smallest packet a
+    // server reads; gso only below a prefilter header, and hands a datagram
+    // that holds one but is shorter than a packet to its prefilter, which
+    // classifies it as posix_classify does (RN-1 t10 rule 2)
+
+    const int native_floor = posix_weather_native == POSIX_NATIVE_GSO ? ROCKETNET_PREFILTER_BYTES : ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
+
+    if ( posix_weather_native != POSIX_NATIVE_NONE && ( bytes < native_floor || bytes > ROCKETNET_RECEIVE_CEILING ) )
     {
         // one drop, read two ways: the transport's own size counter, and the
         // transport's prefilter size counter it maps to, so an oversize

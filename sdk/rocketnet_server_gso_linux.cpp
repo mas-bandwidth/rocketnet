@@ -1252,8 +1252,8 @@ static bool rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * qu
                 continue;
             }
 
-            // a zero-length datagram is below the smallest packet a
-            // server reads: the size pass counts it, as io_uring's does
+            // a zero-length datagram is shorter than a prefilter header: the
+            // size pass counts it TOO_SHORT before any GRO segmentation
 
             if ( message_bytes == 0 )
             {
