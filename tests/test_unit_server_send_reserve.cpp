@@ -728,10 +728,14 @@ static void test_server_fill_ring_chunk()
 
 // A thread whose chunk install finds the line refilled by another thread on
 // it gives its own chunk up whole and takes its slot from the line's chunk:
-// the slots it takes only rise, so the flush, which walks the ring in slot
-// order, sends one client's packets in the order they were started. Its
-// claimed chunk's first slot used beside the other thread's lower chunk
-// would leave after the packets this thread starts next.
+// a lost install never makes its slots fall, so the flush, which walks the
+// ring in slot order, sends one client's packets in the order they were
+// started. Its claimed chunk's first slot used beside the other thread's lower
+// chunk would leave after the packets this thread starts next. (A take that
+// crosses the fill guard while another thread on the line has a claim not yet
+// installed can make a thread's slots fall, and reorder one client's packets
+// within one flush, nothing lost or duplicated; this test does not reach that
+// path: docs/roadmap.sexp ring-take-order-across-guard.)
 static void test_server_fill_ring_chunk_lost_install_keeps_start_order()
 {
     struct sr_rig_t rig;
