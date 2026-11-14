@@ -7,7 +7,12 @@ its three receive buffers, its three transmit banks, its worker's send step
 sends, then drains) with a full socket and the shutdown retry bound, and
 stop, join and free. Every queue has its own banks, lane mutex and worker,
 so the model holds for each; the worker's poll and main's eventfd wake are
-folded. The per-queue staging layout is `RNGsoQueueBankLayout.tla`; the
+folded. One worker thread per queue does both halves, each pass the send
+step then the receive drain; the model runs them as two processes, the RX
+worker and the TX worker, whose steps interleave freely, which includes
+every order the one thread takes. At stop the thread reads no more
+datagrams once it sees quit, its send step ends with stop's final bank, and
+then it returns. The per-queue staging layout is `RNGsoQueueBankLayout.tla`; the
 receive handoff alone, with its delivery property `DeliveredByNextCall`, is
 `RNReceiveHandoff.tla` (`README-RNReceiveHandoff.md`). The
 module header gives the actions and the code each one stands for;
@@ -31,8 +36,22 @@ functions.
   socket room only after shutdown has begun. Before 2026-11-11 this was
   `DroppedOnlyAfterShutdown`, stated of every drop; it held only because
   the model had no hard-error drop.
-- `TxInOrder`, `RxInOrder`: packets are sent and consumed in order; a gap
-  below a sent packet is a counted drop.
+- `RxInOrder`: datagrams are consumed in the order they arrived.
+- `TxInOrder`: banks leave in the order they were published, a held bank's
+  unsent rest before any later bank, and a gap below a sent packet is a
+  counted drop. Inside a bank the code sends in the gather's order
+  (`rocketnet_send_gather`: grouped by destination, each destination's
+  packets in staged order, `RNSendGatherLayout`), so it keeps each
+  destination's staged order and the bank order, not one rising order
+  across destinations. The model has no destinations and sends a bank in
+  staged order; with `TxCap = 2` that is the gather's order for every
+  destination assignment, since two slots never reorder.
+- `TailDroppedOnlyWhenStalled`: after shutdown a full socket's tail is
+  dropped only by an attempt that sent nothing, after `RetryBound` such
+  attempts in a row. An attempt that sent part of the tail starts the count
+  again (`rocketnet_server_gso_send_step` zeroes `retries_after_quit` when
+  `held_slot` passed where the attempt began), so a socket that keeps taking
+  some of it never loses the rest.
 - `MainNeverWaits`: main only try-acquires the queue's send lane mutex.
 - `RxAccounted`: every datagram the receive worker staged was consumed by
   main or is still banked (the tail's unread part, main's buffer past its
@@ -55,52 +74,53 @@ flush gives the kernel may be refused with an errno other than a full
 socket's (EPERM from a netfilter drop, ENETUNREACH, or a destination the
 socket's family cannot route). The code drops it counted and goes on with
 the rest: `rocketnet_server_gso_flush` at
-`counter_send_dropped += message_num_packets[sent]` (line 1982), the
-unroutable run (line 1832), and `rocketnet_server_gso_resend_plain`
-(line 1732). `ErrorBound` (one) bounds these drops per behaviour, as
+`counter_send_dropped += message_num_packets[sent]`, the flush's unroutable
+run, and `rocketnet_server_gso_resend_plain`. `ErrorBound` (one) bounds these drops per behaviour, as
 `MaxTx` bounds staging, so the checks fit the run budget; one drop reaches
 every place a hard error can land.
 
 ## Left out
 
-- **Destinations and the segmentation tier.** Packets are integers with no
-  destination, and the model has no UDP_SEGMENT feature state, so no
-  property can say that one client's refusals leave another's send mode
-  alone. The code's tier is transport-wide: `segment_consecutive_refusals`
-  is one counter (`rocketnet_server_gso_linux.cpp` lines 1931-1937, reset
-  only by an accepted segmented send at line 1912), and past
-  `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` (8,
-  `rocketnet_server_gso.h` line 140) `rocketnet_server_gso_send_bank`
-  clears `ROCKETNET_SERVER_GSO_FEATURE_SEGMENT` for every client (line
-  435). This is a known code risk whose fix is separate work; the
-  destination dimension belongs in this model when that fix lands.
+- **Destinations and the segmentation refusal.** Packets are integers with
+  no destination, and the model has no UDP_SEGMENT feature state. A refused
+  segmented send is per destination in the code: each lane's
+  `rocketnet_segment_refused_t` remembers the refusing destination, its run
+  is resent plain, and `rocketnet_server_gso_send_bank` clears
+  `ROCKETNET_SERVER_GSO_FEATURE_SEGMENT` only when
+  `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD` refusals were counted
+  and no segmented send was ever accepted. That is
+  `RNSegmentRefusal.tla` (`README-RNSegmentRefusal.md`); here a refusal is
+  folded into the send step, which resends the run plain inside the same
+  flush.
 - A failed receive takes the stall path in the code and is not modelled
   separately (`test_server_gso_receive_backoff` covers it).
 
 ## Cases
 
-The 2026-11-13 run on amd-2 (native Linux, the fourteen cases of the two
-stale groups at once), the pinned `tlacheck` and TLC jar, one shard per
-case, two workers; the records in `RUNS.tsv`. The receive half changed that
-day (the worker commits its count at the end of each pass and main reads
-the worker's buffer in place, and a pass that stages nothing still
-commits a buffer main has started on and moves on, `RxMove`), which took
-the main case from 4762152 distinct states to 5291280.
+The 2026-11-13 run on aws-mut-3 (native Linux, 16 cpus), the pinned
+`tlacheck` and TLC jar, one shard per case, two workers; the records in
+`RUNS.tsv`. The receive half changed that day (the worker commits its
+count at the end of each pass and main reads the worker's buffer in place,
+and a pass that stages nothing still commits a buffer main has started on
+and moves on, `RxMove`), which took the main case from 4762152 distinct
+states to 5291280; the shutdown count's progress reset and its ghost
+`movedDrop` took it to 5302440.
 
 | Config | Expected | Distinct states | Seconds | What it shows |
 |---|---|---|---|---|
-| `MCRNGsoHandoff.cfg` | pass | 5291280 | 61.9 | Every invariant, five datagrams, four staged packets. |
-| `MCRNGsoHandoffLive.cfg` | pass | 9944 | 12.5 | Invariants, `StopCompletes`, `ShutdownCompletes`; one datagram and two staged packets (three before the hard-error drop, which took it to 81 s). |
-| `MCRNGsoHandoffBrokenPublishWhileHeld.cfg` | `NoPublishWhileHeld` | 9 | 2.1 | `PublishWhileHeld = TRUE`: the worker writes into the buffer main reads after leaving it. |
-| `MCRNGsoHandoffBrokenFullDrops.cfg` | `SentOrHeld` | 4565 | 4.5 | `FullDrops = TRUE`: a full socket drops the rest of its batch. |
-| `MCRNGsoHandoffBrokenCarryBehind.cfg` | `TxInOrder` | 73355 | 14.4 | `CarryBehind = TRUE`: the unsent rest queues behind newer banks. |
-| `MCRNGsoHandoffBrokenNoBackoff.cfg` | `RxBacksOff` | 182 | 2.3 | `NoBackoff <- TRUE`. |
-| `MCRNGsoHandoffBrokenDropBeforeShutdown.cfg` | `FullSocketDropsOnlyAfterShutdown` | 9152 | 3.5 | `DropBeforeShutdown <- TRUE`: refusals count before shutdown. |
-| `MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg` | `ShutdownCompletes` | 10080 | 5.7 | `BoundOnQuitOnly <- TRUE`. |
-| `MCRNGsoHandoffBrokenMainBlocks.cfg` | `MainNeverWaits` | 21 | 1.7 | `MainBlocks = TRUE`: main waits on the lane mutex. |
-| `MCRNGsoHandoffReachErrorDropRunning.cfg` | `NotReachedErrorDropRunning` | 508 | 2.4 | Reachability: a counted hard-error drop before shutdown. |
-| `MCRNGsoHandoffBrokenUncountedErrorDrop.cfg` | `SentOrHeld` | 508 | 2.3 | `CountErrorDrops <- FALSE`: a hard error drops uncounted. |
-| `MCRNGsoHandoffBrokenStopTail.cfg` | `RxAccounted` | 5994 | 3.4 | `CountTail <- FALSE`: the stop count forgets the unread tail. |
+| `MCRNGsoHandoff.cfg` | pass | 5302440 | 69.4 | Every invariant, five datagrams, four staged packets. |
+| `MCRNGsoHandoffLive.cfg` | pass | 9944 | 7.4 | Invariants, `StopCompletes`, `ShutdownCompletes`; one datagram and two staged packets (three before the hard-error drop, which took it to 81 s). |
+| `MCRNGsoHandoffBrokenPublishWhileHeld.cfg` | `NoPublishWhileHeld` | 9 | 0.8 | `PublishWhileHeld = TRUE`: the worker writes into the buffer main reads after leaving it. |
+| `MCRNGsoHandoffBrokenFullDrops.cfg` | `SentOrHeld` | 4565 | 1.9 | `FullDrops = TRUE`: a full socket drops the rest of its batch. |
+| `MCRNGsoHandoffBrokenCarryBehind.cfg` | `TxInOrder` | 71737 | 12.2 | `CarryBehind = TRUE`: the unsent rest queues behind newer banks. |
+| `MCRNGsoHandoffBrokenNoBackoff.cfg` | `RxBacksOff` | 182 | 0.9 | `NoBackoff <- TRUE`. |
+| `MCRNGsoHandoffBrokenDropBeforeShutdown.cfg` | `FullSocketDropsOnlyAfterShutdown` | 9152 | 1.3 | `DropBeforeShutdown <- TRUE`: refusals count before shutdown. |
+| `MCRNGsoHandoffBrokenBoundOnQuitOnly.cfg` | `ShutdownCompletes` | 10080 | 2.8 | `BoundOnQuitOnly <- TRUE`. |
+| `MCRNGsoHandoffBrokenMainBlocks.cfg` | `MainNeverWaits` | 21 | 0.7 | `MainBlocks = TRUE`: main waits on the lane mutex. |
+| `MCRNGsoHandoffReachErrorDropRunning.cfg` | `NotReachedErrorDropRunning` | 508 | 0.9 | Reachability: a counted hard-error drop before shutdown. |
+| `MCRNGsoHandoffBrokenUncountedErrorDrop.cfg` | `SentOrHeld` | 508 | 0.8 | `CountErrorDrops <- FALSE`: a hard error drops uncounted. |
+| `MCRNGsoHandoffBrokenStopTail.cfg` | `RxAccounted` | 5994 | 1.5 | `CountTail <- FALSE`: the stop count forgets the unread tail. |
+| `MCRNGsoHandoffBrokenLostProgressReset.cfg` | `TailDroppedOnlyWhenStalled` | 1353 | 1.0 | `LostProgressReset <- TRUE`: an attempt that sent part of the tail still counts toward the bound. |
 
 ## Counterexamples checked against the code (2026-11-11)
 
@@ -122,6 +142,14 @@ the main case from 4762152 distinct states to 5291280.
   `tail_end - tail_cursor` to `receive_dropped_stopped`; dropping that
   term is the reversal.
 
+- **LostProgressReset (2026-11-13).** Two packets are staged and
+  published; the socket fills and the worker takes the bank; shutdown
+  begins; two attempts send nothing (count 1, then 2), and a third sends
+  packet 1, which with the reversal counts 3, past `RetryBound`, and
+  packet 2 is dropped. In the code `rocketnet_server_gso_send_step`
+  zeroes `retries_after_quit` when `held_slot` passed where the attempt
+  began, so that attempt would start the count again; skipping that reset
+  is the reversal.
 - **ReachErrorDropRunning.** One packet is staged, main publishes it, the
   worker takes the bank and sends it; the kernel refuses the one message
   with a hard error, so `txErrDropped = <<1>>` with `shut.on` FALSE. In the

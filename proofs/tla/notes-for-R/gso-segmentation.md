@@ -82,14 +82,56 @@ below is for R (or, where marked, for C or the docs package) to apply.
    no transport uses now. Left as is here, since editing it re-runs the case
    for a comment older than this branch; for R to fold into a later pass.
 
+7. `sdk/rocketnet_server_gso.h`, the comment above
+   `ROCKETNET_SEGMENT_REFUSED_ENTRIES`' table (`rocketnet_segment_refused_t`):
+   "owned by the thread that sends (each gso queue worker, the io_uring main
+   thread)". At `aff200074` each io_uring queue worker owns its own table
+   (`rocketnet_uring_queue_worker_t.refused`). Suggested: "(each gso queue
+   worker, each io_uring queue worker)".
+8. `sdk/rocketnet_server_gso.h`, the comment above
+   `ROCKETNET_SEGMENT_CONSECUTIVE_REFUSAL_THRESHOLD`: segmentation "turns off
+   for the transport". For gso it is the tier (every lane); for io_uring it
+   is the queue that reached the threshold. Suggested: "turns off (for the
+   gso tier, or for the io_uring queue that counted them) only when ...".
+9. Not a comment fix: the `destinations` field comment and the comment above
+   `rocketnet_segment_refused_add` say only a destination the table did not
+   hold counts; the code counts every call. That is handed up as a code
+   defect (codewrong/gso-segmentation-MM144.md); the comments state the
+   intended contract and should stay until the code is decided.
+
 ## For the docs package (docs/TRANSPORT-INTERNALS.md)
 
-- MM143's `docs/TRANSPORT-INTERNALS.md:581-584` part (the segmentation
-  refusal called transport-wide). MM143 is held on this branch (see below);
-  the docs package takes the text when the RNSegmentRefusal correction lands.
+- MM143's part (the segmentation refusal called transport-wide) is already
+  right at `aff200074`: the io_uring paragraph under the segmentation offload
+  says each queue keeps its own table and count and turns off for its own
+  destinations, and documents the relaxed `segment_accepted` read. No change
+  owed.
+- The same paragraph says the queue turns off when the threshold "of its
+  destinations refused" and that a remembered destination's "later runs
+  leave plain without a refusal". Both hold for runs submitted after the
+  first refusal is reaped; runs already in the kernel come back refused too
+  and each counts (MM144, handed up as a code defect). The text states the
+  intended contract; leave it until the code is decided.
 
-## Rows held on this branch (the reviewed heads that touch these modules are being re-merged)
+## Rows closed on this branch against `aff200074`
 
-- RNGsoHandoff (msgx-receive-handoff-latency touches it): MM135, MM137,
-  MM138. MM136 is the roadmap entry above.
-- RNSegmentRefusal (uring-receive-rearm touches it): MM143, MM144, MM145.
+- MM135: RNGsoHandoff TxSendFull now zeroes the shutdown count on an attempt
+  that moved the bank on, as `rocketnet_server_gso_send_step` does; new
+  invariant TailDroppedOnlyWhenStalled, reversed witness
+  MCRNGsoHandoffBrokenLostProgressReset.cfg.
+- MM136: the roadmap entry above.
+- MM137: TxInOrder's claim corrected (bank order, and the gather's order
+  inside a bank, which TxCap = 2 makes exact).
+- MM138: one worker thread per queue, modelled as two interleaving
+  processes; the README's "Left out" points to RNSegmentRefusal.
+- MM143: FallbackScope ("queue" io_uring, "transport" gso); the per-queue
+  parts and the transport's accepted flag were already in hot.
+- MM144: InFlight and stale gathered banks modelled; RefusedOnce became
+  RefusalsBounded; the count's mismatch with its comment is handed up
+  (codewrong/gso-segmentation-MM144.md), reach witness
+  MCRNSegmentRefusalReachOneDestFallback.cfg.
+- MM145: PlainFails and plainDropped; NothingDropped restated as the
+  refusal's own drop; reach witness MCRNSegmentRefusalReachPlainDrop.cfg and
+  reversed witness MCRNSegmentRefusalBrokenTransportDrop.cfg.
+- MA036(2): no duplicate case rows in README-RNSegmentRefusal.md at
+  `aff200074`; not a defect at this head.
