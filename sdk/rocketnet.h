@@ -35,8 +35,10 @@
 /// ROCKETNET_DEV_BACKEND_PUBLIC_KEY, and accept the published development
 /// keys and the test packet filter. Production builds
 /// define ROCKETNET_DEV 0 (CMake: -DROCKETNET_DEV=OFF), which compiles all of
-/// that out and refuses at create the development keys and tokens and the
-/// test packet filter. Portable clients and servers are available in both modes.
+/// that out. A production build refuses the development keys at server start
+/// and at connect token creation, a token sealed to the development server
+/// key at client connect, and the test packet filter at create. Portable
+/// clients and servers are available in both modes.
 
 #if !defined( ROCKETNET_DEV )
     #define ROCKETNET_DEV 1
@@ -47,7 +49,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.1.55"
+    #define ROCKETNET_VERSION_FULL                         "v1.1.56"
 
     /// The major component of the SDK version.
 
@@ -59,7 +61,7 @@
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        55
+    #define ROCKETNET_VERSION_PATCH                        56
 
 #else // !ROCKETNET_DEV
 
@@ -344,10 +346,16 @@ enum rocketnet_status_t
     /// No transport found: every transport this server or client was allowed
     /// to try failed to start, including any over the
     /// ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES or
-    /// ROCKETNET_SERVER_MEMORY_BUDGET_BYTES budget, and they failed for
-    /// different reasons. When they all failed for one reason, the status
-    /// names it instead (TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_NOT_BUILT,
-    /// TRANSPORT_PORT_ZERO_UNSUPPORTED). Set the log level to
+    /// ROCKETNET_SERVER_MEMORY_BUDGET_BYTES budget. A client returns this
+    /// whatever the reasons. A server start returns it when the transports it
+    /// opened failed for different reasons, or when none was opened; when
+    /// every open failed for one reason, the status names it instead
+    /// (TRANSPORT_FAMILIES_UNSUPPORTED, TRANSPORT_NOT_BUILT, INVALID_ADDRESS),
+    /// a transport skipped for the budget not counting as an open. A server
+    /// start that opened nothing because the port-zero rule refused returns
+    /// TRANSPORT_PORT_ZERO_UNSUPPORTED, and one where at least one transport
+    /// was refused its bind and every other refusal was the xdp transport's
+    /// returns TRANSPORT_BIND_REFUSED. Set the log level to
     /// ROCKETNET_LOG_LEVEL_WARN to read why each one failed.
 
     ROCKETNET_STATUS_NO_TRANSPORT_FOUND = -18,
@@ -1282,9 +1290,10 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 ///   function NULL, live allocations, or a library already initialized with
 ///   another allocator.
 /// - Update receives a non-finite time, a negative time (every one, not only
-///   the first) or a time below the time before it, with or without a
-///   connection. The last good time is kept, and the call logs. A negative
-///   time never moves the clock; later times move it on by the caller's
+///   the first), a time above 2^52 seconds, or a time below the time before
+///   it, with or without a connection. The last good time is kept, and the
+///   call logs. A negative time or one above 2^52 seconds never moves the
+///   clock; later times move it on by the caller's
 ///   steps.
 /// - A started message stays open at update or send_packets. On the server
 ///   every open message is aborted there. On the client an in-place start is
@@ -1383,8 +1392,14 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 ///
 /// Create allocates the hub as one block through the configured allocator:
 /// one server endpoint and max_clients client endpoints, each with its full
-/// datagram queue. Each client endpoint's queue is 2048 slots of 1476 bytes,
-/// 2048 * 1476 bytes. At max_clients 1000 the block is about 3.05 GB. It sits
+/// datagram queue. A slot is 1476 bytes: the largest datagram the library
+/// receives (1452 bytes, a 1500-byte link less the IPv6 and UDP headers)
+/// with its source address and length. Each client endpoint's queue is 2048
+/// slots. The server endpoint's queue is 16 slots for each client,
+/// rounded up to a power of two and never fewer than a client's 2048 (16384
+/// slots at max_clients 1000). At
+/// max_clients 1000 the block is about 3.05 GB, nearly all of it the client
+/// queues. It sits
 /// outside rocketnet_client_required_memory and
 /// rocketnet_server_required_memory. The endpoint records and queues are
 /// preallocated there: server start registers an endpoint and allocates
@@ -1729,9 +1744,10 @@ struct rocketnet_server_config_t
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
 
     /// ROCKETNET_SERVER_NUM_XDP_THREADS sets the xdp transport's network
-    /// threads: one XDP thread per NIC queue. Default is 1 (zero selects it):
-    /// the count that held 1000 players at 60 Hz and 10 Gb/s out on an Intel
-    /// X710 pair (2026-11-13, main 59890655d). Range is 1 .. 1024. The NIC's
+    /// threads: one XDP thread per NIC queue. Default is 1 (zero selects it).
+    /// At that count the server held 1000 players at 60 Hz, about 900,000
+    /// messages a second at peak (an estimated 9.39 Gb/s), on the machine
+    /// PERFORMANCE.md records. Range is 1 .. 1024. The NIC's
     /// combined queue count must equal it: otherwise the xdp pre-flight
     /// refuses, with a warning naming both counts and both fixes, and start
     /// takes the next transport in the list (with xdp alone,
@@ -1998,9 +2014,10 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_NUM_GSO_WORKERS sets the gso transport's network
     /// threads: queue workers, each with its own socket on the port. Default
-    /// is 1 (zero selects it): the count that held 1000 players at 60 Hz and
-    /// 10 Gb/s out on an Intel X710 pair and on AWS c8gn.8xlarge (2026-11-13,
-    /// main 3218cf5f6). Range is 1 .. 32. Worker q runs on cpu num_os_cpus +
+    /// is 1 (zero selects it). At that count the server held 1000 players at
+    /// 60 Hz, about 900,000 messages a second at peak (an estimated 9.39
+    /// Gb/s), on the machine PERFORMANCE.md records.
+    /// Range is 1 .. 32. Worker q runs on cpu num_os_cpus +
     /// q, so not on cpu 0 by default (gso_reserve_cpu_0). No machine setting
     /// has to match it.
 
@@ -2008,10 +2025,10 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_NUM_IO_URING_WORKERS sets the io_uring transport's
     /// network threads: workers, each with its own ring and socket. Default
-    /// is 2 (zero selects it): AWS c6in.8xlarge needed 2 for 1000 players at
-    /// 60 Hz and 10 Gb/s out with a game load (2026-11-13, c154d7971; 1 ran
-    /// at 51 frames a second) and an Intel X710 pair passed at 2 (main
-    /// 3afea2aed). Range is 1 .. 32. Worker q runs on cpu num_os_cpus + q,
+    /// is 2 (zero selects it). At that count the server held 1000 players at
+    /// 60 Hz, about 900,000 messages a second at peak (an estimated 9.39
+    /// Gb/s), on the machine PERFORMANCE.md records.
+    /// Range is 1 .. 32. Worker q runs on cpu num_os_cpus + q,
     /// so not on cpu 0 by default (io_uring_reserve_cpu_0). No machine
     /// setting has to match it.
 
@@ -2019,10 +2036,10 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_NUM_RIO_LANES sets the Windows rio transport's
     /// network threads: lanes, each a socket, a registered region and an I/O
-    /// worker. Default is 5 (zero selects it): the smallest count that held
-    /// 1000 players at peak and average, with and without a game load, on AWS
-    /// m7i.16xlarge (2026-11-13, 3218cf5f6; 4 lanes fell short of the peak
-    /// rate, 545k of 900k a second). Range is 1 .. 32. More
+    /// worker. Default is 5 (zero selects it). At that count the server held
+    /// 1000 players at 60 Hz, about 900,000 messages a second at peak (an
+    /// estimated 9.39 Gb/s), on the machine PERFORMANCE.md records.
+    /// Range is 1 .. 32. More
     /// than one lane needs a specific local address in bind_ipv4_address or
     /// bind_ipv6_address: the sockets share the port, one per processor, and
     /// Windows has no exclusive form of that sharing (a process that asks for
@@ -2036,9 +2053,10 @@ struct rocketnet_server_config_t
     /// ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS sets the Windows iocp
     /// transport's receive threads: completion workers, each with its own
     /// socket and completion port. Default is 2 (zero selects it), with 2
-    /// send threads below: the counts that held 1000 players at 60 Hz and 10
-    /// Gb/s out on AWS m7i.16xlarge (2026-11-13, 1afaabe69; 1 worker with 2
-    /// send threads ran at 57.6 frames a second). Range is 1 .. 32. More than
+    /// send threads below. At those counts the server held 1000 players at
+    /// 60 Hz, about 900,000 messages a second at peak (an estimated 9.39
+    /// Gb/s), on the machine PERFORMANCE.md records.
+    /// Range is 1 .. 32. More than
     /// one worker needs a specific local address, as num_rio_lanes: on the
     /// wildcard with this field and its variable unset, iocp runs one worker
     /// and logs a warning saying so; a value above 1 on the wildcard is
@@ -2047,23 +2065,20 @@ struct rocketnet_server_config_t
     int num_iocp_completion_workers;
 
     /// ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS sets the Windows iocp
-    /// transport's send threads. Default is 2 (zero selects it; 2 workers
-    /// with 1 send thread ran at 47 frames a second), or the send lanes when
-    /// there are fewer. Range is 1 .. 16, and at most the send lanes
-    /// max_clients gives (8 at 1000 clients, fewer for a smaller server): a
-    /// larger value is refused at start with
-    /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
+    /// transport's send threads. Default is 2 (zero selects it), or the send
+    /// lanes when there are fewer. Range is 1 .. 16, and at most the send
+    /// lanes max_clients gives (8 at 1000 clients, fewer for a smaller
+    /// server): with a larger value the iocp transport refuses at start, with
+    /// a warning naming the limit, and start takes the next transport in the
+    /// list (with iocp alone, ROCKETNET_STATUS_NO_TRANSPORT_FOUND).
 
     int num_iocp_send_threads;
 
     /// ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS sets the macOS msgx
     /// transport's send threads: transmit workers, each sending with
     /// sendmsg_x; one receive worker beside them is fixed. Default is 3 (zero
-    /// selects it): measured 2026-11-13 (5366e4f13) with players on Linux over
-    /// 10 GbE, an M5 Pro Mac mini server sends the whole peak, 900k a second,
-    /// to 1000 players at 3. An M3 Ultra server tops out near 694k a second
-    /// at 2 and sends less as workers are added, each near fully busy in the
-    /// kernel's send path. Range is 1 .. 16.
+    /// selects it). Measure the count on your server: PERFORMANCE.md
+    /// has no macOS record yet. Range is 1 .. 16.
     ///
     /// The portable transport has no count to choose: one send and one
     /// receive thread.
@@ -2754,10 +2769,12 @@ ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * clie
 ///
 /// @param client The client. NULL counts as API misuse and does nothing.
 /// @param time The game clock in seconds, the same clock on every call,
-/// finite and non-negative. A time that is not finite, a negative time
-/// (every one, not only the first), or a time below the time before it is
+/// finite, non-negative and at most 2^52 seconds (about 143 million years).
+/// A time that is not finite, a negative time (every one, not only the
+/// first), a time above 2^52 seconds, or a time below the time before it is
 /// clamped to the last good time and counted as API misuse. A negative time
-/// never moves the clock: the first finite non-negative time starts it.
+/// or one above 2^52 seconds never moves the clock: the first valid time
+/// starts it.
 
 ROCKETNET_EXPORT void rocketnet_client_update( struct rocketnet_client_t * client, double time );
 
@@ -3144,10 +3161,12 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// Either may be NULL. That family is then not served. Both NULL is refused.
 /// With both, the two share one port.
 /// The given addresses are the advertised addresses that connect tokens are
-/// checked against. Every transport except xdp binds the wildcard address of the family
-/// (0.0.0.0 or [::], or [::] for both families) on the given port, so a
-/// specific IP is not a bind restriction. xdp attaches to the interface that
-/// carries the given address.
+/// checked against, not the addresses the server binds. By default every
+/// transport except xdp binds the wildcard address of the family (0.0.0.0
+/// or [::], or [::] for both families) on the given port. To bind one local
+/// address instead, set bind_ipv4_address or bind_ipv6_address in the
+/// config, on a server that serves one family. xdp attaches to the
+/// interface that carries the given address.
 /// ROCKETNET_SERVER_IPV4_ADDRESS overrides ipv4_address.
 /// ROCKETNET_SERVER_IPV6_ADDRESS overrides ipv6_address.
 /// Port 0 requests an ephemeral port. Read it after start with
@@ -3300,10 +3319,12 @@ ROCKETNET_EXPORT void rocketnet_server_destroy( struct rocketnet_server_t * serv
 ///
 /// @param server The server. NULL counts as API misuse and does nothing.
 /// @param time The game clock in seconds, the same clock on every call,
-/// finite and non-negative. A time that is not finite, a negative time
-/// (every one, not only the first), or a time below the time before it is
+/// finite, non-negative and at most 2^52 seconds (about 143 million years).
+/// A time that is not finite, a negative time (every one, not only the
+/// first), a time above 2^52 seconds, or a time below the time before it is
 /// clamped to the last good time and counted as API misuse. A negative time
-/// never moves the clock: the first finite non-negative time starts it.
+/// or one above 2^52 seconds never moves the clock: the first valid time
+/// starts it.
 
 ROCKETNET_EXPORT void rocketnet_server_update( struct rocketnet_server_t * server, double time );
 
@@ -3373,7 +3394,7 @@ ROCKETNET_EXPORT void rocketnet_server_update_finish( struct rocketnet_server_t 
 
 /// Sends each client's queued messages in packets under its send budget.
 ///
-/// The gso, io_uring, xdp, iocp and rio server transports hold what they send
+/// The gso, io_uring, xdp, iocp, rio and msgx server transports hold what they send
 /// in a send room of fixed size. Part of that room is kept each update for
 /// the library's own traffic: connection replies, keep-alives and
 /// disconnects. The part kept is the config's handshakes_per_update plus
@@ -3384,10 +3405,9 @@ ROCKETNET_EXPORT void rocketnet_server_update_finish( struct rocketnet_server_t 
 /// that would take more is not lost by that: it waits in its queue, as a
 /// message does when the transport is full, and goes out in a later call
 /// once the transport has sent what it holds. The SDK-internal counter
-/// SEND_RESERVE_REFUSED counts the sends held back this way. Before this
-/// rule a send was held back only when the whole room was spent, which the
-/// SDK-internal counter SEND_RING_FULL counted; it still counts a send room
-/// that is full. The portable and loopback transports keep nothing back.
+/// SEND_RESERVE_REFUSED counts the sends held back this way, and
+/// SEND_RING_FULL counts a send room that is full. The portable and loopback
+/// transports keep nothing back.
 ///
 /// Needs a running server; stopped or stopping it does nothing. Thread: not
 /// thread-safe; the caller owns the server one thread at a time.

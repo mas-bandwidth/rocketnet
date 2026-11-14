@@ -463,7 +463,7 @@ static void test_reused_slot_starts_clean()
         rn_region_send_free( a, taken[i] );
     }
     a->channel_send[0].ordered_write = 7;
-    a->channel_receive[1].ordered_read = 9;
+    a->channel_receive[ROCKETNET_DEFAULT_NUM_CHANNELS - 1].ordered_read = 9;   // the default config's last channel: inside the array at every channel ceiling, 1 included
     a->send_numbers[3].descriptor = 5;
     a->receive_descriptors[4].live = 1;
     a->received_bits[0] = 0xFF;

@@ -15,16 +15,18 @@ The server process:
    X25519 sealing keypair. Other integrations can supply `server_secret_key`
    at create when they need a stable key; see [Keys](../KEYS.md).
 3. Calls `rocketnet_server_start`, then reads the generated public key with
-   `rocketnet_server_public_key` and the bound address with
+   `rocketnet_server_public_key` and the served address (the address the server
+   was created to serve, with the port it bound) with
    `rocketnet_server_ipv4_address` or `rocketnet_server_ipv6_address`.
 4. Makes that public key and address available to the development client by an
    application-defined local channel. The server secret key remains inside the
    server object and is wiped at destroy.
 5. Runs a 60 Hz frame and echoes each message. By default (`--game-threads 1`)
-   every server call is made on the main thread, one thread at a time:
-   `rocketnet_server_receive_messages` reads what the last update left,
-   then the main thread queues the echoes, calls
-   `rocketnet_server_send_packets` and `rocketnet_server_update`.
+   every server call is made on the main thread, one thread at a time, in the
+   integration guide's order: `rocketnet_server_update` first, then
+   `rocketnet_server_receive_messages` drains what that update received, the
+   main thread queues the echoes, and `rocketnet_server_send_packets` comes
+   last.
    With `--game-threads N` it runs a game server's frame: the main thread
    joins last frame's split-off half and reads the messages into the frame's
    state, and the second half of the network update (queue the echoes with

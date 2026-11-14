@@ -597,8 +597,9 @@ static void test_transport_results_server_receive_checks_counts()
 REGISTER_UNIT_TEST( test_transport_results_server_receive_checks_counts );
 
 // A transport result outside the contract is a transport fault, counted on the
-// transport. A negative receive count leaves PREFILTER_TOO_LARGE alone; a byte
-// count past the UDP size limit reads it once, however often it is read.
+// transport. A negative receive count leaves PREFILTER_TOO_LARGE alone; each
+// byte count past the UDP size limit adds one to it and one fault, so a second
+// such datagram in a later update makes two, never more.
 
 static void test_transport_results_server_faults_count_only_too_large()
 {
@@ -619,7 +620,11 @@ static void test_transport_results_server_faults_count_only_too_large()
     rocketnet_server_transport_update( server, 1000.0 );
     rocketnet_unit_check( server->transport_faults == 2 );
     rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large_before + 1 );
-    rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large_before + 1 );
+
+    lie.calls = 0;
+    rocketnet_server_transport_update( server, 1000.0 );
+    rocketnet_unit_check( server->transport_faults == 3 );
+    rocketnet_unit_check( rocketnet_server_transport_counters( server )->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == too_large_before + 2 );
     rn_test_server_transport_stop_and_destroy( server );
 }
 
@@ -842,6 +847,11 @@ static void test_server_stopped_reads_no_packet()
     rn_test_server_transport_stop_and_destroy( server );
 }
 REGISTER_UNIT_TEST( test_server_stopped_reads_no_packet );
+
+// The bytes this fake offers are no connection request, so they could never
+// admit a client; what the case shows is that a stopping server reads nothing
+// (calls 0) and sends nothing, and so has nothing to admit. The connected
+// check below holds for any server and is kept as a guard only.
 
 static void test_server_stopping_admits_no_client()
 {

@@ -216,16 +216,23 @@ static void loopback_rtt_step( struct loopback_rtt_pair_t * pair, int side, bool
                 break;
             }
 
-            if ( bytes == 8 && data[0] == 0xE7 )
+            // nothing else is sent on this channel, so every delivery must be
+            // one of ours whole: the length, every fixed byte, and an index
+            // that was sent; anything else (a truncated, changed or unknown
+            // message) fails here rather than being released unseen
+            rocketnet_unit_check( bytes == 8 );
+            uint32_t index = 0xFFFFFFFFu;
+            if ( bytes == 8 )
             {
-                uint32_t index = 0;
+                rocketnet_unit_check( data[0] == 0xE7 && data[1] == 0x5A && data[2] == 0xA5 && data[3] == 0x3C );
                 memcpy( &index, data + 4, sizeof( index ) );
-                if ( (int) index != m->received )
-                {
-                    m->in_order = 0;
-                }
-                m->received++;
+                rocketnet_unit_check( index < (uint32_t) m->sent );
             }
+            if ( (int) index != m->received )
+            {
+                m->in_order = 0;
+            }
+            m->received++;
 
             if ( side == LOOPBACK_RTT_SERVER )
             {
@@ -240,7 +247,7 @@ static void loopback_rtt_step( struct loopback_rtt_pair_t * pair, int side, bool
 
     if ( m && send )
     {
-        uint8_t message[8] = { 0xE7, 0, 0, 0, 0, 0, 0, 0 };
+        uint8_t message[8] = { 0xE7, 0x5A, 0xA5, 0x3C, 0, 0, 0, 0 };
         const uint32_t index = (uint32_t) m->sent;
         memcpy( message + 4, &index, sizeof( index ) );
 
@@ -386,7 +393,13 @@ REGISTER_UNIT_TEST( test_loopback_server_resend_delay_seeded_from_transport_rtt 
 // positive first-ack sample, and zero while none is retained. The client's
 // stats report exactly that at every step from the first request through
 // connected and its first acks: the handshake's round trips are no sample
-// (rocketnet_client_transport_rtt reads the same ack endpoint in seconds).
+// (rocketnet_client_transport_rtt reads the same ack endpoint in seconds, so
+// the equality below only shows the two report one field; what makes the
+// test is the rest). The value is held to the clock the test drives: zero in
+// every step before CONNECTED, so no handshake round trip shows; once
+// sampled, a whole number of 10 ms steps between one and four of them (the
+// loopback cadence the cases above measure), never rising, since it is a
+// minimum.
 static void test_client_stats_rtt_is_zero_before_an_ack_sample( void )
 {
     struct loopback_rtt_pair_t pair;
@@ -395,6 +408,8 @@ static void test_client_stats_rtt_is_zero_before_an_ack_sample( void )
     struct rocketnet_client_transport_t * transport = rocketnet_message_client_transport( pair.client );
     int zero_steps = 0;
     int sampled_steps = 0;
+    int connecting_steps = 0;
+    float last_ms = 0.0f;
     for ( int i = 0; i < 100; i++ )
     {
         loopback_rtt_step( &pair, LOOPBACK_RTT_SERVER, false, NULL );
@@ -408,11 +423,33 @@ static void test_client_stats_rtt_is_zero_before_an_ack_sample( void )
                     (double) sample_ms );
         }
         rocketnet_unit_check( stats.rtt == sample_ms );
+
+        if ( rocketnet_message_client_state( pair.client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        {
+            rocketnet_unit_check( stats.rtt == 0.0f );
+            connecting_steps++;
+        }
+
+        if ( stats.rtt > 0.0f )
+        {
+            const double steps = (double) stats.rtt / ( LOOPBACK_RTT_DT * 1000.0 );
+            const double whole = (double) (int) ( steps + 0.5 );
+            rocketnet_unit_check( whole >= 1.0 && whole <= 4.0 );
+            rocketnet_unit_check( steps - whole < 1e-3 && whole - steps < 1e-3 );
+            rocketnet_unit_check( last_ms == 0.0f || stats.rtt <= last_ms );
+            last_ms = stats.rtt;
+        }
+        else
+        {
+            rocketnet_unit_check( last_ms == 0.0f );
+        }
+
         zero_steps += sample_ms == 0.0f ? 1 : 0;
         sampled_steps += sample_ms > 0.0f ? 1 : 0;
     }
 
     rocketnet_unit_check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    rocketnet_unit_check( connecting_steps > 1 );
     rocketnet_unit_check( zero_steps > 0 && sampled_steps > 0 );
 
     rn_test_message_client_stop_and_destroy( pair.client );

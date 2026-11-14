@@ -17,6 +17,7 @@
 #include "rocketnet_window_ack.h"
 #include "rocketnet_window_send.h"
 
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -143,13 +144,18 @@ static void test_window_ack_descriptor_equal_queue()
     // build that reads it answers true. In an ASan build those bytes are the
     // descriptors' red zone (sdk/rocketnet_memory.h), so the plant is written
     // raw and a dereference is also reported by ASan.
+    // The plant is a whole descriptor written through the struct, so its
+    // fields sit where rn_send_descriptor_t puts them on any layout and host;
+    // only the prefix through fragments is copied raw.
     uint8_t * past = (uint8_t *) &region->send_descriptors[queue];
-    uint8_t planted[64];
-    memset( planted, 0, sizeof( planted ) );
-    planted[36] = 1;     // in_use, at its rn_send_descriptor_t offset
-    planted[38] = 3;     // fragments (little-endian low byte, any host
-    planted[39] = 0;     // reads the planted value the same way)
-    rocketnet_test_raw_copy( past, planted, sizeof( planted ) );
+    struct rn_send_descriptor_t planted;
+    memset( &planted, 0, sizeof( planted ) );
+    planted.in_use = 1;
+    planted.fragments = 3;
+    const size_t planted_bytes = offsetof( struct rn_send_descriptor_t, fragments ) + sizeof( planted.fragments );
+    static_assert( offsetof( struct rn_send_descriptor_t, in_use ) < offsetof( struct rn_send_descriptor_t, fragments ),
+                   "the raw prefix copied past the queue holds in_use" );
+    rocketnet_test_raw_copy( past, &planted, planted_bytes );
     region->send_numbers[0].descriptor = queue;
     check( rn_window_ack_slot_is_chunk( &w.ack, 0 ) == false );
 

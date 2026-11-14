@@ -207,7 +207,8 @@ int main( int argc, char ** argv )
 
     // the packet filter is the title's, shared with its clients. A deployment's
     // server takes its backend's public key through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY
-    // or in config; a release library refuses the development key
+    // or in config; a production library (ROCKETNET_DEV=0) refuses the
+    // development key at start
 
     const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = EXAMPLE_BACKEND_PACKET_FILTER;
     struct rocketnet_server_config_t config;

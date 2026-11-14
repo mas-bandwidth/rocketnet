@@ -45,6 +45,29 @@ void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signe
 // counts the client's calls of rocketnet_ack_endpoint_update_stats, for the
 // functional test
 std::atomic<unsigned long long> g_client_ack_stats_count{ 0 };
+
+// The client I/O stop-wait hold (sdk/rocketnet_test_seams.h): a unit test
+// answers each poll of the exit's stop_woken wait and fails at its own
+// ceiling, so the wait does not sleep and cannot hang. Per process, null by
+// default.
+static rocketnet_dev_client_io_stop_wait_function_t * rn_client_io_stop_wait_hold;
+static void * rn_client_io_stop_wait_hold_context;
+
+void rocketnet_dev_set_client_io_stop_wait_hook( rocketnet_dev_client_io_stop_wait_function_t * function, void * context )
+{
+    rn_client_io_stop_wait_hold = function;
+    rn_client_io_stop_wait_hold_context = context;
+}
+
+bool rocketnet_dev_client_io_stop_wait_poll( void )
+{
+    if ( !rn_client_io_stop_wait_hold )
+    {
+        return false;
+    }
+    rn_client_io_stop_wait_hold( rn_client_io_stop_wait_hold_context );
+    return true;
+}
 #endif // #if ROCKETNET_DEV
 
 // the ordinal each client's link simulator seed mixes in, so two clients on
@@ -57,7 +80,9 @@ static std::atomic<unsigned long long> g_client_link_simulator_ordinal{ 0 };
 // forward raw step, BackwardStep, a backwards raw step, and NonFiniteStep, a
 // non-finite or negative sample, refused before the clock reads it, so it
 // changes neither the raw time nor the offset (a negative is never a raw time
-// the next sample steps forward from). A forward step of d advances the
+// the next sample steps forward from), and AboveCeilingStep, a sample above
+// ROCKETNET_UPDATE_TIME_MAX_SECONDS, refused the same way so every sum the
+// clock makes stays finite. A forward step of d advances the
 // clamped time by exactly d while the caller's clock is still behind, so a
 // clock whose caller stepped backwards resumes with the caller instead of
 // standing still until the caller's clock passes the last good time again (BASE's rule, which
@@ -66,8 +91,15 @@ static std::atomic<unsigned long long> g_client_link_simulator_ordinal{ 0 };
 // has happened the offset is exactly 0.0 and the returned time is the
 // caller's time, bit for bit: the common path never adds to the last good
 // time, so every caller that reads an exact time still reads it.
+//
+// The ceiling bounds a caller's raw sample only. A message object's clock can
+// pass it after a backwards step (the clamped time runs ahead of the raw one),
+// and the object hands that clock to its transport: the transport takes it
+// through rocketnet_update_clock_follow, which judges it as every other
+// sample but not against the ceiling, so the transport's clock keeps pace with
+// the object's (proofs/tla/RNUpdateClock.tla LowerFollows).
 
-double rocketnet_update_clock_advance( double last_good, double * raw_time, double * time_offset, double time, bool * clamped )
+static double rocketnet_update_clock_step( double last_good, double * raw_time, double * time_offset, double time, bool * clamped, bool caller_sample )
 {
     if ( clamped )
     {
@@ -105,6 +137,25 @@ double rocketnet_update_clock_advance( double last_good, double * raw_time, doub
         rocketnet_api_misuse_record();
 
         rocketnet_error( "update refused its time %f: it is negative; the last good time %f is kept", time, last_good );
+
+        return last_good;
+    }
+
+    if ( caller_sample && time > ROCKETNET_UPDATE_TIME_MAX_SECONDS )
+    {
+        // a caller's sample above the ceiling is refused the same way: the
+        // raw time stays at or below 2^52, so each call moves the clamped
+        // time by at most about 2^52 and every sum stays finite
+        // (proofs/tla/RNUpdateClock.tla AboveCeilingStep)
+
+        if ( clamped )
+        {
+            *clamped = true;
+        }
+
+        rocketnet_api_misuse_record();
+
+        rocketnet_error( "update refused its time %f: it is above %.0f seconds; the last good time %f is kept", time, ROCKETNET_UPDATE_TIME_MAX_SECONDS, last_good );
 
         return last_good;
     }
@@ -149,6 +200,16 @@ double rocketnet_update_clock_advance( double last_good, double * raw_time, doub
     *raw_time = time;
 
     return last_good + step;
+}
+
+double rocketnet_update_clock_advance( double last_good, double * raw_time, double * time_offset, double time, bool * clamped )
+{
+    return rocketnet_update_clock_step( last_good, raw_time, time_offset, time, clamped, true );
+}
+
+double rocketnet_update_clock_follow( double last_good, double * raw_time, double * time_offset, double time, bool * clamped )
+{
+    return rocketnet_update_clock_step( last_good, raw_time, time_offset, time, clamped, false );
 }
 
 // payloads are decrypted out of the receive frames into this storage, and
@@ -2074,8 +2135,8 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     memcpy( client_transport->protocol.packet_filter, config->packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
 
     // the create-time clock is checked the same way an update's is: a
-    // non-finite or negative seed would poison every later comparison, so it
-    // is clamped to the initial last good time before anything reads it.
+    // non-finite, negative or above-ceiling seed would poison every later
+    // comparison, so it is clamped to the initial last good time before anything reads it.
 
     bool time_clamped = false;
     time = rocketnet_update_clock_advance( 0.0, &client_transport->raw_time, &client_transport->time_offset, time, &time_clamped );
@@ -3362,7 +3423,22 @@ static void rocketnet_client_update_stats( rocketnet_client_transport_t * client
 // proofs/tla/RNReceiveHandoff.tla Call: update reads the records of its view
 // outside the mutex; its next expose empties a finished tail.
 
+static void rocketnet_client_transport_update_body( rocketnet_client_transport_t * client_transport, double time, bool from_layer );
+
 void rocketnet_client_transport_update( rocketnet_client_transport_t * client_transport, double time )
+{
+    rocketnet_client_transport_update_body( client_transport, time, false );
+}
+
+// the message client's update: the time is its object's clock, already
+// advanced from the caller's samples (rocketnet_update_clock_follow)
+
+void rocketnet_client_transport_update_from_layer( rocketnet_client_transport_t * client_transport, double time )
+{
+    rocketnet_client_transport_update_body( client_transport, time, true );
+}
+
+static void rocketnet_client_transport_update_body( rocketnet_client_transport_t * client_transport, double time, bool from_layer )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )
     {
@@ -3394,11 +3470,20 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     }
 
     // the caller's clock is clamped once, before anything reads it: a NaN,
-    // an infinity, a negative time or a step backwards becomes the last good
-    // time, counted and loud in a debug build.
+    // an infinity, a negative time, a caller's time above
+    // ROCKETNET_UPDATE_TIME_MAX_SECONDS or a step backwards becomes the last
+    // good time, counted and loud in a debug build. The message client's
+    // clock is not held to the ceiling: its raw samples were.
 
     bool time_clamped = false;
-    time = rocketnet_update_clock_advance( client_transport->time, &client_transport->raw_time, &client_transport->time_offset, time, &time_clamped );
+    if ( from_layer )
+    {
+        time = rocketnet_update_clock_follow( client_transport->time, &client_transport->raw_time, &client_transport->time_offset, time, &time_clamped );
+    }
+    else
+    {
+        time = rocketnet_update_clock_advance( client_transport->time, &client_transport->raw_time, &client_transport->time_offset, time, &time_clamped );
+    }
 
     client_transport->packet_leases.reset();
 
@@ -4243,6 +4328,16 @@ double rocketnet_client_transport_heard_age( const struct rocketnet_client_trans
     }
     return client_transport->time - protocol->last_receive_time;
 }
+
+#if ROCKETNET_DEV
+// the transport's own clamped clock, for the test that the message client's
+// clock reaches it (tests/test_unit_client_server_lifecycle.cpp)
+double rocketnet_client_transport_time_for_test( const struct rocketnet_client_transport_t * client_transport )
+{
+    rocketnet_assert( client_transport );
+    return client_transport->time;
+}
+#endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_DEV
 // The transport's half of the delivery capture (rocketnet_layers.h): plain

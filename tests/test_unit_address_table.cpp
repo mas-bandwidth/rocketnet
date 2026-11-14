@@ -11,17 +11,22 @@
 // equal to, so a mapped-versus-native mismatch or a wrong drop is a named row
 // rather than a hidden one.
 //
-// The standard's rules, cited per row below:
-//   STANDARD.md:334-340 -- "Address normalization is a law of this protocol
-//     ... an IPv4-mapped IPv6 address (::ffff:a.b.c.d) must never exist. A
-//     receiver converts a mapped source to native IPv4 exactly once, at the
-//     socket boundary, before any address is used for a session table or an
-//     encryption mapping."
-//   STANDARD.md:330-333 -- "A server MAY advertise both an IPv4 and an IPv6
-//     address, and it accepts a connection request arriving at either."
-//   sdk/rocketnet_address.h (rocketnet_address_accept_received_source) / RFC 4291 2.5.5.2 -- "anywhere the real
-//     ipv6 header is seen -- a raw or xdp ipv6 path, or an ipv6-only socket --
-//     a mapped source never occurs legitimately: it is spoofed, and dropped."
+// The rules, cited per row below by the function that holds them (line
+// numbers drift, so none are cited):
+//   accept_received_source -- sdk/rocketnet_address.h,
+//     rocketnet_address_accept_received_source, and its comment: on a dual
+//     stack socket a mapped source is accepted and canonicalised to native
+//     ipv4; "anywhere the real ipv6 header is seen -- a raw or xdp ipv6 path,
+//     or an ipv6-only socket -- a mapped source never occurs legitimately
+//     (RFC 4291 2.5.5.2): it is spoofed, and dropped"; a source with port 0
+//     is dropped on every mode (no reply can reach it); any other source
+//     passes through unchanged.
+//   rocketnet_address_equal -- sdk/rocketnet_address.cpp: type, port and
+//     bytes are compared, and NONE equals nothing.
+//
+// The function takes one bool (dual stack or not), so the v4-only, v6-only
+// and raw rows of one source are one case of the code: they name the socket
+// kinds a source can arrive through, not separate paths.
 //
 // The equality property is the seeded one below: equality is reflexive except
 // for NONE, symmetric and transitive over 10,000 random address triples, on a
@@ -55,7 +60,7 @@ static bool socket_mode_is_dual_stack( socket_mode_t mode )
 }
 
 // the native forms the table compares against. Index 0 is the native ipv4 an
-// accepted mapped source canonicalises to (STANDARD.md:336-338).
+// accepted mapped source canonicalises to.
 
 static const char * k_native_forms[] = {
     "1.2.3.4:40000",        // 0: native ipv4, non-zero address and port
@@ -79,39 +84,39 @@ struct address_case_t
 
 static const struct address_case_t k_cases[] = {
     // native ipv4 passes through untouched on every mode (sdk/rocketnet_address.h (rocketnet_address_accept_received_source)).
-    { "1.2.3.4:40000", SOCKET_V4_ONLY, true, "1.2.3.4:40000", 0, "STANDARD.md:330-333; native ipv4 accepted" },
-    { "1.2.3.4:40000", SOCKET_DUAL_STACK, true, "1.2.3.4:40000", 0, "STANDARD.md:330-333; native ipv4 accepted" },
-    { "1.2.3.4:40000", SOCKET_V6_ONLY, true, "1.2.3.4:40000", 0, "rocketnet_address.h:60-61; not mapped, unchanged" },
-    { "1.2.3.4:40000", SOCKET_RAW, true, "1.2.3.4:40000", 0, "rocketnet_address.h:60-61; not mapped, unchanged" },
+    { "1.2.3.4:40000", SOCKET_V4_ONLY, true, "1.2.3.4:40000", 0, "accept_received_source; native ipv4 accepted" },
+    { "1.2.3.4:40000", SOCKET_DUAL_STACK, true, "1.2.3.4:40000", 0, "accept_received_source; native ipv4 accepted" },
+    { "1.2.3.4:40000", SOCKET_V6_ONLY, true, "1.2.3.4:40000", 0, "accept_received_source; not mapped, unchanged" },
+    { "1.2.3.4:40000", SOCKET_RAW, true, "1.2.3.4:40000", 0, "accept_received_source; not mapped, unchanged" },
 
     // native ipv6 passes through untouched on every mode (sdk/rocketnet_address.h (rocketnet_address_accept_received_source)).
-    { "[2001:db8::1]:40000", SOCKET_DUAL_STACK, true, "[2001:db8::1]:40000", 1, "rocketnet_address.h:60-61; not mapped, unchanged" },
-    { "[2001:db8::1]:40000", SOCKET_V6_ONLY, true, "[2001:db8::1]:40000", 1, "rocketnet_address.h:60-61; not mapped, unchanged" },
-    { "[2001:db8::1]:40000", SOCKET_RAW, true, "[2001:db8::1]:40000", 1, "rocketnet_address.h:60-61; not mapped, unchanged" },
+    { "[2001:db8::1]:40000", SOCKET_DUAL_STACK, true, "[2001:db8::1]:40000", 1, "accept_received_source; not mapped, unchanged" },
+    { "[2001:db8::1]:40000", SOCKET_V6_ONLY, true, "[2001:db8::1]:40000", 1, "accept_received_source; not mapped, unchanged" },
+    { "[2001:db8::1]:40000", SOCKET_RAW, true, "[2001:db8::1]:40000", 1, "accept_received_source; not mapped, unchanged" },
 
     // the mapped source on a dual stack socket is canonicalised to native ipv4,
-    // the same address an ipv4 socket sees (STANDARD.md:334-338).
-    { "[::ffff:1.2.3.4]:40000", SOCKET_DUAL_STACK, true, "1.2.3.4:40000", 0, "STANDARD.md:334-338; mapped accepted and canonicalised" },
+    // the same address an ipv4 socket sees.
+    { "[::ffff:1.2.3.4]:40000", SOCKET_DUAL_STACK, true, "1.2.3.4:40000", 0, "accept_received_source; mapped accepted and canonicalised" },
 
     // the same mapped source where the real ipv6 header is seen is spoofed and
     // dropped (sdk/rocketnet_address.h (rocketnet_address_accept_received_source); RFC 4291 2.5.5.2).
-    { "[::ffff:1.2.3.4]:40000", SOCKET_V6_ONLY, false, NULL, -1, "rocketnet_address.h:56-58; mapped dropped on v6-only" },
-    { "[::ffff:1.2.3.4]:40000", SOCKET_RAW, false, NULL, -1, "rocketnet_address.h:56-58; mapped dropped on raw" },
+    { "[::ffff:1.2.3.4]:40000", SOCKET_V6_ONLY, false, NULL, -1, "accept_received_source; mapped dropped on v6-only" },
+    { "[::ffff:1.2.3.4]:40000", SOCKET_RAW, false, NULL, -1, "accept_received_source; mapped dropped on raw" },
 
     // a source port of 0 is dropped on every mode: no reply can reach it
     // (sdk/rocketnet_address.h (rocketnet_address_accept_received_source)).
     // the zero address, port 0, is still a real ipv4/ipv6 address, not NONE,
     // and equal only to itself (rocketnet_address_equal, sdk/rocketnet_address.cpp, compares type, port and bytes).
-    { "0.0.0.0:0", SOCKET_V4_ONLY, false, NULL, 2, "rocketnet_address.h; port 0 dropped; zero ipv4 is an ipv4 endpoint" },
-    { "[::]:0", SOCKET_V6_ONLY, false, NULL, 3, "rocketnet_address.h; port 0 dropped; zero ipv6 is an ipv6 endpoint" },
+    { "0.0.0.0:0", SOCKET_V4_ONLY, false, NULL, 2, "accept_received_source; port 0 dropped; zero ipv4 is an ipv4 endpoint" },
+    { "[::]:0", SOCKET_V6_ONLY, false, NULL, 3, "accept_received_source; port 0 dropped; zero ipv6 is an ipv6 endpoint" },
 
-    // the port is part of the identity: same address, port 0, is not the
-    // non-zero-port form.
-    { "1.2.3.4:0", SOCKET_DUAL_STACK, false, NULL, 4, "rocketnet_address.h; port 0 dropped; port is part of the key" },
+    // the port is part of the identity (rocketnet_address_equal): same address,
+    // port 0, is not the non-zero-port form.
+    { "1.2.3.4:0", SOCKET_DUAL_STACK, false, NULL, 4, "accept_received_source; port 0 dropped; port is part of the key" },
 
     // NONE is not a source (its port is 0, so it is dropped) and is not equal
     // to itself or any other address (rocketnet_address_equal, sdk/rocketnet_address.cpp, returns false for a non-ipv4/ipv6 type).
-    { NULL, SOCKET_DUAL_STACK, false, NULL, -1, "rocketnet_address.cpp:235-239; NONE unequal to itself and all" }
+    { NULL, SOCKET_DUAL_STACK, false, NULL, -1, "rocketnet_address_equal; NONE unequal to itself and all" }
 };
 
 static const int k_case_count = (int) ( sizeof( k_cases ) / sizeof( k_cases[0] ) );

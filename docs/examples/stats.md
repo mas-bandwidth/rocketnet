@@ -13,7 +13,7 @@ background statistics worker.
 1. Initialize the library and create a server on the `loopback` transport,
    with `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` copied into the config. Create
    generates a sealing keypair for the server object's lifetime.
-2. After start, read the server public key and bound address, create an opaque
+2. After start, read the server public key and served address with its bound port, create an opaque
    base64 development token with `rocketnet_create_dev_connect_token`, and
    connect a client with that string.
 3. Run frames until the client reports `ROCKETNET_CLIENT_STATE_CONNECTED`.
@@ -54,12 +54,13 @@ one `FAIL: ...` line and exits 1.
 
 The output prints the client's state and connection quality, then the server's
 per-client view and totals, then the client's state and the server's reason
-after the disconnect, then `PASS`. The check passes
-when the numbers are present and sane: RTT, jitter, loss and bandwidth are
-never negative, and bytes sent are above zero after the traffic exchange. `PASS`
-means the client connected, traffic flowed both ways, and the disconnect was
-seen on both ends. The informational log lines before the output come from the
-library and are not part of the check.
+after the disconnect, then `PASS`. `PASS` means the client connected, every
+echo the server started was finished, bytes sent are above zero and RTT is not
+negative on both the client and the server's slot, the server counted the
+connection, and the client is `disconnected` after its own disconnect. Jitter,
+loss and bandwidth, and the server's disconnect reason, are printed for you to
+read; they are not checked. The informational log lines before the output
+come from the library and are not part of the check.
 
 Both endpoints use the same ACK-based connection-quality definitions. Client
 loss estimates its outgoing packets to the server; a server slot estimates
@@ -81,8 +82,7 @@ minimum in O(log n)), equal at every read to a full recompute over the retained
 history, so the caller's server-slot stats call copies values that already
 include the latest ack, and an idle slot costs nothing. Server update does no
 statistics pass and runs no statistics thread. A reset clears the slot's values
-with the rest of its connection state (sdk/rocketnet_ack.cpp,
-proofs/tla/RNServerStats.tla).
+with the rest of its connection state.
 
 <a id="public-calls-it-uses"></a>
 

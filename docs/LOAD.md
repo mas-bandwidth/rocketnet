@@ -312,10 +312,9 @@ identity. The harness drains the endpoint-wide receive queue and checks:
 Short 10- and 100-client cases serve as integration gates. The
 1,000-client LAN case is recorded in
 [runs/lan-1000-proof.md](runs/lan-1000-proof.md) for the native server
-transports (Linux gso and io_uring for 600 seconds at
-`1ca477339e150220f90e96bbe7c61be5b175eb51`, Linux xdp copy mode for 300
-seconds at `534cce2e10159b52074ea9b10f7a2f0b074f7298`, and macOS msgx for
-600 seconds at `813b4adbe3dec2eee496577e3da2c0d7d66b8063`). The portable
+transports (Linux gso and io_uring for 600 seconds, Linux xdp copy mode for
+300 seconds, and macOS msgx for 600 seconds, each on an earlier version of
+the SDK that the record names). The portable
 transport is a fallback, not a production server transport, so its LAN cells
 do not count, and the Windows iocp and rio cells were not made. The thirty-minute soaks are recorded in
 [runs/linux-soak-30min-per-transport.md](runs/linux-soak-30min-per-transport.md),

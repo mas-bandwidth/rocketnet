@@ -1924,6 +1924,18 @@ The distinction exists so that an application pays for ordering only where it as
 it, and so that the receive ring can be sized from the number of records that can be
 held rather than from the number in flight.
 
+[RN-2 m7 Delivery: reliable codes 2, 3 and 4](MESSAGES.md#m7)
+**The held records are found through 2W hashed cells, and the hash is keyed with a
+secret drawn for each connection.** The sender chooses every key, a channel and an
+ordering index, so with a fixed hash it could choose W keys that share one run of cells
+and make every hold and every lookup walk the run, a cost per record that grows with W.
+The home depends on a per-connection secret that the sender is never sent and that is
+redrawn at every carve, so the old chosen-key attack (keys picked against a known, fixed
+home) no longer applies. The tests show the old attack keys, and keys chosen against one
+known key, staying short over the sampled drawn keys (the worst probe 34 cells at W = 1024
+over 3000 connections, against 984 with the fixed hash). Neither a bound on the worst probe
+nor resistance to an adaptive sender is proven.
+
 <a id="m8"></a>
 ## m8. Blocks
 

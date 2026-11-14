@@ -12,8 +12,9 @@
 // The environment forms are ambient: they apply only to a server of that one
 // family and are ignored, with a log line, for a family the server does not
 // serve and on a server of both families, while the config fields keep
-// refusing there. Both paths that read the
-// environment are covered: the public create, and a bare transport create.
+// refusing there; the rule's case counts that log line, per family. Both
+// paths that read the environment are covered: the public create, and a bare
+// transport create.
 //
 // No sockets, no real time: the resolve is pure, and the servers run on the
 // loopback transport in memory.
@@ -204,13 +205,38 @@ static void test_server_bind_address_public_start()
     check( bind_public_start( NULL ) == ROCKETNET_STATUS_OK );
 }
 
+// the log line a dropped environment bind address leaves, counted per family
+// (rocketnet_server_transport_ignore_ambient_bind)
+static int bind_ignored_ipv4_lines = 0;
+static int bind_ignored_ipv6_lines = 0;
+
+static void bind_ignored_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) level;
+    (void) length;
+    if ( strstr( message, "server config ignores ROCKETNET_SERVER_BIND_IPV4_ADDRESS=" ) != NULL )
+    {
+        bind_ignored_ipv4_lines++;
+    }
+    if ( strstr( message, "server config ignores ROCKETNET_SERVER_BIND_IPV6_ADDRESS=" ) != NULL )
+    {
+        bind_ignored_ipv6_lines++;
+    }
+}
+
 // the rule itself: a field the environment changed for a family not served
-// goes back to its value before the environment; a served family keeps the
-// environment's value, and a field the environment did not change is left
-// for the resolve to judge
+// goes back to its value before the environment, with one log line naming the
+// variable; a served family keeps the environment's value, and a field the
+// environment did not change is left for the resolve to judge, with no line
 static void test_server_bind_address_ambient_rule()
 {
-    rocketnet_quiet( 1 );
+    rocketnet_quiet( 0 );
+    const enum rocketnet_log_level_t saved = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );
+    rocketnet_log_function( bind_ignored_log, NULL );
+    bind_ignored_ipv4_lines = 0;
+    bind_ignored_ipv6_lines = 0;
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_default_config( &config );
@@ -218,19 +244,27 @@ static void test_server_bind_address_ambient_rule()
     snprintf( config.bind_ipv6_address, sizeof( config.bind_ipv6_address ), "%s", "fd00::5" );
     rocketnet_server_transport_ignore_ambient_bind( &config, "", "", 1, 0 );
     check( config.bind_ipv6_address[0] == '\0' );
+    check( bind_ignored_ipv6_lines == 1 && bind_ignored_ipv4_lines == 0 );
 
     snprintf( config.bind_ipv6_address, sizeof( config.bind_ipv6_address ), "%s", "fd00::5" );
     rocketnet_server_transport_ignore_ambient_bind( &config, "", "", 1, 1 );
     check( strcmp( config.bind_ipv6_address, "fd00::5" ) == 0 );
+    check( bind_ignored_ipv6_lines == 1 && bind_ignored_ipv4_lines == 0 );
 
     // set in the struct, the environment silent: kept, and the resolve refuses it
     rocketnet_server_transport_ignore_ambient_bind( &config, "", "fd00::5", 1, 0 );
     check( strcmp( config.bind_ipv6_address, "fd00::5" ) == 0 );
+    check( bind_ignored_ipv6_lines == 1 && bind_ignored_ipv4_lines == 0 );
 
     // the environment overrode the struct's value: back to the struct's
     snprintf( config.bind_ipv4_address, sizeof( config.bind_ipv4_address ), "%s", "10.0.0.9" );
     rocketnet_server_transport_ignore_ambient_bind( &config, "10.0.0.1", "fd00::5", 0, 1 );
     check( strcmp( config.bind_ipv4_address, "10.0.0.1" ) == 0 );
+    check( bind_ignored_ipv6_lines == 1 && bind_ignored_ipv4_lines == 1 );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved );
+    rocketnet_quiet( 1 );
 }
 
 static void bind_env( const char * ipv4, const char * ipv6 )

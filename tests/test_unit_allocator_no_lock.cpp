@@ -65,7 +65,8 @@ static void test_allocator_malloc_and_free_take_no_lock()
 
     check( rocketnet_lifecycle_locks_for_test() == locks_before );
 
-    // install and term still see a live allocation
+    // install and term still see a live allocation: term refuses while a
+    // block is live
 
     void * live = rocketnet_malloc( NULL, 64 );
     check( live != NULL );
@@ -73,6 +74,21 @@ static void test_allocator_malloc_and_free_take_no_lock()
     rocketnet_free( NULL, live );
 
     check( rocketnet_term_internal() == ROCKETNET_STATUS_OK );
+
+    // and, on the uninitialized library, so does an allocator install: a
+    // block of the installed allocator still live refuses the replacement,
+    // and the same install takes once it is freed
+
+    live = rocketnet_malloc( NULL, 64 );
+    check( live != NULL );
+    rocketnet_quiet( 1 );
+    check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
+    rocketnet_quiet( 0 );
+    check( !rocketnet_allocator_installed( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
+    rocketnet_free( NULL, live );
+    check( rocketnet_allocator_internal( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_allocator_installed( rocketnet_default_malloc_function, rocketnet_default_free_function ) );
+
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 

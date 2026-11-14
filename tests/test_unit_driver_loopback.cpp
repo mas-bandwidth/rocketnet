@@ -205,8 +205,10 @@ static void test_loopback_transport_io_exchanges_both_ways()
 
     rocketnet_unit_check( client.operations->receive( client.instance, &from, buf, 64 ) == 0 );
 
-    // Oversize replies must not make receive report an empty queue while a
-    // fitting reply is still queued behind them.
+    // The built-in loopback drops a queued datagram larger than the caller's
+    // buffer, whole and counted: nothing of it is copied or delivered, and it
+    // does not make receive report an empty queue while a fitting reply is
+    // still queued behind it.
     rocketnet_address_t client_to = client_address;
     set_ipv4_loopback( client_to );
     const uint8_t small[] = { 91, 92 };
@@ -712,8 +714,9 @@ static void test_wire_totals_staged_finish_counts_exactly()
 {
     // the staged producer path seals into the fake transport's staging, bumps
     // server_stats and the per-client totals with the relaxed atomics, and
-    // the public stats readers fold them back; a non-atomic add either loses
-    // an increment here (without a thread) or trips the tsan gate upstream
+    // the public stats readers fold them back. On this one thread every count
+    // is exact, so a missed or doubled add shows here; whether the adds are
+    // atomic is not checked here: a plain add counts the same on one thread
 
     wire_totals_staged_fixture_t fx;
     memset( &fx, 0, sizeof( fx ) );
@@ -1572,19 +1575,26 @@ static void test_loopback_transport_server_batch_drops_packet_larger_than_stride
     rocketnet_address_t to = server_address;
     set_ipv4_loopback( to );
 
+    // the built-in loopback drops a queued datagram larger than the stride,
+    // whole and counted: nothing of it is copied or delivered
+
     const uint8_t oversized[] = { 1, 2, 3, 4 };
     client.operations->send( client.instance, &to, oversized, sizeof( oversized ) );
 
+    const uint64_t dropped = rocketnet_loopback_endpoint_dropped( server.instance );
     rocketnet_address_t from;
-    uint8_t data[2];
-    int bytes = 0;
+    uint8_t data[2] = { 0xEE, 0xEE };
+    int bytes = -7;
     rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, data, sizeof( data ), &bytes, 1 ) == 0 );
+    rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( server.instance ) == dropped + 1 );
+    rocketnet_unit_check( data[0] == 0xEE && data[1] == 0xEE && bytes == -7 );
 
     const uint8_t valid[] = { 5, 6 };
     client.operations->send( client.instance, &to, valid, sizeof( valid ) );
     rocketnet_unit_check( server.operations->receive_batch( server.instance, &from, data, sizeof( data ), &bytes, 1 ) == 1 );
     rocketnet_unit_check( bytes == (int) sizeof( valid ) );
     rocketnet_unit_check( memcmp( data, valid, sizeof( valid ) ) == 0 );
+    rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( server.instance ) == dropped + 1 );
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
 }

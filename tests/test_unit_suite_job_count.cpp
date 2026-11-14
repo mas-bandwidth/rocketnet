@@ -9,8 +9,8 @@
 // It once held 8 handles while the count followed the cores and the memory
 // (about 30 on captain: 64 cores, 48 GiB free), and the ninth running case
 // wrote past it: the parent ./bin/test died with 0xC0000409 partway through
-// the suite. The count is a function of its inputs here; no time, sockets or
-// processes.
+// the suite. The count is a function of its inputs here; no time, sockets,
+// processes, files or other host state.
 
 #include "test_unit_registry.h"
 #include "suite_runner.h"
@@ -44,24 +44,24 @@ static void test_suite_job_count_fits_the_windows_wait_set()
     check( suite_job_count_for( 128, 0, 0, 0 ) == 128 );
     check( suite_job_count_for( 4, 0, 1000, 0 ) == 1000 );
 
-    // the live count on this host, whatever its cores, memory and
-    // ROCKETNET_TEST_JOBS, fits the Windows wait set
+    // the count the runner plans is wired to this platform's ceiling: a
+    // requested count far past it reads exactly the ceiling on Windows, on any
+    // host, and the request itself elsewhere (VERIFY-4 W10: no CI host asks
+    // for more than 64 jobs, so a bound on the live count alone could not go
+    // red). The host's cpus, memory and request go in as arguments; a unit
+    // case reads no host state and never writes the environment
+    // (tools/check_unit_purity.py).
 
-    check( suite_job_count() >= 1 );
-
-    // and the live count is wired to this platform's ceiling: a requested
-    // count far past it reads exactly the ceiling on Windows, on any host, and
-    // the request itself elsewhere (VERIFY-4 W10: no CI host asks for more
-    // than 64 jobs, so a bound on suite_job_count() alone could not go red).
-    // The request goes in as an argument; a unit case never writes the
-    // environment (tools/check_unit_purity.py).
-
-    const int asked_past = suite_job_count_requested( 1000 );
+    const int asked_past = suite_job_count_planned( 64, 64, 50 * gib, 1000 );
+    const int host_past = suite_job_count_planned( 128, 128, 0, 0 );
 #if defined( _WIN32 )
-    check( suite_job_count() <= SUITE_WAIT_HANDLES );
+    check( suite_platform_job_ceiling() == SUITE_WAIT_HANDLES );
     check( asked_past == SUITE_WAIT_HANDLES );
+    check( host_past == SUITE_WAIT_HANDLES );
 #else
+    check( suite_platform_job_ceiling() == 0 );
     check( asked_past == 1000 );
+    check( host_past == 128 );
 #endif // #if defined( _WIN32 )
 }
 
@@ -71,8 +71,8 @@ REGISTER_UNIT_TEST( test_suite_job_count_fits_the_windows_wait_set );
 // host's: a 48-cpu bench whose run is held to 5 cpus (a nova-reserve slot)
 // ran 48 jobs on 5 cpus before (std::thread::hardware_concurrency()). It plans
 // SUITE_JOBS_PER_USABLE_CPU (3) jobs a usable cpu, never more than the host's
-// count. The mask goes in as an argument; the live count is checked against
-// the live mask.
+// count. The mask, the cpu counts and the memory go in as arguments: no case
+// here reads the host's affinity, cgroup, memory or environment.
 static void test_suite_job_count_follows_the_cpu_mask()
 {
     const uint64_t gib = 1024ull * 1024 * 1024;
@@ -107,12 +107,13 @@ static void test_suite_job_count_follows_the_cpu_mask()
     check( suite_job_count_for( suite_planned_cpus( suite_cpus_in_mask( slot, 1 ), 48 ), 10 * gib, 0, 0 ) == 6 );
     check( suite_job_count_for( suite_planned_cpus( suite_cpus_in_mask( slot, 1 ), 48 ), 300 * gib, 4, 0 ) == 4 );
 
-    // live: with no request, this process never plans more than
-    // SUITE_JOBS_PER_USABLE_CPU jobs a cpu it may run on
+    // the runner's plan from the host's answers: with no request, a process
+    // held to some cpus plans SUITE_JOBS_PER_USABLE_CPU jobs a cpu it may run
+    // on, not the host's count
 
-    const unsigned usable = suite_usable_cpus();
-    check( usable >= 1 );
-    check( suite_job_count_requested( 0 ) <= (int) ( usable * SUITE_JOBS_PER_USABLE_CPU ) );
+    check( suite_job_count_planned( 5, 48, 300 * gib, 0 ) == 15 );
+    check( suite_job_count_planned( 4, 192, 300 * gib, 0 ) == (int) ( 4 * SUITE_JOBS_PER_USABLE_CPU ) );
+    check( suite_job_count_planned( 48, 48, 300 * gib, 0 ) == 48 );
 }
 
 REGISTER_UNIT_TEST( test_suite_job_count_follows_the_cpu_mask );
