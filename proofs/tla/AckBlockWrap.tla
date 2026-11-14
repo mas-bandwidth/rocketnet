@@ -17,12 +17,16 @@
 (* the larger on a tie).                                                   *)
 (*                                                                         *)
 (* Ranges below the first are abstracted: the honest builder's count is   *)
-(* zero here, and their walk (rules 3-5) is the subject of                 *)
-(* SessionAcks.  Forge writes any block that is not the all-zero one: a   *)
-(* zero first range length with something else nonzero, or a first range *)
-(* length of 1 or 2 against any wire largest, so a first run longer than  *)
-(* the reconstructed largest is on the wire too.  MalformedRefused states *)
-(* the two malformed shapes from the standard (t15) apart from Decide.    *)
+(* zero here, and their walk (t15 rules 4 and 5) is the subject of         *)
+(* SessionAcks.  Forge writes any block that is not the all-zero one and  *)
+(* needs no walk: a zero first range length with a nonzero wire largest   *)
+(* or range count, or a first range length of 1 or 2 against any wire     *)
+(* largest with no ranges, so a first run longer than the reconstructed   *)
+(* largest is on the wire too.  A forged block with both a first run and  *)
+(* ranges is not written: its fate is the walk's.  MalformedRefused       *)
+(* states t15 rules 2 and 3, the two on the fixed fields, on the block's  *)
+(* own fields rather than through Decide; rules 1 (size), 4 and 5 are     *)
+(* abstracted.                                                             *)
 (*                                                                         *)
 (* RunBoundChecked = FALSE drops the reader's refusal of a first range    *)
 (* length above the reconstructed largest; the reversed witness            *)
@@ -133,10 +137,12 @@ WriteBlock ==
     /\ UNCHANGED << highestSent, opened, read >>
 
 \* an outside event: a block the builder did not write, any shape but the
-\* all-zero empty block
+\* all-zero empty block, and no ranges behind a first run (the walk, t15
+\* rules 4 and 5, is abstracted)
 Forge(w, f, c) ==
     /\ flight.none
     /\ ( w # 0 \/ f # 0 \/ c # 0 )
+    /\ ( f = 0 \/ c = 0 )
     /\ flight' = [wire |-> w, frl |-> f, count |-> c, honest |-> FALSE, true |-> 0, none |-> FALSE]
     /\ UNCHANGED << highestSent, opened, read >>
 
@@ -168,10 +174,10 @@ LargestExact == ( read.honest /\ read.true # 0 ) => ( read.result = "nonempty" /
 NeverRefusedHonest == read.honest => read.result # "refused"
 
 \* a malformed forged block is refused: first range length zero with
-\* anything else nonzero (Forge never writes the all-zero block), or a first
-\* run longer than the largest it reconstructs to (TRANSPORT.md t15: the run
-\* cannot reach below sequence 1).  A forged block of neither shape is
-\* well formed and may read nonempty.
+\* anything else nonzero (t15 rule 2; Forge never writes the all-zero
+\* block), or a first run longer than the largest it reconstructs to (t15
+\* rule 3: the run cannot reach below sequence 1).  A forged block of
+\* neither shape has no ranges here, is well formed and may read nonempty.
 MalformedRefused ==
     ( read.result # "none" /\ ~read.honest /\ ( read.frl = 0 \/ read.frl > read.near ) )
         => read.result = "refused"

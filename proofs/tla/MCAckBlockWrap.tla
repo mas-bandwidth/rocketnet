@@ -6,6 +6,8 @@
 (* has wire value 0 and must still read nonempty.                          *)
 (*                                                                         *)
 (* MCAckBlockWrap.cfg is the rule and passes every invariant.              *)
+(* MCAckBlockWrapFromOne.cfg is the rule with the session from 1, where a  *)
+(* wire zero below Modulus/2 reconstructs to 0, and passes too.            *)
 (* MCAckBlockWrapBrokenHalfRange.cfg sets BrokenHalfRange = TRUE (the      *)
 (* empty test on the reconstructed largest, the reader before 2026-10-24)  *)
 (* and must fail on EmptyRecognised.                                       *)

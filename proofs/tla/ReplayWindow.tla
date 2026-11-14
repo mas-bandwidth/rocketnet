@@ -431,8 +431,9 @@ NoOpenBeforeConnect ==
 \* This holds by construction and checks nothing an action could break:
 \* Raised only ever moves a mark up (as rocketnet_replay_advance raises
 \* highest_opened only), Connect only sets connected, nothing clears it, and
-\* no cfg reverses it.  It is kept as the statement that tests/dst_checks.h's
-\* replay_monotone mirrors, not as a check of this model's actions.
+\* no cfg reverses it.  It is kept for its highest conjunct, the one
+\* tests/dst_checks.h replay_monotone mirrors (on replay_session only),
+\* not as a check of this model's actions.
 Monotone ==
     [][highest' >= highest /\ accHighest' >= accHighest /\ (connected => connected')]_vars
 

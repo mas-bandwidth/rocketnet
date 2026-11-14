@@ -113,7 +113,7 @@ is no liveness property here; the connection models above it carry those.
 | `NoAdvanceBeforeConnect` | STANDARD.md _Reading packets_, the slot gate before the mark (OV-34; the standard's rule, its PR pending) | the session windows of a mapping without a slot never move |
 | `AckReportsOnlyProcessed` | the harm behind OV-34 and behind the second window | the ack block names only packets the endpoint took in |
 | `NoOpenBeforeConnect` | TRANSPORT.md t10 step 12, the slot gate before decryption (asr pass 1 F4, approved 2026-10-21) | no AEAD open is attempted for a session packet, genuine (`Receive`) or forged (`Forge`), on a mapping without a slot |
-| `Monotone` (action property) | | the marks never go backwards; a slot is never given up. Holds by construction (`Raised` only moves a mark up, `Connect` only sets `connected`, no witness reverses it), so TLC checking it shows nothing an action could break; it is kept as the statement `replay_monotone` in tests/dst_checks.h mirrors |
+| `Monotone` (action property) | | the marks never go backwards; a slot is never given up. Holds by construction (`Raised` only moves a mark up, `Connect` only sets `connected`, no witness reverses it), so TLC checking it shows nothing an action could break; it is kept for its `highest` conjunct, which `replay_monotone` in tests/dst_checks.h mirrors (`replay_session` only, not `accHighest` or `connected`) |
 
 `GenuineIsAccepted` follows from `WindowIsTruth`, and `AckReportsOnlyReceived` from
 the same truth for `accepted_session` (one advance runs on both); they are

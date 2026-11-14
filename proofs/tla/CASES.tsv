@@ -507,6 +507,7 @@ MCRNBufferHandoffBaseBrokenDeferred.cfg	MCRNBufferHandoffBase.tla	invariant	OneO
 MCRNBufferHandoffBaseBrokenMainBlocks.cfg	MCRNBufferHandoffBase.tla	invariant	MainNeverWaits	check	rnbufferhandoffbase	required	-
 MCRNBufferHandoffBaseBrokenWorkUnderLock.cfg	MCRNBufferHandoffBase.tla	invariant	NoWorkUnderLock	check	rnbufferhandoffbase	required	-
 MCAckBlockWrap.cfg	MCAckBlockWrap.tla	pass	-	check	ackblockwrap	required	-
+MCAckBlockWrapFromOne.cfg	MCAckBlockWrap.tla	pass	-	check	ackblockwrap	required	-
 MCAckBlockWrapBrokenHalfRange.cfg	MCAckBlockWrap.tla	invariant	EmptyRecognised	check	ackblockwrap	required	-
 MCAckBlockWrapBrokenRunBound.cfg	MCAckBlockWrap.tla	invariant	MalformedRefused	check	ackblockwrap	required	-
 MCRNClientIocp.cfg	MCRNClientIocp.tla	pass	-	check	rnclientiocp	required	-
