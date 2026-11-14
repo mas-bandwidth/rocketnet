@@ -124,8 +124,10 @@
     uses as its negative control. ROCKETNET_SOAK_FAULT_IMPAIRMENT=1 creates
     the endpoints with no loss and no duplication while the run records the
     requested ones: --assert-flat must fail "link impairment not observed"
-    (the selftest's impairment leg). ROCKETNET_SOAK_FAULT_LEAK_FD=1 holds one
-    file open past the end sample: --assert-flat must fail on fds (handles).
+    (the selftest's impairment leg). ROCKETNET_SOAK_FAULT_LEAK_FD=1 holds files
+    open past the end sample, one more than THE WINSOCK THREAD HANDLES
+    allowance (so one off an iocp server): --assert-flat must fail on fds
+    (handles) on every transport.
 
     THE WARM CYCLE AND THE RESOURCE COUNTS (tests/process_resources.h). The
     warm cycle is the first planned reconnect cycle: 30 s of the first client,
@@ -1011,11 +1013,24 @@ static int soak_os_pool_settle( const struct process_resources_t * start, struct
 #define SOAK_IOCP_DEFAULT_COMPLETION_WORKERS 2 // rocketnet_network_threads.h ROCKETNET_IOCP_DEFAULT_COMPLETION_WORKERS
 #define SOAK_WINSOCK_HANDLES_PER_THREAD 2      // ws2_32's copy of the thread's handle and mswsock's event
 
+#define SOAK_ENV_VALUE_BYTES 4096 // sdk/rocketnet_platform.h ROCKETNET_PLATFORM_GETENV_MAX_BYTES: the longest value the library reads, terminator included
+
 #if defined( _WIN32 )
+// whether the variable holds a value, read by its length alone: a value of any
+// length counts (a 64-byte buffer read a longer one as unset), and one longer
+// than the library reads, which the library refuses, is named here
 static int soak_env_set( const char * name )
 {
-    char value[64];
-    return rocketnet_test_getenv( name, value, sizeof( value ) ) && value[0] != '\0';
+    size_t required = 0;
+    if ( getenv_s( &required, NULL, 0, name ) != 0 || required <= 1 )
+    {
+        return 0;
+    }
+    if ( required > SOAK_ENV_VALUE_BYTES )
+    {
+        printf( "soak: %s is %d characters long, over the %d the library reads\n", name, (int) required - 1, SOAK_ENV_VALUE_BYTES - 1 );
+    }
+    return 1;
 }
 #endif // #if defined( _WIN32 )
 
@@ -2111,19 +2126,31 @@ int main( int argc, char ** argv )
     }
 
     // the --assert-flat negative control: ROCKETNET_SOAK_FAULT_LEAK_FD=1 opens
-    // one file after the start sample and never closes it, so the end sample
-    // holds one more fd (a handle on Windows) and --assert-flat must go red
+    // files after the start sample and never closes them, one more than the
+    // handles the end sample may hold above the start (THE WINSOCK THREAD
+    // HANDLES allowance: 0 off an iocp server), so --assert-flat must go red on
+    // every transport. One file alone fit inside the iocp allowance (4 at the
+    // default) and passed there.
 
     char fault_leak_env[256];
-    static FILE * soak_fault_leaked_file = NULL;
+    static FILE ** soak_fault_leaked_files = NULL;
     if ( resources_started && rocketnet_test_getenv( "ROCKETNET_SOAK_FAULT_LEAK_FD", fault_leak_env, sizeof( fault_leak_env ) ) && fault_leak_env[0] != '\0' && strcmp( fault_leak_env, "0" ) != 0 )
     {
+        const int64_t leak_allowance = soak_winsock_handle_allowance( server_transport_name, server_config.num_iocp_completion_workers );
+        const int64_t leak_count = 1 + ( leak_allowance > 0 ? leak_allowance : 0 );
+        int64_t leak_opened = 0;
+        soak_fault_leaked_files = (FILE **) calloc( (size_t) leak_count, sizeof( FILE * ) );
+        for ( int64_t leak = 0; soak_fault_leaked_files && leak < leak_count; leak++ )
+        {
 #if defined( _WIN32 )
-        soak_fault_leaked_file = rocketnet_test_fopen( "NUL", "r" );
+            soak_fault_leaked_files[leak] = rocketnet_test_fopen( "NUL", "r" );
 #else
-        soak_fault_leaked_file = rocketnet_test_fopen( "/dev/null", "r" );
+            soak_fault_leaked_files[leak] = rocketnet_test_fopen( "/dev/null", "r" );
 #endif
-        printf( "soak: fd leak fault ARMED -- one file held open past the end sample (%s); --assert-flat must go red\n", soak_fault_leaked_file ? "opened" : "open failed" );
+            leak_opened += soak_fault_leaked_files[leak] ? 1 : 0;
+        }
+        printf( "soak: fd leak fault ARMED -- %lld of %lld files held open past the end sample (1 + the handles allowance %lld); --assert-flat must go red\n",
+                (long long) leak_opened, (long long) leak_count, (long long) ( leak_allowance > 0 ? leak_allowance : 0 ) );
     }
 
     // the end sample, between clients as the post-warmup sample was: the
