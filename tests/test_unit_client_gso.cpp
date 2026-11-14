@@ -625,10 +625,10 @@ REGISTER_UNIT_TEST( test_client_gso_send_retries_an_interrupted_call );
 
 static void test_client_gso_send_retries_a_pending_icmp_error()
 {
-    const int pending[] = { ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, EHOSTDOWN, ENONET, ENOPROTOOPT, EPROTO, EACCES };
+    const int pending[] = { ECONNREFUSED, EHOSTUNREACH, ENETUNREACH, EHOSTDOWN, ENONET, ENOPROTOOPT, EPROTO, EACCES, EMSGSIZE };
     const int packet_bytes[] = { 100, 100, 100, 300 };
 
-    for ( int p = 0; p < 8; p++ )
+    for ( int p = 0; p < 9; p++ )
     {
         memset( &test_socket, 0, sizeof( test_socket ) );
         rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );

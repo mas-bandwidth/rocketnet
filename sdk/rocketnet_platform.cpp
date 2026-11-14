@@ -1973,8 +1973,12 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
 // pending error drops it, counted, as any refused send. Linux queues these for
 // IPv4 (icmp_err_convert, ICMP_PARAMETERPROB): ECONNREFUSED, ENETUNREACH,
 // EHOSTUNREACH, EHOSTDOWN, ENONET, ENOPROTOOPT, EPROTO; for IPv6
-// (icmpv6_err_convert): ECONNREFUSED, EACCES, EPROTO. An unconnected socket
-// never holds one, so only a connected socket's sends retry.
+// (icmpv6_err_convert): ECONNREFUSED, EACCES, EPROTO; and EMSGSIZE for a
+// fragmentation-needed or packet-too-big, a hard error under the
+// IP_PMTUDISC_PROBE and IPV6_PMTUDISC_PROBE every socket sets here (xnu maps
+// it to EMSGSIZE too). An unconnected socket never holds one, so only a
+// connected socket's sends retry; a local refusal of these errnos costs one
+// more call before it drops, counted, as before.
 
 bool rocketnet_platform_send_error_is_pending( int error )
 {
@@ -1985,7 +1989,7 @@ bool rocketnet_platform_send_error_is_pending( int error )
     }
 #endif // #if defined( ENONET )
     return error == ECONNREFUSED || error == ENETUNREACH || error == EHOSTUNREACH || error == EHOSTDOWN || error == ENOPROTOOPT ||
-           error == EPROTO || error == EACCES;
+           error == EPROTO || error == EACCES || error == EMSGSIZE;
 }
 
 // One failed send, counted in *failures (send_failures, or on darwin
