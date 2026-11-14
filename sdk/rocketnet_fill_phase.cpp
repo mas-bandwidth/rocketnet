@@ -83,10 +83,12 @@ static inline bool rn_fill_phase_claims( const struct rocketnet_fill_phase_t * f
 }
 
 void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * fill_phase, int num_clients,
+                                struct rocketnet_fill_phase_client_t * clients,
                                 uint64_t * overlap_counter, uint64_t * two_fillers_counter )
 {
     rocketnet_assert( fill_phase );
     rocketnet_assert( num_clients >= 0 && num_clients <= ROCKETNET_MAX_CLIENTS );
+    rocketnet_assert( clients || num_clients <= 0 );
 
     fill_phase->main_calls.store( 0 );
     fill_phase->window.store( 0 );
@@ -94,14 +96,15 @@ void rocketnet_fill_phase_init( struct rocketnet_fill_phase_t * fill_phase, int 
     fill_phase->main_owner.store( 0 );
     fill_phase->armed.store( 1 );
     fill_phase->main_depth = 0;
-    fill_phase->num_clients = num_clients < 0 ? 0 : ( num_clients > ROCKETNET_MAX_CLIENTS ? ROCKETNET_MAX_CLIENTS : num_clients );
+    fill_phase->num_clients = !clients || num_clients < 0 ? 0 : ( num_clients > ROCKETNET_MAX_CLIENTS ? ROCKETNET_MAX_CLIENTS : num_clients );
+    fill_phase->clients = clients;
     fill_phase->overlap_counter = overlap_counter;
     fill_phase->two_fillers_counter = two_fillers_counter;
     for ( int i = 0; i < ROCKETNET_FILL_PHASE_FILL_LINES; ++i )
     {
         fill_phase->lines[i].fills_in.store( 0, std::memory_order_relaxed );
     }
-    for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; ++i )
+    for ( int i = 0; i < fill_phase->num_clients; ++i )
     {
         fill_phase->clients[i].owner.store( 0, std::memory_order_relaxed );
         fill_phase->clients[i].claim.store( 0, std::memory_order_relaxed );

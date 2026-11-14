@@ -731,6 +731,431 @@ static void session_run_isolation_pair( const char * server_transport, const cha
     }
 }
 
+// A small server is sized from its own max_clients (sdk/rocketnet_constants.h,
+// "Per-server sizing"): a server of 1, 8 or 15 clients holds that many slots'
+// buffers and no 512-client floor. Each run creates a server of exactly that
+// many clients, connects that many clients, exchanges messages in all eight
+// reliability modes both ways (each mode on its own channel, one reliable
+// ordered message of three fragments each way), disconnects every client,
+// waits for every slot to empty, and does it all again on the same server.
+// The reliable modes must arrive complete (the ordered ones in order), the
+// reliable sequenced one must reach its last message, and each unreliable
+// mode, resent until one arrives, must arrive at least once.
+
+#define SMALL_SERVER_MAX_CLIENTS    15
+#define SMALL_SERVER_MODES          8
+#define SMALL_SERVER_SEQUENCES      4           // per client, mode and direction; the last is the fragmented one in mode 3
+#define SMALL_SERVER_BYTES          40
+#define SMALL_SERVER_FRAGMENTED     2600
+
+struct small_server_track_t
+{
+    uint32_t got[2][SMALL_SERVER_MAX_CLIENTS][SMALL_SERVER_MODES];     // bit s: sequence s arrived (direction 0: client to server)
+    int last[2][SMALL_SERVER_MAX_CLIENTS][SMALL_SERVER_MODES];          // the last sequence an ordered or sequenced mode delivered
+};
+
+static bool small_server_mode_reliable( int mode )
+{
+    return mode == ROCKETNET_RELIABILITY_RELIABLE || mode == ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
+           mode == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT || mode == ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT;
+}
+
+static bool small_server_mode_ordered( int mode )
+{
+    // the unreliable sequenced mode is resent below, so a resent copy may
+    // follow its first one: its order is not checked here
+    return mode == ROCKETNET_RELIABILITY_RELIABLE_ORDERED || mode == ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT ||
+           mode == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED;
+}
+
+static int small_server_message_bytes( int mode, int sequence )
+{
+    return mode == ROCKETNET_RELIABILITY_RELIABLE_ORDERED && sequence == SMALL_SERVER_SEQUENCES - 1 ? SMALL_SERVER_FRAGMENTED : SMALL_SERVER_BYTES;
+}
+
+static void small_server_fill( uint8_t * out, int bytes, uint8_t tag, int client, int mode, int sequence )
+{
+    for ( int i = 0; i < bytes; ++i )
+    {
+        out[i] = (uint8_t) ( tag ^ ( i * 7 ) ^ client ^ ( mode << 4 ) ^ sequence );
+    }
+    out[0] = tag;
+    out[1] = (uint8_t) client;
+    out[2] = (uint8_t) mode;
+    out[3] = (uint8_t) sequence;
+}
+
+static void small_server_send( rocketnet_server_t * server, rocketnet_client_t * client, int slot, int c, int mode, int sequence, uint8_t tag )
+{
+    const int bytes = small_server_message_bytes( mode, sequence );
+    const int channel = mode;       // each mode on its own channel (channels are per connection; the default config has 32): a sequenced resend never shares a channel with the ordered modes
+    uint8_t * out = server ? rocketnet_server_start_message( server, (uint64_t) slot, channel, (enum rocketnet_reliability_t) mode, bytes )
+                           : rocketnet_client_start_message( client, channel, (enum rocketnet_reliability_t) mode, bytes );
+    session_check( out != NULL );
+    small_server_fill( out, bytes, tag, c, mode, sequence );
+    const uint32_t finished = server ? rocketnet_server_finish_message( server, bytes ) : rocketnet_client_finish_message( client, bytes );
+    session_check( finished != 0 );
+}
+
+static void small_server_arrival( struct small_server_track_t * track, int direction, int expected_client, const uint8_t * data, int bytes, uint8_t tag )
+{
+    session_check( bytes >= 4 && data[0] == tag );
+    const int c = data[1];
+    const int mode = data[2];
+    const int sequence = data[3];
+    session_check( c < SMALL_SERVER_MAX_CLIENTS && mode < SMALL_SERVER_MODES && sequence < SMALL_SERVER_SEQUENCES );
+    session_check( expected_client < 0 || c == expected_client );
+    session_check( bytes == small_server_message_bytes( mode, sequence ) );
+    uint8_t want[SMALL_SERVER_FRAGMENTED];
+    small_server_fill( want, bytes, tag, c, mode, sequence );
+    session_check( memcmp( want, data, (size_t) bytes ) == 0 );
+    if ( small_server_mode_reliable( mode ) )
+    {
+        session_check( ( track->got[direction][c][mode] & ( 1u << sequence ) ) == 0 );     // never twice
+    }
+    if ( small_server_mode_ordered( mode ) )
+    {
+        session_check( sequence > track->last[direction][c][mode] );
+        track->last[direction][c][mode] = sequence;
+    }
+    track->got[direction][c][mode] |= 1u << sequence;
+}
+
+static bool small_server_done( const struct small_server_track_t * track, int clients )
+{
+    const uint32_t all = ( 1u << SMALL_SERVER_SEQUENCES ) - 1;
+    for ( int direction = 0; direction < 2; ++direction )
+    {
+        for ( int c = 0; c < clients; ++c )
+        {
+            for ( int mode = 0; mode < SMALL_SERVER_MODES; ++mode )
+            {
+                const uint32_t got = track->got[direction][c][mode];
+                if ( small_server_mode_reliable( mode ) ? got != all
+                                                        : ( mode == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED ? track->last[direction][c][mode] != SMALL_SERVER_SEQUENCES - 1 : got == 0 ) )
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+static void small_server_pump( rocketnet_server_t * server, rocketnet_client_t ** clients, int count, double wall_start, struct small_server_track_t * track, uint8_t tag )
+{
+    const double now = 1000.0 + ( rocketnet_time() - wall_start );
+    for ( int c = 0; c < count; ++c )
+    {
+        rocketnet_client_update( clients[c], now );
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( clients[c] ) ) != NULL )
+        {
+            for ( int i = 0; i < batch->num_messages; ++i )
+            {
+                // outside the exchange only a late copy of this session's
+                // unreliable resends may arrive; never another session's
+                session_check( batch->bytes[i] >= 1 && batch->data[i][0] == tag );
+                if ( track )
+                {
+                    small_server_arrival( track, 1, c, batch->data[i], batch->bytes[i], tag );
+                }
+            }
+        }
+        // receipts stay readable until the next update (rocketnet.h): one read a pass
+        struct rocketnet_receipt_t receipts[64];
+        (void) rocketnet_client_receipts( clients[c], receipts, 64 );
+        rocketnet_client_send_packets( clients[c] );
+    }
+    rocketnet_server_update( server, now );
+    const struct rocketnet_message_batch_t * batch = NULL;
+    while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+    {
+        for ( int i = 0; i < batch->num_messages; ++i )
+        {
+            session_check( batch->bytes[i] >= 1 && batch->data[i][0] == tag );
+            if ( track )
+            {
+                small_server_arrival( track, 0, -1, batch->data[i], batch->bytes[i], tag );
+                session_check( batch->data[i][1] < SMALL_SERVER_MAX_CLIENTS );
+            }
+        }
+    }
+    for ( int slot = 0; slot < rocketnet_server_max_clients( server ); ++slot )
+    {
+        struct rocketnet_receipt_t receipts[64];
+        (void) rocketnet_server_receipts( server, slot, receipts, 64 );
+    }
+    rocketnet_server_send_packets( server );
+    rocketnet_sleep( 0.001 );
+}
+
+static void small_server_connect( rocketnet_client_t * client, const char * token, const char * far_netns_path )
+{
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
+    if ( far_netns_path != NULL )
+    {
+        const int self_ns = open( "/proc/self/ns/net", O_RDONLY );
+        const int far_ns = open( far_netns_path, O_RDONLY );
+        session_check( self_ns >= 0 && far_ns >= 0 );
+        session_check( setns( far_ns, CLONE_NEWNET ) == 0 );
+        status = rocketnet_client_connect( client, token );
+        session_check( setns( self_ns, CLONE_NEWNET ) == 0 );
+        close( self_ns );
+        close( far_ns );
+    }
+    else
+#else
+    (void) far_netns_path;
+#endif
+    {
+        status = rocketnet_client_connect( client, token );
+    }
+    session_check( status == ROCKETNET_STATUS_OK );
+}
+
+static void small_server_generation( rocketnet_server_t * server, rocketnet_client_t ** clients, int count, const uint8_t * backend_secret,
+                                     const char * dial_host, const char * far_netns_path, double wall_start, uint8_t tag )
+{
+    for ( int c = 0; c < count; ++c )
+    {
+        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+        session_mint_token( backend_secret, server, dial_host, ( (uint64_t) tag << 8 ) | (uint64_t) ( c + 1 ), token );
+        small_server_connect( clients[c], token, far_netns_path );
+    }
+
+    const double connect_start = rocketnet_time();
+    for ( ;; )
+    {
+        small_server_pump( server, clients, count, wall_start, NULL, tag );
+        int connected = 0;
+        for ( int c = 0; c < count; ++c )
+        {
+            connected += rocketnet_client_state( clients[c] ) == ROCKETNET_CLIENT_STATE_CONNECTED ? 1 : 0;
+        }
+        if ( connected == count && rocketnet_server_num_connected_clients( server ) == count )
+        {
+            break;
+        }
+        session_check( rocketnet_time() - connect_start < 10.0 );
+    }
+
+    int slot[SMALL_SERVER_MAX_CLIENTS];
+    for ( int c = 0; c < count; ++c )
+    {
+        slot[c] = rocketnet_client_index( clients[c] );
+        session_check( slot[c] >= 0 && slot[c] < count && rocketnet_server_client_connected( server, slot[c] ) == 1 );
+    }
+
+    // every mode both ways; the unreliable ones again each tenth pass until one arrives
+    struct small_server_track_t track;
+    memset( &track, 0, sizeof( track ) );
+    for ( int direction = 0; direction < 2; ++direction )
+    {
+        for ( int c = 0; c < count; ++c )
+        {
+            for ( int mode = 0; mode < SMALL_SERVER_MODES; ++mode )
+            {
+                track.last[direction][c][mode] = -1;
+            }
+        }
+    }
+    for ( int c = 0; c < count; ++c )
+    {
+        for ( int mode = 0; mode < SMALL_SERVER_MODES; ++mode )
+        {
+            for ( int sequence = 0; sequence < SMALL_SERVER_SEQUENCES; ++sequence )
+            {
+                small_server_send( NULL, clients[c], 0, c, mode, sequence, tag );
+                small_server_send( server, NULL, slot[c], c, mode, sequence, tag );
+            }
+        }
+    }
+    const double exchange_start = rocketnet_time();
+    for ( int pass = 1; !small_server_done( &track, count ); ++pass )
+    {
+        session_check( rocketnet_time() - exchange_start < 20.0 );
+        small_server_pump( server, clients, count, wall_start, &track, tag );
+        if ( pass % 10 == 0 )
+        {
+            for ( int c = 0; c < count; ++c )
+            {
+                for ( int mode = 0; mode < SMALL_SERVER_MODES; ++mode )
+                {
+                    if ( small_server_mode_reliable( mode ) || mode == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED )
+                    {
+                        continue;
+                    }
+                    if ( track.got[0][c][mode] == 0 )
+                    {
+                        small_server_send( NULL, clients[c], 0, c, mode, SMALL_SERVER_SEQUENCES - 1, tag );
+                    }
+                    if ( track.got[1][c][mode] == 0 )
+                    {
+                        small_server_send( server, NULL, slot[c], c, mode, SMALL_SERVER_SEQUENCES - 1, tag );
+                    }
+                }
+            }
+        }
+    }
+
+    // every client disconnects; every slot empties
+    for ( int c = 0; c < count; ++c )
+    {
+        rocketnet_client_disconnect( clients[c] );
+    }
+    const double disconnect_start = rocketnet_time();
+    for ( ;; )
+    {
+        small_server_pump( server, clients, count, wall_start, NULL, tag );
+        int disconnected = 0;
+        for ( int c = 0; c < count; ++c )
+        {
+            disconnected += rocketnet_client_disconnected( clients[c] ) ? 1 : 0;
+        }
+        if ( disconnected == count && rocketnet_server_num_connected_clients( server ) == 0 )
+        {
+            break;
+        }
+        session_check( rocketnet_time() - disconnect_start < 10.0 );
+    }
+}
+
+static void small_server_run( const char * server_transport, const char * client_transport, int count, const char * bind_host, const char * dial_host,
+                              uint16_t fixed_port, const char * far_netns_path )
+{
+    session_check( count >= 1 && count <= SMALL_SERVER_MAX_CLIENTS );
+    session_env_guard_t env_all( "ROCKETNET_TRANSPORT" );
+    session_env_guard_t env_server( "ROCKETNET_SERVER_TRANSPORT" );
+    session_env_guard_t env_client( "ROCKETNET_CLIENT_TRANSPORT" );
+    session_env_guard_t env_max_clients( "ROCKETNET_SERVER_MAX_CLIENTS" );
+
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; ++i )
+    {
+        seed[i] = (uint8_t) ( 0x5C ^ i );
+    }
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[64];
+    session_check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_server_config_t server_config;
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = SESSION_ISO_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.packet_filter, SESSION_ISO_PACKET_FILTER, sizeof( server_config.packet_filter ) );
+    server_config.max_clients = count;
+    server_config.transport = server_transport;
+
+    char bind[64];
+    snprintf( bind, sizeof( bind ), "%s:%u", bind_host, (unsigned) fixed_port );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    rocketnet_server_t * server = rocketnet_server_create( NULL, bind, NULL, &server_config, &status );
+    session_check( server != NULL && status == ROCKETNET_STATUS_OK );
+    session_check( rocketnet_server_max_clients( server ) == count );
+    session_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+    session_check( rocketnet_server_transport_name( server ) != NULL && strcmp( rocketnet_server_transport_name( server ), server_transport ) == 0 );
+
+    rocketnet_client_config_t client_config;
+    rocketnet_client_default_config( &client_config );
+    memcpy( client_config.packet_filter, SESSION_ISO_PACKET_FILTER, sizeof( client_config.packet_filter ) );
+    client_config.transport = client_transport;
+    rocketnet_client_t * clients[SMALL_SERVER_MAX_CLIENTS];
+    for ( int c = 0; c < count; ++c )
+    {
+        clients[c] = rocketnet_client_create( NULL, &client_config, &status );
+        session_check( clients[c] != NULL && status == ROCKETNET_STATUS_OK );
+    }
+
+    const double wall_start = rocketnet_time();
+    small_server_generation( server, clients, count, backend_secret, dial_host, far_netns_path, wall_start, 0xD1 );
+    small_server_generation( server, clients, count, backend_secret, dial_host, far_netns_path, wall_start, 0xD2 );
+    printf( "small server %s: %d clients, two sessions of all eight modes, %.3f s\n", server_transport, count, rocketnet_time() - wall_start );
+
+    for ( int c = 0; c < count; ++c )
+    {
+        rn_cli_client_stop_and_destroy( clients[c], 1000.0 + ( rocketnet_time() - wall_start ) );
+    }
+    rn_cli_server_stop_and_destroy( server );
+}
+
+static void small_server_counts( const char * server_transport, const char * client_transport, const char * bind_host, const char * dial_host,
+                                 uint16_t fixed_port, const char * far_netns_path )
+{
+    small_server_run( server_transport, client_transport, 1, bind_host, dial_host, fixed_port, far_netns_path );
+    small_server_run( server_transport, client_transport, 8, bind_host, dial_host, fixed_port, far_netns_path );
+    small_server_run( server_transport, client_transport, 15, bind_host, dial_host, fixed_port, far_netns_path );
+}
+
+void rocketnet_test_small_server_sessions_portable()
+{
+    small_server_counts( "portable", "portable", "127.0.0.1", "127.0.0.1", 0, NULL );
+}
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+void rocketnet_test_small_server_sessions_gso()
+{
+    small_server_counts( "gso", "gso", "127.0.0.1", "127.0.0.1", 0, NULL );
+}
+
+void rocketnet_test_small_server_sessions_io_uring()
+{
+    small_server_counts( "io_uring", "portable", "127.0.0.1", "127.0.0.1", 0, NULL );
+}
+
+#if ROCKETNET_XDP
+// 1, 8 and 15 clients: up to 15 the reply MAC table is held at its 64-entry
+// minimum (four probe windows, the smallest table the transport binds), so
+// each of these creates proves the minimum is enough to start and serve
+void rocketnet_test_small_server_sessions_xdp()
+{
+    char veth_address[128];
+    struct rocketnet_server_transport_t * initial_server = rocketnet_xdp_veth_start( false, "test_small_server_sessions_xdp", veth_address, sizeof( veth_address ) );
+    session_check( initial_server != NULL );
+    rocketnet_xdp_veth_note_server( NULL );
+    rocketnet_server_transport_stop( initial_server );
+    for ( int i = 0; i < 100 && rocketnet_server_transport_state( initial_server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED; ++i )
+    {
+        rocketnet_server_transport_update( initial_server, rocketnet_platform_time() );
+        rocketnet_platform_sleep( 0.001 );
+    }
+    rn_native_server_transport_stop_and_destroy( initial_server );
+
+#if ROCKETNET_DEV
+    rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
+    session_env_guard_t env_xdp_threads( "ROCKETNET_SERVER_NUM_XDP_THREADS" );
+    session_env_guard_t env_os_cpus( "ROCKETNET_SERVER_NUM_OS_CPUS" );
+    session_check( setenv( "ROCKETNET_SERVER_NUM_XDP_THREADS", "1", 1 ) == 0 );
+    session_check( setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "1", 1 ) == 0 );
+
+    const char * near_host = rocketnet_xdp_veth_host( false, false );
+    small_server_counts( "xdp", "portable", near_host, near_host, 40421, rocketnet_xdp_veth_netns_path() );
+    rocketnet_xdp_veth_pair_down( NULL );
+}
+#endif // #if ROCKETNET_XDP
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+void rocketnet_test_small_server_sessions_msgx()
+{
+    small_server_counts( "msgx", "msgx", "127.0.0.1", "127.0.0.1", 0, NULL );
+}
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+void rocketnet_test_small_server_sessions_iocp()
+{
+    small_server_counts( "iocp", "iocp", "127.0.0.1", "127.0.0.1", 0, NULL );
+}
+
+void rocketnet_test_small_server_sessions_rio()
+{
+    small_server_counts( "rio", "portable", "127.0.0.1", "127.0.0.1", 0, NULL );
+}
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
 void rocketnet_test_session_reconnect_isolation_portable()
 {
     session_run_isolation_pair( "portable", "portable", "127.0.0.1", "127.0.0.1", 0, 0, NULL );

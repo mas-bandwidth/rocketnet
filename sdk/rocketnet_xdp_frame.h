@@ -1423,22 +1423,28 @@ static inline bool rocketnet_xdp_stats_publish( bool read, const struct rocketne
 
 // The table holds a learned MAC for every client of the server's configured
 // max_clients at most a quarter full: four slots per sized client, rounded
-// up to a power of two for the index mask (4096 at 1000 clients). The
-// smallest table (at ROCKETNET_SERVER_MIN_SIZED_CLIENTS) is far wider than
-// one probe window, so a window never wraps onto itself.
+// up to a power of two for the index mask (4096 at 1000 clients), and never
+// fewer than ROCKETNET_XDP_REPLY_MAC_MIN_ENTRIES: four probe windows, the
+// smallest table rocketnet_xdp_reply_macs_bind takes, so a probe window never
+// wraps onto itself and the table is at most a quarter full, at any client
+// count.
 
 #define ROCKETNET_XDP_REPLY_MAC_PROBES      16
+#define ROCKETNET_XDP_REPLY_MAC_MIN_ENTRIES ( 4 * ROCKETNET_XDP_REPLY_MAC_PROBES )
 
 static inline int rocketnet_xdp_reply_mac_entries( int max_clients )
 {
-    return rocketnet_power_of_two_at_least( 4 * rocketnet_server_sized_clients( max_clients ) );
+    const int entries = rocketnet_power_of_two_at_least( 4 * rocketnet_server_sized_clients( max_clients ) );
+    return entries > ROCKETNET_XDP_REPLY_MAC_MIN_ENTRIES ? entries : ROCKETNET_XDP_REPLY_MAC_MIN_ENTRIES;
 }
 
 // the entries at the default configuration, for storage a test declares statically
 #define ROCKETNET_XDP_REPLY_MAC_DEFAULT_ENTRIES     ROCKETNET_POWER_OF_TWO_AT_LEAST( 4 * ROCKETNET_DEFAULT_MAX_CLIENTS )
 
-ROCKETNET_STATIC_ASSERT( ROCKETNET_POWER_OF_TWO_AT_LEAST( 4 * ROCKETNET_SERVER_MIN_SIZED_CLIENTS ) >= 4 * ROCKETNET_XDP_REPLY_MAC_PROBES,
-                         "the smallest reply MAC table is wider than a probe window" );
+ROCKETNET_STATIC_ASSERT( ( ROCKETNET_XDP_REPLY_MAC_MIN_ENTRIES & ( ROCKETNET_XDP_REPLY_MAC_MIN_ENTRIES - 1 ) ) == 0,
+                         "the reply MAC table's minimum is a power of two for the index mask" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_REPLY_MAC_MIN_ENTRIES <= 4 * 512,
+                         "the reply MAC table's minimum never reaches a server of 512 or more clients" );
 
 #define ROCKETNET_XDP_REPLY_MAC_EMPTY       0
 #define ROCKETNET_XDP_REPLY_MAC_LIVE        1
@@ -1474,7 +1480,7 @@ static inline void rocketnet_xdp_reply_macs_reset( struct rocketnet_xdp_reply_ma
 static inline bool rocketnet_xdp_reply_macs_bind( struct rocketnet_xdp_reply_macs_t * table, struct rocketnet_xdp_reply_mac_entry_t * entries, int count )
 {
     memset( table, 0, sizeof( *table ) );
-    if ( !entries || count < 4 * ROCKETNET_XDP_REPLY_MAC_PROBES || ( count & ( count - 1 ) ) != 0 )
+    if ( !entries || count < ROCKETNET_XDP_REPLY_MAC_MIN_ENTRIES || ( count & ( count - 1 ) ) != 0 )
     {
         return false;
     }

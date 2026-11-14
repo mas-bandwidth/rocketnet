@@ -749,7 +749,8 @@ static int trace_fill_phase( uint64_t seed, int steps, const char * out )
     // every compiler: it is built in static storage of its own alignment
     alignas( rocketnet_fill_phase_t ) static unsigned char phase_memory[sizeof( rocketnet_fill_phase_t )];
     walk->phase = new ( phase_memory ) rocketnet_fill_phase_t();
-    rocketnet_fill_phase_init( walk->phase, FP_CLIENTS, &walk->overlaps, &walk->two_fillers );
+    static rocketnet_fill_phase_client_t phase_clients[FP_CLIENTS];
+    rocketnet_fill_phase_init( walk->phase, FP_CLIENTS, phase_clients, &walk->overlaps, &walk->two_fillers );
 
     // as the server makes it: not armed until the game names a client, which
     // the walk does once, after FP_ARM_AT records of skipped calls (RNFillPhase Arm)

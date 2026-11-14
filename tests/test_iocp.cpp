@@ -3099,17 +3099,19 @@ static void test_windows_transports_sized_by_max_clients()
     printf( "test_windows_transports_sized_by_max_clients iocp_plan_%d=%llu rio_plan_%d=%llu rio_region_%d=%llu iocp_plan_4=%llu rio_plan_4=%llu\n",
             large_clients, (unsigned long long) iocp_large, large_clients, (unsigned long long) rio_large, large_clients,
             (unsigned long long) region_large, (unsigned long long) iocp_small, (unsigned long long) rio_small );
-    CHECK( iocp_small > 0 && ( large_clients > ROCKETNET_SERVER_MIN_SIZED_CLIENTS ? iocp_small < iocp_large : iocp_small == iocp_large ) );
-    CHECK( rio_small > 0 && ( large_clients > ROCKETNET_SERVER_MIN_SIZED_CLIENTS ? rio_small < rio_large : rio_small == rio_large ) && region_large > 0 );
+    CHECK( iocp_small > 0 && iocp_small < iocp_large );
+    CHECK( rio_small > 0 && rio_small < rio_large && region_large > 0 );
     CHECK( rocketnet_server_iocp_allocation_bytes( 1, ROCKETNET_MAX_CLIENTS ) >= iocp_large );
     CHECK( rocketnet_server_iocp_allocation_bytes( 1, 0 ) == 0 && rocketnet_server_iocp_allocation_bytes( 1, ROCKETNET_MAX_CLIENTS + 1 ) == 0 );
     CHECK( rocketnet_server_rio_allocation_bytes( 0 ) == 0 && rocketnet_server_rio_allocation_bytes( ROCKETNET_MAX_CLIENTS + 1 ) == 0 );
-    // the send lanes, sized by rate: the 512-client sizing floor is four
+    // the send lanes, sized by rate from the configured count: 4 clients is
+    // one lane of 2048 (every client slot and the 1024 headroom), 512 is four
     // lanes of 4096, and a lane stages at most 4096, or the smallest power of
     // two holding every client slot and the headroom when that is more (above
     // 3072 clients); the total stays within the 65536 operations the packet
     // handle's index bits name
-    CHECK( rocketnet_server_iocp_send_lanes( 4 ) == 4 && rocketnet_server_iocp_send_queue_size( 4 ) == ROCKETNET_IOCP_LANE_PACKETS );
+    CHECK( rocketnet_server_iocp_send_lanes( 4 ) == 1 && rocketnet_server_iocp_send_queue_size( 4 ) == 2048 );
+    CHECK( rocketnet_server_iocp_send_lanes( 512 ) == 4 && rocketnet_server_iocp_send_queue_size( 512 ) == ROCKETNET_IOCP_LANE_PACKETS );
     {
         const int sized = rocketnet_server_sized_clients( large_clients );
         const int floor_packets = rocketnet_power_of_two_at_least( sized + ROCKETNET_IOCP_LANE_HEADROOM );

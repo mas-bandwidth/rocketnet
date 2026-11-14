@@ -455,13 +455,16 @@ static void test_network_threads_plan_per_transport()
     rocketnet_test_env_restore();
 #endif // #if ROCKETNET_DEV
 
-    // the iocp send threads against the send lanes. max_clients 64 is sized
-    // as ROCKETNET_SERVER_MIN_SIZED_CLIENTS (512): 4 send lanes, so 2 send
-    // threads are legal and the plan counts them beside the completion
-    // workers; one more thread than there are lanes is refused (a thread with
-    // no lane would never post), the plan does not compute, and a list of
-    // iocp alone has no size
+    // the iocp send threads against the send lanes. max_clients 512 has 4
+    // send lanes, so 2 send threads are legal and the plan counts them beside
+    // the completion workers; one more thread than there are lanes is refused
+    // (a thread with no lane would never post), the plan does not compute,
+    // and a list of iocp alone has no size. A server of 64 clients has one
+    // lane and so one send thread.
     config.max_clients = 64;
+    check( rocketnet_server_iocp_send_lanes( config.max_clients ) == 1 );
+    check( rocketnet_server_iocp_send_threads( rocketnet_server_iocp_send_lanes( config.max_clients ) ) == 1 );
+    config.max_clients = 512;
     const int iocp_lanes = rocketnet_server_iocp_send_lanes( config.max_clients );
     check( iocp_lanes == 4 );
     rocketnet_server_memory_plan_t iocp_plan;
@@ -507,7 +510,7 @@ static void test_network_threads_plan_per_transport()
     struct rocketnet_server_config_t server_config;
     check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
     server_config.transport = "iocp";
-    server_config.max_clients = 64;
+    server_config.max_clients = 512;
     static const uint8_t filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x49, 0x4F, 0x43, 0x50 };
     memcpy( server_config.packet_filter, filter, sizeof( server_config.packet_filter ) );   // a production build refuses the test filter
     check( rocketnet_server_required_memory( &server_config ) > 0 );
