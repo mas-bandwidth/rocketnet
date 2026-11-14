@@ -388,6 +388,57 @@ def host_os():
     return {"Linux": "linux", "Darwin": "macos", "Windows": "windows"}.get(system, system.lower())
 
 
+class BashError(Exception):
+    pass
+
+
+_BASH = []
+
+
+def posix_bash():
+    """The bash the rows are written for, by its full path on Windows.
+
+    A bare "bash" there is found by CreateProcess, which searches python's own
+    directory, the current directory and System32 before PATH: on a host with
+    WSL that is C:\\Windows\\System32\\bash.exe, whose Linux does not see this
+    checkout's Windows paths (six self-test cases failed so on captain,
+    2026-11-14). The rows mean the bash of the runner's `shell: bash` steps,
+    Git's: the first bash.exe in a PATH directory outside %SystemRoot%. It must
+    be a POSIX shell that sees this file, or the run stops naming the path."""
+    if _BASH:
+        return _BASH[0]
+    if os.name != "nt":
+        _BASH.append("bash")
+        return "bash"
+    system_root = os.path.normcase(os.path.abspath(os.environ.get("SystemRoot", r"C:\Windows")))
+    found = None
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        folder = folder.strip('"')
+        if not folder:
+            continue
+        full = os.path.normcase(os.path.abspath(folder))
+        if full == system_root or full.startswith(system_root + os.sep):
+            continue
+        if os.path.isfile(os.path.join(folder, "bash.exe")):
+            found = os.path.join(folder, "bash.exe")
+            break
+    if not found:
+        raise BashError(f"no bash.exe in a PATH directory outside {system_root}: install Git for Windows "
+                        "and put its bin directory on PATH")
+    here = Path(__file__).resolve().as_posix()
+    try:
+        probe = subprocess.run([found, "-c", 'uname -s; if [ -f "$1" ]; then echo SEES-CHECKOUT; fi', "probe", here],
+                               capture_output=True, text=True, timeout=60)
+        said = (probe.stdout + probe.stderr).strip()
+    except (OSError, subprocess.TimeoutExpired) as error:
+        said = str(error)
+    if "SEES-CHECKOUT" not in said or said.startswith("Linux"):
+        raise BashError(f"{found} is not a POSIX shell that sees this checkout (it could not find {here}): "
+                        f"{' | '.join(said.splitlines())[:300]}")
+    _BASH.append(found)
+    return found
+
+
 def apply_plants(row, tree, source_root):
     for plant in split_plants(row["plant"]):
         parsed = parse_plant(plant, row["id"])
@@ -457,7 +508,7 @@ def run_script(script, tree, timeout):
     kwargs = {}
     if os.name == "posix":
         kwargs["start_new_session"] = True
-    proc = subprocess.Popen(["bash", "-euo", "pipefail", "-c", script], cwd=tree, env=env,
+    proc = subprocess.Popen([posix_bash(), "-euo", "pipefail", "-c", script], cwd=tree, env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kwargs)
     try:
         data, _ = proc.communicate(timeout=timeout)
@@ -606,7 +657,14 @@ def run(argv, root=ROOT, out=say, checkout=scratch_checkout):
     selected = [r for r in selected if r["skip"] == "-"]
     for row in skipped:
         out(f"PLANT-SKIP {row['id']} ({row['skip']})")
-    base = Path(args.scratch).resolve() if args.scratch else Path(tempfile.mkdtemp(prefix="planted-violations-"))
+    try:
+        posix_bash()
+    except BashError as error:
+        out(f"planted-violations: {error}")
+        return 2
+    # absolute first: Path.resolve() of a path that does not exist yet stays relative on Windows
+    # before Python 3.10, and git worktree add would then read it against the repo, not the caller
+    base = Path(os.path.abspath(args.scratch)).resolve() if args.scratch else Path(tempfile.mkdtemp(prefix="planted-violations-"))
     base.mkdir(parents=True, exist_ok=True)
     counts = {"RED": 0, "GREEN": 0, "BROKEN": 0, "HUNG": 0}
     slots = queue.Queue()
@@ -652,10 +710,18 @@ def run(argv, root=ROOT, out=say, checkout=scratch_checkout):
 def self_test(out=say):
     failures = []
 
-    def expect(name, condition):
+    def expect(name, condition, seen=None):
         if not condition:
             failures.append(name)
             out(f"self-test FAIL: {name}")
+            for line in seen or []:
+                out(f"self-test FAIL:   saw: {line}")
+
+    try:
+        out(f"planted-violations self-test: rows run under {posix_bash()}")
+    except BashError as error:
+        out(f"planted-violations self-test: {error}")
+        return 1
 
     with tempfile.TemporaryDirectory() as tmp:
         repo = Path(tmp) / "repo"
@@ -725,8 +791,8 @@ def self_test(out=say):
 
         # a check that catches its plant: RED, and the scratch tree is gone (no plant left behind)
         code, lines = go(complete, "--only", "w/good,w/matrixed")
-        expect("catching check is PLANT-RED", has(lines, "PLANT-RED w/good :: check: BAD found in data.txt"))
-        expect("matrix step filled in is PLANT-RED", has(lines, "PLANT-RED w/matrixed"))
+        expect("catching check is PLANT-RED", has(lines, "PLANT-RED w/good :: check: BAD found in data.txt"), lines)
+        expect("matrix step filled in is PLANT-RED", has(lines, "PLANT-RED w/matrixed"), lines)
 
         # a setup step's $GITHUB_ENV line reaches the checked step, as on the runner
         stepenv = ["w/stepenv", "w.yml", "matrixed", "Check ${{ matrix.part }}", "linux", "-",
@@ -741,7 +807,7 @@ def self_test(out=say):
         finally:
             os.chdir(here)
         expect("a setup step's GITHUB_ENV reaches the check (relative --scratch)",
-               has(env_lines, "PLANT-RED w/stepenv") and env_code == 0)
+               has(env_lines, "PLANT-RED w/stepenv") and env_code == 0, env_lines)
         # a STEP_BREAK line hands one setup step's $GITHUB_ENV to the next setup step
         wrote = 'echo PLANTED_PART=a >> "$GITHUB_ENV"'
         needs = '[ "${PLANTED_PART:-}" = a ] || exit 3'
@@ -750,16 +816,16 @@ def self_test(out=say):
                       "sh check.sh ${PLANTED_PART}.txt", r"check: BAD found in a\.txt"]
         code_b, lines_b = go([good, lazy, matrixed, uncovered, broken_row], "--only", "w/stepbreak")
         expect("without a step break the next setup step does not see GITHUB_ENV (BROKEN)",
-               has(lines_b, "PLANT-BROKEN w/stepbreak") and code_b == 1)
+               has(lines_b, "PLANT-BROKEN w/stepbreak") and code_b == 1, lines_b)
         broken_row[7] = f"{wrote}\\n{STEP_BREAK}\\n{needs}"
         code_b, lines_b = go([good, lazy, matrixed, uncovered, broken_row], "--only", "w/stepbreak")
         expect("a step break hands GITHUB_ENV to the next setup step (RED)",
-               has(lines_b, "PLANT-RED w/stepbreak") and code_b == 0)
+               has(lines_b, "PLANT-RED w/stepbreak") and code_b == 0, lines_b)
         expect("all red, complete table exits 0", code == 0)
         expect("the plant did not touch the real tree", (repo / "data.txt").read_text() == "fine\n")
         # a check that does not catch its plant
         code, lines = go(complete, "--only", "w/lazy")
-        expect("lazy check is PLANT-GREEN", has(lines, "PLANT-GREEN w/lazy (the check did not catch its plant"))
+        expect("lazy check is PLANT-GREEN", has(lines, "PLANT-GREEN w/lazy (the check did not catch its plant"), lines)
         expect("a GREEN row exits 1", code == 1)
         # a missing row (job with no row) is red even when every run row is red
         code, lines = go([good, lazy, matrixed], "--only", "w/good")
