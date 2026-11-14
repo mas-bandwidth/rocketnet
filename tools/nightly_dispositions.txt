@@ -26,3 +26,40 @@
 # #735, #767, #775) are merged or closed. All 21 were removed; today's reds are
 # unowned and the watch reports them as NEW-RED / NO-VERDICT until someone
 # takes them.
+#
+# 2026-11-14: rows from the nightly triage of the runs on main since
+# 2026-11-13 22:00 UTC (v1.2.0 is being cut; these are recorded, not fixed).
+# Each cause names its docs/roadmap.sexp item; GUESS marks a class not yet
+# proven. Left without a row on purpose, because they are being fixed in
+# flight: nightly-toolchains v142 (sodium.c C4197), nightly-soak low-tick,
+# nightly-ci macOS checks (fuzz seed drift), and nightly.yml macOS functional
+# (reply-opens). nightly-ci ubuntu 22.04 container and the 22.04 VM were the
+# gcc 11 warning fixed by 2b8c6106 and go green at their next scheduled run.
+fuzz-nightly.yml	nightly fuzz macOS (	glenn	2026-11-14	GUESS: FUZZ-EXECS-FLOOR on loaded macOS hosts (client 4408/6003, server 4430/9000), not a measured regression; roadmap fuzz-execs-floor-loaded-hosts
+nightly-bigendian-system.yml	s390x full system	glenn	2026-11-14	fixed 10 s shutdown bound (examples/shutdown.h:30) and other real-time bounds trip in the emulated guest; alone it passes 3/3; roadmap s390x-real-time-bounds
+nightly-channel-seeds.yml	channel-seed-sweep	glenn	2026-11-14	GUESS: test_block_resend_cost_over_long_path reason=one on rolling seeds (4917323, 4914435), class not read; roadmap channel-seed-block-resend-cost
+nightly-ci.yml	full / windows / Release / unit	glenn	2026-11-14	test waited 1800 s for the machine-wide commit lock (tests/suite_runner.h:1725), shared by both runner slots on a host; roadmap windows-commit-lock-machine-wide
+nightly-ci.yml	full / platform selftests / macos	glenn	2026-11-14	GUESS: soak argument and summary selftest, leg 9 (send fault), --seconds 3 exited 1; roadmap macos-soak-selftest-send-fault
+nightly-ci.yml	full / macos / Release / functional_production	glenn	2026-11-14	test_receive_drops_oversize_datagram watchdog on a loaded macOS runner (rocketnet_functional_tests.cpp:2880 at 21543f689); roadmap macos-oversize-datagram-watchdog
+nightly-dst.yml	dst-	glenn	2026-11-14	handshake rows start=2 c2s-dark end -4 after W2-51 (e04c7f45), which tests/dst_outage.h:1107 does not allow; 450 FAILs per OS, deterministic; roadmap dst-handshake-escaped-request
+nightly-examples.yml	windows-2025	glenn	2026-11-14	WinError 1314 at tools/run_examples.py:153 symlink_to: the runner account lacks the symlink privilege; roadmap examples-windows-symlink-privilege
+nightly-framework.yml	framework on rocketnet main	glenn	2026-11-14	FRAMEWORK_READ_TOKEN is not set for the workflow; roadmap nightly-runner-setup-gaps
+nightly-real-load.yml	1000 clients over the LAN	glenn	2026-11-14	no inventory file on the runner; roadmap nightly-runner-setup-gaps
+nightly-soak.yml	soak (main / windows)	glenn	2026-11-14	test_secrets_wiped_destroy_writes_only_keys waited 1800 s for the machine-wide commit lock (tests/suite_runner.h:1725); roadmap windows-commit-lock-machine-wide
+nightly-toolchains.yml	windows / v145	glenn	2026-11-14	Configure: MSVC 14.52 not installed on the runner the label picked; roadmap nightly-runner-setup-gaps
+nightly-toolchains.yml	windows / v143	glenn	2026-11-14	MSB8020: toolset v143 missing on the aws-win runner the label picked; roadmap nightly-runner-setup-gaps
+nightly-toolchains.yml	windows / v141	glenn	2026-11-14	MSB8020: toolset v141 missing on the aws-win runner the label picked (on captain v141 builds and hits rocketnet_platform.h __iso_volatile_load64, fixed elsewhere); roadmap nightly-runner-setup-gaps
+nightly-toolchains.yml	linux / clang-18	glenn	2026-11-14	exact delivery over real sockets under host load (rocketnet_functional_tests.cpp:9171 tag == num_seen; earlier 1201/1280 with SEND_FAILED=79); roadmap exact-delivery-asserts
+nightly-ubuntu-lts-vms.yml	ubuntu 24.04 vm	glenn	2026-11-14	gpg-agent fails in the cloud image verify step on the runner; roadmap nightly-runner-setup-gaps
+nightly-windows-sanitizers.yml	windows appverif	glenn	2026-11-14	APPVERIF-REFUSED: NETWORK SERVICE cannot write the HKLM IFEO key; roadmap nightly-runner-setup-gaps
+nightly-windows-sanitizers.yml	windows clangcl-asan	glenn	2026-11-14	clang-cl Debug build: lld __cpu_model undefined, duplicate operator new/delete, harden_load.cpp sign and shorten warnings; roadmap clang-cl-test-build-warnings
+nightly.yml	linux / Release functional nightly tier	glenn	2026-11-14	env pin ROCKETNET_SERVER_TRANSPORT=portable makes the placement cases cast a portable server to gso/uring (signal 11); roadmap env-pinned-placement-cast
+nightly.yml	windows / Release functional nightly tier	glenn	2026-11-14	receive latency client_iocp: a message never arrived (exact delivery over real sockets); roadmap exact-delivery-asserts
+nightly.yml	windows / clang-cl x64	glenn	2026-11-14	windows_socket_errors.cpp missing field 'client' initializer under -Werror, lld __cpu_model undefined; roadmap clang-cl-test-build-warnings
+nightly.yml	linux / mutation	glenn	2026-11-14	194 new survivors in the daily slice against tools/mutation/survivors.tsv; roadmap mutation-slice-survivors
+nightly.yml	linux / transport cells x50	glenn	2026-11-14	GUESS: every suite cell red, the failing case is only in the per-cell artifacts; roadmap linux-transport-cells-x50
+nightly.yml	windows / Debug	glenn	2026-11-14	tools/check_memory.py:24 hard-codes iocp workers (3); v1.1.61 plans 2; roadmap check-memory-worker-table
+planted-violations.yml	planted violations / Windows	glenn	2026-11-14	GUESS: self-test fails 6 on captain: tools/planted_violations.py:460 Popen bash likely starts WSL bash from System32; roadmap planted-self-test-wsl-bash
+planted-violations.yml	planted violations / macOS	glenn	2026-11-14	PLANT-GREEN nightly-frame-budget/macos: VOID under the planted run's own host load, so the plant cannot be caught; roadmap planted-frame-budget-void
+tlc.yml	TLA+ trace check	glenn	2026-11-14	rolling seeds where the plant never fires or changes no record, and one no-behaviour plant; roadmap trace-plant-never-fires, tlc-plant-behaviour-not-printed
+tlc.yml	TLC re-run slice	glenn	2026-11-14	MCClientConnectionLCrash past its 900 s budget and MCRNClientIoDecrypt counts differ from their records; roadmap tlc-timeout-debt, client-io-decrypt-receive-half, nightly-debt-row-input-fingerprint
