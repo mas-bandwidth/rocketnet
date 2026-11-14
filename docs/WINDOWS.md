@@ -109,14 +109,16 @@ rio transport: port 40000, 1 lane (one socket and I/O worker each), 4096 receive
 Because `rio` ranks after `iocp`, `auto` reaches it only when `iocp` refuses;
 set it to run it. The list `rio,iocp` runs `rio` and falls to `iocp` where
 `rio` refuses: for example when Winsock offers no Registered I/O function
-table, when `num_rio_lanes` is negative or above 32 (0 is the default), when
-more than one lane is asked for on the wildcard or an IPv4-mapped address,
-when another socket holds the lanes' address and port, when its memory plan
-exceeds the operator's memory budget, or when any other step of its create
-fails. A region that cannot be allocated or registered for want of memory is
-the exception: that ends the start with `OUT_OF_MEMORY` and does not fall to
-`iocp` ("What the host needs", below). Each refusal is logged with its
-reason. With no bind address a server runs one `rio` lane, which does not
+table, when more than one lane is asked for on the wildcard or an IPv4-mapped
+address, when another socket holds the lanes' address and port, when its
+memory plan exceeds the operator's memory budget, or when any other step of
+its create fails. A region that cannot be allocated or registered for want of
+memory is the exception: that ends the start with `OUT_OF_MEMORY` and does not
+fall to `iocp` ("What the host needs", below). Each refusal is logged with its
+reason. An invalid configuration is not a refusal: a `num_rio_lanes` other
+than 0 (the default) or 1 to 32 fails configuration validation with
+`CONFIG_OUT_OF_RANGE` before any transport in the list is tried, so `iocp`
+does not stand in for it. With no bind address a server runs one `rio` lane, which does not
 hold the peak, as `iocp` runs one completion worker (below).
 How its send phases and receive banks change hands is in
 TRANSPORTS.md, "The RIO server transport".
@@ -124,9 +126,9 @@ TRANSPORTS.md, "The RIO server transport".
 ### To reach 10 Gb/s on Windows set a bind address
 
 The defaults are 5 RIO lanes, or 2 IOCP completion workers with 2 send
-threads: the counts that sent the peak load to 1000 players at 60 Hz, about
-900,000 packets a second (an estimated 9.39 Gb/s, from the packet rate), on
-the machines in [PERFORMANCE.md](PERFORMANCE.md). Measure yours. More than
+threads: the counts that sent the peak load to 1000 players at 60 Hz on the
+machines in [PERFORMANCE.md](PERFORMANCE.md), which gives the measured rates.
+Measure yours. More than
 one lane or worker shares the port by processor, and Windows allows that only
 on a specific local address, so those defaults need a bind address. Set the network card's address
 in the config, `bind_ipv4_address` (or `bind_ipv6_address`), or in the
@@ -192,10 +194,14 @@ server that runs the default or falls back to it.
 
 The network card's work, its interrupts and the deferred procedure calls
 (DPCs) that follow them, runs ahead of every thread on the processor it lands
-on. The `rio` lane workers and `iocp` completion workers run at
-`THREAD_PRIORITY_TIME_CRITICAL` by default (unless `rocketnet_thread_priority(
-false )`, below), so a thread at normal priority cannot take their processors;
-a realtime-class thread, interrupts and DPCs can. For `rio`, receive work
+on. By default the SDK asks Windows to run the `rio` lane workers and `iocp`
+completion workers at `THREAD_PRIORITY_TIME_CRITICAL` (unless
+`rocketnet_thread_priority( false )`, below). Where Windows grants it, a
+thread at normal priority cannot take their processors; a realtime-class
+thread, interrupts and DPCs can. Where Windows refuses it, the server logs
+`thread priority: SetThreadPriority THREAD_PRIORITY_TIME_CRITICAL refused
+(...); the thread runs at its default priority`, and the workers have no
+such protection. For `rio`, receive work
 belongs on each lane's socket processor (`2l`) and never on its worker's
 (`2l + 1`); step 3 above places RSS that way. For `iocp`, see "IOCP at 10
 Gb/s" below.
@@ -316,10 +322,13 @@ refusal of a name no build knows.
 
 No transport needs an elevated process. By default `rocketnet_init` asks
 Windows for a 1 ms timer period (`timeBeginPeriod( 1 )`) and `rocketnet_term`
-releases it (`timeEndPeriod( 1 )`), and each network thread `iocp` and `rio`
-create is set to `THREAD_PRIORITY_TIME_CRITICAL`. So is every client's own
-network thread, whatever its transport, `portable` included: a game that
-creates a client has one time-critical thread in its process. Call
+releases it (`timeEndPeriod( 1 )`), and the SDK asks for each network thread
+`iocp` and `rio` create to run at `THREAD_PRIORITY_TIME_CRITICAL`. So it does
+for every client's own network thread, whatever its transport, `portable`
+included: a game that creates a client asks for one time-critical thread in
+its process. Windows can refuse; the refusal is logged once ("... refused
+...; the thread runs at its default priority") and the thread runs at its
+default priority. Call
 `rocketnet_thread_priority( false )` before init to skip both if the game sets
 the timer period and priorities itself (`sdk/rocketnet.h`).
 
