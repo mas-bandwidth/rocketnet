@@ -1589,8 +1589,8 @@ void rocketnet_test_transport_start_finish_shape()
     // count covers it. That count is the kernel's count of lost datagrams
     // since the case began:
     // - macOS: the datagrams this process's own sockets sent that none of them
-    //   received, plus udps_fullsock. udps_fullsock is machine-wide, so
-    //   another process's drops raise it too.
+    //   received, and at most the loopback interface's drops: each alone could
+    //   cover a datagram the library lost or misaddressed.
     // - Linux: the drops of this process's own sockets.
     // - Elsewhere: nothing, and the gate refuses every resend.
     //
@@ -10668,8 +10668,8 @@ void rocketnet_test_transport_reply_opens_a_later_update()
     // the first sends, only when the gate's count covers them. That count is
     // the kernel's count of lost datagrams since the case began:
     // - macOS: the datagrams this process's own sockets sent that none of them
-    //   received, plus udps_fullsock. udps_fullsock is machine-wide, so
-    //   another process's drops raise it too.
+    //   received, and at most the loopback interface's drops: each alone could
+    //   cover a datagram the library lost or misaddressed.
     // - Linux: the drops of this process's own sockets.
     // - Elsewhere: nothing, and the gate refuses every resend.
     //

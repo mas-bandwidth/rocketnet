@@ -30,16 +30,27 @@
 // sockets count. A machine-wide counter does not do here: on a loaded Linux
 // bench (vision, 2026-11-12) Udp InErrors rose by 309 and by 11171 during one
 // case, which would admit a resend for a loss the library made.
-// macOS: two counts added. The datagrams this process's own sockets sent and
-// none of them received, from the kernel's per-socket packet counts (below:
-// a loss under machine load that no drop counter of macOS sees); and
-// net.inet.udp.stats udps_fullsock ("dropped due to full socket buffers"),
-// which is machine-wide: another process's drops raise it too, so on a loaded
-// Mac the gate can admit a resend the case's own datagrams did not need. The
-// printed line names the delta every time. Measured on the studio,
-// 2026-11-12: a 2000-datagram burst to a 127.0.0.1 socket lost 1149, 1947
-// and 1987 datagrams at three receive buffer sizes, and udps_fullsock rose by
-// exactly 1149, 1947 and 1987; idle, it did not move between reads.
+// macOS: the datagrams this process's own sockets sent and none of them
+// received, from the kernel's per-socket packet counts (below), and no more
+// than the loopback interface's own drop count (lo0's input and send queue
+// drops) rose since the case began. Each alone admits what the library lost:
+// - this process's sent-not-received also counts a datagram the library sent
+//   to a wrong address or port, which no socket of this process receives;
+// - lo0's drops are the machine's: another process's loopback burst raises it.
+// A loss is the kernel's only when both say so. Measured on the studio,
+// 2026-11-14, under the looping functional suite: every 0.3 s window in which
+// a pair of this process's loopback sockets lost datagrams in transit (sent,
+// never counted at the receiver) saw lo0's drops rise by more (129 lost with
+// 1640 drops, 264 with 6560, 345 with 4920; 12 windows of 12), and under a
+// loopback flood every honest loss the gated cases asked about was admitted.
+// udps_fullsock is not read: it is machine-wide, it moved in 41 of 60 5 s
+// windows of that suite (36 by 100 or more, up to 15964), and in 9 of those
+// 12 transit losses it did not move at all. A datagram dropped at one of this
+// process's own full receive buffers is not admitted: the per-socket receive
+// count rises before the buffer is checked (a 2000-datagram burst into an
+// 8 KB buffer counted 2000 received and delivered 43), so no count of this
+// process's own sees that drop, and the case fails; the transport sockets'
+// buffers are large enough that the suite has not shown one.
 // Windows: no counter is read; the gate never admits a resend there.
 
 #include <stdint.h>
@@ -54,6 +65,8 @@
 #include <netinet/udp.h>
 #include <netinet/ip_var.h>
 #include <netinet/udp_var.h>
+#include <net/if.h>
+#include <net/if_mib.h>
 #endif // #if defined( __APPLE__ )
 
 #define ROCKETNET_LOSS_GATE_WAIT 2.0        // seconds a case waits for what it sent before it asks the gate
@@ -378,19 +391,43 @@ static inline int64_t rocketnet_kernel_own_lost_since( const struct rocketnet_ke
 
 #endif // #if defined( __APPLE__ )
 
-// the kernel's count of UDP datagrams it dropped on receive (per platform above)
+#if defined( __APPLE__ )
+
+// the loopback interface's drops, input queue and send queue: the 32-bit
+// counts, which the caller differences modulo 2^32; 0 when lo0 is not found
+
+static inline uint32_t rocketnet_kernel_loopback_drops()
+{
+    int count = 0;
+    size_t bytes = sizeof( count );
+    int count_mib[] = { CTL_NET, PF_LINK, NETLINK_GENERIC, IFMIB_SYSTEM, IFMIB_IFCOUNT };
+    if ( sysctl( count_mib, 5, &count, &bytes, NULL, 0 ) != 0 )
+    {
+        return 0;
+    }
+    // interface rows are numbered from 1 and may have holes, so look past the count
+    for ( int row = 1; row <= count + 16; row++ )
+    {
+        struct ifmibdata data;
+        bytes = sizeof( data );
+        int mib[] = { CTL_NET, PF_LINK, NETLINK_GENERIC, IFMIB_IFDATA, row, IFDATA_GENERAL };
+        if ( sysctl( mib, 6, &data, &bytes, NULL, 0 ) == 0 && strcmp( data.ifmd_name, "lo0" ) == 0 )
+        {
+            return (uint32_t) data.ifmd_data.ifi_iqdrops + (uint32_t) data.ifmd_snd_drops;
+        }
+    }
+    return 0;
+}
+
+#endif // #if defined( __APPLE__ )
+
+// the kernel's count of UDP datagrams it dropped (per platform above; on macOS
+// the loopback interface's, which the gate backs with this process's own counts)
 
 static inline uint64_t rocketnet_kernel_udp_receive_drops()
 {
 #if defined( __APPLE__ )
-    struct udpstat stats;
-    size_t bytes = sizeof( stats );
-    memset( &stats, 0, sizeof( stats ) );
-    if ( sysctlbyname( "net.inet.udp.stats", &stats, &bytes, NULL, 0 ) != 0 )
-    {
-        return 0;
-    }
-    return (uint64_t) stats.udps_fullsock;
+    return rocketnet_kernel_loopback_drops();
 #elif defined( __linux__ )
     static unsigned long inodes[ROCKETNET_KERNEL_DROPS_MAX_SOCKETS];
     const int num_inodes = rocketnet_kernel_drops_own_sockets( inodes, ROCKETNET_KERNEL_DROPS_MAX_SOCKETS );
@@ -403,9 +440,8 @@ static inline uint64_t rocketnet_kernel_udp_receive_drops()
 // what the count covers, printed with every gate decision
 
 #if defined( __APPLE__ )
-#define ROCKETNET_LOSS_GATE_SCOPE                                                                                                   \
-    "the datagrams this process's own sockets sent and none of them received, plus udps_fullsock, which is machine-wide (WEAK: " \
-    "another process's full-buffer drops can permit a resend the case did not need)"
+#define ROCKETNET_LOSS_GATE_SCOPE \
+    "the datagrams this process's own sockets sent and none of them received, at most the loopback interface's drops since the case began"
 #elif defined( __linux__ )
 #define ROCKETNET_LOSS_GATE_SCOPE "the drops of this process's own sockets"
 #else
@@ -441,15 +477,18 @@ static inline void rocketnet_loss_gate_begin( struct rocketnet_loss_gate_t * gat
 static inline uint64_t rocketnet_loss_gate_drops( const struct rocketnet_loss_gate_t * gate )
 {
     const uint64_t now = rocketnet_kernel_udp_receive_drops();
-    uint64_t drops = now >= gate->drops_at_start ? now - gate->drops_at_start : 0;
 #if defined( __APPLE__ )
+    // this process's sent-not-received, backed by lo0's drops: the smaller of the two
+    const uint64_t loopback_drops = (uint32_t) ( (uint32_t) now - (uint32_t) gate->drops_at_start );
     const int64_t own_lost = rocketnet_kernel_own_lost_since( gate->own_at_start, gate->num_own_at_start );
-    if ( own_lost > 0 )
-    {
-        drops += (uint64_t) own_lost;
-    }
+    const uint64_t own = own_lost > 0 ? (uint64_t) own_lost : 0;
+    printf( "%s: macOS loss evidence: this process's sockets sent %lld datagrams none of them received; lo0 dropped %llu\n", gate->name,
+            (long long) own_lost, (unsigned long long) loopback_drops );
+    fflush( stdout );
+    return own < loopback_drops ? own : loopback_drops;
+#else
+    return now >= gate->drops_at_start ? now - gate->drops_at_start : 0;
 #endif // #if defined( __APPLE__ )
-    return drops;
 }
 
 // a case is short of `missing` datagrams after its wait: true when the kernel
