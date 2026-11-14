@@ -41,7 +41,10 @@
     count at the end may exceed the warm count only by THE WINSOCK THREAD
     HANDLES (tests/process_resources.h, the allowance the soak takes) for each
     SDK thread live at the end sample: 0 in the create/destroy cases, so one
-    handle left behind, once or per cycle, fails.
+    handle left behind, once or per cycle, fails. In the connect_disconnect
+    and server_restart cases the server's threads are still live at the end
+    sample, so the allowance is 2 handles per live library thread there, and a
+    one-off leak of up to that many passes; a leak per cycle still fails.
 
     The cells are the Windows server transports (portable, iocp, rio), each
     with the portable client, and each case is one function per cell:
