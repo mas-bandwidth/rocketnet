@@ -985,7 +985,8 @@ MCRNSendReserveBrokenNoFallback.cfg	MCRNSendReserve.tla	invariant	NeverStarved	c
 MCRNSendReserveBrokenBatchCount.cfg	MCRNSendReserve.tla	invariant	NeverStarved	check	rnsendreserve	required	-
 MCRNSendReserveBrokenNoTailReturn.cfg	MCRNSendReserve.tla	invariant	NeverStarved	check	rnsendreserve	required	-
 MCRNSendReserveBrokenNoRetry.cfg	MCRNSendReserve.tla	invariant	NeverStarved	check	rnsendreserve	required	-
-MCRNSendReserveCodeTailsNamed.cfg	MCRNSendReserve.tla	invariant	TailsNamed	check	rnsendreserve	required	-
+MCRNSendReserveCodeTailsNamed.cfg	MCRNSendReserve.tla	pass	-	check	rnsendreserve	required	-
+MCRNSendReserveBrokenNameAll.cfg	MCRNSendReserve.tla	invariant	TailsNamed	check	rnsendreserve	required	-
 MCRNFillPhase.cfg	MCRNFillPhase.tla	pass	-	check	rnfillphase	required	-
 MCRNFillPhaseBrokenLookFirst.cfg	MCRNFillPhase.tla	invariant	Sound	check	rnfillphase	required	-
 MCRNFillPhaseBrokenLoadStore.cfg	MCRNFillPhase.tla	invariant	OneFiller	check	rnfillphase	required	-
