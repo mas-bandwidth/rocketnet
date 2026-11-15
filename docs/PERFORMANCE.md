@@ -10,27 +10,27 @@ A harness PASS alone does not establish all three.
 The following results are the measurement owner's current reported results
 for the specified configurations. Some were measured on fixes awaiting
 integration; they do not qualify an unmeasured assembled release. The GSO receive-handoff fix is on main; the XDP, RIO and IOCP
-receive-handoff fixes are awaiting the hot-path integration. io_uring does
+receive-handoff fixes shipped in v1.1.58 and are in v1.2.0. io_uring does
 not require that receive-delay repair. Raw run
 receipts are not published in this repository. Treat the numbers as scoped
 measurement records, not a guarantee for another machine or workload.
 
 | Server transport | Measured configuration | Throughput and refusals | Receive result and remaining limit |
 | --- | --- | --- | --- |
-| XDP | Linux, AMD EPYC 9254 / Intel X710, receive-handoff fix, one or two XDP threads | Both counts pass all four workloads in three repetitions: about 900.3k packets/s at peak, zero refused starts or lost messages | Receive wait mean 4.3–11.6 ms across the rows; late_1ms 0.06–0.46%. Fix awaits hot-path integration and final-tree qualification |
-| io_uring | AWS c8gn.8xlarge server / c7gn.16xlarge clients, two workers | All eighteen rows passed across four workloads, including nine loaded-peak samples; 899.6–900.3k packets/s at peak, 480.3k at average, zero refused starts or lost messages | Receive delay mean 4.30–10.88 ms, p99 11.00–20.33 ms; late-by-more-than-1-ms share 0.008–0.208% |
+| XDP | Linux, AMD EPYC 9254 / Intel X710, receive-handoff fix, one or two XDP threads | Both counts pass all four workloads in three repetitions: about 900.3k packets/s at peak, zero refused starts or lost messages | Receive wait mean 4.3–11.6 ms across the rows; late_1ms 0.06–0.46%. Fix shipped in v1.1.58 and is in v1.2.0 |
+| io_uring | AWS c8gn.8xlarge server / c7gn.16xlarge clients, two workers | All eighteen rows passed across four workloads, including nine loaded-peak samples; 899.6–900.3k packets/s at peak, 480.3k at average, zero refused starts or lost messages | Receive delay mean 4.30–10.88 ms, p99 11.00–20.33 ms; late-by-more-than-1-ms share 0.008–0.208%. Selected by `auto` on this release: 12 of 12, 0 refused, 900.3k packets/s at peak, main thread p99 0.29–0.44 ms |
 | GSO | Linux X710 pair, one worker, receive-handoff fix | All four workloads passed in three repetitions | Reported receive wait mean 5.9–12.3 ms, p99 13.8–19.3 ms; this does not establish the same capacity on the AWS rig |
-| GSO | Same AWS pair, one worker | Loaded peak fails all six samples: 842.0–871.6k packets/s, 56.67–58.57 frames/s. Average with game work passes two of three; other workloads pass three of three. Zero refused starts and zero lost messages in all samples | Receive delay is fixed on main; the one-worker loaded-peak limit is rate/frame time. Two workers pass loaded peak three of three; other two-worker workloads were not measured |
-| RIO | Windows m7i.16xlarge server, configured RSS, six lanes, receive-handoff fix | All four workloads pass in three repetitions with zero refused starts and zero lost messages | Receive wait mean 5.5–11.1 ms; loaded-peak late_1ms 1.05–2.72%, other workloads 0.02–0.34%. Five-lane default remains placement-sensitive |
-| RIO | Windows pair 2, m7i.16xlarge server / c7gn.8xlarge players, specific bind, default five lanes | Peak without game work: 900.3k packets/s and zero refused starts in three of three; one run loses two client-to-server packets. Half game work: zero refused in two of three; the other records 75,322 refused starts at 897.7k packets/s | Input delay mean 6.8–12.2 ms, p99 20.5–52.2 ms across these six rows. See the individual P13 results below; this is a different rig from the six-lane record |
-| IOCP | Windows m7i.16xlarge, two completion workers and two send threads, receive-handoff fix | Peak is MARGINAL: 898.4–900.3k packets/s, with loaded-peak 18,663–56,479 and unloaded-peak 1,558–8,999 refused starts per run. Both average workloads pass | Receive wait mean 4.6–10.6 ms; late_1ms 0.16–0.48%. Peak refusal limit remains |
+| GSO | Same AWS pair, two workers (the default; was one) | Peak with game threads half busy 3 of 3, peak idle 3 of 3, average idle 3 of 3, average half busy 2 of 3; 900.3k packets/s at peak and 479.9–480.3k at average. Zero refused except one average-load run that refused 701 sends in one second during a 70–107 ms gap in a network thread on the cloud VM. Main thread p99 0.291–0.392 ms | Receive delay is fixed on main. With one worker, loaded peak fell to 842.0–871.6k packets/s |
+| RIO | Windows m7i.16xlarge server, configured RSS, six lanes, receive-handoff fix | All four workloads pass in three repetitions with zero refused starts and zero lost messages | Receive wait mean 5.5–11.1 ms; loaded-peak late_1ms 1.05–2.72%, other workloads 0.02–0.34%. Six lanes is now the default (sdk/rocketnet_network_threads.h); at 6 lanes on this release 12 of 12, 0 refused, main thread p99 0.58–0.85 ms |
+| RIO | Windows pair 2, m7i.16xlarge server / c7gn.8xlarge players, specific bind, five lanes (the default before six) | Peak without game work: 900.3k packets/s and zero refused starts in three of three; one run loses two client-to-server packets. Half game work: zero refused in two of three; the other records 75,322 refused starts at 897.7k packets/s | Input delay mean 6.8–12.2 ms, p99 20.5–52.2 ms across these six rows. See the individual P13 results below; this is a different rig from the six-lane record |
+| IOCP | Windows m7i.16xlarge, two completion workers and two send threads, receive-handoff fix | Default is now 64 send operations per client (was 32), workers and send threads unchanged: 12 of 12, 0 refused, 899.9–900.3k packets/s at peak, main thread p99 0.60–0.84 ms. At 32 it refused 6,631–16,794 sends per run at peak with game threads half busy; the earlier 32 record was MARGINAL at peak: 898.4–900.3k packets/s, with loaded-peak 18,663–56,479 and unloaded-peak 1,558–8,999 refused starts per run | Receive wait mean 4.6–10.6 ms; late_1ms 0.16–0.48% (at 32) |
 | msgx | Mac Studio M3 Ultra, Aquantia 10GBASE-T, three transmit workers | Average reaches about 480k packets/s without refused starts. No measured peak row reaches 900k | Address topology and interface contention affect throughput; the macOS timing column below is state-to-send, not receive delay |
 
 **Explicitly selected RIO with a specific bind address is the Windows choice
-for this peak workload**, with verified RSS and worker placement. Production
-`auto` still tries `iocp,rio,portable`; IOCP is the default and fallback.
-IOCP's remaining peak refusals make its near-target
-packet rate insufficient for the same qualification. Configure and verify
+for this peak workload**, with verified RSS and worker placement.
+`auto` tries `iocp,rio,portable` in development and production builds alike; IOCP is the default and fallback.
+At the old 32 send operations per client, IOCP's peak refusals made its
+near-target packet rate insufficient for the same qualification; the 64 default passes. Configure and verify
 placement using [Windows](WINDOWS.md); a default wildcard bind is not a
 substitute for the measured setup. Windows measurements used Windows Server
 2025 and do not expand the Windows 11 support row in
@@ -67,7 +67,7 @@ The measurement owner reports MSVC Release on the server and GCC Release on
 the players, using tree `cfd75ce15` with the input-stamp harness. The tool
 links `rocketnet_dev`; these are not production-library measurements.
 Each row explicitly selects its transport list, so it does not measure or
-change the production `auto` preference. Runs were recorded on November 14,
+change the `auto` preference. Runs were recorded on November 14,
 2026, from 00:23 to 00:39 UTC; the raw receipts are not published here.
 
 Each run has 1000 players, 32 client threads and a 60-second duration.
@@ -142,7 +142,8 @@ granted, including `iocp` for the fallback row. Read the startup grant.
 In P13-F1, `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES=700000000` rejects RIO's
 904,379,943-byte allocator plan; IOCP's 534,051,687-byte plan fits. The
 resulting IOCP layout has two completion workers, two send threads and eight
-send lanes of 4096 slots. This demonstrates fallback on a valid budget
+send lanes of 4096 slots. At the v1.2.0 defaults the plans are 1,007,637,571
+bytes for RIO (six lanes) and 602,998,815 for IOCP (16 send lanes). This demonstrates fallback on a valid budget
 refusal, not recovery from an invalid configuration. Wildcard RIO logs one
 lane, one worker and one socket, with a 491,349,431-byte plan.
 
@@ -257,9 +258,9 @@ the config field.
 | Transport | Config field | Environment variable | Default |
 | --- | --- | --- | ---: |
 | XDP | `num_xdp_threads` | `ROCKETNET_SERVER_NUM_XDP_THREADS` | 1 |
-| GSO | `num_gso_workers` | `ROCKETNET_SERVER_NUM_GSO_WORKERS` | 1 |
+| GSO | `num_gso_workers` | `ROCKETNET_SERVER_NUM_GSO_WORKERS` | 2 |
 | io_uring | `num_io_uring_workers` | `ROCKETNET_SERVER_NUM_IO_URING_WORKERS` | 2 |
-| RIO | `num_rio_lanes` | `ROCKETNET_SERVER_NUM_RIO_LANES` | 5 |
+| RIO | `num_rio_lanes` | `ROCKETNET_SERVER_NUM_RIO_LANES` | 6 |
 | IOCP receive | `num_iocp_completion_workers` | `ROCKETNET_SERVER_NUM_IOCP_COMPLETION_WORKERS` | 2 |
 | IOCP send | `num_iocp_send_threads` | `ROCKETNET_SERVER_NUM_IOCP_SEND_THREADS` | 2 |
 | msgx | `num_msgx_transmit_workers` | `ROCKETNET_SERVER_NUM_MSGX_TRANSMIT_WORKERS` | 3 |
@@ -281,9 +282,9 @@ For `scripts/harden-pair`, pass the transport's count within `--server-args`:
 | Transport | Server arguments for the default count |
 | --- | --- |
 | XDP | `--num-xdp-threads 1` |
-| GSO | `--num-gso-workers 1` |
+| GSO | `--num-gso-workers 2` |
 | io_uring | `--num-io-uring-workers 2` |
-| RIO | `--num-rio-lanes 5` |
+| RIO | `--num-rio-lanes 6` |
 | IOCP | `--num-iocp-completion-workers 2 --num-iocp-send-threads 2` |
 | msgx | `--num-msgx-transmit-workers 3` |
 
@@ -325,7 +326,8 @@ record identifies main `e0f1a0fae` with the measurement harness merged as
 `74e7be243`, identical on server and clients;
 the Windows receive-fix series identifies `8c58f1946` plus its harness. The
 msgx record identifies server `25fca1774` and address-comparison clients
-`aa9d85c50`; the other msgx client rows use `25fca1774`. These identifiers bound
+`aa9d85c50`; the other msgx client rows use `25fca1774`. The msgx rows were
+measured on a branch that is not in the v1.2.0 release. These identifiers bound
 the reported results to the measured builds. The linked row records identify the measurement recipes. Capture full
 server/client/harness commit identities and raw receipts when qualifying the
 final integrated build.

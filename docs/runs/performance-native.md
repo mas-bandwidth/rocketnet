@@ -129,7 +129,7 @@ Layouts:
 | layout | env (besides the bind address) | RSS on 'Ethernet 2' | T / F |
 |---|---|---|---|
 | rio 6 lanes (lane l: socket on processor 2l, worker on 2l+1) | `ROCKETNET_SERVER_NUM_RIO_LANES=6` | base 0, max 10, 6 queues | 52 / 12 |
-| rio 5 lanes (built-in default) | none | base 0, max 8, 5 queues | 54 / 10 |
+| rio 5 lanes (the built-in default when measured; now 6) | none | base 0, max 8, 5 queues | 54 / 10 |
 | iocp default placement (workers on 0 and 2, send threads after them) | none | base 0, max 2, 2 queues | 56 / 8 |
 | iocp pinned | `ROCKETNET_TEST_IOCP_LAYOUT=2,4/3,5` | base 2, max 4, 2 queues | 54 / 10 |
 
