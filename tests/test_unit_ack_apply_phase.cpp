@@ -376,6 +376,7 @@ struct ack_phase_run_t
     int total;
     uint64_t unknown;
     uint64_t batch_full;
+    uint64_t cookie_withheld;
     double rtt[ACK_PHASE_CLIENTS];
     int connected[ACK_PHASE_CLIENTS];
 };
@@ -401,6 +402,7 @@ static void ack_phase_run( bool split, uint64_t protocol_id, struct ack_phase_ru
     const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( world.server );
     run->unknown = counters->values[ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE];
     run->batch_full = counters->values[ROCKETNET_COUNTER_ACKED_BATCH_FULL];
+    run->cookie_withheld = counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_REPLY_WITHHELD];
     for ( int c = 0; c < ACK_PHASE_CLIENTS; c++ )
     {
         run->connected[c] = rocketnet_server_transport_is_client_connected( world.server, c );
@@ -408,6 +410,28 @@ static void ack_phase_run( bool split, uint64_t protocol_id, struct ack_phase_ru
     }
 
     ack_phase_world_teardown( &world );
+}
+
+// the first frame whose acked count differs, named before its check fails:
+// the frame, the client, both runs' counts there and on the frames around
+// it, both totals, and each run's withheld cookie replies (a withheld reply
+// delays its client's connect, so it tells a late handshake from the apply)
+static void ack_phase_print_mismatch( const struct ack_phase_run_t * runs, int frame, int client )
+{
+    printf( "ack apply mismatch: frame %d client %d acked inline %d split %d\n",
+            frame, client, runs[0].counts[frame][client], runs[1].counts[frame][client] );
+    const int first = frame > 3 ? frame - 3 : 0;
+    const int last = frame + 3 < ACK_PHASE_FRAMES - 1 ? frame + 3 : ACK_PHASE_FRAMES - 1;
+    for ( int f = first; f <= last; f++ )
+    {
+        printf( "  frame %d inline %d %d %d split %d %d %d\n", f,
+                runs[0].counts[f][0], runs[0].counts[f][1], runs[0].counts[f][2],
+                runs[1].counts[f][0], runs[1].counts[f][1], runs[1].counts[f][2] );
+    }
+    printf( "  total inline %d split %d; cookie replies withheld inline %llu split %llu\n",
+            runs[0].total, runs[1].total,
+            (unsigned long long) runs[0].cookie_withheld, (unsigned long long) runs[1].cookie_withheld );
+    fflush( stdout );
 }
 
 static void test_ack_apply_split_update_matches_inline_server()
@@ -428,6 +452,10 @@ static void test_ack_apply_split_update_matches_inline_server()
     {
         for ( int c = 0; c < ACK_PHASE_CLIENTS; c++ )
         {
+            if ( runs[0].counts[frame][c] != runs[1].counts[frame][c] )
+            {
+                ack_phase_print_mismatch( runs, frame, c );
+            }
             rocketnet_unit_check( runs[0].counts[frame][c] == runs[1].counts[frame][c] );
         }
     }
