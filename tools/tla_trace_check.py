@@ -41,9 +41,11 @@ reach predicate of the row, was never taken or reached in a clean trace, or
 when no seed of a layer checked in the run fired its plant and met every
 check above.
 
-Per commit the work is split by SHARDS (--shard I/10): each shard is a set of
+In CI the work is split by SHARDS (--shard I/10): each shard is a set of
 (layer, seed) pairs, and the table is red unless every pair is in exactly one
 shard. A layer's cross-seed checks run in the shard holding its first seed.
+Shards 0-4 and 6 run per commit; 5, 7, 8 and 9 only in the nightly tier
+(ci.yml tla-trace, inputs.full), which runs all ten.
 
 A layer is one file, tests/tla_trace_<layer>.cpp, that registers itself
 with TLA_TRACE_LAYER, plus one row of LAYERS below.
@@ -307,7 +309,8 @@ LAYERS = {
     },
 }
 
-# The per-commit shards (ci.yml tla-trace, --shard I/10 with --seeds 1-4): each is
+# The CI shards (ci.yml tla-trace, --shard I/10 with --seeds 1-4; 5, 7, 8 and 9
+# run only in the nightly tier): each is
 # a set of (layer, seed) pairs, written "layer:seed", or "layer" for the layer's
 # every seed in SHARD_SEEDS. Every pair of every layer is in exactly one shard: a
 # pair in two shards, or in none, or an empty shard is red. A layer's action

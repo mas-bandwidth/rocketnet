@@ -1795,7 +1795,14 @@ jobs:
   # shard names, the summary job's name list and its plant rows, in the same change. The
   # required check "TLA+ trace check (fixed seeds)"
   # is the summary job below (tools/check_debug_unit_shards.py), green only when every
-  # shard is.
+  # shard that ran is.
+  # Shards 5, 7, 8 and 9 run only in the nightly tier (inputs.full), every night and on
+  # demand (owner, 2026-11-14: "Move it to nightly."): shard 8/10 was cut at the cap on
+  # two runners in a row on 59df7c4dd (run 43665961575), and in four green main runs
+  # (43624176347, 43634108850, 43654926416, 43658369105) whole jobs ran 66-118 s
+  # (8/10), 84-119 s (7/10), 75-115 s (9/10) and 61-102 s (5/10), within 20 s of the
+  # 120 s cap; the per-commit shards 0-4 and 6 ran 36-96 s. SHARDS is unchanged: the
+  # nightly runs all ten and its summary requires all ten.
   tla-trace:
     name: TLA+ trace check (fixed seeds, shard ${{ matrix.shard }})
     runs-on: [self-hosted, Linux, X64, fleet]
@@ -1803,7 +1810,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ['0/10', '1/10', '2/10', '3/10', '4/10', '5/10', '6/10', '7/10', '8/10', '9/10']
+        shard: ${{ fromJSON(inputs.full && '["0/10","1/10","2/10","3/10","4/10","5/10","6/10","7/10","8/10","9/10"]' || '["0/10","1/10","2/10","3/10","4/10","6/10"]') }}
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -1883,7 +1890,9 @@ jobs:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
-      - name: All ten trace check shards succeeded
+      # Per commit the six shards the matrix runs (0-4, 6); in the nightly tier all
+      # ten. A shard of the list that is missing, failed or cancelled is red.
+      - name: All the trace check shards succeeded
         env:
           GH_TOKEN: ${{ github.token }}
           SHARD_JOBS: trace-shard-jobs.json
@@ -1894,7 +1903,7 @@ jobs:
             echo "DEBUG-UNIT-SHARDS=FAIL no verdict: the job list could not be read"
             exit 1
           fi
-          python3 tools/check_debug_unit_shards.py --prefix "${SHARD_JOB_PREFIX:-}" "$SHARD_JOBS" "TLA+ trace check (fixed seeds, shard 0/10)" "TLA+ trace check (fixed seeds, shard 1/10)" "TLA+ trace check (fixed seeds, shard 2/10)" "TLA+ trace check (fixed seeds, shard 3/10)" "TLA+ trace check (fixed seeds, shard 4/10)" "TLA+ trace check (fixed seeds, shard 5/10)" "TLA+ trace check (fixed seeds, shard 6/10)" "TLA+ trace check (fixed seeds, shard 7/10)" "TLA+ trace check (fixed seeds, shard 8/10)" "TLA+ trace check (fixed seeds, shard 9/10)"
+          python3 tools/check_debug_unit_shards.py --prefix "${SHARD_JOB_PREFIX:-}" "$SHARD_JOBS" "TLA+ trace check (fixed seeds, shard 0/10)" "TLA+ trace check (fixed seeds, shard 1/10)" "TLA+ trace check (fixed seeds, shard 2/10)" "TLA+ trace check (fixed seeds, shard 3/10)" "TLA+ trace check (fixed seeds, shard 4/10)" "TLA+ trace check (fixed seeds, shard 6/10)" ${{ inputs.full && '"TLA+ trace check (fixed seeds, shard 5/10)" "TLA+ trace check (fixed seeds, shard 7/10)" "TLA+ trace check (fixed seeds, shard 8/10)" "TLA+ trace check (fixed seeds, shard 9/10)"' || '' }}
 
   # Development-only unit files are in ./bin/test only when ROCKETNET_DEV=ON.
   # The Debug unit row runs them at -O0. This job runs the same suite from a

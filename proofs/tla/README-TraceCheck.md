@@ -262,10 +262,13 @@ hand-written traces:
 ## Where it runs, and what it costs
 
 - **Every commit:** the `tla-trace` job of `ci.yml` builds `tla_trace_all` (the harness
-  and every plant) and runs `--layer all --seeds 1-4 --jobs 8 --shard I/10` in ten parallel shard jobs
-  (a summary job carries the required name "TLA+ trace check (fixed seeds)").
-- **Nightly:** the `trace` job of `tlc.yml` runs 64 seeds that start where the day of
-  the year puts them.
+  and every plant) and runs `--layer all --seeds 1-4 --jobs 8 --shard I/10` in six parallel
+  shard jobs, shards 0 to 4 and 6 (a summary job carries the required name "TLA+ trace
+  check (fixed seeds)"). Shards 5, 7, 8 and 9 ran within 20 s of the two-minute job cap
+  and run only in the nightly tier (2026-11-14).
+- **Nightly:** Nightly CI (`ci.yml` with `full: true`, every night and on demand) runs all
+  ten shards and its summary requires all ten; the `trace` job of `tlc.yml` runs 64
+  seeds that start where the day of the year puts them.
 - **Cost:** see "Measured cost" below.
 - **On failure:** TLC prints the behaviour up to the rejection. The last `ti` is the
   last record that matched, so record `ti + 1` is the first code step that is not the
