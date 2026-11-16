@@ -1023,9 +1023,14 @@ inline void rocketnet_platform_spin_unlock_u64( volatile uint64_t * value )
 
 // The error a socket call just failed with (errno; WSAGetLastError on
 // Windows), read before anything else can change it, and its text in the one
-// form every socket failure line uses: "errno 98 EADDRINUSE (Address already
-// in use)", or "Winsock 10048 WSAEADDRINUSE". A number with no name here
-// prints its number and "?".
+// form every failure line uses: "errno 98 EADDRINUSE", or "Winsock 10048
+// WSAEADDRINUSE". A number with no name here prints its number and "?". The
+// name comes from a fixed table and the text is the caller's: no allocation,
+// no locale, safe on any thread. No line a running client or server can log
+// (connect, start, update, send, receive, stop) names an error with strerror
+// or strerror_r instead: glibc's look the message up through gettext, which
+// calls the system allocator on every call (two mallocs and two frees,
+// glibc 2.43), outside the caller's allocator.
 struct rocketnet_platform_error_text_t
 {
     char text[128];

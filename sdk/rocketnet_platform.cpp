@@ -533,7 +533,10 @@ static void rocketnet_platform_network_thread_priority( rocketnet_platform_threa
     {
         char call[64];
         snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", priority );
-        rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, strerror( result ), "the thread runs at its default priority" );
+        // no strerror: this runs at every client connect and server start of an
+        // unprivileged process (rocketnet_platform_socket_error_text, rocketnet_platform.h)
+
+        rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, rocketnet_platform_socket_error_text( result ).text, "the thread runs at its default priority" );
     }
 }
 
@@ -1956,7 +1959,7 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
         const int error = errno;
         char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
         rocketnet_address_to_string( to, address_string );
-        rocketnet_error( "connect (%s) failed: %s", address_string, strerror( error ) );
+        rocketnet_error( "connect (%s) failed: %s", address_string, rocketnet_platform_socket_error_text( error ).text );
         return false;
     }
 
@@ -2064,7 +2067,7 @@ static void rocketnet_platform_send_one( rocketnet_platform_socket_t * socket, c
 
     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     rocketnet_address_to_string( to, address_string );
-    rocketnet_debug( "sendto (%s) failed: %s", address_string, strerror( error ) );
+    rocketnet_debug( "sendto (%s) failed: %s", address_string, rocketnet_platform_socket_error_text( error ).text );
     rocketnet_platform_send_failed( socket, failures, call, error );
     errno = error;
 }
@@ -2426,7 +2429,7 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
                 {
                     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
                     rocketnet_address_to_string( sends[map[i]].to, address_string );
-                    rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( error ) );
+                    rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, rocketnet_platform_socket_error_text( error ).text );
                     rocketnet_platform_send_failed( socket, &socket->send_failures, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, error );
                 }
 
@@ -2438,7 +2441,7 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
 
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
             rocketnet_address_to_string( sends[map[sent]].to, address_string );
-            rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( error ) );
+            rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, rocketnet_platform_socket_error_text( error ).text );
             rocketnet_platform_send_failed( socket, &socket->send_failures, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, error );
             sent += 1;
         }
@@ -5938,6 +5941,19 @@ static const struct
 #if defined( ETIME )
                                         ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( ETIME )
 #endif // #if defined( ETIME )
+    // what a send, a connect, a map or a device call fails with: the lines
+    // that named these with strerror name them here instead
+    ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( EAGAIN ) ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( ECONNREFUSED )
+        ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( EHOSTUNREACH ) ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( ENETUNREACH )
+            ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( ENETDOWN ) ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( EMSGSIZE )
+                ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( EIO ) ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( EPROTO )
+                    ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( ENOENT ) ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( EEXIST )
+                        ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( EBUSY ) ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( ENODEV )
+                            ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( ENXIO ) ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( ESRCH )
+                                ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( ENOSPC ) ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( E2BIG )
+#if defined( EHOSTDOWN )
+                                    ROCKETNET_PLATFORM_SOCKET_ERROR_NAME( EHOSTDOWN )
+#endif // #if defined( EHOSTDOWN )
 };
 #undef ROCKETNET_PLATFORM_SOCKET_ERROR_NAME
 

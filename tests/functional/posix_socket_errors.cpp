@@ -2018,7 +2018,10 @@ static void posix_mmsg_log( void * context, enum rocketnet_log_level_t level, co
     if ( strstr( message, "sendmmsg (" ) != NULL )
     {
         posix_mmsg_lines++;
-        if ( strstr( message, strerror( EAGAIN ) ) != NULL )
+        // the library names the error from its own table ("errno 11 EAGAIN"),
+        // never with strerror, which allocates on glibc
+
+        if ( strstr( message, " EAGAIN" ) != NULL )
         {
             posix_mmsg_lines_eagain++;
         }

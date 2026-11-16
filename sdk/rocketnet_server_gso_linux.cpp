@@ -2725,7 +2725,8 @@ static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso, struct rock
                 // cannot segment), and then the bank resends from this message
                 // with nothing dropped (proofs/tla/RNSegmentRefusal.tla Refuse).
 
-                const char * reason = strerror( errno );
+                const struct rocketnet_platform_error_text_t reason_text = rocketnet_platform_socket_error_text( errno );
+                const char * reason = reason_text.text;
                 const int refused_slot = message_first_slot[sent];
 
                 // another queue's accepted segmented send counts as this

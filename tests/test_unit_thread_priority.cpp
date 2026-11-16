@@ -27,6 +27,8 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 
+#include <limits.h>
+#include <stdio.h>
 #include <string.h>
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -298,9 +300,55 @@ static void test_thread_priority_refusal_counts_and_logs_once()
     rocketnet_unit_check( strstr( priority_log_last, "SetThreadPriority THREAD_PRIORITY_TIME_CRITICAL" ) != NULL );
 #else
     rocketnet_unit_check( strstr( priority_log_last, "pthread_setschedparam SCHED_RR" ) != NULL );
-    rocketnet_unit_check( strstr( priority_log_last, strerror( EPERM ) ) != NULL );
+
+    // the error is named by number and errno.h name, from the platform's own
+    // table, and never by strerror's text (which allocates on glibc)
+
+    char named[32];
+    snprintf( named, sizeof( named ), "refused (errno %d EPERM);", EPERM );
+    rocketnet_unit_check( strstr( priority_log_last, named ) != NULL );
+    rocketnet_unit_check( strstr( priority_log_last, strerror( EPERM ) ) == NULL );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     rocketnet_unit_check( strstr( priority_log_last, "the thread runs at its default priority" ) != NULL );
+
+    priority_fake_restore();
+}
+
+// A refused priority call is what every client connect and reconnect of an
+// unprivileged process takes (rocketnet_client_transport_create calls
+// rocketnet_platform_client_thread_priority right after its thread create),
+// and a server start the same. It makes no allocation: not through the
+// library's allocator, not through operator new, and on glibc not through the
+// C allocator either, where strerror and strerror_r call malloc and free on
+// every call (their gettext lookup). The allocation trap of
+// tests/test_channels.cpp is armed across the connect (the refusal that logs),
+// the reconnect (counted, not logged) and a server thread's call; a firing
+// trap ends the case with "live allocation: malloc ... during thread priority
+// refused".
+
+void rocketnet_test_allocation_trap_arm( const char * phase );
+void rocketnet_test_allocation_trap_disarm();
+
+static void test_thread_priority_refusal_makes_no_allocation()
+{
+    struct rocketnet_platform_thread_t thread;
+    memset( &thread, 0, sizeof( thread ) );
+    priority_fake_install( true );
+
+    const uint64_t refusals = rocketnet_get_thread_priority_refusals();
+
+    rocketnet_test_allocation_trap_arm( "thread priority refused" );
+
+    rocketnet_platform_client_thread_priority( &thread ); // connect
+    rocketnet_platform_client_thread_priority( &thread ); // reconnect
+    rocketnet_platform_server_thread_priority( &thread ); // server start
+
+    rocketnet_test_allocation_trap_disarm();
+
+    rocketnet_unit_check( priority_fake_count == 3 );
+    rocketnet_unit_check( rocketnet_get_thread_priority_refusals() == refusals + 3 );
+    rocketnet_unit_check( priority_log_lines == 1 );
+    rocketnet_unit_check( strstr( priority_log_last, "refused" ) != NULL );
 
     priority_fake_restore();
 }
@@ -374,6 +422,7 @@ REGISTER_UNIT_TEST( test_thread_priority_client_requests_space_values );
 REGISTER_UNIT_TEST( test_thread_priority_server_requests_space_values );
 REGISTER_UNIT_TEST( test_thread_priority_off_makes_no_calls );
 REGISTER_UNIT_TEST( test_thread_priority_refusal_counts_and_logs_once );
+REGISTER_UNIT_TEST( test_thread_priority_refusal_makes_no_allocation );
 
 #endif // #if ROCKETNET_DEV
 
@@ -424,3 +473,81 @@ static void test_platform_cpu_list_text()
 
 REGISTER_UNIT_TEST( test_platform_cpu_list_text );
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+// The one text every failure line names an OS error with
+// (rocketnet_platform_socket_error_text): the number and its name from a fixed
+// table, "?" for a number the table does not hold, always terminated inside
+// the caller's 128 bytes, and made with no allocation (the trap is armed
+// across every call in a development build; a production suite has no trap
+// and checks the text alone).
+
+static void platform_error_text_check( int error, const char * expected )
+{
+#if ROCKETNET_DEV
+    rocketnet_test_allocation_trap_arm( "error text" );
+#endif // #if ROCKETNET_DEV
+    const struct rocketnet_platform_error_text_t text = rocketnet_platform_socket_error_text( error );
+#if ROCKETNET_DEV
+    rocketnet_test_allocation_trap_disarm();
+#endif // #if ROCKETNET_DEV
+
+    rocketnet_unit_check( memchr( text.text, '\0', sizeof( text.text ) ) != NULL );
+    rocketnet_unit_check( strcmp( text.text, expected ) == 0 );
+}
+
+static void test_platform_error_text_names_the_error_without_allocating()
+{
+    char expected[64];
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    platform_error_text_check( WSAEADDRINUSE, "Winsock 10048 WSAEADDRINUSE" );
+    platform_error_text_check( WSAEACCES, "Winsock 10013 WSAEACCES" );
+    platform_error_text_check( 1, "Winsock 1 ?" );
+    platform_error_text_check( 0, "Winsock 0 ?" );
+    platform_error_text_check( -1, "Winsock -1 ?" );
+    snprintf( expected, sizeof( expected ), "Winsock %d ?", INT_MIN );
+    platform_error_text_check( INT_MIN, expected );
+#else
+    // the errors the connect, send and thread placement paths take; the
+    // numbers are the platform's own (EAGAIN is 11 on Linux and 35 on macOS)
+    static const struct
+    {
+        int error;
+        const char * name;
+    } named[] = {
+        { EPERM, "EPERM" },
+        { EACCES, "EACCES" },
+        { EINVAL, "EINVAL" },
+        { EAGAIN, "EAGAIN" },
+        { ENOBUFS, "ENOBUFS" },
+        { ENOMEM, "ENOMEM" },
+        { EADDRINUSE, "EADDRINUSE" },
+        { ECONNREFUSED, "ECONNREFUSED" },
+        { EHOSTUNREACH, "EHOSTUNREACH" },
+        { ENETUNREACH, "ENETUNREACH" },
+        { ENETDOWN, "ENETDOWN" },
+        { EMSGSIZE, "EMSGSIZE" },
+        { EIO, "EIO" },
+        { ENOENT, "ENOENT" },
+        { EBUSY, "EBUSY" },
+        { ENODEV, "ENODEV" },
+        { EOPNOTSUPP, "EOPNOTSUPP" },
+    };
+
+    for ( size_t i = 0; i < sizeof( named ) / sizeof( named[0] ); i++ )
+    {
+        snprintf( expected, sizeof( expected ), "errno %d %s", named[i].error, named[i].name );
+        platform_error_text_check( named[i].error, expected );
+    }
+
+    // a number the table does not hold keeps its number
+
+    platform_error_text_check( 0, "errno 0 ?" );
+    platform_error_text_check( -1, "errno -1 ?" );
+    platform_error_text_check( 99999, "errno 99999 ?" );
+    snprintf( expected, sizeof( expected ), "errno %d ?", INT_MIN );
+    platform_error_text_check( INT_MIN, expected );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+}
+
+REGISTER_UNIT_TEST( test_platform_error_text_names_the_error_without_allocating );

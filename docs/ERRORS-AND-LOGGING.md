@@ -741,8 +741,12 @@ not `TIMERR_NOERROR`) adds one to a process-wide count, read from the
 that kind never logs again in the process:
 
 ```
-thread priority: pthread_setschedparam SCHED_RR 1 refused (Operation not permitted); the thread runs at its default priority
+thread priority: pthread_setschedparam SCHED_RR 1 refused (errno 1 EPERM); the thread runs at its default priority
 ```
+
+The error is named by its number and its `errno.h` name, never by `strerror`
+text: glibc's `strerror` calls the system allocator on every call, and this
+line's refusal is taken at every client connect of an unprivileged process.
 
 The other kinds read `thread priority: SetThreadPriority THREAD_PRIORITY_TIME_CRITICAL refused (error <n>); ...`, `thread affinity: pthread_setaffinity_np cpu <n> refused (...); the thread runs on any cpu`,
 `timer period: timeBeginPeriod 1 refused (error <n>); the timer keeps its default period` and `timer period: timeEndPeriod 1 refused (...)`. The count
