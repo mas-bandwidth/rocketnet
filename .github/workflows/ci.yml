@@ -4535,6 +4535,20 @@ jobs:
           python3 tools/check_byte_order.py --self-test
           python3 tools/check_byte_order.py
 
+      # tools/check_no_strerror.py exits 1 when the library (sdk/) names an
+      # OS error with strerror, strerror_r, strerror_l, perror or a %m
+      # conversion outside a preprocessor region only an Apple build
+      # compiles. glibc's allocate on every call, outside the caller's
+      # allocator: the refused thread priority call did so at every client
+      # connect of an unprivileged process. The library names the error with
+      # rocketnet_platform_socket_error_text. --self-test holds the red and
+      # green controls.
+      - name: No strerror in the library
+        if: ${{ !cancelled() }}
+        run: |
+          python3 tools/check_no_strerror.py --self-test
+          python3 tools/check_no_strerror.py
+
       # Counters are ABI (owner, 2026-11-13): tools/check_counter_contract.py
       # exits 1 when sdk/rocketnet_counters.h renumbers, renames, removes,
       # reuses or reclasses an id of tests/counter_contract.inc, adds a row the

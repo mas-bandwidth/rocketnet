@@ -551,3 +551,102 @@ static void test_platform_error_text_names_the_error_without_allocating()
 }
 
 REGISTER_UNIT_TEST( test_platform_error_text_names_the_error_without_allocating );
+
+// The whole table. Every row formats as its own number and name, so a row
+// whose number an earlier row already holds (it would print the earlier name)
+// fails here. Off Windows the table also holds a row for every errno the
+// library compares against or hands on in the code a Linux build compiles
+// (grep -ow 'E[A-Z0-9]*' over sdk/, less the Windows and Apple files): a line
+// that names one of them prints its name, never "?". EWOULDBLOCK and ENOTSUP
+// are held by number: where one is its own number it has its own row, and
+// where it is EAGAIN's or EOPNOTSUPP's that row names it.
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#define PLATFORM_ERROR_TEXT_REQUIRED( name ) { name, #name },
+static const struct
+{
+    int error;
+    const char * name;
+} platform_error_text_required[] = {
+    PLATFORM_ERROR_TEXT_REQUIRED( E2BIG ) PLATFORM_ERROR_TEXT_REQUIRED( EACCES ) PLATFORM_ERROR_TEXT_REQUIRED( EADDRINUSE )
+        PLATFORM_ERROR_TEXT_REQUIRED( EADDRNOTAVAIL ) PLATFORM_ERROR_TEXT_REQUIRED( EAFNOSUPPORT ) PLATFORM_ERROR_TEXT_REQUIRED( EAGAIN )
+            PLATFORM_ERROR_TEXT_REQUIRED( EBADF ) PLATFORM_ERROR_TEXT_REQUIRED( EBUSY ) PLATFORM_ERROR_TEXT_REQUIRED( ECANCELED )
+                PLATFORM_ERROR_TEXT_REQUIRED( ECONNREFUSED ) PLATFORM_ERROR_TEXT_REQUIRED( ECONNRESET ) PLATFORM_ERROR_TEXT_REQUIRED( EDESTADDRREQ )
+                    PLATFORM_ERROR_TEXT_REQUIRED( EEXIST ) PLATFORM_ERROR_TEXT_REQUIRED( EFAULT ) PLATFORM_ERROR_TEXT_REQUIRED( EHOSTUNREACH )
+                        PLATFORM_ERROR_TEXT_REQUIRED( EINTR ) PLATFORM_ERROR_TEXT_REQUIRED( EINVAL ) PLATFORM_ERROR_TEXT_REQUIRED( EIO )
+                            PLATFORM_ERROR_TEXT_REQUIRED( EISCONN ) PLATFORM_ERROR_TEXT_REQUIRED( EMFILE ) PLATFORM_ERROR_TEXT_REQUIRED( EMSGSIZE )
+                                PLATFORM_ERROR_TEXT_REQUIRED( ENETDOWN ) PLATFORM_ERROR_TEXT_REQUIRED( ENETUNREACH ) PLATFORM_ERROR_TEXT_REQUIRED( ENFILE )
+                                    PLATFORM_ERROR_TEXT_REQUIRED( ENOBUFS ) PLATFORM_ERROR_TEXT_REQUIRED( ENODEV ) PLATFORM_ERROR_TEXT_REQUIRED( ENOENT )
+                                        PLATFORM_ERROR_TEXT_REQUIRED( ENOMEM ) PLATFORM_ERROR_TEXT_REQUIRED( ENOPROTOOPT ) PLATFORM_ERROR_TEXT_REQUIRED( ENOSPC )
+                                            PLATFORM_ERROR_TEXT_REQUIRED( ENOSYS ) PLATFORM_ERROR_TEXT_REQUIRED( ENOTCONN ) PLATFORM_ERROR_TEXT_REQUIRED( ENOTSOCK )
+                                                PLATFORM_ERROR_TEXT_REQUIRED( ENXIO ) PLATFORM_ERROR_TEXT_REQUIRED( EOPNOTSUPP ) PLATFORM_ERROR_TEXT_REQUIRED( EPERM )
+                                                    PLATFORM_ERROR_TEXT_REQUIRED( EPIPE ) PLATFORM_ERROR_TEXT_REQUIRED( EPROTO ) PLATFORM_ERROR_TEXT_REQUIRED( EPROTONOSUPPORT )
+                                                        PLATFORM_ERROR_TEXT_REQUIRED( ERANGE ) PLATFORM_ERROR_TEXT_REQUIRED( ESRCH ) PLATFORM_ERROR_TEXT_REQUIRED( ETIMEDOUT )
+#if defined( EHOSTDOWN )
+                                                            PLATFORM_ERROR_TEXT_REQUIRED( EHOSTDOWN )
+#endif // #if defined( EHOSTDOWN )
+#if defined( ENONET )
+                                                                PLATFORM_ERROR_TEXT_REQUIRED( ENONET )
+#endif // #if defined( ENONET )
+#if defined( ETIME )
+                                                                    PLATFORM_ERROR_TEXT_REQUIRED( ETIME )
+#endif // #if defined( ETIME )
+};
+#undef PLATFORM_ERROR_TEXT_REQUIRED
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+static void test_platform_error_text_names_every_table_row()
+{
+    char expected[64];
+    const int count = rocketnet_platform_socket_error_name_count();
+    rocketnet_unit_check( count > 0 );
+
+    for ( int i = 0; i < count; i++ )
+    {
+        int error = 0;
+        const char * name = rocketnet_platform_socket_error_name_at( i, &error );
+        rocketnet_unit_check( name != NULL && name[0] != '\0' );
+        rocketnet_unit_check( error != 0 );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        snprintf( expected, sizeof( expected ), "Winsock %d %s", error, name );
+#else
+        snprintf( expected, sizeof( expected ), "errno %d %s", error, name );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        platform_error_text_check( error, expected );
+    }
+
+    // outside the table
+
+    int outside = 1;
+    rocketnet_unit_check( rocketnet_platform_socket_error_name_at( -1, &outside ) == NULL && outside == 0 );
+    outside = 1;
+    rocketnet_unit_check( rocketnet_platform_socket_error_name_at( count, &outside ) == NULL && outside == 0 );
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+    for ( size_t r = 0; r < sizeof( platform_error_text_required ) / sizeof( platform_error_text_required[0] ); r++ )
+    {
+        bool held = false;
+        for ( int i = 0; i < count; i++ )
+        {
+            int error = 0;
+            const char * name = rocketnet_platform_socket_error_name_at( i, &error );
+            if ( strcmp( name, platform_error_text_required[r].name ) == 0 )
+            {
+                held = error == platform_error_text_required[r].error;
+            }
+        }
+        if ( !held )
+        {
+            printf( "the error text table holds no row for %s\n", platform_error_text_required[r].name );
+        }
+        rocketnet_unit_check( held );
+    }
+
+    // the two an errno may share its number with: named either way, never "?"
+
+    rocketnet_unit_check( strchr( rocketnet_platform_socket_error_text( EWOULDBLOCK ).text, '?' ) == NULL );
+    rocketnet_unit_check( strchr( rocketnet_platform_socket_error_text( ENOTSUP ).text, '?' ) == NULL );
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+}
+
+REGISTER_UNIT_TEST( test_platform_error_text_names_every_table_row );
