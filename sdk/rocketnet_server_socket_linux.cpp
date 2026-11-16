@@ -575,12 +575,12 @@ static bool get_gateway_mac_address_netlink( const char * interface_name, int in
                 strcpy( gateway_ip_string, "?" );
             }
             rocketnet_error( "%s gateway discovery: neighbor query for %s on %s failed: %s (%s)", family_name, gateway_ip_string, interface_name,
-                             rocketnet_gateway_netlink_result_name( result ), strerror( error ) );
+                             rocketnet_gateway_netlink_result_name( result ), rocketnet_platform_socket_error_text( error ).text );
         }
         else
         {
             rocketnet_error( "%s gateway discovery: route query on %s failed: %s (%s)", family_name, interface_name,
-                             rocketnet_gateway_netlink_result_name( result ), strerror( error ) );
+                             rocketnet_gateway_netlink_result_name( result ), rocketnet_platform_socket_error_text( error ).text );
         }
         return false;
     }
@@ -867,12 +867,11 @@ static bool rocketnet_server_socket_xdp_device( const char * interface_name, uns
     memset( &lower, 0, sizeof( lower ) );
     int error = 0;
 
-    char error_text[128];
     int result = rocketnet_gateway_netlink_link( (int) interface_index, &device, &error );
     if ( result != ROCKETNET_GATEWAY_NETLINK_FOUND )
     {
         rocketnet_warn( "xdp transport refused: could not read the link of %s from rtnetlink: %s (%s) (R2)", interface_name,
-                        rocketnet_gateway_netlink_result_name( result ), strerror_r( error, error_text, sizeof( error_text ) ) );
+                        rocketnet_gateway_netlink_result_name( result ), rocketnet_platform_socket_error_text( error ).text );
         return false;
     }
 
@@ -883,7 +882,7 @@ static bool rocketnet_server_socket_xdp_device( const char * interface_name, uns
         if ( result != ROCKETNET_GATEWAY_NETLINK_FOUND )
         {
             rocketnet_warn( "xdp transport refused: could not read the link under VLAN device %s from rtnetlink: %s (%s) (R2)", interface_name,
-                            rocketnet_gateway_netlink_result_name( result ), strerror_r( error, error_text, sizeof( error_text ) ) );
+                            rocketnet_gateway_netlink_result_name( result ), rocketnet_platform_socket_error_text( error ).text );
             return false;
         }
         have_lower = true;
@@ -2101,7 +2100,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
 
             // Both XDP netlink query APIs return a negative error code.
 
-            rocketnet_warn( "xdp pre-flight: could not query %s for an attached XDP program (%s) (R3)", interface_name, strerror( -query_result ) );
+            rocketnet_warn( "xdp pre-flight: could not query %s for an attached XDP program (%s) (R3)", interface_name, rocketnet_platform_socket_error_text( -query_result ).text );
             provisioned = false;
         }
         else if ( rocketnet_xdp_attached_any( &attached ) )
@@ -2232,7 +2231,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
         {
             // silence must never verify
 
-            rocketnet_warn( "xdp pre-flight: could not open a probe socket for the channel query (%s) (R7)", strerror( errno ) );
+            rocketnet_warn( "xdp pre-flight: could not open a probe socket for the channel query (%s) (R7)", rocketnet_platform_socket_error_text( errno ).text );
             provisioned = false;
         }
         else
@@ -2260,7 +2259,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
             }
             else if ( ethtool_result != 0 )
             {
-                rocketnet_warn( "xdp pre-flight: the channel query on %s failed (%s) (R7): cannot verify the queue count", interface_name, strerror( errno ) );
+                rocketnet_warn( "xdp pre-flight: the channel query on %s failed (%s) (R7): cannot verify the queue count", interface_name, rocketnet_platform_socket_error_text( errno ).text );
                 provisioned = false;
             }
             else if ( channels.combined_count == 0 && (int) channels.rx_count == num_queues && (int) channels.tx_count == num_queues &&
@@ -2294,7 +2293,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
         int xdp_fd = socket( AF_XDP, SOCK_RAW | SOCK_CLOEXEC, 0 );
         if ( xdp_fd < 0 )
         {
-            rocketnet_warn( "xdp pre-flight: kernel refused an AF_XDP socket (%s) (K1). this kernel cannot run the XDP data plane", strerror( errno ) );
+            rocketnet_warn( "xdp pre-flight: kernel refused an AF_XDP socket (%s) (K1). this kernel cannot run the XDP data plane", rocketnet_platform_socket_error_text( errno ).text );
             provisioned = false;
         }
         else
@@ -2315,7 +2314,7 @@ static bool rocketnet_server_socket_preflight_with_cpus( const char * public_add
         int program_fd = rocketnet_xdp_probe_program( instructions, 2 );
         if ( program_fd < 0 )
         {
-            rocketnet_warn( "xdp pre-flight: kernel refused a BPF program load (%s) (K1). this kernel cannot run the XDP data plane", strerror( errno ) );
+            rocketnet_warn( "xdp pre-flight: kernel refused a BPF program load (%s) (K1). this kernel cannot run the XDP data plane", rocketnet_platform_socket_error_text( errno ).text );
             provisioned = false;
         }
         else
@@ -2767,7 +2766,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         }
         else
         {
-            rocketnet_error( "could not create pin root %s (%s)", server_socket->pin_root, strerror( errno ) );
+            rocketnet_error( "could not create pin root %s (%s)", server_socket->pin_root, rocketnet_platform_socket_error_text( errno ).text );
         }
 
         server_socket->pin_root[0] = '\0';
@@ -2859,10 +2858,9 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         // reasons, an MTU above its XDP limit among them, so the message
         // does not guess
 
-        char attach_error[128];
         const int attach_errno = ret < 0 ? -ret : ret;
-        rocketnet_error( "xdp transport refused: server_xdp could not attach in native mode to %s (errno %d, %s; mtu %d); generic (skb) mode is not used. the driver refused the attach: it may lack native XDP, or refuse it at this MTU or channel setup. use a NIC and setup its driver attaches natively, or another transport",
-                         xdp_interface_name, attach_errno, strerror_r( attach_errno, attach_error, sizeof( attach_error ) ), get_interface_mtu( xdp_interface_name ) );
+        rocketnet_error( "xdp transport refused: server_xdp could not attach in native mode to %s (%s; mtu %d); generic (skb) mode is not used. the driver refused the attach: it may lack native XDP, or refuse it at this MTU or channel setup. use a NIC and setup its driver attaches natively, or another transport",
+                         xdp_interface_name, rocketnet_platform_socket_error_text( attach_errno ).text, get_interface_mtu( xdp_interface_name ) );
         rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
@@ -2890,7 +2888,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     server_socket->config_map_fd = bpf_obj_get( server_socket->pinned_paths[0] );
     if ( server_socket->config_map_fd < 0 )
     {
-        rocketnet_error( "server could not get config map: %s", strerror( errno ) );
+        rocketnet_error( "server could not get config map: %s", rocketnet_platform_socket_error_text( errno ).text );
         rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
@@ -2898,7 +2896,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     server_socket->socket_map_fd = bpf_obj_get( server_socket->pinned_paths[1] );
     if ( server_socket->socket_map_fd < 0 )
     {
-        rocketnet_error( "server could not get socket map: %s", strerror( errno ) );
+        rocketnet_error( "server could not get socket map: %s", rocketnet_platform_socket_error_text( errno ).text );
         rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
@@ -2906,7 +2904,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     server_socket->stats_map_fd = bpf_obj_get( server_socket->pinned_paths[2] );
     if ( server_socket->stats_map_fd < 0 )
     {
-        rocketnet_error( "server could not get stats map: %s", strerror( errno ) );
+        rocketnet_error( "server could not get stats map: %s", rocketnet_platform_socket_error_text( errno ).text );
         rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
@@ -2918,7 +2916,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     server_socket->replay_map_fd = bpf_obj_get( server_socket->pinned_paths[3] );
     if ( server_socket->replay_map_fd < 0 )
     {
-        rocketnet_error( "server could not get replay map: %s", strerror( errno ) );
+        rocketnet_error( "server could not get replay map: %s", rocketnet_platform_socket_error_text( errno ).text );
         rocketnet_server_socket_abort_create( server_socket );
         return NULL;
     }
@@ -2964,7 +2962,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         __u32 key = 0;
         if ( bpf_map_update_elem( server_socket->config_map_fd, &key, &config, BPF_ANY ) != 0 )
         {
-            rocketnet_error( "server could not write config map: %s", strerror( errno ) );
+            rocketnet_error( "server could not write config map: %s", rocketnet_platform_socket_error_text( errno ).text );
             rocketnet_server_socket_abort_create( server_socket );
             return NULL;
         }
@@ -3045,7 +3043,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
             result = xsk_umem__create( &socket->umem, socket->buffer, buffer_size, &socket->fill_queue, &socket->complete_queue, &umem_config );
             if ( result )
             {
-                rocketnet_error( "server could not create umem: %s (errno %d)", strerror( -result ), -result );
+                rocketnet_error( "server could not create umem: %s", rocketnet_platform_socket_error_text( -result ).text );
                 rocketnet_server_socket_abort_create( server_socket );
                 return NULL;
             }
@@ -3063,12 +3061,12 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
             if ( !zero_copy )
             {
-                rocketnet_error( "server could not create xsk socket for queue %d: %s (errno %d)", queue, strerror( -result ), -result );
+                rocketnet_error( "server could not create xsk socket for queue %d: %s", queue, rocketnet_platform_socket_error_text( -result ).text );
                 rocketnet_server_socket_abort_create( server_socket );
                 return NULL;
             }
 
-            rocketnet_info( "server xdp queue %d refused the zero copy bind (%s), binding in copy mode", queue, strerror( -result ) );
+            rocketnet_info( "server xdp queue %d refused the zero copy bind (%s), binding in copy mode", queue, rocketnet_platform_socket_error_text( -result ).text );
 
             xsk_umem__delete( socket->umem );
             socket->umem = NULL;
@@ -3315,7 +3313,7 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
 
     if ( server_socket->pin_root_created && rmdir( server_socket->pin_root ) != 0 )
     {
-        rocketnet_warn( "could not remove pin root %s (%s): sweep deliberately with scripts/rocketnet-provision sweep", server_socket->pin_root, strerror( errno ) );
+        rocketnet_warn( "could not remove pin root %s (%s): sweep deliberately with scripts/rocketnet-provision sweep", server_socket->pin_root, rocketnet_platform_socket_error_text( errno ).text );
     }
 
     // the queue array is allocated late in create, so a create that failed
@@ -3869,7 +3867,7 @@ bool rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * ser
 static void rocketnet_server_socket_replay_commit_failed( struct rocketnet_server_socket_t * server_socket, const char * call )
 {
     server_socket->replay_commit_failures++;
-    rocketnet_debug( "replay commit: %s failed (%s)", call, strerror( errno ) );
+    rocketnet_debug( "replay commit: %s failed (%s)", call, rocketnet_platform_socket_error_text( errno ).text );
 }
 
 // the commit's calls into the kernel map for rocketnet_xdp_replay_apply: a
@@ -5244,9 +5242,8 @@ static bool xdp_thread_leave_core_zero( int queue, const rocketnet_xdp_affinity_
     const int result = calls->set( &fallback );
     if ( result != 0 )
     {
-        char error_text[128];
         char why[192];
-        (void) snprintf( why, sizeof( why ), "leaving core 0 was refused (%s)", strerror_r( result, error_text, sizeof( error_text ) ) );
+        (void) snprintf( why, sizeof( why ), "leaving core 0 was refused (%s)", rocketnet_platform_socket_error_text( result ).text );
         xdp_thread_warn_left_on_core_zero( queue, &allowed, why );
         return false;
     }
@@ -5297,9 +5294,8 @@ static bool xdp_thread_pin( rocketnet_server_xdp_socket_t * socket, int online, 
         socket->pin_refusals.fetch_add( 1, std::memory_order_relaxed );
         char call[64];
         snprintf( call, sizeof( call ), "pthread_setaffinity_np cpu %d", cpu );
-        char error_text[128];
         rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_AFFINITY, "thread affinity", call,
-                                                    strerror_r( result, error_text, sizeof( error_text ) ),
+                                                    rocketnet_platform_socket_error_text( result ).text,
                                                     "the thread runs on its allowed cpus less core 0 and asks for no real-time scheduling" );
         socket->left_on_core_zero.store( !xdp_thread_leave_core_zero( socket->queue, calls ), std::memory_order_relaxed );
         return false;
@@ -5327,7 +5323,7 @@ static void xdp_thread_place( rocketnet_server_xdp_socket_t * socket, int online
         {
             char call[64];
             (void) snprintf( call, sizeof( call ), "pthread_setschedparam SCHED_RR %d", priority );
-            rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, strerror( result ), "the thread runs at its default priority" );
+            rocketnet_platform_thread_priority_refused( ROCKETNET_PLATFORM_PRIORITY_CALL_SET_SCHED, "thread priority", call, rocketnet_platform_socket_error_text( result ).text, "the thread runs at its default priority" );
         }
     }
 }
@@ -5795,8 +5791,7 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
         }
         else
         {
-            char reason[128];
-            rocketnet_error( "xdp stats not read: map lookup failed: %s; the last read stands", strerror_r( read_error, reason, sizeof( reason ) ) );
+            rocketnet_error( "xdp stats not read: map lookup failed: %s; the last read stands", rocketnet_platform_socket_error_text( read_error ).text );
         }
     }
 }
@@ -6292,9 +6287,8 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
                     }
                     else
                     {
-                        char reason[128];
                         rocketnet_error( "xdp queue %d tx wakeup failed: %s; the tx ring cannot drain and stop will not wait for it",
-                                         socket->queue, strerror_r( error, reason, sizeof( reason ) ) );
+                                         socket->queue, rocketnet_platform_socket_error_text( error ).text );
                     }
                 }
             }

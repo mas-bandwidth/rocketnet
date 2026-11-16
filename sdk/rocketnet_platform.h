@@ -1023,9 +1023,17 @@ inline void rocketnet_platform_spin_unlock_u64( volatile uint64_t * value )
 
 // The error a socket call just failed with (errno; WSAGetLastError on
 // Windows), read before anything else can change it, and its text in the one
-// form every socket failure line uses: "errno 98 EADDRINUSE (Address already
-// in use)", or "Winsock 10048 WSAEADDRINUSE". A number with no name here
-// prints its number and "?".
+// form every failure line uses: "errno 98 EADDRINUSE", or "Winsock 10048
+// WSAEADDRINUSE". A number with no name here prints its number and "?". The
+// name comes from a fixed table and the text is the caller's: no allocation,
+// no locale, safe on any thread. In the code a Linux build compiles, no line
+// names an error with strerror, strerror_r, strerror_l, perror or %m instead
+// (tools/check_no_strerror.py refuses one): glibc's look the message up
+// through gettext, which calls the system allocator on every call (two
+// mallocs and two frees, glibc 2.43), outside the caller's allocator. The
+// lines only an Apple build compiles (the msgx pump and send failure lines of
+// rocketnet_platform.cpp, rocketnet_server_msgx_apple.cpp) keep strerror:
+// Apple's makes no allocation for an errno it knows.
 struct rocketnet_platform_error_text_t
 {
     char text[128];
@@ -1040,6 +1048,11 @@ int rocketnet_platform_socket_error();
 // ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED through its status.
 bool rocketnet_platform_bind_refused( int error );
 struct rocketnet_platform_error_text_t rocketnet_platform_socket_error_text( int error );
+
+// The table behind the text, for the unit case that walks it: the number of
+// rows, and row index's name and error (NULL and 0 outside the table).
+int rocketnet_platform_socket_error_name_count();
+const char * rocketnet_platform_socket_error_name_at( int index, int * error );
 
 #if defined( __APPLE__ )
 // binds handle (an AF_INET6 socket with IPV6_V6ONLY cleared, for an IPv6

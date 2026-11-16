@@ -1217,6 +1217,23 @@ void operator delete[]( void * p, size_t ) noexcept
 
 #endif // #if RN_TEST_TRAP_NEW
 
+// The trap for a unit case in another file (tests/test_unit_thread_priority.cpp
+// arms it around the refused thread priority call): armed, the first
+// allocation through any net above ends the process with a line naming the
+// function and this phase. The phase must be a string literal.
+
+void rocketnet_test_allocation_trap_arm( const char * phase )
+{
+    rn_trap_phase = phase;
+    rn_trap_armed = 1;
+}
+
+void rocketnet_test_allocation_trap_disarm()
+{
+    rn_trap_armed = 0;
+    rn_trap_phase = "idle";
+}
+
 // ----------------------------------------------------------------
 //                           test plumbing
 // ----------------------------------------------------------------

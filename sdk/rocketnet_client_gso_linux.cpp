@@ -233,7 +233,7 @@ static int rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const 
             // first packet as plain messages -- lossless, not a dropped batch.
             // the rebuild has no segmented message, so this runs once.
 
-            rocketnet_warn( "gso client: live UDP_SEGMENT send refused (%s). degrading to plain sendmmsg", strerror( error ) );
+            rocketnet_warn( "gso client: live UDP_SEGMENT send refused (%s). degrading to plain sendmmsg", rocketnet_platform_socket_error_text( error ).text );
 
             gso->segment = false;
             gso->segment_refusals++;
@@ -271,7 +271,7 @@ static int rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const 
                 gso->packet_send_failures.fetch_add( (uint64_t) gso->message_num_packets[i], std::memory_order_relaxed );
             }
 
-            rocketnet_debug( "gso client sendmmsg failed: %s. %d messages dropped", strerror( error ), num_messages - sent );
+            rocketnet_debug( "gso client sendmmsg failed: %s. %d messages dropped", rocketnet_platform_socket_error_text( error ).text, num_messages - sent );
             return num_packets;
         }
 
@@ -281,7 +281,7 @@ static int rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const 
 
         gso->packet_send_failures.fetch_add( (uint64_t) gso->message_num_packets[sent], std::memory_order_relaxed );
 
-        rocketnet_debug( "gso client sendmmsg failed: %s. one message dropped", strerror( error ) );
+        rocketnet_debug( "gso client sendmmsg failed: %s. one message dropped", rocketnet_platform_socket_error_text( error ).text );
 
         sent++;
     }
