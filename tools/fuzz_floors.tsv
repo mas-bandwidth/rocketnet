@@ -14,7 +14,9 @@ rocketnet_fuzz	95	3881.72
 rocketnet_fuzz_client_transport	1326	6.67
 rocketnet_fuzz_config	108	451.24
 rocketnet_fuzz_connect_token	167	78.70
-rocketnet_fuzz_endpoint	597	102.84
+# rocketnet_fuzz_endpoint: MSan leg 133154808777 (run 43824450950, b1, 2397 cached corpus inputs): INITED cov 1835
+# (final 1848), 91368 units in 900 s (101.52/s); min_units_per_second is a tenth of that rate.
+rocketnet_fuzz_endpoint	597	10.15
 rocketnet_fuzz_gateway_netlink	33	4386.71
 rocketnet_fuzz_message	125	1544.27
 rocketnet_fuzz_receive_structured	555	2.33

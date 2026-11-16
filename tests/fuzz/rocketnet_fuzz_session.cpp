@@ -30,9 +30,10 @@
 // uses it keeps the safety checks on deliveries it can attribute and drops
 // the liveness check. A connection the script itself tears down (a sealed
 // disconnect, or a long enough silence) also skips liveness; a script with
-// neither, whose wire was never silent either way for half the timeout before
-// either side dropped or the handshake failed (the quiet that follows never
-// counts), must end connected.
+// neither, once connected (or from the start of an unfaulted handshake with
+// timeout room left), whose wire was never silent either way for half the
+// timeout before either side dropped (the quiet that follows never counts),
+// must end connected, and an untainted client never fails before the timeout.
 //
 // INPUT: [selector][op]...
 //   selector bit 4: start the script during the handshake
@@ -76,9 +77,12 @@ static uint64_t rocketnet_fuzz_session_delivered_tally[2][ROCKETNET_FUZZ_NUM_CHA
 // clean delivery, and the longest silence either way so far
 static double rocketnet_fuzz_session_heard[2];
 static double rocketnet_fuzz_session_dark;
-// whether each side was connected after the last step, and whether either
-// dropped (or the handshake failed) since the script began: from then on the
-// silence is frozen
+// whether the pair has connected yet, whether a wire fault ran during the
+// handshake before connecting, whether each side was connected after the last
+// step, and whether an established side dropped: once connected, silence is
+// measured from connect until any drop
+static bool rocketnet_fuzz_session_ever_up;
+static bool rocketnet_fuzz_session_handshake_faulted;
 static bool rocketnet_fuzz_session_was_up[2];     // [0] the client CONNECTED, [1] the server's slot 0 connected
 static bool rocketnet_fuzz_session_went_down;
 
@@ -272,13 +276,28 @@ static void rocketnet_fuzz_session_update( struct rocketnet_fuzz_pair_t * pair, 
     rocketnet_fuzz_pair_send( pair );
     rocketnet_fuzz_pair_check_no_allocation( pair );
 
-    // a side dropping (the client leaving CONNECTED, the server freeing slot 0)
-    // or the client handshake failing: the longest silence either way up to
-    // now is the one that has to account for it, so it is taken here and frozen
     const int client_state = rocketnet_message_client_state( pair->client );
+    if ( !rocketnet_fuzz_session_tainted && !rocketnet_fuzz_session_ever_up &&
+         client_state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+    {
+        rocketnet_fuzz_pair_require( pair->time - ROCKETNET_FUZZ_START_TIME >= ROCKETNET_FUZZ_SESSION_TIMEOUT_SECONDS,
+                                     "an untainted handshake never fails before timeout_seconds" );
+    }
+
     const bool up[2] = { client_state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED, rocketnet_message_server_client_connected( pair->server, 0 ) != 0 };
-    const bool dropped = ( rocketnet_fuzz_session_was_up[0] && !up[0] ) || ( rocketnet_fuzz_session_was_up[1] && !up[1] ) ||
-                         client_state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
+    if ( !rocketnet_fuzz_session_ever_up && up[0] && up[1] )
+    {
+        rocketnet_fuzz_session_ever_up = true;
+        rocketnet_fuzz_session_heard[0] = pair->time;
+        rocketnet_fuzz_session_heard[1] = pair->time;
+        rocketnet_fuzz_session_dark = 0.0;
+    }
+
+    // an established side dropping (the client leaving CONNECTED, the server
+    // freeing slot 0): the longest silence either way since connect is the one
+    // that has to account for it, so it is taken here and frozen
+    const bool dropped = rocketnet_fuzz_session_ever_up &&
+                         ( ( rocketnet_fuzz_session_was_up[0] && !up[0] ) || ( rocketnet_fuzz_session_was_up[1] && !up[1] ) );
     if ( dropped && !rocketnet_fuzz_session_went_down )
     {
         rocketnet_fuzz_session_went_down = true;
@@ -299,7 +318,7 @@ static void rocketnet_fuzz_session_update( struct rocketnet_fuzz_pair_t * pair, 
 static void rocketnet_fuzz_session_heard_from( const struct rocketnet_fuzz_pair_t * pair, int direction )
 {
     const struct rocketnet_fuzz_ring_t * ring = direction == 0 ? &pair->c2s : &pair->s2c;
-    if ( ring->count == 0 || rocketnet_fuzz_session_went_down )
+    if ( ring->count == 0 || !rocketnet_fuzz_session_ever_up || rocketnet_fuzz_session_went_down )
     {
         return;
     }
@@ -406,6 +425,8 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
     rocketnet_fuzz_session_dark = 0.0;
     rocketnet_fuzz_session_was_up[0] = rocketnet_message_client_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
     rocketnet_fuzz_session_was_up[1] = rocketnet_message_server_client_connected( pair->server, 0 ) != 0;
+    rocketnet_fuzz_session_ever_up = rocketnet_fuzz_session_was_up[0] && rocketnet_fuzz_session_was_up[1];
+    rocketnet_fuzz_session_handshake_faulted = false;
     rocketnet_fuzz_session_went_down = false;
 
     static uint8_t buffer[ROCKETNET_RECEIVE_CEILING];
@@ -414,6 +435,10 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
     for ( int ops = 0; ops < 1024 && rocketnet_fuzz_more( &cursor ); ops++ )
     {
         const int op = rocketnet_fuzz_u8( &cursor ) % 12;
+        if ( !rocketnet_fuzz_session_ever_up && op >= 3 && op <= 9 )
+        {
+            rocketnet_fuzz_session_handshake_faulted = true;
+        }
         switch ( op )
         {
             case 0:
@@ -558,6 +583,8 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
     // the quiet window: a clean wire, both sides still sending, and every
     // reliable message sent in it due by the end
 
+    const double before_quiet = pair->time;
+
     rocketnet_dst_check_settle( &rocketnet_fuzz_session_checks );
 
     for ( int step = 0; step < ROCKETNET_FUZZ_SESSION_QUIET_STEPS; step++ )
@@ -571,21 +598,24 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
         rocketnet_fuzz_session_clean_step( pair );
     }
 
-    // the longest silence either way, to the end of the quiet window; when the
-    // connection dropped, the silence that counts is the one before the drop
-    // (rocketnet_fuzz_session_update), not the quiet the drop itself caused
-    for ( int direction = 0; direction < 2 && !rocketnet_fuzz_session_went_down; direction++ )
+    // the longest silence either way since connect, to the end of the quiet
+    // window; when an established connection dropped, the silence that counts
+    // is the one before the drop (rocketnet_fuzz_session_update), not the quiet
+    // the drop itself caused
+    for ( int direction = 0; direction < 2 && rocketnet_fuzz_session_ever_up && !rocketnet_fuzz_session_went_down; direction++ )
     {
         rocketnet_fuzz_session_note_silence( pair, direction );
     }
 
-    // a script the remote endpoint did not forge into (untainted) whose wire
-    // never went silent either way for half the token's timeout before any drop
-    // (rocketnet_fuzz_session_update) gives neither side a reason to end the
-    // connection: it must still be up, so an unexpected disconnect cannot
-    // switch the liveness check below off
+    // an untainted script that either connected (and never went silent either
+    // way for half the token's timeout before any drop) or started in an
+    // unfaulted handshake with timeout room left must end connected, so an
+    // unexpected disconnect cannot switch the liveness check below off
     const bool live = rocketnet_fuzz_pair_connected( pair );
-    if ( !rocketnet_fuzz_session_tainted && rocketnet_fuzz_session_dark < 0.5 * ROCKETNET_FUZZ_SESSION_TIMEOUT_SECONDS )
+    const bool unfaulted_handshake_due = !rocketnet_fuzz_session_ever_up && !rocketnet_fuzz_session_handshake_faulted &&
+                                         before_quiet <= ROCKETNET_FUZZ_START_TIME + ROCKETNET_FUZZ_SESSION_TIMEOUT_SECONDS - 0.5;
+    if ( !rocketnet_fuzz_session_tainted &&
+         ( unfaulted_handshake_due || ( rocketnet_fuzz_session_ever_up && rocketnet_fuzz_session_dark < 0.5 * ROCKETNET_FUZZ_SESSION_TIMEOUT_SECONDS ) ) )
     {
         rocketnet_fuzz_pair_require( live, "a script that never silenced the wire for half the timeout ends connected" );
     }

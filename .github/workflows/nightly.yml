@@ -349,6 +349,13 @@ jobs:
           set -euo pipefail
           bash tools/run_functional.sh prod-portable ./build-production/bin/Release/functional_production.exe
 
+      - name: Clean build tree
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build build-production bin
+
   # THE THREADED TRANSPORTS UNDER TSAN, lifted from ci.yml's tsan job on
   # 2026-10-22 step for step (its comment there is the doctrine: a real race
   # stops the world, halt_on_error=1, no suppressions file; setarch -R for gcc
@@ -626,6 +633,13 @@ jobs:
             build-asan.build.log
           if-no-files-found: ignore
 
+      - name: Clean build tree
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build build-asan bin
+
 
   # The windows Debug row, lifted from ci.yml's build-and-test-windows on
   # 2026-09-13, step for step. The doctrine it carries (#81's baseline): the
@@ -744,6 +758,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/check_driver_extension.py build --config Debug
 
+      - name: Clean build tree
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build bin
+
   # THE OUT-OF-TREE TRANSPORT BACKEND, UNDER MSVC. Lifted from ci.yml's
   # windows-2025 / Release leg (a) on 2026-09-13.
   #
@@ -797,6 +818,13 @@ jobs:
 
       - name: External transport backend
         run: python tools/check_driver_extension.py build --config Release
+
+      - name: Clean build tree
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build bin
 
   # Windows MSVC AddressSanitizer over unit, lifecycle, IOCP/RIO transport and
   # functional suites (portable, iocp and rio, each pinned) on the native Windows
@@ -908,6 +936,13 @@ jobs:
           set -euo pipefail
           bash tools/run_functional.sh dev-sanitized-rio ./bin/Release/functional.exe
 
+      - name: Clean build tree
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build bin
+
   # THE WINDOWS TOOLCHAIN MATRIX: clang-cl x64, built and tested, and an MSVC
   # ARM64 cross build, build-checked only.
   #
@@ -1005,6 +1040,13 @@ jobs:
           "$dumpbin" //nologo //headers build-arm64/bin/Release/rocketnet.dll | tr -d '\r' | tee arm64-headers.txt | grep -i machine
           grep -q 'AA64 machine (ARM64)' arm64-headers.txt
           python tools/check_exports.py build-arm64/bin/Release/rocketnet.dll build-arm64/Release/rocketnet.lib
+
+      - name: Clean build tree
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build-clang build-arm64 bin arm64-headers.txt
 
   # THE MUTATION GATE, ONE SLICE A NIGHT. The list is every mutant the
   # generator emits (--max-mutants 0, never a sample) over the six core table

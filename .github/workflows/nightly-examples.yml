@@ -180,7 +180,7 @@ jobs:
 
       - name: Configure
         timeout-minutes: 2
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_TOOLS=OFF
 
       - name: Build
         timeout-minutes: 22
@@ -188,3 +188,10 @@ jobs:
 
       - name: Run the examples (Windows)
         run: python tools/run_examples.py --build build --config Release
+
+      - name: Clean build tree
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build bin

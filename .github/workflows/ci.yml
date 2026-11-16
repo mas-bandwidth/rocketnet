@@ -2514,6 +2514,9 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+          submodules: false
       - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
@@ -2613,7 +2616,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           set -euo pipefail
-          cmake --build build --config Release --parallel 8
+          cmake --build build --config Release --parallel 4
 
       # the two C programs share this directory with the Go tool, so name the
       # tool's .go file rather than the directory. Compiling the tool and its
@@ -2678,6 +2681,9 @@ jobs:
     steps:
 
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+          submodules: false
       - uses: ./.github/actions/ccache
 
       - name: Check the fleet's build dependencies are present
@@ -2703,7 +2709,7 @@ jobs:
 
       - name: Build the unit suite (Windows)
         timeout-minutes: 5
-        run: cmake --build build --config Release --target test --parallel 8
+        run: cmake --build build --config Release --target test --parallel 4
 
       - name: Start combined unit and functional timing
         shell: bash

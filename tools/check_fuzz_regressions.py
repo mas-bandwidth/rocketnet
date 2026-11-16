@@ -41,6 +41,12 @@ NO_CAPTURE = {
         "the client transport target's input is a config selector and a stream of records (raw, sealed, cookie, mutated and time steps), not one datagram",
     "tests/fuzz/corpus_config/regress_config_f80d0030":
         "the config target's input is environment text for the config parser, not a packet",
+    "tests/fuzz/corpus_session/regress_handshake_poisoned_mapping":
+        "the session target's input is a selector and a script of pair operations, not one datagram",
+    "tests/fuzz/corpus_session/regress_handshake_timeout_interleaved":
+        "the session target's input is a selector and a script of pair operations, not one datagram",
+    "tests/fuzz/corpus_session_raw/regress_handshake_poisoned_mapping":
+        "the session_raw target's input is a selector and a script of pair operations, not one datagram",
 }
 
 

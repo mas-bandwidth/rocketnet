@@ -623,6 +623,38 @@ def run(argv, root=ROOT, out=say, checkout=scratch_checkout):
     for line in problems:
         out(line)
     if args.check_table:
+        for row in rows:
+            staged = {}
+            for plant in split_plants(row["plant"]):
+                parsed = parse_plant(plant, row["id"])
+                if parsed[0] == "sed":
+                    _, target, regex, replacement, every = parsed
+                    if target not in staged:
+                        fpath = root / target
+                        if not fpath.is_file():
+                            msg = f"PLANT-STALE {row['id']} (sed target {target} does not exist)"
+                            problems.append(msg)
+                            out(msg)
+                            break
+                        staged[target] = fpath.read_text(encoding="utf-8", errors="surrogateescape")
+                    new_text, count = re.subn(regex, lambda _m, s=replacement: s, staged[target],
+                                              count=0 if every else 1, flags=re.M)
+                    if count == 0 or new_text == staged[target]:
+                        msg = f"PLANT-STALE {row['id']} (sed {regex!r} matched nothing in {target})"
+                        problems.append(msg)
+                        out(msg)
+                        break
+                    staged[target] = new_text
+                elif parsed[0] == "patch":
+                    ppath = root / PLANTED / parsed[1]
+                    if not ppath.is_file():
+                        msg = f"PLANT-STALE {row['id']} (patch {PLANTED}/{parsed[1]} does not exist)"
+                        problems.append(msg)
+                        out(msg)
+                        break
+                elif parsed[0] == "write":
+                    _, target, content = parsed
+                    staged[target] = content
         jobs = len([k for k, kind in inventory(root) if kind == "job"])
         if problems:
             out(f"planted-violations: table check: {len(problems)} problem(s) in {len(rows)} rows")
@@ -834,8 +866,9 @@ def self_test(out=say):
         expect("a reusable call is not inventoried", not any("w.yml:called" in line for line in lines))
         expect("a dispatch-only workflow is not inventoried", not any("manual.yml" in line for line in lines))
         # a stale row, a row for a dispatch-only workflow, a drifted command, a wrong os
-        code, lines = go(complete + [stale, manual, drifted, wrong_os], "--check-table")
+        code, lines = go(complete + [stale, manual, drifted, wrong_os, noapply_sed], "--check-table")
         expect("stale job row is PLANT-STALE", has(lines, "PLANT-STALE w/gone (job gone is not in w.yml)"))
+        expect("stale sed plant is PLANT-STALE in --check-table", has(lines, "PLANT-STALE w/noapply-sed (sed "))
         expect("dispatch-only workflow row is PLANT-STALE", has(lines, "PLANT-STALE m/any"))
         expect("drifted command is PLANT-STALE", has(lines, "PLANT-STALE w/drifted (command is not"))
         expect("wrong os is PLANT-STALE", has(lines, "PLANT-STALE w/wrong-os (os macos"))
