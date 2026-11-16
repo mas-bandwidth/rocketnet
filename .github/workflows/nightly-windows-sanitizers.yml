@@ -36,12 +36,10 @@
 # appverif leg's Leak layer is the leak check here. No suppression, no skipped
 # case and no changed bound: a finding is a defect with its own card.
 #
-# Its last runs, from its branch (2026-10-31, run 41218588899): msvc-asan
-# green; clangcl-asan red, test_server_stats_current_every_update
-# peak_rss_mb=5382 over the 2048 bound under all three transports; appverif red,
-# APPVERIF-REFUSED as NETWORK SERVICE (no HKLM write). Both are real and stay
-# red until fixed at their cause. Brought to main 2026-11-12 from branch
-# nightly/windows-sanitizers, where its cron never fired.
+# Brought to main 2026-11-12 from branch nightly/windows-sanitizers. msvc-asan
+# is green; clangcl-asan uses tests/msan_scale_allocator.h's VirtualAlloc mapping
+# for full-capacity 36 GiB worlds (since /MD omits _DEBUG); appverif stays red
+# with APPVERIF-REFUSED while running as NETWORK SERVICE (no HKLM IFEO write).
 
 name: nightly-windows-sanitizers
 
@@ -266,3 +264,10 @@ jobs:
             *.log
             logs/
           if-no-files-found: ignore
+
+      - name: Clean build tree
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build-asan-msvc build-asan-clangcl build-appverif bin logs *.log

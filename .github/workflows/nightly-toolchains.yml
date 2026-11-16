@@ -115,6 +115,7 @@ jobs:
           python tools/check_toolchain_build.py compiler "$BUILD" "MSVC/${{ matrix.toolset.msvc }}."
 
       - name: Build
+        id: build
         run: |
           set -euo pipefail
           cmake --build "$BUILD" --config Release --parallel 4 2>&1 | tr -d '\r' | tee "$LOGS/build.log"
@@ -130,7 +131,7 @@ jobs:
           "./$BUILD/bin/Release/test.exe"
 
       - name: Functional suite
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           bash tools/run_functional.sh dev "./$BUILD/bin/Release/functional.exe"
@@ -142,6 +143,13 @@ jobs:
           name: nightly-toolchains-windows-${{ matrix.toolset.id }}-${{ github.run_id }}
           path: ${{ env.LOGS }}
           if-no-files-found: ignore
+
+      - name: Clean build tree
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$BUILD" "$LOGS" bin
 
   # THE OLDEST CLANG ON THE FLEET'S LINUX HOSTS, Debug and Release.
   linux-compilers:
@@ -196,6 +204,7 @@ jobs:
           python3 tools/check_toolchain_build.py compiler build "/$CC_NAME" "/$CXX_NAME"
 
       - name: Build static and shared libraries, unit suite and functional suite
+        id: build
         run: |
           set -euo pipefail
           cmake --build build --parallel 8 2>&1 | tee logs/build.log
@@ -211,7 +220,7 @@ jobs:
           ./bin/test
 
       - name: Functional suite
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           bash tools/run_functional.sh dev ./bin/functional
@@ -264,6 +273,7 @@ jobs:
           cmake -B build -DCMAKE_BUILD_TYPE=Debug "-DCMAKE_OSX_DEPLOYMENT_TARGET=$MINIMUM" 2>&1 | tee logs/configure.log
 
       - name: Build static and shared libraries, unit suite and functional suite
+        id: build
         run: |
           set -euo pipefail
           cmake --build build --parallel 4 2>&1 | tee logs/build.log
@@ -279,13 +289,13 @@ jobs:
           python3 tools/check_toolchain_build.py minos bin "$MINIMUM"
 
       - name: Unit suite
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           ./bin/test
 
       - name: Functional suite
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           set -euo pipefail
           bash tools/run_functional.sh dev ./bin/functional

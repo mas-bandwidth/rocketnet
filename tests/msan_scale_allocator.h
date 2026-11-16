@@ -4,8 +4,8 @@
 */
 
 // The allocator a full-capacity case (1000 connected slots, a server and its
-// clients in one process) runs under in a MemorySanitizer build and under the
-// MSVC debug CRT.
+// clients in one process) runs under in a MemorySanitizer build, a Windows
+// AddressSanitizer build, and under the MSVC debug CRT.
 //
 // The SDK plans a 1000-slot world up front: about 36 GiB in blocks of up to
 // 18.7 GiB (the message server object, sdk/rocketnet_message_object.cpp), of
@@ -79,10 +79,26 @@
 #endif // #if __has_feature( memory_sanitizer )
 #endif // #if defined( __has_feature )
 
-#if defined( _WIN32 ) && defined( _MSC_VER ) && defined( _DEBUG ) && !defined( ROCKETNET_TEST_MSAN_SCALE_ALLOCATOR )
+#if defined( _WIN32 ) && defined( _MSC_VER ) && defined( _DEBUG )
+#define ROCKETNET_TEST_DEBUG_CRT_SCALE_ALLOCATOR 1
+#endif // #if defined( _WIN32 ) && defined( _MSC_VER ) && defined( _DEBUG )
+
+// On Windows under AddressSanitizer (including clang-cl, which links /MD so
+// _DEBUG is undefined), ASan's malloc writes shadow bytes across the entire
+// 36.6 GiB planned world up front (~4.3 GiB resident). Mapping >=1 MiB blocks
+// via VirtualAlloc leaves untouched pages and their shadow uncommitted while
+// sdk/rocketnet_memory.h still poisons every carved array's red zone.
+#if defined( _WIN32 ) && !defined( ROCKETNET_TEST_MSAN_SCALE_ALLOCATOR )
+#if defined( ROCKETNET_TEST_DEBUG_CRT_SCALE_ALLOCATOR ) || defined( __SANITIZE_ADDRESS__ )
 #define ROCKETNET_TEST_MSAN_SCALE_ALLOCATOR 1
 #define ROCKETNET_TEST_SCALE_ALLOCATOR_VIRTUAL_ALLOC 1
-#endif // #if defined( _WIN32 ) && defined( _MSC_VER ) && defined( _DEBUG ) && !defined( ROCKETNET_TEST_MSAN_SCALE_ALLOCATOR )
+#elif defined( __has_feature )
+#if __has_feature( address_sanitizer )
+#define ROCKETNET_TEST_MSAN_SCALE_ALLOCATOR 1
+#define ROCKETNET_TEST_SCALE_ALLOCATOR_VIRTUAL_ALLOC 1
+#endif // #if __has_feature( address_sanitizer )
+#endif // #if defined( ROCKETNET_TEST_DEBUG_CRT_SCALE_ALLOCATOR ) || defined( __SANITIZE_ADDRESS__ )
+#endif // #if defined( _WIN32 ) && !defined( ROCKETNET_TEST_MSAN_SCALE_ALLOCATOR )
 
 #if defined( ROCKETNET_TEST_MSAN_SCALE_ALLOCATOR )
 
@@ -98,11 +114,11 @@
 enum
 {
     MSAN_SCALE_HEADER_BYTES = 64,               // keeps the block 64-byte aligned
-#if defined( ROCKETNET_TEST_SCALE_ALLOCATOR_VIRTUAL_ALLOC )
-    MSAN_SCALE_MAPPED_BYTES = 4096,             // blocks of a page and up are mapped (the header comment)
+#if defined( ROCKETNET_TEST_DEBUG_CRT_SCALE_ALLOCATOR )
+    MSAN_SCALE_MAPPED_BYTES = 4096,             // blocks of a page and up are mapped under the debug CRT (the header comment)
 #else
     MSAN_SCALE_MAPPED_BYTES = 1024 * 1024,      // blocks this size and up are mapped
-#endif // #if defined( ROCKETNET_TEST_SCALE_ALLOCATOR_VIRTUAL_ALLOC )
+#endif // #if defined( ROCKETNET_TEST_DEBUG_CRT_SCALE_ALLOCATOR )
 };
 
 struct msan_scale_header_t
@@ -205,13 +221,13 @@ struct msan_scale_allocator_scope_t
 // build slot): the scale allocator under the debug CRT, nothing in every other
 // build, MSan included, so those cases keep MSan's poisoning of every block.
 
-#if defined( ROCKETNET_TEST_SCALE_ALLOCATOR_VIRTUAL_ALLOC )
+#if defined( ROCKETNET_TEST_DEBUG_CRT_SCALE_ALLOCATOR )
 typedef msan_scale_allocator_scope_t debug_crt_scale_allocator_scope_t;
 #else
 struct debug_crt_scale_allocator_scope_t
 {
     debug_crt_scale_allocator_scope_t() {} // user-provided, so a case's scope is never an unused variable
 };
-#endif // #if defined( ROCKETNET_TEST_SCALE_ALLOCATOR_VIRTUAL_ALLOC )
+#endif // #if defined( ROCKETNET_TEST_DEBUG_CRT_SCALE_ALLOCATOR )
 
 #endif // ROCKETNET_TESTS_MSAN_SCALE_ALLOCATOR_H

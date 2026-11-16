@@ -305,6 +305,9 @@ def gh(path):
     if path.endswith("/logs"):
         command.insert(2, "--allow-escape-sequences")  # job logs carry the runner's colour codes
     result = subprocess.run(command, capture_output=True, text=True, timeout=120, errors="replace")
+    if (result.returncode != 0 and "--allow-escape-sequences" in command
+            and "unknown flag: --allow-escape-sequences" in result.stderr):
+        result = subprocess.run(["gh", "api", path], capture_output=True, text=True, timeout=120, errors="replace")
     if result.returncode != 0:
         raise RuntimeError(f"gh api {path}: {result.stderr.strip()[:200]}")
     return result.stdout
@@ -512,6 +515,28 @@ def self_test():
     case("(c) the suite executed zero cases", {}, remote_good, 1, do_remote=True,
          fetch=fetcher(jobs_ok, log="check passed: 0 cases\n"), expect="shows no executed case")
     case("(c) no run on main has the job", {}, remote_good, 1, do_remote=True, fetch=fetcher({"jobs": []}), expect="has job build")
+
+    calls = []
+    saved_run = subprocess.run
+    try:
+        def fake_gh_run(cmd, **kw):
+            calls.append(list(cmd))
+            if "--allow-escape-sequences" in cmd:
+                return subprocess.CompletedProcess(cmd, 1, "", "unknown flag: --allow-escape-sequences\n")
+            return subprocess.CompletedProcess(cmd, 0, "log-body\n", "")
+        subprocess.run = fake_gh_run
+        cases[0] += 1
+        got_log = gh("repos/o/r/actions/jobs/1/logs")
+        ok_gh = got_log == "log-body\n" and calls == [
+            ["gh", "api", "--allow-escape-sequences", "repos/o/r/actions/jobs/1/logs"],
+            ["gh", "api", "repos/o/r/actions/jobs/1/logs"],
+        ]
+        print(f"{'ok' if ok_gh else 'FAIL'}: gh() retries /logs without --allow-escape-sequences on older gh")
+        if not ok_gh:
+            failures.append("gh() retries /logs without --allow-escape-sequences on older gh")
+    finally:
+        subprocess.run = saved_run
+
     if failures:
         print(f"check_run_matrix self-test: {len(failures)} failed: {failures}")
         return 1

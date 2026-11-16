@@ -26,6 +26,7 @@ Run with --generate to rewrite the baseline from the current findings.
 """
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -205,19 +206,31 @@ def run_gcc_analyzer():
     findings = []
     files = parser_files()
     print("analyzing %d parser translation units: %s" % (len(files), " ".join(files)))
-    for rel in files:
+    jobs = []
+    for index, rel in enumerate(files):
         entry = by_file.get(os.path.join(ROOT, rel))
         if entry is None:
             raise IncompleteRun("no compile command for %s in %s" % (rel, COMPILE_DB))
         command = entry["command"]
         compiler = "g++" if rel.endswith((".cc", ".cpp", ".cxx")) else "gcc"
         command = re.sub(r"^\S+", compiler, command)
-        tmp_obj = os.path.join(BUILD, "static-gcc-analyzer.o")
+        tmp_obj = os.path.join(BUILD, "static-gcc-analyzer-%d.o" % index)
         command += " -fanalyzer -Wno-error -fdiagnostics-color=never -o " + tmp_obj
+        jobs.append((rel, compiler, command, entry["directory"]))
+
+    def compile_one(job):
+        rel, compiler, command, directory = job
         result = subprocess.run(
-            command, shell=True, cwd=entry["directory"],
+            command, shell=True, cwd=directory,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
+        return rel, compiler, result
+
+    workers = max(1, min(len(jobs), min(8, os.cpu_count() or 1)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(compile_one, jobs))
+
+    for rel, compiler, result in results:
         found, error_findings, other_errors = parse_output(result.stderr, "gcc")
         if result.returncode != 0 and (other_errors or not error_findings):
             detail = "\n".join(other_errors) or result.stderr.strip() or "(no output)"

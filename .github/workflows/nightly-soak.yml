@@ -704,6 +704,13 @@ jobs:
           name: soak-windows-logs-${{ strategy.job-index }}
           path: build/soak-windows
 
+      - name: Clean build tree
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build bin
+
   # THE SANITIZED SOAK. Bounded, seed-pinned soak_sim under asan + ubsan +
   # lsan. It lived on the per-commit gate (ci.yml) until 2026-09-13, where at
   # 297 seconds it WAS the wall: the whole per-commit tier finished when this

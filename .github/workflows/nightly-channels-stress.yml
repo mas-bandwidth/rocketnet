@@ -111,3 +111,10 @@ jobs:
         run: |
           set -euo pipefail
           ./bin/Release/test_channels_10k.exe
+
+      - name: Clean build tree
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build bin

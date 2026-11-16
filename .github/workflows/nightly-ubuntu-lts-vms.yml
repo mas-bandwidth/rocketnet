@@ -246,9 +246,9 @@ jobs:
           # cloud-init must have finished (it writes the user and its key);
           # its status is printed, and a guest whose cloud-init is not done
           # fails here by name
-          "$WORK/g" 'cloud-init status --wait --long' > "$WORK/cloud-init.txt" 2>&1 || echo "cloud-init status exit $? (judged by its status line below)"
+          "$WORK/g" 'set +e; cloud-init status --wait >/dev/null 2>&1; cloud-init status --long' > "$WORK/cloud-init.txt" 2>&1 || echo "cloud-init status exit $? (judged by its status line below)"
           cat "$WORK/cloud-init.txt"
-          if ! grep -qE '^status: done' "$WORK/cloud-init.txt"; then
+          if ! grep -qE '^\.*status: done' "$WORK/cloud-init.txt"; then
             echo "GUEST-CLOUD-INIT-NOT-DONE"
             exit 1
           fi
@@ -284,7 +284,7 @@ jobs:
       - name: Collect the guest logs
         if: failure()
         run: |
-          set -uo pipefail
+          set +e; set -uo pipefail
           # a log that was never written is not an error here; the verdict is
           # the step above
           mkdir -p "$WORK/logs"
@@ -317,12 +317,12 @@ jobs:
       - name: Tear down the guest
         if: always()
         run: |
-          set -uo pipefail
+          set +e; set -uo pipefail
           # cleanup, not a verdict: a guest already gone is the goal
           if [ -f "$WORK/qemu.pid" ]; then
             pid=$(cat "$WORK/qemu.pid")
             if kill -0 "$pid" 2>/dev/null; then
-              "$WORK/g" 'sudo poweroff' >/dev/null 2>&1
+              "$WORK/g" 'sudo poweroff' >/dev/null 2>&1 || echo "poweroff ssh exit $? (expected when guest closes ssh)"
               for _ in $(seq 1 20); do
                 kill -0 "$pid" 2>/dev/null || break
                 sleep 1

@@ -663,6 +663,13 @@ jobs:
             leak-*
           if-no-files-found: ignore
 
+      - name: Clean build tree
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build-fuzz bin
+
   # MemorySanitizer over the same fourteen-target matrix, Linux only (row 262's
   # macOS and Windows cells are n and -: MSan is a Linux instrument). Every
   # linked object must be instrumented: the development library, vendored
