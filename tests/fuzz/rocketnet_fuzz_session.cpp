@@ -108,6 +108,40 @@ static double rocketnet_fuzz_session_first_c2s_time;
 static bool rocketnet_fuzz_session_witness;
 static bool rocketnet_fuzz_session_witness_failed;
 static double rocketnet_fuzz_session_script_end;     // when the script's ops ended and the quiet window began
+static bool rocketnet_fuzz_session_in_script;        // the script's ops are running, not the quiet window
+static bool rocketnet_fuzz_session_drop_in_script;   // the drop, if any, came while the script's ops ran
+
+// client -> server deliveries after connect, inside the script and before any
+// drop, by the path that made them: the controls require the path they test
+enum
+{
+    ROCKETNET_FUZZ_SESSION_C2S_CLEAN,          // heard_from: a clean step, op 4/5/6/7, op 8 on the other way
+    ROCKETNET_FUZZ_SESSION_C2S_FAULTY,         // op 3's deliver or duplicate choice
+    ROCKETNET_FUZZ_SESSION_C2S_CORRUPTING,     // op 8 corrupting the client -> server way
+    ROCKETNET_FUZZ_SESSION_C2S_PATHS
+};
+static uint64_t rocketnet_fuzz_session_c2s_by_path[ROCKETNET_FUZZ_SESSION_C2S_PATHS];
+
+// a client -> server datagram delivered after connect, by any path (clean,
+// faulty, corrupting): the server may have wound its receive clock, so a drop
+// no longer measures the client -> server silence from the slot coming up.
+// Every path that delivers client -> server traffic calls this.
+static void rocketnet_fuzz_session_c2s_delivered( const struct rocketnet_fuzz_pair_t * pair, int path )
+{
+    if ( !rocketnet_fuzz_session_ever_up || rocketnet_fuzz_session_went_down )
+    {
+        return;
+    }
+    if ( rocketnet_fuzz_session_in_script )
+    {
+        rocketnet_fuzz_session_c2s_by_path[path]++;
+    }
+    if ( !rocketnet_fuzz_session_c2s_since_connect )
+    {
+        rocketnet_fuzz_session_c2s_since_connect = true;
+        rocketnet_fuzz_session_first_c2s_time = pair->time;
+    }
+}
 
 // the silence one way (0 client -> server, 1 server -> client) up to now, kept
 // when it is the longest so far; compared by hand, since windows.h defines max
@@ -337,6 +371,7 @@ static void rocketnet_fuzz_session_update( struct rocketnet_fuzz_pair_t * pair, 
     if ( dropped && !rocketnet_fuzz_session_went_down )
     {
         rocketnet_fuzz_session_went_down = true;
+        rocketnet_fuzz_session_drop_in_script = rocketnet_fuzz_session_in_script;
 
         // the server's receive clock was set when its slot came up, which
         // can be long before the client connected: with no client -> server
@@ -360,20 +395,6 @@ static void rocketnet_fuzz_session_update( struct rocketnet_fuzz_pair_t * pair, 
 // The time since the last such delivery is a silence, measured only until a
 // drop (rocketnet_fuzz_session_update), so a drop cannot excuse itself with
 // the quiet it causes; the longest is kept
-// a client -> server datagram delivered after connect, by any path (clean,
-// faulty, corrupting): the server may have wound its receive clock, so a drop
-// no longer measures the client -> server silence from the slot coming up.
-// Every path that delivers client -> server traffic calls this.
-static void rocketnet_fuzz_session_c2s_delivered( const struct rocketnet_fuzz_pair_t * pair )
-{
-    if ( !rocketnet_fuzz_session_ever_up || rocketnet_fuzz_session_went_down || rocketnet_fuzz_session_c2s_since_connect )
-    {
-        return;
-    }
-    rocketnet_fuzz_session_c2s_since_connect = true;
-    rocketnet_fuzz_session_first_c2s_time = pair->time;
-}
-
 static void rocketnet_fuzz_session_heard_from( const struct rocketnet_fuzz_pair_t * pair, int direction )
 {
     const struct rocketnet_fuzz_ring_t * ring = direction == 0 ? &pair->c2s : &pair->s2c;
@@ -385,7 +406,7 @@ static void rocketnet_fuzz_session_heard_from( const struct rocketnet_fuzz_pair_
     rocketnet_fuzz_session_heard[direction] = pair->time;
     if ( direction == 0 )
     {
-        rocketnet_fuzz_session_c2s_delivered( pair );
+        rocketnet_fuzz_session_c2s_delivered( pair, ROCKETNET_FUZZ_SESSION_C2S_CLEAN );
     }
 }
 
@@ -419,7 +440,7 @@ static void rocketnet_fuzz_session_faulty_step( struct rocketnet_fuzz_pair_t * p
             const uint8_t decision = rocketnet_fuzz_u8( cursor ) & 3;
             if ( pass == 0 && ( decision == 0 || decision == 2 ) )
             {
-                rocketnet_fuzz_session_c2s_delivered( pair );
+                rocketnet_fuzz_session_c2s_delivered( pair, ROCKETNET_FUZZ_SESSION_C2S_FAULTY );
             }
             if ( decision == 0 )            // deliver
             {
@@ -499,6 +520,9 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
     rocketnet_fuzz_session_first_c2s_time = pair->time;
     rocketnet_fuzz_session_planted = false;
     rocketnet_fuzz_session_witness_failed = false;
+    rocketnet_fuzz_session_in_script = true;
+    rocketnet_fuzz_session_drop_in_script = false;
+    memset( rocketnet_fuzz_session_c2s_by_path, 0, sizeof( rocketnet_fuzz_session_c2s_by_path ) );
     rocketnet_fuzz_session_handshake_faulted = false;
     rocketnet_fuzz_session_went_down = false;
 
@@ -578,7 +602,7 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
                 rocketnet_fuzz_session_heard_from( pair, ( direction & 1 ) ? 0 : 1 );
                 if ( ( direction & 1 ) == 0 && pair->c2s.count > 0 )
                 {
-                    rocketnet_fuzz_session_c2s_delivered( pair );
+                    rocketnet_fuzz_session_c2s_delivered( pair, ROCKETNET_FUZZ_SESSION_C2S_CORRUPTING );
                 }
                 rocketnet_fuzz_pair_deliver_all( pair );
                 break;
@@ -664,6 +688,7 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
 
     const double before_quiet = pair->time;
     rocketnet_fuzz_session_script_end = before_quiet;
+    rocketnet_fuzz_session_in_script = false;
 
     rocketnet_dst_check_settle( &rocketnet_fuzz_session_checks );
 
@@ -784,30 +809,68 @@ static void rocketnet_fuzz_session_late_prefix( std::vector<uint8_t> & s, int cl
 // a negative control: the script run with the server freeing slot 0 one
 // second after the first client -> server delivery past connect, on a clean
 // wire. It must be a real late connect (connect at least half the timeout
-// after the slot came up) with client -> server traffic delivered inside the
-// script before the planted drop, or it proves nothing; then the
-// end-connected check must fail. False, with the reason printed, otherwise.
-static bool rocketnet_fuzz_session_planted_drop_fails( const char * name, const std::vector<uint8_t> & script )
+// after the slot came up) whose client -> server traffic after connect, inside
+// the script and before the planted drop, went only by the path under test
+// (at least one delivery by it, none by any other), or it proves nothing; then
+// the end-connected check must fail. False, with the reason printed,
+// otherwise: each precondition has its own message, apart from the verdict's.
+static bool rocketnet_fuzz_session_planted_drop_fails( const char * name, const std::vector<uint8_t> & script, int path )
 {
+    static const char * const path_names[ROCKETNET_FUZZ_SESSION_C2S_PATHS] = { "clean", "faulty (op 3)", "corrupting (op 8)" };
+
     rocketnet_fuzz_session_plant_drop = true;
     rocketnet_fuzz_session_witness = true;
     rocketnet_fuzz_session_run( script.data(), script.size() );
     rocketnet_fuzz_session_plant_drop = false;
     rocketnet_fuzz_session_witness = false;
 
+    bool ok = true;
     const double lateness = rocketnet_fuzz_session_connect_time - rocketnet_fuzz_session_server_up_time;
-    const bool c2s_in_script = rocketnet_fuzz_session_c2s_since_connect && rocketnet_fuzz_session_first_c2s_time < rocketnet_fuzz_session_script_end;
-    if ( !rocketnet_fuzz_session_ever_up || lateness < 0.5 * ROCKETNET_FUZZ_SESSION_TIMEOUT_SECONDS ||
-         !c2s_in_script || !rocketnet_fuzz_session_planted || !rocketnet_fuzz_session_went_down )
+    if ( !rocketnet_fuzz_session_ever_up )
     {
-        fprintf( stderr, "seed generator: %s is not a late connect with traffic before a planted drop (connected %d, %.2f s after the slot came up, client -> server delivered in the script %d, planted %d, dropped %d)\n",
-                 name, (int) rocketnet_fuzz_session_ever_up, lateness, (int) c2s_in_script,
-                 (int) rocketnet_fuzz_session_planted, (int) rocketnet_fuzz_session_went_down );
+        fprintf( stderr, "seed generator: %s: control precondition: the pair never connected\n", name );
+        return false;
+    }
+    if ( lateness < 0.5 * ROCKETNET_FUZZ_SESSION_TIMEOUT_SECONDS )
+    {
+        fprintf( stderr, "seed generator: %s: control precondition: connect came %.2f s after the slot, not a late connect\n", name, lateness );
+        ok = false;
+    }
+    for ( int p = 0; p < ROCKETNET_FUZZ_SESSION_C2S_PATHS; p++ )
+    {
+        const uint64_t count = rocketnet_fuzz_session_c2s_by_path[p];
+        if ( p == path && count == 0 )
+        {
+            fprintf( stderr, "seed generator: %s: control precondition: no %s client -> server delivery after connect in the script\n", name, path_names[p] );
+            ok = false;
+        }
+        if ( p != path && count != 0 )
+        {
+            fprintf( stderr, "seed generator: %s: control precondition: %llu %s client -> server deliveries after connect, where only %s may deliver\n",
+                     name, (unsigned long long) count, path_names[p], path_names[path] );
+            ok = false;
+        }
+    }
+    if ( !rocketnet_fuzz_session_planted || !rocketnet_fuzz_session_went_down )
+    {
+        fprintf( stderr, "seed generator: %s: control precondition: the planted drop did not happen (planted %d, dropped %d)\n",
+                 name, (int) rocketnet_fuzz_session_planted, (int) rocketnet_fuzz_session_went_down );
+        ok = false;
+    }
+    else if ( !rocketnet_fuzz_session_drop_in_script )
+    {
+        // a drop in the quiet window follows its clean steps, which would
+        // record a delivery by another path first
+        fprintf( stderr, "seed generator: %s: control precondition: the planted drop came after the script, in the quiet window\n", name );
+        ok = false;
+    }
+    if ( !ok )
+    {
         return false;
     }
     if ( !rocketnet_fuzz_session_witness_failed )
     {
-        fprintf( stderr, "seed generator: %s: an early drop after a late connect and traffic passed the end-connected check\n", name );
+        fprintf( stderr, "seed generator: %s: the end-connected check passed an early drop after a late connect and %s traffic\n", name, path_names[path] );
         return false;
     }
     return true;
@@ -927,7 +990,10 @@ static bool rocketnet_fuzz_session_generate( const char * dir )
                 n.script.push_back( 0 );
             }
 
-            for ( int round = 0; round < 4; round++ )
+            // about 2.6 s of steps after the silence, so the planted drop
+            // (a second after the first delivery past connect) comes inside
+            // the script
+            for ( int round = 0; round < 8; round++ )
             {
                 rocketnet_fuzz_session_traffic( n.script, 64 + 100 * round );
 
@@ -1031,31 +1097,53 @@ static bool rocketnet_fuzz_session_generate( const char * dir )
     // from the slot coming up once traffic flows) would excuse these drops,
     // and so would one that missed a path delivering client -> server
     // traffic. First the late connect with clean traffic after connect.
-    complete = rocketnet_fuzz_session_planted_drop_fails( late_connect.name.c_str(), late_connect.script ) && complete;
+    complete = rocketnet_fuzz_session_planted_drop_fails( late_connect.name.c_str(), late_connect.script, ROCKETNET_FUZZ_SESSION_C2S_CLEAN ) && complete;
 
     // Then the same late connect with every client -> server datagram after
     // the silence delivered only by the faulty tick's deliver choice (op 3,
     // decision 0): no clean step, so only that path can record the delivery.
-    // Each faulty tick is followed by six bytes of 4: decision 0 for the
+    // Each faulty tick is followed by ten bytes of 4: decision 0 for the
     // datagrams it takes, and any it does not take run as op 4 steps, which
-    // drop client -> server and so deliver nothing that way.
+    // drop client -> server and so deliver nothing that way. The control
+    // counts deliveries by path, so a parse that slipped into a clean step
+    // is reported, not passed.
     {
         named_t n = { "late_connect_faulty_deliver", {} };
         rocketnet_fuzz_session_late_prefix( n.script, late_connect_clean );
 
-        for ( int round = 0; round < 80; round++ )
+        for ( int round = 0; round < 60; round++ )
         {
             rocketnet_fuzz_session_op_send( n.script, 0, round % ROCKETNET_FUZZ_NUM_CHANNELS, 64 );
             rocketnet_fuzz_session_op_send( n.script, 1, round % ROCKETNET_FUZZ_NUM_CHANNELS, 64 );
             n.script.push_back( 3 );
 
-            for ( int i = 0; i < 6; i++ )
+            for ( int i = 0; i < 10; i++ )
             {
                 n.script.push_back( 4 );
             }
         }
 
-        complete = rocketnet_fuzz_session_planted_drop_fails( n.name.c_str(), n.script ) && complete;
+        complete = rocketnet_fuzz_session_planted_drop_fails( n.name.c_str(), n.script, ROCKETNET_FUZZ_SESSION_C2S_FAULTY ) && complete;
+    }
+
+    // And with every client -> server datagram after the silence delivered
+    // only by op 8 on the client -> server way. The mask is 0, so the
+    // "corrupted" datagram arrives intact: the path is under test, not the
+    // server's refusal of a corrupt packet.
+    {
+        named_t n = { "late_connect_corrupting_deliver", {} };
+        rocketnet_fuzz_session_late_prefix( n.script, late_connect_clean );
+
+        for ( int round = 0; round < 200; round++ )
+        {
+            rocketnet_fuzz_session_op_send( n.script, 0, round % ROCKETNET_FUZZ_NUM_CHANNELS, 64 );
+            rocketnet_fuzz_session_op_send( n.script, 1, round % ROCKETNET_FUZZ_NUM_CHANNELS, 64 );
+
+            const uint8_t corrupt[] = { 8, 0, 0, 0, 0 };
+            n.script.insert( n.script.end(), corrupt, corrupt + sizeof( corrupt ) );
+        }
+
+        complete = rocketnet_fuzz_session_planted_drop_fails( n.name.c_str(), n.script, ROCKETNET_FUZZ_SESSION_C2S_CORRUPTING ) && complete;
     }
 
     for ( int direction = 0; direction < 2; direction++ )
