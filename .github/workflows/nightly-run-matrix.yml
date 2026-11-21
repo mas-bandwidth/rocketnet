@@ -17,9 +17,10 @@
 # frame time measurements want a quiet fleet) and of the TLC records and CBMC
 # runs around 05:00.
 #
-# Linux first. A pinned run of the xdp server needs root and a veth pair
-# (inside the virtme-ng guest), so the xdp~portable cells are not here yet;
-# their rows in the matrix name what they wait on.
+# Linux here; the macOS cells are nightly-run-matrix-macos.yml, at night
+# for the macOS runners. A pinned run of the xdp server needs root and a
+# veth pair (inside the virtme-ng guest), so the xdp~portable cells are not
+# here yet; their rows in the matrix name what they wait on.
 
 name: nightly-run-matrix
 
