@@ -51,6 +51,10 @@ NO_CAPTURE = {
         "the session target's input is a selector and a script of pair operations, not one datagram",
     "tests/fuzz/corpus_session_raw/regress_server_up_before_connect":
         "the session_raw target's input is a selector and a script of pair operations, not one datagram",
+    "tests/fuzz/corpus_session/regress_server_up_before_connect_windows":
+        "the session target's input is a selector and a script of pair operations, not one datagram",
+    "tests/fuzz/corpus_session/regress_server_up_before_connect_ndebug":
+        "the session target's input is a selector and a script of pair operations, not one datagram",
 }
 
 

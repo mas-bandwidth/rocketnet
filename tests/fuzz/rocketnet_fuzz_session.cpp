@@ -87,10 +87,26 @@ static bool rocketnet_fuzz_session_handshake_faulted;
 // sets the slot's receive clock then, and a challenge response the client
 // resends before it hears the server is not session activity, so it never
 // winds that clock (rocketnet_server_protocol.cpp, "A response retransmission
-// is not fresh session activity"). Client -> server silence runs from here.
+// is not fresh session activity"). Silence is still measured from connect;
+// only a drop that comes before any client -> server datagram was delivered
+// after connect measures the client -> server silence from here, since
+// nothing since the slot came up can have wound the server's clock.
 static double rocketnet_fuzz_session_server_up_time;
+static bool rocketnet_fuzz_session_c2s_since_connect;
 static bool rocketnet_fuzz_session_was_up[2];     // [0] the client CONNECTED, [1] the server's slot 0 connected
 static bool rocketnet_fuzz_session_went_down;
+static double rocketnet_fuzz_session_connect_time;
+
+// the seed generator's negative control for the end-connected check, never
+// set by a fuzzer run: plant_drop has the server free slot 0 one second after
+// the first client -> server delivery past connect, a drop on a clean wire the
+// oracle must catch; witness makes that check record its verdict here rather
+// than abort, so the generator can require that it fails
+static bool rocketnet_fuzz_session_plant_drop;
+static bool rocketnet_fuzz_session_planted;
+static double rocketnet_fuzz_session_first_c2s_time;
+static bool rocketnet_fuzz_session_witness;
+static bool rocketnet_fuzz_session_witness_failed;
 
 // the silence one way (0 client -> server, 1 server -> client) up to now, kept
 // when it is the longest so far; compared by hand, since windows.h defines max
@@ -290,20 +306,26 @@ static void rocketnet_fuzz_session_update( struct rocketnet_fuzz_pair_t * pair, 
                                      "an untainted handshake never fails before timeout_seconds" );
     }
 
-    const bool up[2] = { client_state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED, rocketnet_message_server_client_connected( pair->server, 0 ) != 0 };
+    bool up[2] = { client_state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED, rocketnet_message_server_client_connected( pair->server, 0 ) != 0 };
     if ( !rocketnet_fuzz_session_ever_up && up[1] && !rocketnet_fuzz_session_was_up[1] )
     {
         rocketnet_fuzz_session_server_up_time = pair->time;
     }
     if ( !rocketnet_fuzz_session_ever_up && up[0] && up[1] )
     {
-        // the client's receive clock is set as it connects, now; the
-        // server's was set when its slot came up, which can be long before
-        // the client hears it
         rocketnet_fuzz_session_ever_up = true;
-        rocketnet_fuzz_session_heard[0] = rocketnet_fuzz_session_server_up_time;
+        rocketnet_fuzz_session_connect_time = pair->time;
+        rocketnet_fuzz_session_heard[0] = pair->time;
         rocketnet_fuzz_session_heard[1] = pair->time;
         rocketnet_fuzz_session_dark = 0.0;
+    }
+
+    if ( rocketnet_fuzz_session_plant_drop && !rocketnet_fuzz_session_planted && !rocketnet_fuzz_session_went_down &&
+         rocketnet_fuzz_session_c2s_since_connect && pair->time >= rocketnet_fuzz_session_first_c2s_time + 1.0 )
+    {
+        rocketnet_fuzz_session_planted = true;
+        rocketnet_server_transport_disconnect_client( pair->transport, 0 );
+        up[1] = rocketnet_message_server_client_connected( pair->server, 0 ) != 0;
     }
 
     // an established side dropping (the client leaving CONNECTED, the server
@@ -314,6 +336,15 @@ static void rocketnet_fuzz_session_update( struct rocketnet_fuzz_pair_t * pair, 
     if ( dropped && !rocketnet_fuzz_session_went_down )
     {
         rocketnet_fuzz_session_went_down = true;
+
+        // the server's receive clock was set when its slot came up, which
+        // can be long before the client connected: with no client -> server
+        // datagram delivered since connect, nothing has wound it since, so
+        // that is where the client -> server silence starts
+        if ( !rocketnet_fuzz_session_c2s_since_connect )
+        {
+            rocketnet_fuzz_session_heard[0] = rocketnet_fuzz_session_server_up_time;
+        }
         for ( int direction = 0; direction < 2; direction++ )
         {
             rocketnet_fuzz_session_note_silence( pair, direction );
@@ -337,6 +368,11 @@ static void rocketnet_fuzz_session_heard_from( const struct rocketnet_fuzz_pair_
     }
     rocketnet_fuzz_session_note_silence( pair, direction );
     rocketnet_fuzz_session_heard[direction] = pair->time;
+    if ( direction == 0 && !rocketnet_fuzz_session_c2s_since_connect )
+    {
+        rocketnet_fuzz_session_c2s_since_connect = true;
+        rocketnet_fuzz_session_first_c2s_time = pair->time;
+    }
 }
 
 // every captured datagram delivered both ways, clean
@@ -440,6 +476,11 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
     rocketnet_fuzz_session_was_up[1] = rocketnet_message_server_client_connected( pair->server, 0 ) != 0;
     rocketnet_fuzz_session_ever_up = rocketnet_fuzz_session_was_up[0] && rocketnet_fuzz_session_was_up[1];
     rocketnet_fuzz_session_server_up_time = pair->time;
+    rocketnet_fuzz_session_c2s_since_connect = false;
+    rocketnet_fuzz_session_connect_time = pair->time;
+    rocketnet_fuzz_session_first_c2s_time = pair->time;
+    rocketnet_fuzz_session_planted = false;
+    rocketnet_fuzz_session_witness_failed = false;
     rocketnet_fuzz_session_handshake_faulted = false;
     rocketnet_fuzz_session_went_down = false;
 
@@ -631,7 +672,14 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
     if ( !rocketnet_fuzz_session_tainted &&
          ( unfaulted_handshake_due || ( rocketnet_fuzz_session_ever_up && rocketnet_fuzz_session_dark < 0.5 * ROCKETNET_FUZZ_SESSION_TIMEOUT_SECONDS ) ) )
     {
-        rocketnet_fuzz_pair_require( live, "a script that never silenced the wire for half the timeout ends connected" );
+        if ( rocketnet_fuzz_session_witness )
+        {
+            rocketnet_fuzz_session_witness_failed = !live;
+        }
+        else
+        {
+            rocketnet_fuzz_pair_require( live, "a script that never silenced the wire for half the timeout ends connected" );
+        }
     }
     if ( live && !rocketnet_fuzz_session_tainted )
     {
@@ -778,6 +826,65 @@ static bool rocketnet_fuzz_session_generate( const char * dir )
         seeds.push_back( n );
     }
 
+    // the end-connected check's controls, a late connect: the server's slot
+    // comes up, the client hears nothing back for over half the timeout, then
+    // connects and both sides carry traffic. The silence before connect
+    // excuses nothing after it: the script must end connected, and with an
+    // early drop planted it must fail the check (below). The handshake steps
+    // before the server's slot comes up are the protocol's, so the clean steps
+    // before the silence are found, not guessed: the fewest that bring the
+    // slot up without the client connecting. Not a seed: the planted drop is
+    // not in the script language, so the fuzzer cannot use it.
+
+    bool late_connect_ends_connected = false;
+    named_t late_connect = { "late_connect", {} };
+    {
+        named_t & n = late_connect;
+
+        for ( int clean = 1; clean <= 16; clean++ )
+        {
+            n.script.assign( 1, 0x10 );
+
+            for ( int i = 0; i < clean; i++ )
+            {
+                n.script.push_back( 0 );
+            }
+
+            for ( int i = 0; i < 9; i++ )
+            {
+                n.script.push_back( 11 );
+                n.script.push_back( 63 );
+            }
+
+            for ( int i = 0; i < 40; i++ )
+            {
+                n.script.push_back( 0 );
+            }
+
+            for ( int round = 0; round < 4; round++ )
+            {
+                rocketnet_fuzz_session_traffic( n.script, 64 + 100 * round );
+
+                for ( int i = 0; i < 20; i++ )
+                {
+                    n.script.push_back( 0 );
+                }
+            }
+
+            rocketnet_fuzz_session_witness = true;
+            rocketnet_fuzz_session_run( n.script.data(), n.script.size() );
+            rocketnet_fuzz_session_witness = false;
+
+            if ( rocketnet_fuzz_session_ever_up &&
+                 rocketnet_fuzz_session_connect_time - rocketnet_fuzz_session_server_up_time >= 0.5 * ROCKETNET_FUZZ_SESSION_TIMEOUT_SECONDS )
+            {
+                late_connect_ends_connected = !rocketnet_fuzz_session_witness_failed && !rocketnet_fuzz_session_went_down &&
+                                              rocketnet_fuzz_pair_connected( &rocketnet_fuzz_session_pair );
+                break;
+            }
+        }
+    }
+
     // garbage from each of the three places: the committed wire corpus
 
     char from[1024];
@@ -844,6 +951,46 @@ static bool rocketnet_fuzz_session_generate( const char * dir )
     {
         rocketnet_fuzz_session_run( n.script.data(), n.script.size() );
         complete = rocketnet_fuzz_seed_write( dir, n.name.c_str(), n.script.data(), (int) n.script.size() ) && complete;
+    }
+
+    // the positive control: unplanted, the late connect ends connected
+    if ( !late_connect_ends_connected )
+    {
+        fprintf( stderr, "seed generator: no late connect (slot up, then silence for half the timeout) that ends connected was found\n" );
+        complete = false;
+    }
+
+    // the negative control for the end-connected check: the late connect with
+    // the server dropping one second after the first client -> server delivery
+    // past connect, on a clean wire. An oracle that let the silence before
+    // connect count against what follows (measuring it from the slot coming up
+    // once traffic flows) would excuse this drop; it must fail. The script must
+    // really be late (connect at least half the timeout after the slot came up)
+    // with client -> server traffic delivered before the drop, or the control
+    // proves nothing.
+    {
+        const named_t & n = late_connect;
+
+        rocketnet_fuzz_session_plant_drop = true;
+        rocketnet_fuzz_session_witness = true;
+        rocketnet_fuzz_session_run( n.script.data(), n.script.size() );
+        rocketnet_fuzz_session_plant_drop = false;
+        rocketnet_fuzz_session_witness = false;
+
+        const double lateness = rocketnet_fuzz_session_connect_time - rocketnet_fuzz_session_server_up_time;
+        if ( !rocketnet_fuzz_session_ever_up || lateness < 0.5 * ROCKETNET_FUZZ_SESSION_TIMEOUT_SECONDS ||
+             !rocketnet_fuzz_session_c2s_since_connect || !rocketnet_fuzz_session_planted || !rocketnet_fuzz_session_went_down )
+        {
+            fprintf( stderr, "seed generator: %s is not a late connect with traffic before a planted drop (connected %d, %.2f s after the slot came up, client -> server delivered %d, planted %d, dropped %d)\n",
+                     n.name.c_str(), (int) rocketnet_fuzz_session_ever_up, lateness, (int) rocketnet_fuzz_session_c2s_since_connect,
+                     (int) rocketnet_fuzz_session_planted, (int) rocketnet_fuzz_session_went_down );
+            complete = false;
+        }
+        else if ( !rocketnet_fuzz_session_witness_failed )
+        {
+            fprintf( stderr, "seed generator: an early drop after a late connect and traffic passed the end-connected check\n" );
+            complete = false;
+        }
     }
 
     for ( int direction = 0; direction < 2; direction++ )
