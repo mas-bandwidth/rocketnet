@@ -158,6 +158,28 @@ class TestCheckFrameBudget(unittest.TestCase):
         # a report-only void exits 0, so it names itself to the nightly watch
         self.assertIn("::warning title=UNMEASURED::frame budget VOID: host load 4.25 over 4 (16 cores / 4) "
                       "before run 1; nothing measured", report_ro)
+        # ... and still reports the numbers it ran: the probe's P=32 line, marked not judged
+        self.assertIn("total_us_p99=40.000", report_ro)
+        self.assertIn("frame_budget_probe transport=portable P=32 total_us_p99=40.00 load=4.25 cores=16 judged=no",
+                      report_ro)
+        # an enforcing leg's void prints no probe numbers
+        self.assertNotIn("frame_budget_probe", report)
+
+        # a report-only void after quiet runs prints the quiet runs' lines and the probe's
+        code_ro2, report_ro2 = cfb.evaluate_gate(
+            transport="portable",
+            run_outputs=outputs,
+            load1=1.0,
+            cores=16,
+            load_samples=[(1.0, 16), (5.50, 16), (1.0, 16)],
+            report_only=True,
+        )
+        self.assertEqual(code_ro2, 0, msg=report_ro2)
+        self.assertIn("total_us_p99=40.000", report_ro2)
+        self.assertIn("frame_budget_probe transport=portable P=32 total_us_p99=41.00 load=5.50 cores=16 judged=no",
+                      report_ro2)
+        self.assertIn("verdict=VOID", report_ro2)
+        self.assertNotIn("verdict=PASS", report_ro2)
 
         # Windows (load1=None) prints load=unavailable and does not void:
         code_win, report_win = cfb.evaluate_gate(

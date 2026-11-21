@@ -14,7 +14,10 @@ prints no P=32 line the verdict is FAIL (exit 1, with --report-only too), since
 load voids a timing and never a broken binary; otherwise, including a probe
 that did not finish within the run timeout (named in the verdict line), it
 prints "VOID load=<x> cores=<n>" and a VOID verdict line and exits 3 (unless
---report-only is set, which exits 0). A void is never a pass.
+--report-only is set, which exits 0). A void is never a pass. The lines of
+the quiet runs before the void are printed, and with --report-only the probe's
+own P=32 line and a "frame_budget_probe ... judged=no" line are printed too, so
+a report-only leg reports numbers on a loaded night.
 
 --report-only exits 0 on PASS, on a timing FAIL (the median over the gate) and
 on VOID; a broken run (nonzero exit, no P=32 line, or a quiet-host run that did
@@ -142,6 +145,16 @@ def evaluate_gate(
 
         if loaded:
             timed_out = probe_timeout is not None and idx >= len(run_outputs)
+            lines_out.extend(raw_lines)
+            if report_only and idx < len(run_outputs):
+                # a report-only leg still reports what it ran: the probe's numbers, measured
+                # under load and not judged
+                probe_us, probe_line = parse_p32_total_p99(run_outputs[idx])
+                lines_out.append(probe_line)
+                lines_out.append(
+                    f"frame_budget_probe transport={transport} P=32 total_us_p99={probe_us:.2f} "
+                    f"load={cur_load:.2f} cores={cur_cores} judged=no"
+                )
             lines_out.append(f"VOID load={cur_load:.2f} cores={cur_cores}")
             lines_out.append(
                 f"frame_budget transport={transport} P=32 total_us_p99_median=VOID "

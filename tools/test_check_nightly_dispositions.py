@@ -692,8 +692,9 @@ class Unmeasured(WatchCase):
         self.assertGreater(total, 0, "no workflow declares ROCKETNET_MAY_NOT_MEASURE")
         reports = sorted(name for name, _ in watch.scheduled_workflows(root)
                          for _, why in watch.may_not_measure(root, name, watch.REPORT_ONLY))
-        self.assertEqual(["nightly-client-frame-time.yml"] * 2 + ["nightly-frame-budget.yml"] * 2, reports,
-                         "the macOS and Windows legs of the frame-budget and client-frame-time nightlies are report-only")
+        self.assertEqual(["nightly-client-frame-time.yml"] * 2 + ["nightly-frame-budget.yml"] * 3, reports,
+                         "the macOS and Windows legs of the client-frame-time nightly and every leg of the "
+                         "frame-budget nightly (portable has no performance guarantee) are report-only")
         self.assertTrue(all(why.strip() for why in reports), reports)
 
 
