@@ -15,6 +15,13 @@
 # 0 with a REPORT-ONLY-FAIL annotation the nightly watch lists. The allocation
 # assertion and the red proofs fail the job on every leg.
 #
+# The quiet runner's host also carries CI runners. A loaded host cannot time a
+# frame, so the checker waits up to 20 minutes for the 1-minute load to fall to
+# cores/4, and judges the worst frame only when the host was quiet before and
+# after the row; otherwise the verdict is VOID (exit 0, annotated UNMEASURED,
+# never counted green; the nightly watch goes red after 7 unmeasured nights).
+# The 400 us bound is unchanged on every measured night.
+#
 # Not part of per-commit CI.
 #
 # Hosted minutes budget:
@@ -50,6 +57,9 @@ jobs:
     name: client frame time (${{ matrix.ref }} / linux-quiet gso)
     runs-on: [self-hosted, Linux, X64, rocketnet-quiet]
     timeout-minutes: 7200
+    env:
+      # read by tools/check_nightly_dispositions.py: a VOID here exits 0 and annotates UNMEASURED
+      ROCKETNET_MAY_NOT_MEASURE: 'the quiet runner host also carries CI runners: a host load over cores/4 before or after the row voids the worst frame (VOID, exit 0)'
     strategy:
       fail-fast: false
       matrix:
@@ -77,6 +87,8 @@ jobs:
       # read by tools/check_nightly_dispositions.py: a worst frame over --max-us exits 0 (report-only, as the
       # header above states) and annotates REPORT-ONLY-FAIL; the watch lists it red
       ROCKETNET_REPORT_ONLY: 'the fleet Mac is not reserved quiet (header of nightly-client-frame-time.yml)'
+      # a host load over cores/4 before or after the row voids the worst frame (VOID, exit 0, UNMEASURED)
+      ROCKETNET_MAY_NOT_MEASURE: 'the fleet Mac carries other fleet work: a host load over cores/4 voids the worst frame (VOID, exit 0)'
     strategy:
       fail-fast: false
       matrix:

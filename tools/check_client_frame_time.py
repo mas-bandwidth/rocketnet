@@ -22,7 +22,17 @@ plants inside the library's own calls:
 
 A red proof that passes is a FAIL: the row would no longer catch what it says.
 
-Exit: 0 PASS (or a report-only FAIL of the worst frame), 1 FAIL, 2 refused
+A loaded host cannot time a frame. Before the row the 1-minute load average is
+polled every 30 s until it is at or under cores / 4 (the bound of
+tools/check_frame_budget.py), for up to --quiet-wait-s. When the host is still
+loaded before the row, or is loaded after it, the worst frame is not judged:
+the verdict is VOID (never PASS), it prints
+::warning title=UNMEASURED::<why> for the nightly watch, and it exits 0 when
+nothing else failed. The allocation assertion and the red proofs are enforced
+on a loaded host too. Where the platform has no load average (Windows) the row
+never voids.
+
+Exit: 0 PASS (or a report-only FAIL of the worst frame, or a VOID), 1 FAIL, 2 refused
 (--bin is not an executable file). --self-test checks the verdicts on
 synthetic client output (tools/test_check_client_frame_time.py).
 """
@@ -33,7 +43,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import List, NamedTuple, Optional, Tuple
+from typing import Callable, List, NamedTuple, Optional, Tuple
 
 FRAME_RE = re.compile(r"^cft call=frame frames=(\d+) p50_us=([0-9.]+) p99_us=([0-9.]+) p999_us=([0-9.]+) max_us=([0-9.]+)", re.M)
 ALLOCS_RE = re.compile(r"allocs_in_calls=(\d+)")
@@ -52,6 +62,44 @@ class Row(NamedTuple):
     failures: List[str]
     report_fail: bool
     line: str
+
+
+def host_load_and_cores() -> Tuple[Optional[float], int]:
+    """The 1-minute load average (None where the platform has none) and the core count."""
+    cores = os.cpu_count() or 1
+    if not hasattr(os, "getloadavg"):
+        return None, cores
+    try:
+        return os.getloadavg()[0], cores
+    except OSError:
+        return None, cores
+
+
+def is_loaded(load1: Optional[float], cores: int) -> bool:
+    """A host whose 1-minute load is over cores / 4 cannot time a frame (the same
+    bound as tools/check_frame_budget.py); an unknown load never voids."""
+    return load1 is not None and load1 > cores / 4.0
+
+
+def wait_for_quiet(wait_s: float, poll_s: float, load_fn: Callable[[], Tuple[Optional[float], int]],
+                   sleep_fn: Callable[[float], None]) -> Tuple[Optional[float], int, float]:
+    """Polls the load every poll_s until the host is quiet or wait_s has passed.
+    Returns (load1, cores, seconds waited) at the last reading."""
+    waited = 0.0
+    load1, cores = load_fn()
+    while is_loaded(load1, cores) and waited + poll_s <= wait_s:
+        sleep_fn(poll_s)
+        waited += poll_s
+        load1, cores = load_fn()
+    return load1, cores, waited
+
+
+def void_reason(before: Tuple[Optional[float], int], after: Tuple[Optional[float], int]) -> Optional[str]:
+    """Why the worst frame cannot be judged, or None when the host was quiet before and after the row."""
+    for when, (load1, cores) in (("before", before), ("after", after)):
+        if is_loaded(load1, cores):
+            return "host load %.2f over %g (%d cores / 4) %s the row" % (load1, cores / 4.0, cores, when)
+    return None
 
 
 def run_pair(binary: str, port: int, token: str, client_args: List[str], seconds: int) -> Tuple[int, str]:
@@ -87,12 +135,16 @@ def parse(output: str) -> Tuple[Optional[str], Optional[float], Optional[float],
     )
 
 
-def judge_row(code: int, output: str, max_us: float, report_only: bool) -> Row:
+def judge_row(code: int, output: str, max_us: float, report_only: bool, void: Optional[str] = None) -> Row:
     """The row's verdict from the client's exit code and output. With
     report_only the client ran without --assert-max-us, so the worst frame is
-    compared here."""
+    compared here. With void (the host was loaded before or after the row) the
+    worst frame is not judged: a refusal of it is not a failure and the verdict
+    is VOID, never PASS; the allocation assertion still holds."""
     transport, p99, worst, frames, allocs = parse(output)
     failures = []
+    if void is not None and code == EXIT_MAX_US:
+        code = 0
     if code == EXIT_ALLOC:
         failures.append("%s allocations inside client calls in steady state" % allocs)
     elif code == EXIT_MAX_US:
@@ -103,9 +155,9 @@ def judge_row(code: int, output: str, max_us: float, report_only: bool) -> Row:
         failures.append("client printed no frame or allocation line")
     elif allocs != 0:
         failures.append("%d allocations inside client calls in steady state (the client did not refuse them)" % allocs)
-    elif not report_only and worst > max_us:
+    elif void is None and not report_only and worst > max_us:
         failures.append("worst client frame %.2f us is over %.1f us (the client did not refuse it)" % (worst, max_us))
-    report_fail = report_only and not failures and worst is not None and worst > max_us
+    report_fail = void is None and report_only and not failures and worst is not None and worst > max_us
     line = "CLIENT-FRAME-TIME transport=%s frames=%s frame_p99_us=%s frame_max_us=%s max_us=%.1f%s allocs=%s verdict=%s" % (
         transport,
         frames,
@@ -114,7 +166,7 @@ def judge_row(code: int, output: str, max_us: float, report_only: bool) -> Row:
         max_us,
         " report-only" if report_only else "",
         allocs,
-        "FAIL" if failures or report_fail else "PASS",
+        "FAIL" if failures or report_fail else ("VOID" if void is not None else "PASS"),
     )
     return Row(failures, report_fail, line)
 
@@ -140,12 +192,39 @@ def self_test() -> int:
         ("allocations the client passed", judge_row(0, leaky, 400.0, True), ["600 allocations inside client calls in steady state (the client did not refuse them)"], False),
         ("no output", judge_row(0, "", 400.0, False), ["client printed no frame or allocation line"], False),
         ("client crashed", judge_row(-11, clean, 400.0, False), ["client exit -11"], False),
+        ("loaded, the client refused the frame: VOID", judge_row(EXIT_MAX_US, slow, 400.0, False, "load"), [], False),
+        ("loaded, slow, enforced: VOID", judge_row(0, slow, 400.0, False, "load"), [], False),
+        ("loaded, slow, report-only: VOID, no report fail", judge_row(0, slow, 400.0, True, "load"), [], False),
+        ("loaded, clean: VOID, never PASS", judge_row(0, clean, 400.0, False, "load"), [], False),
+        ("loaded, allocations refused: FAIL", judge_row(EXIT_ALLOC, leaky, 400.0, False, "load"), ["600 allocations inside client calls in steady state"], False),
+        ("loaded, allocations passed: FAIL", judge_row(0, leaky, 400.0, False, "load"), ["600 allocations inside client calls in steady state (the client did not refuse them)"], False),
+        ("loaded, client crashed: FAIL", judge_row(-11, clean, 400.0, False, "load"), ["client exit -11"], False),
     ]
     failed = 0
     for name, row, want_failures, want_report_fail in cases:
-        verdict_ok = ("verdict=FAIL" in row.line) == bool(want_failures or want_report_fail)
+        voided = name.startswith("loaded") and not want_failures
+        verdict_ok = ("verdict=FAIL" in row.line) == bool(want_failures or want_report_fail) and ("verdict=VOID" in row.line) == voided
         if row.failures != want_failures or row.report_fail != want_report_fail or not verdict_ok:
             print("SELF-TEST FAIL %s: failures=%s report_fail=%s line=%s" % (name, row.failures, row.report_fail, row.line))
+            failed += 1
+    loads = iter([(101.6, 32), (40.0, 32), (8.0, 32), (0.1, 32)])
+    slept: List[float] = []
+    quiet = wait_for_quiet(1200.0, 30.0, lambda: next(loads), slept.append)
+    stuck = wait_for_quiet(90.0, 30.0, lambda: (101.6, 32), lambda s: None)
+    unknown = wait_for_quiet(1200.0, 30.0, lambda: (None, 8), lambda s: None)
+    load_cases = [
+        ("waits until load reaches cores/4", quiet, (8.0, 32, 60.0)),
+        ("waited 30 s twice", slept, [30.0, 30.0]),
+        ("gives up after the wait, still loaded", stuck, (101.6, 32, 90.0)),
+        ("no load average never waits", unknown, (None, 8, 0.0)),
+        ("quiet before and after", void_reason((8.0, 32), (0.1, 32)), None),
+        ("loaded before", void_reason((101.6, 32), (0.1, 32)), "host load 101.60 over 8 (32 cores / 4) before the row"),
+        ("loaded after", void_reason((0.1, 32), (8.5, 32)), "host load 8.50 over 8 (32 cores / 4) after the row"),
+        ("no load average never voids", void_reason((None, 8), (None, 8)), None),
+    ]
+    for name, got, want in load_cases:
+        if got != want:
+            print("SELF-TEST FAIL %s: got %s want %s" % (name, got, want))
             failed += 1
     proof_cases = [
         ("busy plant failed its assertion", judge_proof("busy-update", EXIT_MAX_US, EXIT_MAX_US), None),
@@ -156,7 +235,7 @@ def self_test() -> int:
         if got != want:
             print("SELF-TEST FAIL %s: got %s want %s" % (name, got, want))
             failed += 1
-    total = len(cases) + len(proof_cases)
+    total = len(cases) + len(load_cases) + len(proof_cases)
     if failed:
         print("check_client_frame_time self-test: %d of %d cases failed" % (failed, total))
         return 1
@@ -172,6 +251,8 @@ def main() -> int:
     parser.add_argument("--warmup", type=int, default=600)
     parser.add_argument("--port", type=int, default=40600)
     parser.add_argument("--report-only", action="store_true", help="a worst frame over --max-us is a FAIL verdict that exits 0")
+    parser.add_argument("--quiet-wait-s", type=float, default=1200.0,
+                        help="how long to wait for the host load to fall to cores/4 before the row (default 1200 s)")
     parser.add_argument("--self-test", action="store_true", help="check the verdicts on synthetic output and exit")
     args = parser.parse_args()
 
@@ -186,12 +267,21 @@ def main() -> int:
 
     # the row
 
+    # a loaded host cannot time a frame: wait for it to go quiet, and judge the
+    # worst frame only when it was quiet before and after the row
+    load1, cores, waited = wait_for_quiet(args.quiet_wait_s, 30.0, host_load_and_cores, time.sleep)
+    print("CLIENT-FRAME-TIME-LOAD before load=%s cores=%d waited_s=%g" % ("%.2f" % load1 if load1 is not None else "unavailable", cores, waited))
+    before = (load1, cores)
+
     row_args = ["--frames", str(args.frames), "--warmup", str(args.warmup), "--condition", "nightly-clean", "--assert-zero-alloc", "1"]
-    if not args.report_only:
+    if not args.report_only and not is_loaded(*before):
         row_args += ["--assert-max-us", "%.1f" % args.max_us]
     code, output = run_pair(args.bin, args.port, token, row_args, seconds)
     sys.stdout.write(output)
-    row = judge_row(code, output, args.max_us, args.report_only)
+    after = host_load_and_cores()
+    print("CLIENT-FRAME-TIME-LOAD after load=%s cores=%d" % ("%.2f" % after[0] if after[0] is not None else "unavailable", after[1]))
+    void = void_reason(before, after)
+    row = judge_row(code, output, args.max_us, args.report_only, void)
     failures = list(row.failures)
 
     # the red proofs: each plant must fail its assertion
@@ -205,10 +295,16 @@ def main() -> int:
             sys.stdout.write(proof_output)
             failures.append(failure)
 
-    line = row.line if not failures or "verdict=FAIL" in row.line else row.line.replace("verdict=PASS", "verdict=FAIL")
+    line = row.line if not failures or "verdict=FAIL" in row.line else row.line.replace("verdict=PASS", "verdict=FAIL").replace("verdict=VOID", "verdict=FAIL")
     print(line)
     for failure in failures:
         print("FAIL: " + failure)
+    if void is not None and not failures:
+        # the worst frame was not judged: a void is never a pass. The job declares
+        # ROCKETNET_MAY_NOT_MEASURE, and the nightly watch reads this annotation
+        # (tools/check_nightly_dispositions.py, UNMEASURED; NO-MEASUREMENT after 7 nights)
+        print("::warning title=UNMEASURED::client frame time VOID: %s; the worst frame (%s us) is not judged; "
+              "allocations and the red proofs were" % (void, line.split("frame_max_us=")[1].split()[0]))
     if row.report_fail and not failures:
         # report-only: exit 0 on the FAIL verdict; the nightly watch reads this annotation
         # (tools/check_nightly_dispositions.py) and lists the night red
