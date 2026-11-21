@@ -83,6 +83,12 @@ static double rocketnet_fuzz_session_dark;
 // measured from connect until any drop
 static bool rocketnet_fuzz_session_ever_up;
 static bool rocketnet_fuzz_session_handshake_faulted;
+// when the server's slot 0 last came up before the pair connected: the server
+// sets the slot's receive clock then, and a challenge response the client
+// resends before it hears the server is not session activity, so it never
+// winds that clock (rocketnet_server_protocol.cpp, "A response retransmission
+// is not fresh session activity"). Client -> server silence runs from here.
+static double rocketnet_fuzz_session_server_up_time;
 static bool rocketnet_fuzz_session_was_up[2];     // [0] the client CONNECTED, [1] the server's slot 0 connected
 static bool rocketnet_fuzz_session_went_down;
 
@@ -285,10 +291,17 @@ static void rocketnet_fuzz_session_update( struct rocketnet_fuzz_pair_t * pair, 
     }
 
     const bool up[2] = { client_state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED, rocketnet_message_server_client_connected( pair->server, 0 ) != 0 };
+    if ( !rocketnet_fuzz_session_ever_up && up[1] && !rocketnet_fuzz_session_was_up[1] )
+    {
+        rocketnet_fuzz_session_server_up_time = pair->time;
+    }
     if ( !rocketnet_fuzz_session_ever_up && up[0] && up[1] )
     {
+        // the client's receive clock is set as it connects, now; the
+        // server's was set when its slot came up, which can be long before
+        // the client hears it
         rocketnet_fuzz_session_ever_up = true;
-        rocketnet_fuzz_session_heard[0] = pair->time;
+        rocketnet_fuzz_session_heard[0] = rocketnet_fuzz_session_server_up_time;
         rocketnet_fuzz_session_heard[1] = pair->time;
         rocketnet_fuzz_session_dark = 0.0;
     }
@@ -426,6 +439,7 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
     rocketnet_fuzz_session_was_up[0] = rocketnet_message_client_state( pair->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
     rocketnet_fuzz_session_was_up[1] = rocketnet_message_server_client_connected( pair->server, 0 ) != 0;
     rocketnet_fuzz_session_ever_up = rocketnet_fuzz_session_was_up[0] && rocketnet_fuzz_session_was_up[1];
+    rocketnet_fuzz_session_server_up_time = pair->time;
     rocketnet_fuzz_session_handshake_faulted = false;
     rocketnet_fuzz_session_went_down = false;
 
