@@ -23,7 +23,7 @@ build+exports|windows|arm64|msvc-arm64-cross|Release|devON|none|-~-|default	nigh
 cbmc(all harnesses)|linux|x86_64|gcc|Release|devON|none|-~-|default	cbmc.yml	cbmc	*	cbmc	nightly	CBMC proofs
 channel-seed-sweep|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-channel-seeds.yml	channel-seed-sweep	*	channel-seed-sweep	nightly	channel seeds
 clang-tidy|linux|x86_64|gcc|Release|devON|none|-~-|default	static.yml	tidy	*	clang-tidy	per-commit	tidy
-client+server(tests/client_server)|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-frame-budget.yml	linux-frame-budget	Report P=32 frame budget	client	nightly	frame-budget pair
+client+server(tests/client_server)|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-frame-budget.yml	linux-frame-budget	Enforce P=32 frame budget	client	nightly	frame-budget pair
 client_main_thread_cost|linux|x86_64|gcc|Release|devON|none|-~-|default	nightly-frame-budget.yml	linux-frame-budget	*	client_main_thread_cost	nightly	client main-thread cost
 connect_token_vectors|linux|x86_64|gcc|Release|devON|none|-~-|default	-	-	-	connect_token_vectors	owed:2026-11-19	standard's token vectors generator/check
 connect_token_vectors|macos|arm64|appleclang|Release|devON|none|-~-|default	-	-	-	connect_token_vectors	owed:2026-11-19	standard's token vectors generator/check

@@ -1,14 +1,8 @@
 # Nightly client per-frame main-thread budget gate.
 #
-# Runs client_main_thread_cost at P=32 (2000 measured frames, 3 runs) and
-# records the median total_us_p99 against the 100 us budget.
-#
-# Every leg is report-only. The Linux and Windows legs measure the portable
-# transport, which has no performance guarantee (Glenn's ruling): its numbers
-# are reported every night and no bound is enforced on them. The Linux leg runs
-# on [self-hosted, Linux, X64, rocketnet-quiet], whose host also carries CI
-# runners; a host load over cores/4 voids the timing (VOID, exit 0, annotated
-# UNMEASURED) and the probe run's numbers are still printed.
+# Runs client_main_thread_cost at P=32 (2000 measured frames, 3 runs) and gates
+# the median total_us_p99 <= 100 us on the dedicated quiet Linux runner
+# ([self-hosted, Linux, X64, rocketnet-quiet]).
 #
 # The schedule measures main and sprint/rocketnet-proof. A manual dispatch
 # measures the branch it was dispatched on, on every leg, so a fix can be
@@ -53,16 +47,9 @@ defaults:
 
 jobs:
   linux-frame-budget:
-    name: frame budget (${{ matrix.ref }} / linux-quiet portable report-only)
-    # Report-only: portable has no performance guarantee, so its numbers are
-    # recorded and never gated (header above).
+    name: frame budget (${{ matrix.ref }} / linux-quiet portable)
     runs-on: [self-hosted, Linux, X64, rocketnet-quiet]
     timeout-minutes: 7200
-    env:
-      # read by tools/check_nightly_dispositions.py: a VOID here exits 0 and annotates UNMEASURED
-      ROCKETNET_MAY_NOT_MEASURE: 'report-only portable on a host that also carries CI runners: a host load over cores/4 voids the timing (VOID, exit 0)'
-      # a FAIL here exits 0 (report-only, as the header above states) and annotates REPORT-ONLY-FAIL; the watch lists it red
-      ROCKETNET_REPORT_ONLY: 'portable has no performance guarantee (header of nightly-frame-budget.yml)'
     strategy:
       fail-fast: false
       matrix:
@@ -79,9 +66,9 @@ jobs:
           cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build --target client_main_thread_cost --parallel 8
 
-      - name: Report P=32 frame budget (portable, report-only)
+      - name: Enforce P=32 frame budget (portable)
         run: |
-          python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --transport portable --report-only
+          python3 tools/check_frame_budget.py --bin ./bin/client_main_thread_cost --transport portable
 
   macos-frame-budget:
     name: frame budget (${{ matrix.ref }} / macos msgx report-only)
