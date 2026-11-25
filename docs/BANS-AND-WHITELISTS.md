@@ -10,10 +10,15 @@ With carrier-grade NAT (CGNAT), an internet provider can put many
 unrelated subscribers behind one public IPv4 address. Two players in
 different homes can appear to the game server at the same address.
 Banning that address for one player's conduct also locks out the other.
-Meanwhile, the banned player can switch from home Wi-Fi to mobile data
-and return with a different address. An address ban can keep the wrong
-player out and let the same account back in.
-See [RFC 6269, section 13.1](https://www.rfc-editor.org/rfc/rfc6269.html#section-13.1).
+A player who moves from home Wi-Fi to mobile data can return with a
+different address. See [RFC 6269, section 13.1](https://www.rfc-editor.org/rfc/rfc6269.html#section-13.1).
+
+Consider a game that checks an IP ban only when its backend issues a
+connect token. Alice's home IP is banned. She requests a token through a
+VPN, disconnects the VPN, and then plays from home. The backend saw the
+VPN address. The unused token names the game server and carries Alice's
+account id, so it can be presented for its first handshake from her home
+address. A ban on Alice's account would apply on either network.
 
 ## How to enforce an account ban
 
@@ -86,21 +91,28 @@ The client gets its session keys and can present the token, but it cannot
 read or alter the id in it. After the handshake the server reads that id
 with `rocketnet_server_client_id`. See the [token format](STANDARD.md).
 
-### One seat per account
+<a id="one-seat-per-account"></a>
 
-A connect token is a bearer credential. Someone who receives a copy can
-present it as the original account. Sharing gives them neither a second
-seat nor a different identity. The server refuses a second simultaneous
-connection with the same `client_id`. If the backend matches the account
-to a different server, only that server's next whitelist contains the id.
-The previous server disconnects the player when it receives the change.
-The transport also tracks token reuse across addresses in a bounded table.
-See the [handshake rules](../standard/TRANSPORT.md#t12) and
-[binding lifetime](../standard/TRANSPORT.md#t17).
+### What happens if players share a connect token?
 
-A ban makes the backend refuse new matches and omit the user from every
-whitelist it returns. A previously issued token can still complete a
-handshake. The game server enforces the ban when it checks the whitelist.
+Suppose Alice sends Bob a copy of her unused connect token. If Bob uses
+it first, the game server sees Alice's signed `client_id`. Bob can occupy
+Alice's seat and play as her. Even if Bob's own account is banned, the
+server sees Alice's account in this session. Her account is the one the
+game can hold responsible for his conduct. Treat connect tokens as private
+credentials.
+
+Sharing does not create another seat. The server refuses a second active
+connection with Alice's id, even with a separately issued token. It also
+refuses reuse of the same token from another address while it retains
+the original address binding. See the [handshake rules](../standard/TRANSPORT.md#t12)
+and [binding lifetime](../standard/TRANSPORT.md#t17).
+
+Enforcement follows the account in the token. If Alice is banned while
+Bob plays with her token, her id disappears from the server's next
+whitelist and Bob is disconnected. If Alice is matched to a different
+server, her id moves to that server's whitelist and the previous server
+disconnects whoever held her seat.
 
 ## The example game server
 
