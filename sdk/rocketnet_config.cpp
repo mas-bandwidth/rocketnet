@@ -671,9 +671,12 @@ static void rocketnet_config_field_to_string( const void * config, const struct 
             // the entries in use as the variable spells them; a count
             // outside the field is printed as the count alone
 
+            // the list is the config's own int array and its count, in host
+            // order: read in place, never as bytes
+
             const int max_entries = field->size / (int) sizeof( int ) - 1;
-            int count;
-            memcpy( &count, base + sizeof( int ) * (size_t) max_entries, sizeof( count ) );
+            const int * list = (const int *) (const void *) base;
+            const int count = list[max_entries];
             if ( count < 0 || count > max_entries )
             {
                 snprintf( buffer, (size_t) buffer_size, "(%d entries)", count );
@@ -683,10 +686,8 @@ static void rocketnet_config_field_to_string( const void * config, const struct 
             buffer[0] = '\0';
             for ( int i = 0; i < count; i++ )
             {
-                int entry;
-                memcpy( &entry, base + sizeof( int ) * (size_t) i, sizeof( entry ) );
                 const size_t used = strlen( buffer );
-                snprintf( buffer + used, (size_t) buffer_size - used, "%s%d", i > 0 ? "," : "", entry );
+                snprintf( buffer + used, (size_t) buffer_size - used, "%s%d", i > 0 ? "," : "", list[i] );
             }
         }
         break;
@@ -875,8 +876,9 @@ static bool rocketnet_config_apply_env_value( const char * transport_name, void 
                 return false;
             }
 
-            memcpy( base, entries, sizeof( int ) * (size_t) count );
-            memcpy( base + sizeof( int ) * (size_t) max_entries, &count, sizeof( count ) );
+            int * list = (int *) (void *) base;
+            memcpy( list, entries, sizeof( int ) * (size_t) count );
+            list[max_entries] = count;
         }
         break;
 
