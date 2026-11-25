@@ -8059,7 +8059,8 @@ void rocketnet_test_wire_server_packet_valid()
     }
 
     // exhaustive: over every type and every size to the ceiling, exactly the
-    // two fixed sizes and the four session ranges are accepted, nothing else
+    // two fixed sizes, the four session ranges and the connection probe's
+    // range are accepted, nothing else
 
     int accepted = 0;
     for ( int type = 0; type < 256; type++ )
@@ -8073,7 +8074,7 @@ void rocketnet_test_wire_server_packet_valid()
         }
     }
 
-    const int expected = 2 + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + 1 );
+    const int expected = 2 + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES - ROCKETNET_CONNECTION_PROBE_MIN_WIRE_BYTES + 1 );
     rocketnet_check( accepted == expected );
 }
 

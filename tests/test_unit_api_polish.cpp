@@ -307,7 +307,8 @@ static void test_api_polish_lookups_say_unknown()
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION ), "PROTOCOL_VIOLATION" ) == 0 );
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH ), "CONFIG_MISMATCH" ) == 0 );
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED ), "MESSAGE_MEMORY_EXHAUSTED" ) == 0 );
-    check( strcmp( rocketnet_client_state_name( (rocketnet_client_state_t) -14 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED ), "MTU_PROBE_FAILED" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( (rocketnet_client_state_t) -15 ), "UNKNOWN" ) == 0 );
 
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ), "NONE" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT ), "RELIABLE_TIMED_OUT" ) == 0 );

@@ -735,7 +735,7 @@ static void test_counters_conservation_reports_the_first_unbalanced_family()
         check( strcmp( report, expected ) == 0 );
     }
 
-    check( families == 13 );               // six at the server, seven at the client
+    check( families == 15 );               // seven at the server, eight at the client
 
     // two families unbalanced: the one whose RECEIVED counter comes first
 
