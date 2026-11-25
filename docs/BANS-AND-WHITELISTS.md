@@ -37,10 +37,18 @@ a connection made with a token the backend issued before the ban.
 
 ### Why your game implements the whitelist
 
-The game server needs updates from the backend to enforce a whitelist.
-A connect token records the account that was allowed to join when the
-token was issued. If that account is banned during play, the game server
-learns about the ban through its connection to the backend.
+Suppose Alice joins while her account is in good standing. An operator
+then bans her in the backend. The backend can refuse her next token, but
+her existing connection looks exactly the same to the game server as it
+did before the ban. An unused, unexpired token issued before the ban can
+also still pass the handshake. Its signature proves what the backend
+authorized when it issued the token.
+
+For bans that take effect during play, we recommend an authenticated path
+from the backend to the game server. Without fresh information from the
+backend, the server cannot tell that Alice's authorization has changed.
+In the example, the server polls for its whitelist and disconnects Alice
+as soon as it sees that her id is missing.
 
 RocketNet ships no official backend. As the game developer, you decide who
 may play, maintain the whitelist in your backend, and have your game server
