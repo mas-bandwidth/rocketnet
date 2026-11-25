@@ -50,7 +50,17 @@ connect token. Alice's home IP is banned. She requests a token through a
 VPN, disconnects the VPN, and then plays from home. The backend saw the
 VPN address. The unused token names the game server and carries Alice's
 account id, so it can be presented for its first handshake from her home
-address. A ban on Alice's account would apply on either network.
+address. If the backend bans Alice's account instead, it refuses her
+next match on either network. The VPN changes her apparent IP address.
+Her verified provider and user id still produce the same account hash.
+
+A different sign-in raises a separate question. If Alice signs in with
+another account, the backend checks that account's own ban status and
+right to play. For a game sold by the copy, creating a new login should
+not grant another purchase. If two sign-ins belong to the same linked
+game account, use that account's stable id for bans and seats. Where no
+such link exists, a shared IP address is insufficient evidence that the
+same person owns both accounts.
 
 ## How to enforce an account ban
 
