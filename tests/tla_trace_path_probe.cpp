@@ -4,7 +4,7 @@
 */
 
 // The path packet size probe of the handshake (sdk/rocketnet_client_protocol.cpp,
-// sdk/rocketnet_server_protocol.cpp; standard/TRANSPORT.md t8.10 and t11.4),
+// sdk/rocketnet_server_protocol.cpp; standard/TRANSPORT.md t8.13 and t11.4),
 // checked by proofs/tla/TraceRNPathProbe.tla (README-TraceCheck.md) against
 // proofs/tla/RNPathProbe.tla with Timed = FALSE, the code's own timing.
 //

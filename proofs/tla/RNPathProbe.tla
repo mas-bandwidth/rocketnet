@@ -7,7 +7,7 @@
 (* of rocketnet_client_protocol_update, rocketnet_client_process_probe;    *)
 (* sdk/rocketnet_server_protocol.cpp: rocketnet_server_process_probe, the  *)
 (* response's size field and rocketnet_server_process_connection_response; *)
-(* standard/TRANSPORT.md t8.10 and t11.4).                                 *)
+(* standard/TRANSPORT.md t8.13 and t11.4).                                 *)
 (*                                                                         *)
 (* The model starts after the challenge: the client holds the handshake   *)
 (* keys and the server's mapping for the client's address is half-open    *)
