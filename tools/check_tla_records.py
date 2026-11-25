@@ -66,7 +66,9 @@ DECLARED_DEBT = frozenset(
         "MCRNClientIoDecrypt.cfg",
         "MCRNFillPhaseN3.cfg",
         "MCRNGsoQueueBankLayoutFlush3.cfg",
-        "MCRNPathProbeDeadlineFull.cfg",
+        "MCRNPathProbeFull.cfg",
+        "MCRNPathProbeLateFull.cfg",
+        "MCRNPathProbeServerListFull.cfg",
         "MCSessionAcksLive.cfg",
         "MCServerSessionTwoClients.cfg",
     }
