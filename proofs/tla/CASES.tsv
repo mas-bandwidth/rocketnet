@@ -1222,6 +1222,8 @@ MCRNPathProbe.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeServerList.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeOneEntry.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeLate.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
+MCRNPathProbeForged.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
+MCRNPathProbeDeadline.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeReachLateReply.cfg	MCRNPathProbe.tla	invariant	NoLateReplyTaken	check	rnpathprobe	required	-
 MCRNPathProbeBrokenToday.cfg	MCRNPathProbe.tla	invariant	CarriedBothWays	check	rnpathprobe	required	-
 MCRNPathProbeBrokenTodayHang.cfg	MCRNPathProbe.tla	temporal	NoHang	check	rnpathprobe	required	-
@@ -1233,3 +1235,6 @@ MCRNPathProbeBrokenNoAllowance.cfg	MCRNPathProbe.tla	invariant	OneReplyPerUpdate
 MCRNPathProbeBrokenSlotCeiling.cfg	MCRNPathProbe.tla	invariant	SlotAgrees	check	rnpathprobe	required	-
 MCRNPathProbeBrokenNoExpire.cfg	MCRNPathProbe.tla	temporal	Ends	check	rnpathprobe	required	-
 MCRNPathProbeBrokenSkipLast.cfg	MCRNPathProbe.tla	temporal	ConnectsWhenFits	check	rnpathprobe	required	-
+MCRNPathProbeBrokenForgedStarves.cfg	MCRNPathProbe.tla	temporal	ForgedNeverStarves	check	rnpathprobe	required	-
+MCRNPathProbeBrokenNoBudget.cfg	MCRNPathProbe.tla	invariant	WalkInsideDeadline	check	rnpathprobe	required	-
+MCRNPathProbeBrokenTimeoutProbing.cfg	MCRNPathProbe.tla	invariant	NoTimeoutWhileProbing	check	rnpathprobe	required	-

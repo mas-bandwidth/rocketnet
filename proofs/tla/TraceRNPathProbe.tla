@@ -47,14 +47,14 @@ VARIABLES ti,        \* the index of the record the state matches
 \* every model variable by the field name the harness writes
 VarsRec == [capUp |-> capUp, capDown |-> capDown, phase |-> phase, idx |-> idx,
            size |-> size, sends |-> sends, maySend |-> maySend, mapping |-> mapping,
-           slot |-> slot, answered |-> answered, up |-> up, down |-> down,
+           slot |-> slot, answered |-> answered, age |-> age, up |-> up, down |-> down,
            losses |-> losses, attacks |-> attacks]
 
 \* the actions each operation of the code can be
 OpActs == [client_update |-> {"ClientSendProbe", "ClientExpireNext", "ClientExpireFail", "ClientSendResponse"},
            client_timeout |-> {"ClientTimeout"},
            client_recv |-> {"ClientRecvReply", "ClientRecvKeepAlive"},
-           server_recv |-> {"ServerRecvProbe", "ServerRecvResponse"},
+           server_recv |-> {"ServerRecvProbe", "ServerRecvForged", "ServerRecvResponse"},
            keep_alive |-> {"ServerSendKeepAlive"},
            tick |-> {"Tick"},
            server_update |-> {"ServerUpdate"},
@@ -74,6 +74,7 @@ Act(a, x) == CASE a = "ClientSendProbe" -> ClientSendProbe
                [] a = "ClientRecvReply" -> ClientRecvReply(x[1])
                [] a = "ClientRecvKeepAlive" -> ClientRecvKeepAlive(x[1])
                [] a = "ServerRecvProbe" -> ServerRecvProbe(x[1])
+               [] a = "ServerRecvForged" -> ServerRecvForged(x[1])
                [] a = "ServerRecvResponse" -> ServerRecvResponse(x[1])
                [] a = "ServerSendKeepAlive" -> ServerSendKeepAlive
                [] a = "Tick" -> Tick

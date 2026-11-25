@@ -415,8 +415,9 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
 
 // proofs/tla/ClientConnection.tla Tick (TickRule with Erase TRUE): the deadline or the
 // timeout goes through rocketnet_client_set_state, which zeroes the keys.
-// proofs/tla/RNPathProbe.tla ClientTimeout: the silence timeout ends sending
-// connection response, probing or not, at -4.
+// proofs/tla/RNPathProbe.tla ClientTimeout and NoTimeoutWhileProbing: the
+// silence timeout ends sending connection response at -4 once the walk has
+// chosen a size; while the client probes it waits.
 
 static void rocketnet_client_check_deadlines( struct rocketnet_client_protocol_t * client, double current_time )
 {

@@ -1380,7 +1380,8 @@ static const int * rocketnet_server_link_mtus( const struct rocketnet_server_pro
 // deadline, and, when the server's list gives the source's family more than
 // one packet size, the probe's whole bound on top, so a client walking any
 // allowed list finishes before its mapping is removed (standard/TRANSPORT.md
-// t12 rule 14; sdk/rocketnet_link_mtu.h). The default list adds nothing.
+// t12 rule 14; sdk/rocketnet_link_mtu.h; proofs/tla/RNPathProbe.tla
+// WalkInsideDeadline). The default list adds nothing.
 
 static double rocketnet_server_handshake_deadline_seconds( const struct rocketnet_server_protocol_t * server, const struct rocketnet_address_t * from )
 {
@@ -1434,12 +1435,14 @@ int rocketnet_server_protocol_mapping_packet_bytes( const struct rocketnet_encry
 // proofs/tla/RNPathProbe.tla ServerRecvProbe). The probe is answered only
 // where the challenge's receiver proved the address: a mapping exists for the
 // source, holds no slot yet, and the probe opens under that mapping's
-// handshake client-to-server key, which only the holder of the token's keys
-// and the challenge's nonce derives. The reply is a probe of the same wire
-// size, so the server never sends more than it was sent, and never a size
-// off its own list. One probe per mapping per update is opened; a second in
-// the same update is ignored unopened (OneReplyPerUpdate), so the work a
-// source can make the server do is one open and one seal an update.
+// session client-to-server key, which only the ends of the ephemeral
+// exchange hold. The reply is a probe of the same wire size, so the server
+// never sends more than it was sent, and never a size off its own list. One
+// probe per mapping per update is answered: once one has opened, a second in
+// the same update is ignored unopened (OneReplyPerUpdate). A probe that does
+// not open spends nothing (ServerRecvForged), so a source can make the
+// server do one failed open per probe it sends, and one open that succeeds
+// and one seal an update.
 
 static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * server,
                                            const struct rocketnet_address_t * from,
@@ -1488,14 +1491,7 @@ static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * 
     // probe_update holds the update number plus one, so a mapping's zero
     // means no probe opened yet, even before the server's first update
 
-#if defined( ROCKETNET_PATH_PROBE_PLANT )
-    // the trace check's plant (tests/tla_trace_path_probe.cpp): the
-    // allowance is spent but never read, so a second probe of one update is
-    // opened and answered
-    if ( mapping->probe_update == server->update_number + 1 && mapping->probe_update == 0 )
-#else  // #if defined( ROCKETNET_PATH_PROBE_PLANT )
     if ( mapping->probe_update == server->update_number + 1 )
-#endif // #if defined( ROCKETNET_PATH_PROBE_PLANT )
     {
         rocketnet_spam( "server ignored connection probe. one probe per mapping per update" );
         counters[ROCKETNET_COUNTER_CONNECTION_PROBE_WITHHELD]++;
@@ -1511,6 +1507,14 @@ static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * 
         counters[ROCKETNET_COUNTER_CONNECTION_PROBE_ZERO_SEQUENCE]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
+
+#if defined( ROCKETNET_PATH_PROBE_PLANT )
+    // the trace check's plant (tests/tla_trace_path_probe.cpp): the
+    // allowance is spent before the open, so a probe forged at the client's
+    // address spends it (the reversed witness
+    // proofs/tla/MCRNPathProbeBrokenForgedStarves.cfg)
+    mapping->probe_update = server->update_number + 1;
+#endif // #if defined( ROCKETNET_PATH_PROBE_PLANT )
 
     uint8_t opened[ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES];
     const int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, (int) sizeof( opened ), packet_data, packet_bytes,
@@ -2151,7 +2155,8 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
     server->counters->handshakes_processed_this_update = 0;
     server->num_repeat_tokens = 0;
     // proofs/tla/RNPathProbe.tla ServerUpdate and Tick: a new update renews
-    // every mapping's one probe reply (probe_update, OneReplyPerUpdate)
+    // every mapping's one probe reply (probe_update, OneReplyPerUpdate), and
+    // the sweep below removes a half-open mapping at its handshake deadline
     server->update_number++;
     if ( server->cookie_reply_sources && server->cookie_reply_sources_dirty )
     {

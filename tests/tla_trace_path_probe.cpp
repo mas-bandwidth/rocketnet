@@ -24,7 +24,8 @@
 // are in flight in a set (two copies of one packet are one), delivered in any
 // order, lost when the walk loses them. An attacker replays a client probe in
 // flight, or sends a probe of any size from the client's own address that
-// does not open (F) or from an address with no mapping (X).
+// reaches the open and fails (F: sealed under a key that is not the session
+// key) or from an address with no mapping (X).
 //
 // Records (tla_step), each the model action the call's own result names:
 //   client_update   rocketnet_client_protocol_update, called only when
@@ -35,18 +36,22 @@
 //                   or ClientSendResponse (a response went out), by the
 //                   packet's type and the counters the call moved
 //   client_timeout  the same call at the client's silence deadline, which
-//                   the walk's clock jumps to: ClientTimeout when the call
-//                   left the client in -4; the walk ends with Done after it
+//                   the walk's clock jumps to once the walk has chosen a
+//                   size (the silence timeout waits while the client
+//                   probes): ClientTimeout when the call left the client
+//                   in -4; the walk ends with Done after it
 //   client_recv     rocketnet_client_protocol_process_packet of a packet in
 //                   flight down: ClientRecvReply(r) or ClientRecvKeepAlive(r)
 //   server_recv     rocketnet_server_protocol_process_packet of a packet in
-//                   flight up: ServerRecvProbe(p) or ServerRecvResponse(p);
+//                   flight up: ServerRecvProbe(p), ServerRecvForged(p) for
+//                   a probe from F, or ServerRecvResponse(p);
 //                   its reply (SEND_PROBE) or keep-alive (SEND_KEEP_ALIVE)
 //                   goes down at the size the server wrote
 //   keep_alive      rocketnet_server_write_keep_alive for the client's slot:
 //                   ServerSendKeepAlive
 //   tick            the walk's clock forward one client send interval and
-//                   rocketnet_server_protocol_update: Tick
+//                   rocketnet_server_protocol_update: Tick; while the
+//                   client probes, only after its send
 //   server_update   rocketnet_server_protocol_update at the same time:
 //                   ServerUpdate
 //   lose_up, lose_down, replay, attack, done   the walk's path and attacker:
@@ -57,7 +62,10 @@
 // packet_bytes, sends from probe_sends, maySend from
 // rocketnet_client_protocol_send_ready, mapping, slot and answered from the
 // server's mapping of the client's address (its client index, packet_bytes
-// and probe_update against the server's update_number). capUp, capDown, up,
+// and probe_update against the server's update_number; "removed" when the
+// server has no mapping), age from the mapping's own handshake deadline
+// against the time of the server's last update (so a deadline without the
+// probe's budget reads as an age the model never starts from). capUp, capDown, up,
 // down, losses and attacks are the walk's path: an honest probe the server
 // withholds (its counter CONNECTION_PROBE_WITHHELD moved) is a loss, as the
 // model counts it. A packet in flight is written as the model's record: a
@@ -66,10 +74,12 @@
 // server's slot then checks.
 //
 // The plant (ROCKETNET_PATH_PROBE_PLANT, in rocketnet_server_process_probe)
-// never reads the mapping's per-update allowance, so a second probe in one
-// update is answered. Its effect shows at the first server_recv that answers
-// a probe while the code's own allowance for the update was already spent,
-// which the clean code never does; the walk reports that record.
+// spends the mapping's per-update allowance before the open, as the code did
+// before probes were sealed under the session keys, so a probe forged at the
+// client's address spends it. Its effect shows at the first server_recv of a
+// forged probe after which the update's allowance is spent, which the clean
+// code never does (ServerRecvForged spends nothing); the walk reports that
+// record.
 
 #if defined( ROCKETNET_TLA_PLANT )
 #define ROCKETNET_PATH_PROBE_PLANT 1
@@ -104,7 +114,8 @@
 #define PP_SEND_RATE        64.0
 #define PP_START_TIME       100.0
 // the token's silence timeout, and a handshake deadline past any walk: 400
-// ticks are 6.25 s, so no deadline but the walk's own jump ends the attempt
+// ticks are 6.25 s, so no deadline but the walk's own jump ends the attempt.
+// The model's Deadline and Budget are these in ticks: 3840 and 512
 #define PP_TIMEOUT_SECONDS  10
 #define PP_HANDSHAKE_DEADLINE 60.0
 
@@ -180,7 +191,23 @@ struct pp_walk_t
     int losses;
     int attacks;
     uint64_t forged_sequence;
+    // the time of the server's last update, and the mapping's age in ticks
+    // when it was last half-open (the model's age stops when it connects)
+    double server_time;
+    int age;
 };
+
+// the model's Deadline and Budget, in ticks of the walk's clock: the
+// server's configured deadline and the probe's time bound (sdk/rocketnet_link_mtu.h)
+static int pp_deadline_ticks( const pp_walk_t * walk )
+{
+    return (int) ( walk->server.handshake_deadline_seconds * PP_SEND_RATE + 0.5 );
+}
+
+static int pp_budget_ticks()
+{
+    return (int) ( ROCKETNET_LINK_MTU_PROBE_BUDGET_SECONDS * PP_SEND_RATE + 0.5 );
+}
 
 // the path: a packet above the direction's capacity never arrives, and a
 // packet already in flight is the one packet the set holds (the model's set)
@@ -242,9 +269,20 @@ static tla_record_t pp_state( pp_walk_t * walk )
     state.add( "size", tla_int( walk->client.packet_bytes ) );
     state.add( "sends", tla_int( walk->client.probe_sends ) );
     state.add( "maySend", tla_bool( pp_may_send( walk ) ) );
-    state.add( "mapping", tla_string( !mapping ? "none" : ( mapping->control->client_index == -1 ? "halfopen" : "connected" ) ) );
-    state.add( "slot", tla_int( mapping ? mapping->packet_bytes : -1 ) );
+    const bool half_open = mapping && mapping->control->client_index == -1;
+    state.add( "mapping", tla_string( !mapping ? "removed" : ( half_open ? "halfopen" : "connected" ) ) );
+    state.add( "slot", tla_int( mapping ? mapping->packet_bytes : 0 ) );
     state.add( "answered", tla_bool( pp_answered( walk ) ) );
+    // the ticks the mapping has been half-open, read off its own deadline:
+    // the model's Deadline + Budget less what remains at the server's last
+    // update. With no mapping, the model's age stopped at its limit, which
+    // the walk does not reach (60 s of ticks)
+    if ( half_open )
+    {
+        const double remaining = ( mapping->control->handshake_deadline - walk->server_time ) * PP_SEND_RATE;
+        walk->age = pp_deadline_ticks( walk ) + pp_budget_ticks() - (int) ( remaining + ( remaining >= 0.0 ? 0.5 : -0.5 ) );
+    }
+    state.add( "age", tla_int( walk->age ) );
     state.add( "up", pp_set( walk->up ) );
     state.add( "down", pp_set( walk->down ) );
     state.add( "losses", tla_int( walk->losses ) );
@@ -292,6 +330,7 @@ static bool pp_setup( pp_walk_t * walk, const int * server_mtus, int num_server_
     }
 
     walk->now = PP_START_TIME;
+    walk->server_time = walk->now;
     rocketnet_server_protocol_update( server, walk->now );
 
     struct rocketnet_signed_connect_data_t signed_fields;
@@ -367,7 +406,9 @@ static void pp_teardown( pp_walk_t * walk )
     rocketnet_server_acks_destroy( walk->server.acks );
 }
 
-// a probe that does not open: sealed under a key nobody holds
+// a probe that reaches the open and fails: the client's address, a size the
+// server allows, a sequence of the session's range, sealed under a key that
+// is not the session key (the forger holds neither key of the exchange)
 static pp_packet_t pp_forged_probe( pp_walk_t * walk, int src, int s )
 {
     static const uint8_t zeros[ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES] = { 0 };
@@ -394,7 +435,8 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
 
     // the seed's scenario: 0 a path that carries every size, 1 one whose
     // capacities are two candidates (the walk goes down), 2 one that
-    // carries none (-14), 3 any path, ended by the silence timeout
+    // carries none (-14), 3 any path, ended by the silence timeout once
+    // the walk has chosen a size
     const int scenario = (int) ( seed % 4 );
     const bool short_server = ( ( seed / 4 ) % 2 ) == 1;
     const int num_server_mtus = short_server ? 3 : 4;
@@ -457,7 +499,7 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
     // deliveries to the client back early on, so replies arrive after their
     // windows and the first one delivered may be an earlier window's
     const int hold_down_until = scenario == 0 ? 30 : 0;
-    const int timeout_at = scenario == 3 ? 12 + random.below( 40 ) : -1;
+    const int timeout_at = scenario == 3 ? random.below( 30 ) : -1;
     walk->forged_sequence = 1;
 
     records.push_back( tla_step( "init", "init", "<<>>", pp_state( walk ) ) );
@@ -484,7 +526,9 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
             continue;
         }
 
-        if ( timeout_at >= 0 && step >= timeout_at && attempting && may_send )
+        // the silence timeout waits while the client probes: the jump is
+        // taken only once a size is chosen
+        if ( timeout_at >= 0 && step >= timeout_at && phase == "response" && may_send )
         {
             const double deadline = walk->client.last_receive_time + (double) walk->client.timeout_seconds;
             walk->now = deadline > walk->now ? deadline : walk->now;
@@ -501,7 +545,8 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
                OP_LOSE_UP, OP_LOSE_DOWN, OP_REPLAY, OP_ATTACK, OP_DONE, OP_COUNT };
         int weights[OP_COUNT] = { 0 };
         weights[OP_CLIENT_UPDATE] = attempting && may_send ? 6 : 0;
-        weights[OP_TICK] = ( !may_send || answered ) ? 4 : 0;
+        // a probing client sends at every interval: the next tick follows its send
+        weights[OP_TICK] = ( phase == "probe" ? !may_send : ( !may_send || answered ) ) ? 4 : 0;
         weights[OP_SERVER_UPDATE] = answered ? 1 : 0;
         weights[OP_SERVER_RECV] = !walk->up.empty() ? 5 : 0;
         weights[OP_CLIENT_RECV] = !walk->down.empty() ? ( step < hold_down_until ? 0 : 5 ) : 0;
@@ -512,7 +557,9 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
             honest_up = honest_up || ( walk->up[i].src == PP_C && walk->up[i].n == 0 );
         }
         weights[OP_LOSE_UP] = honest_up ? ( attempting ? 2 : 1 ) : 0;
-        weights[OP_LOSE_DOWN] = !walk->down.empty() ? 1 : 0;
+        // the late-reply walk loses nothing down while the client attempts,
+        // so a held reply from an earlier window arrives
+        weights[OP_LOSE_DOWN] = !walk->down.empty() && !( hold_down_until > 0 && attempting ) ? 1 : 0;
         weights[OP_REPLAY] = honest_up ? ( attempting ? 4 : 1 ) : 0;
         // the attacker keeps at most two probes in flight, so the client's
         // own packets are not lost in a crowd
@@ -575,6 +622,7 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
                     walk->now += 1.0 / PP_SEND_RATE;
                 }
                 rocketnet_server_protocol_update( &walk->server, walk->now );
+                walk->server_time = walk->now;
                 const char * act = op == OP_TICK ? "Tick" : "ServerUpdate";
                 report.act( act );
                 records.push_back( tla_step( op == OP_TICK ? "tick" : "server_update", act, "<<>>", pp_state( walk ) ) );
@@ -614,12 +662,12 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
                 {
                     walk->losses++;
                 }
-                const char * act = delivered.kind == PP_PROBE ? "ServerRecvProbe" : "ServerRecvResponse";
+                const char * act = delivered.kind != PP_PROBE ? "ServerRecvResponse" : ( delivered.src == PP_F ? "ServerRecvForged" : "ServerRecvProbe" );
                 report.act( act );
                 records.push_back( tla_step( "server_recv", act, tla_sequence( std::vector<std::string>( 1, pp_record( delivered ) ) ), pp_state( walk ) ) );
-                // the planted effect: a probe answered in an update whose one
-                // reply the code had already spent
-                if ( answered && result == ROCKETNET_SERVER_PROCESS_SEND_PROBE )
+                // the planted effect: a forged probe that spent the update's
+                // one reply
+                if ( delivered.src == PP_F && !answered && pp_answered( walk ) )
                 {
                     report.planted( (int) records.size() );
                 }
@@ -752,8 +800,9 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
     char line[256];
     snprintf( line, sizeof( line ),
               "    Ceiling = %d\n    CapsUp = {%d}\n    CapsDown = {%d}\n    W = %d\n    MaxLoss = %d\n    AttackBudget = %d\n"
-              "    Timed = FALSE\n    Broken = \"none\"\n",
-              ROCKETNET_MAX_PACKET_BYTES, walk->cap_up, walk->cap_down, ROCKETNET_CLIENT_PROBE_WINDOW_SENDS, steps, steps );
+              "    Forger = FALSE\n    Deadline = %d\n    Budget = %d\n    Timed = FALSE\n    Broken = \"none\"\n",
+              ROCKETNET_MAX_PACKET_BYTES, walk->cap_up, walk->cap_down, ROCKETNET_CLIENT_PROBE_WINDOW_SENDS, steps, steps,
+              pp_deadline_ticks( walk ), pp_budget_ticks() );
     constants += line;
     constants += "    ClientSet = " + pp_int_set( client_set ) + "\n";
     constants += "    ServerList = " + pp_int_set( server_list ) + "\n";
