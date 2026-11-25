@@ -35,6 +35,22 @@ tokens and omits its id from every whitelist it returns. A game server
 disconnects the player when it receives the updated list. This also covers
 a connection made with a token the backend issued before the ban.
 
+### Why your game implements the whitelist
+
+The game server needs updates from the backend to enforce a whitelist.
+A connect token records the account that was allowed to join when the
+token was issued. If that account is banned during play, the game server
+learns about the ban through its connection to the backend.
+
+RocketNet ships no official backend. As the game developer, you decide who
+may play, maintain the whitelist in your backend, and have your game server
+fetch and enforce it.
+The SDK exposes the connected player's id through `rocketnet_server_client_id`
+and lets the server disconnect a player with `rocketnet_server_disconnect_client`.
+The [example game server](../examples/backend_server.c) shows how to use
+those calls with a whitelist fetched from either of the
+[Go and C# example backends](../examples/backend/README.md).
+
 ## Run it
 
 Follow steps 1 through 3 of [Production integration](PRODUCTION.md) to build

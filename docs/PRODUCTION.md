@@ -5,7 +5,9 @@ tokens for a running game server. Complete [Getting started](GETTING-STARTED.md)
 first. For key ownership and rotation, use [Keys](KEYS.md); for operational
 limits, use [qualification](TESTING.md) and [memory planning](MEMORY.md).
 
-The Go and C# backends demonstrate sign-in, matching and bans on loopback.
+RocketNet ships no official backend. To enforce bans during play, connect
+each game server to your backend so it receives its current whitelist.
+The Go and C# examples demonstrate that exchange on loopback.
 Their mock provider issues a ticket for any requested user. Before
 deployment, replace it with your game's sign-in provider, authenticate game
 servers for registration and whitelist reads, and restrict ban changes to
