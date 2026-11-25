@@ -45,7 +45,10 @@ struct rn_message_object_t;
     X( RESET, received_session_sequence ) X( RESET, ack ) X( RESET, num_acked ) \
     X( RESET, acked_packet_ids ) \
     X( KEEP, publish_keys ) X( KEEP, retire_keys ) X( KEEP, keys_context ) \
-    X( RESET, record_verdict ) X( RESET, record_sequence )
+    X( RESET, record_verdict ) X( RESET, record_sequence ) \
+    X( KEEP, link_mtus ) X( KEEP, num_link_mtus ) \
+    X( RESET, probe_candidates ) X( RESET, num_probe_candidates ) X( RESET, probe_index ) \
+    X( RESET, probe_sends ) X( RESET, probing ) X( RESET, packet_bytes )
 
 #define ROCKETNET_CLIENT_SLOTS_OWNER_FIELDS( X ) \
     X( KEEP, context ) X( KEEP, max_clients ) X( KEEP, num_connected ) X( KEEP, hash_key ) \
@@ -75,7 +78,8 @@ struct rn_message_object_t;
     X( RESET, token_identifier ) X( RESET, token_expire_timestamp ) \
     X( RESET, last_send_time ) X( RESET, last_keep_alive_send_time ) \
     X( RESET, send_sequence_handshake ) X( RESET, send_sequence_session ) \
-    X( RESET, handshake_highest_opened ) X( RESET, replay_session ) X( RESET, accepted_session ) X( RESET, integrity_failures )
+    X( RESET, handshake_highest_opened ) X( RESET, replay_session ) X( RESET, accepted_session ) X( RESET, integrity_failures ) \
+    X( RESET, probe_update ) X( RESET, packet_bytes )
 
 #define ROCKETNET_ENCRYPTION_MAPPING_CONTROL_CONNECTION_FIELDS( X ) \
     X( RESET, handshake_deadline ) X( RESET, last_receive_time ) \

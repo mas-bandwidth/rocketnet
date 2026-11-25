@@ -15,6 +15,7 @@
 #include "rocketnet_protocol.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_ack.h"
+#include "rocketnet_link_mtu.h"
 
 // The client state machine, per standard/TRANSPORT.md t11: the machine steps forward or
 // fails, never sideways. A client climbs 1, 2, 3, 4 entering each state
@@ -105,7 +106,15 @@ typedef void ( *rocketnet_client_retire_keys_t )( void * context );
     X( retire_keys, rocketnet_client_retire_keys_t retire_keys ) \
     X( keys_context, void * keys_context ) \
     X( record_verdict, uint8_t record_verdict ) \
-    X( record_sequence, uint64_t record_sequence )
+    X( record_sequence, uint64_t record_sequence ) \
+    X( link_mtus, int link_mtus[ROCKETNET_LINK_MTU_MAX_ENTRIES] ) \
+    X( num_link_mtus, int num_link_mtus ) \
+    X( probe_candidates, int probe_candidates[ROCKETNET_LINK_MTU_MAX_ENTRIES] ) \
+    X( num_probe_candidates, int num_probe_candidates ) \
+    X( probe_index, int probe_index ) \
+    X( probe_sends, int probe_sends ) \
+    X( probing, int probing ) \
+    X( packet_bytes, int packet_bytes )
 
 struct rocketnet_client_protocol_t
 {
@@ -115,6 +124,11 @@ struct rocketnet_client_protocol_t
 };
 
 void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters );
+
+// The connection's packet size (sdk/rocketnet_link_mtu.h): the size the
+// response carries, fixed when it is built for the connection's life;
+// ROCKETNET_MAX_PACKET_BYTES before then and on the default link MTU list.
+int rocketnet_client_protocol_packet_bytes( const struct rocketnet_client_protocol_t * client );
 
 // Every field zeroed but the ack history's record rings (guarded by its
 // written bits, rocketnet_ack_endpoint_reset) and the acked packet ids

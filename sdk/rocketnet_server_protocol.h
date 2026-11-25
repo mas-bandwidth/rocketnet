@@ -16,6 +16,7 @@
 #include "rocketnet_token_tables.h"
 #include "rocketnet_server.h"
 #include "rocketnet_server_uring.h"
+#include "rocketnet_link_mtu.h"
 
 // Server-side connection request processing: the check sequence from the standard,
 // every check in its exact order, each rung rejecting what it can at its own
@@ -54,6 +55,7 @@ struct rocketnet_counters_t;
 #define ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE    4
 #define ROCKETNET_SERVER_PROCESS_ACCEPTED           5
 #define ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED    6
+#define ROCKETNET_SERVER_PROCESS_SEND_PROBE         7
 
 // The cookie reply limit of one update (standard/TRANSPORT.md t12 rule 7,
 // proofs/tla/RNCookieReplyLimits.tla): at most one cookie reply to each
@@ -121,6 +123,18 @@ struct rocketnet_server_protocol_t
     double previous_cookie_key_expire_time;                 // when the previous key stops being accepted
 
     double handshake_deadline_seconds;                      // default 5
+
+    // the link MTU list (sdk/rocketnet_link_mtu.h): the packet sizes a probe
+    // is answered at and a connection response may carry. 0 entries is the
+    // default list { 1500 }, so a protocol a unit harness builds by hand
+    // behaves as a build without the list.
+    int link_mtus[ROCKETNET_LINK_MTU_MAX_ENTRIES];
+    int num_link_mtus;
+
+    // update's count, from 1 at the first update: a mapping's probe_update
+    // holds the update a probe was last opened in, the one-per-update
+    // allowance (proofs/tla/RNPathProbe.tla OneReplyPerUpdate)
+    uint64_t update_number;
     int handshakes_per_update;                              // the handshake work budget, 1 .. 1024; default 16
     int32_t max_timeout_seconds;                            // clamp; <= 0 means no clamp
 
@@ -206,6 +220,12 @@ int rocketnet_server_protocol_cookie_reply_source_index( const struct rocketnet_
 
 uint64_t rocketnet_server_protocol_connection_id( const struct rocketnet_server_protocol_t * server, int client_index );
 int rocketnet_server_protocol_end_reason( const struct rocketnet_server_protocol_t * server, int client_index );
+
+// The packet size of the connection in client_index (sdk/rocketnet_link_mtu.h):
+// the size its connection response carried, fixed for the connection's life,
+// ROCKETNET_MAX_PACKET_BYTES on the default link MTU list; 0 for a slot that
+// holds no connection.
+int rocketnet_server_protocol_client_packet_bytes( const struct rocketnet_server_protocol_t * server, int client_index );
 
 // The reported round-trip time of the connection in client_index, in seconds
 // (standard/TRANSPORT.md t15.5): the minimum retained first-ack sample, 0

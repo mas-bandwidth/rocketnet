@@ -171,7 +171,7 @@ int main( void )
 
     CHECK( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_ERROR ), "ERROR" ) == 0 );
 
-    for ( int i = ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED; i <= ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    for ( int i = ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED; i <= ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
     {
         CHECK( rocketnet_client_state_name( (enum rocketnet_client_state_t) i ) != NULL );
     }
@@ -182,6 +182,7 @@ int main( void )
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH ), "CONFIG_MISMATCH" ) == 0 );
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED ), "MESSAGE_MEMORY_EXHAUSTED" ) == 0 );
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED ), "MESSAGE_NOT_RECEIVED" ) == 0 );
+    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED ), "MTU_PROBE_FAILED" ) == 0 );
     CHECK( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED ), "MESSAGE_NOT_RECEIVED" ) == 0 );
     CHECK( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_TIMED_OUT ), "TIMED_OUT" ) == 0 );
     CHECK( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED ), "CLIENT_DISCONNECTED" ) == 0 );

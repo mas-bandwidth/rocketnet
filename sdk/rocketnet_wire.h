@@ -28,10 +28,11 @@
 #define ROCKETNET_CONNECTION_DISCONNECT_PACKET  6
 #define ROCKETNET_CONNECTION_COOKIE_PACKET      7
 #define ROCKETNET_CONNECTION_ACK_PACKET         8
+#define ROCKETNET_CONNECTION_PROBE_PACKET       9
 
-// types 9 through 255 are reserved and ignored by a conforming receiver
+// types 10 through 255 are reserved and ignored by a conforming receiver
 
-#define ROCKETNET_FIRST_RESERVED_PACKET_TYPE    9
+#define ROCKETNET_FIRST_RESERVED_PACKET_TYPE    10
 
 // the prefilter header: 6 bytes on the front of every packet -- the packet
 // type, the filter epoch, and a 4-byte filter value whose meaning the epoch
@@ -165,10 +166,20 @@ ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES <= ROCKET
 #define ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES          38
 #define ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES         33  // 6 + 4 + 7 + 0 + 16
 
+// The connection probe (standard/TRANSPORT.md t8.10): sealed zero padding,
+// sent by a client whose link MTU list gives more than one packet size, after
+// the challenge, at each candidate size; the server answers one at the same
+// size. Its size is a packet size of a link MTU list: from the smallest
+// entry's IPv4 packet (the connection request's size, so the smallest entry
+// carries the request) up to the ceiling.
+
+#define ROCKETNET_CONNECTION_PROBE_MIN_WIRE_BYTES       ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES
+#define ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES       ROCKETNET_RECEIVE_CEILING
+
 // The server-inbound rule, usable from BPF and from tests alike: the types
-// a server ever receives, each at its exact wire size (the session types at
-// their ranges). DENIED, CHALLENGE and COOKIE travel server to client only,
-// and everything from 9 up is reserved -- a conforming server refuses them
+// a server ever receives, each at its exact wire size (the session types and
+// the probe at their ranges). DENIED, CHALLENGE and COOKIE travel server to client only,
+// and everything from 10 up is reserved -- a conforming server refuses them
 // all, so the kernel filter drops them before they cost a ring slot. This
 // mirrors the refusal check sequence in rocketnet_server_protocol.cpp; the
 // equivalence test in rocketnet_tests.cpp holds the two together.
@@ -183,7 +194,9 @@ ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES <= ROCKET
       ( (packet_type) == ROCKETNET_CONNECTION_DISCONNECT_PACKET  && (packet_bytes) >= ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES \
                                                                  && (packet_bytes) <= ROCKETNET_RECEIVE_CEILING                   ) || \
       ( (packet_type) == ROCKETNET_CONNECTION_ACK_PACKET         && (packet_bytes) >= ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES        \
-                                                                 && (packet_bytes) <= ROCKETNET_RECEIVE_CEILING                   ) )
+                                                                 && (packet_bytes) <= ROCKETNET_RECEIVE_CEILING                   ) || \
+      ( (packet_type) == ROCKETNET_CONNECTION_PROBE_PACKET       && (packet_bytes) >= ROCKETNET_CONNECTION_PROBE_MIN_WIRE_BYTES      \
+                                                                 && (packet_bytes) <= ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES   ) )
 
 // the smallest packet a server can ever accept, for the cheap early bound
 

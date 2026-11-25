@@ -101,13 +101,13 @@ static int rocketnet_packet_type_has_session_nonce( uint8_t packet_type )
     return packet_type == ROCKETNET_CONNECTION_DENIED_PACKET || packet_type == ROCKETNET_CONNECTION_CHALLENGE_PACKET;
 }
 
-// the sealed types: 1 through 6 and 8. type 0 (request) and type 7
+// the sealed types: 1 through 6, 8 and 9. type 0 (request) and type 7
 // (cookie) are the two unsealed packets.
 
 static int rocketnet_packet_type_is_sealed( uint8_t packet_type )
 {
     return ( packet_type >= ROCKETNET_CONNECTION_DENIED_PACKET && packet_type <= ROCKETNET_CONNECTION_DISCONNECT_PACKET ) ||
-           packet_type == ROCKETNET_CONNECTION_ACK_PACKET;
+           packet_type == ROCKETNET_CONNECTION_ACK_PACKET || packet_type == ROCKETNET_CONNECTION_PROBE_PACKET;
 }
 
 static int rocketnet_packet_type_has_ephemeral_in_ad( uint8_t packet_type )

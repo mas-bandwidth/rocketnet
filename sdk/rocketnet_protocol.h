@@ -46,6 +46,13 @@ int rocketnet_prefilter_counter( int refusal_code );
 #define ROCKETNET_PACKET_TAG_BYTES                  16
 #define ROCKETNET_PACKET_OVERHEAD_BYTES             ( ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES + ROCKETNET_PACKET_TAG_BYTES )      // 26
 #define ROCKETNET_RESPONSE_PADDING_BYTES            24
+
+// the connection response's padding opens with the connection's packet size,
+// a little-endian u16 (standard/TRANSPORT.md t8.4): 0 is the ceiling
+// ROCKETNET_MAX_PACKET_BYTES, so a client on the default link MTU list sends
+// the same 24 zero bytes as a build without the list. The 22 bytes after it
+// stay zero.
+#define ROCKETNET_RESPONSE_PACKET_BYTES_BYTES       2
 #define ROCKETNET_COOKIE_FIELD_BYTES                24      // expire + mac, echoed in requests
 #define ROCKETNET_COOKIE_MAC_BYTES                  16
 #define ROCKETNET_CONNECTION_SALT_BYTES             8

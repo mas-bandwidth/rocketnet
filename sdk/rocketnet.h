@@ -657,6 +657,13 @@ enum rocketnet_disconnect_reason_t
 
 enum rocketnet_client_state_t
 {
+    /// No packet size of the client's link MTU list was carried both ways:
+    /// the path probe after the challenge heard no reply at any size. Only a
+    /// client whose list gives more than one packet size probes. See
+    /// rocketnet_client_config_t link_mtus.
+
+    ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED = -14,
+
     /// A message was still in the receive queue at update. See
     /// rocketnet_client_update.
 

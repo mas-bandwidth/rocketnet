@@ -85,6 +85,8 @@ bool rocketnet_get_thread_priority( void );
  */
 #define ROCKETNET_TRANSPORT_STRING_LENGTH                     64
 
+/** @brief No packet size of the client's link MTU list was carried both ways: the path probe after the challenge heard no reply at any size (the transport value of ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED). */
+#define ROCKETNET_CLIENT_TRANSPORT_STATE_MTU_PROBE_FAILED           (-14)
 /** @brief The server sent what the protocol forbids: the attempt ended at a connection challenge whose server ephemeral key is a small-order point (the transport value of ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION). */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION         (-10)
 /** @brief The connect token expired: its expire time was not after the current Unix time when the connect began, or its lifetime (expire minus create) ran out before the handshake reached CONNECTED. */
