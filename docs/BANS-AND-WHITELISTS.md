@@ -202,8 +202,14 @@ the second session depends on where they connect.
 - **On different servers:** Suppose Bob is playing on server A and Alice
   gets a new match on server B. The backend moves the account's seat to B.
   When A receives its updated whitelist, it disconnects Bob. The two
-  sessions can overlap until A receives that update. This is why each
-  server needs to hear about seat changes after the backend issues a token.
+  sessions can overlap until A receives that update.
+
+Across servers, enforcement is **eventually consistent**. Once the account's
+seat assignment stops changing and every affected server receives and
+applies its current whitelist, at most one active connection remains for
+that `client_id` (the user hash) across all game servers. A banned account
+converges to zero connections. A server cut off from the backend can keep
+a previously authorized connection longer because it still has its old list.
 
 If the game bans Alice's account, it withdraws the seat altogether. The
 server disconnects whoever is using it when it receives the updated list.
