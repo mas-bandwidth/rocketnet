@@ -644,6 +644,53 @@ static void test_client_one_entry_list_sends_no_probe()
 
 REGISTER_UNIT_TEST( test_client_one_entry_list_sends_no_probe );
 
+// An entry whose packet size, after the family's headers and the 1452
+// ceiling, equals the entry before it is not probed again for that family
+// (standard/TRANSPORT.md t11.4): over IPv4 { 1500, 1492 } is the one size
+// 1452, so the client sends no probe, its response is byte for byte the
+// default list's, and the server holds the plain handshake deadline; over
+// IPv6 the two entries are 1452 and 1444, two sizes. Planted: equal sizes
+// kept, the IPv4 client probes 1452 twice and the server waits the bound.
+
+static void test_link_mtu_equal_sizes_probed_once()
+{
+    const int pppoe[2] = { 1500, 1492 };
+    int candidates[ROCKETNET_LINK_MTU_MAX_ENTRIES];
+
+    check( rocketnet_link_mtu_candidates( pppoe, 2, ROCKETNET_ADDRESS_IPV4, candidates ) == 1 );
+    check( candidates[0] == 1452 );
+    check( rocketnet_link_mtu_candidates( pppoe, 2, ROCKETNET_ADDRESS_IPV6, candidates ) == 2 );
+    check( candidates[0] == 1452 && candidates[1] == 1444 );
+
+    const int four[4] = { 1500, 1492, 1200, 576 };
+    check( rocketnet_link_mtu_candidates( four, 4, ROCKETNET_ADDRESS_IPV4, candidates ) == 3 );
+    check( candidates[0] == 1452 && candidates[1] == 1172 && candidates[2] == 548 );
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+
+    struct probe_client_t unset;
+    probe_client_setup( &unset, NULL, 0 );
+    check( probe_client_next_send( &unset, packet ) == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+
+    struct probe_client_t client;
+    probe_client_setup( &client, pppoe, 2 );
+    check( client.client.num_probe_candidates == 1 );
+    check( probe_client_next_send( &client, packet ) == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+    check( packet[0] == ROCKETNET_CONNECTION_RESPONSE_PACKET );
+    check( memcmp( client.client.stored_response, unset.client.stored_response, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES ) == 0 );
+    check( client.counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT] == 0 );
+    check( rocketnet_client_protocol_packet_bytes( &client.client ) == ROCKETNET_MAX_PACKET_BYTES );
+
+    probe_server_deadline_seconds = 5;
+    struct probe_server_t server;
+    probe_server_setup( &server, pppoe, 2 );
+    check( server.mapping->control->handshake_deadline == server.time + 5.0 );
+    probe_server_teardown( &server );
+    probe_server_deadline_seconds = 30;
+}
+
+REGISTER_UNIT_TEST( test_link_mtu_equal_sizes_probed_once );
+
 // The three-step list: four probes of 1452, then of 1172; a 548 reply while
 // probing 1172 is refused (above the candidate probed), a forged reply is an
 // integrity failure, a reply with nonzero padding is refused, and a late reply

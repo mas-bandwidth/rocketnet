@@ -514,9 +514,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // measured on Linux.
 // The link MTU list and the path probe: 40384 more to the server at 1000
 // clients, derived from the macOS reading (actual=1664773371, studio).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145807482ULL )
+// Measured on Linux with the probe under the session keys: 64 more than
+// the macOS derivation, actual=2146856114 (space, gcc, Debug, DEV ON);
+// arm64 the same 64, computed.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145807546ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145807474ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145807538ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
@@ -541,7 +544,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // more to the server at 1000 clients and 512 more to the client:
 // actual=1664773371 and 15046602 (studio, Apple clang, Debug, DEV=ON),
 // measured; the other platforms derived from the macOS reading.
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146706 )
+// Measured on Linux with the probe under the session keys: 64 fewer
+// than the macOS derivation, actual=15195218 (space, gcc, Debug, DEV ON).
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146642 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the
