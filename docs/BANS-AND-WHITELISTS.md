@@ -145,27 +145,29 @@ with `rocketnet_server_client_id`. See the [token format](STANDARD.md).
 
 ### What happens if players share a connect token?
 
-Suppose Alice sends Bob a copy of her unused connect token. If Bob uses
-it first, the game server sees Alice's signed `client_id`. Bob can occupy
-Alice's seat and play as her. Even if Bob's own account is banned, the
-server sees Alice's account in this session. Her account is the one the
-game can hold responsible for his conduct. Treat connect tokens as private
+Alice and Bob buy one copy of the game. The purchase is on Alice's
+account and entitles that account to one online seat. They both want to
+play at the same time. What happens if Alice shares a connect token?
+
+- **On the same server:** If Bob connects first with Alice's unused token,
+  he occupies Alice's seat. The server refuses a second connection with
+  her `client_id` while that seat is occupied, even if Alice gets a fresh
+  token. The transport also refuses reuse of a token from another address
+  while it retains the original address binding. See the
+  [handshake rules](../standard/TRANSPORT.md#t12) and
+  [binding lifetime](../standard/TRANSPORT.md#t17).
+- **On different servers:** Suppose Bob is playing on server A and Alice
+  gets a new match on server B. The backend moves the account's seat to B.
+  When A receives its updated whitelist, it disconnects Bob. The two
+  sessions can overlap until A receives that update. This is why each
+  server needs to hear about seat changes after the backend issues a token.
+
+If the game bans Alice's account, it withdraws the seat altogether. The
+server disconnects whoever is using it when it receives the updated list.
+If Alice and Bob take turns, the one-seat rule alone cannot tell them
+apart. Both present Alice's signed account id, and the game attributes play
+and any moderation action to that account. Treat connect tokens as private
 credentials.
-
-Sharing does not create another seat. The server refuses a second active
-connection with Alice's id, even with a separately issued token. It also
-refuses reuse of the same token from another address while it retains
-the original address binding. See the [handshake rules](../standard/TRANSPORT.md#t12)
-and [binding lifetime](../standard/TRANSPORT.md#t17).
-
-The authenticated backend-to-server channel lets the game revoke Alice's
-seat even after she has shared her token. If Alice is banned while Bob
-plays, the game server disconnects him when it receives a whitelist that
-omits her id. If her seat moves, the previous server enforces that change
-the same way. Without that channel, the server has only the authorization
-recorded at issuance. Even with a current whitelist, the server can tell
-whether Alice's account may play, but it cannot tell whether Alice or Bob
-is holding her token.
 
 ## The example game server
 
