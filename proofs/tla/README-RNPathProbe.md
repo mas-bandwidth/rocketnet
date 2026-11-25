@@ -153,7 +153,7 @@ FALSE, `Deadline` = 0, `Timed` = TRUE unless the case says otherwise.
 | `MCRNPathProbeOneEntry.cfg` | `{3, 2, 1}` | client set `{3}`, no probing |
 | `MCRNPathProbeLate.cfg` | `{3, 2, 1}` | `Timed` = FALSE, capacities `{1, 3}` each way, invariants only (`Spec`) |
 | `MCRNPathProbeForged.cfg` | `{3, 2, 1}` | `Forger` = TRUE, no other attacker, capacities `{0, 1, 3}`: `ForgedNeverStarves` and `Ends` under `FairSpec` |
-| `MCRNPathProbeDeadline.cfg` | `{3, 2, 1}` | `Deadline` = 3, `Budget` = 6, `Timed` = FALSE, capacities `{1, 3}`: `WalkInsideDeadline` (safety) |
+| `MCRNPathProbeDeadline.cfg` | `{3, 2, 1}` | `Deadline` = 3, `Budget` = 6, `Timed` = FALSE, capacities `{1, 3}`, `AttackBudget` = 0: `WalkInsideDeadline` (safety) |
 | `MCRNPathProbeReachLateReply.cfg` | `{3, 2, 1}` | `Timed` = FALSE, must violate `NoLateReplyTaken` |
 | each `MCRNPathProbeBroken*.cfg` | as named | must violate the one property it names |
 
@@ -227,9 +227,9 @@ whose list probes adds the probe's bound to the handshake deadline
 
 The records in `RUNS.tsv` are measured on a Linux bench with the pinned
 tlacheck (`tlacheck run --group rnpathprobe`, which refuses to run on
-macOS); until that run they are stale or missing for this model
-(tools/check_tla_records.py and tools/conformance/check_witnesses.py name
-them). TLC 2.19 run directly on studio.local, 4 workers, 2026-11-25:
+macOS), one case per bounded run: the 20 records of this model were measured
+on space (2 workers, 2026-11-25). For comparison, TLC 2.19 run directly on
+studio.local, 4 workers (`MCRNPathProbeDeadline.cfg`: 2), 2026-11-25:
 
 | Case | Result | Generated | Distinct | Seconds |
 | --- | --- | --- | --- | --- |
@@ -238,7 +238,7 @@ them). TLC 2.19 run directly on studio.local, 4 workers, 2026-11-25:
 | `MCRNPathProbeOneEntry.cfg` | pass | 47,072 | 9,408 | 2 |
 | `MCRNPathProbeForged.cfg` | pass | 109,993 | 14,232 | 3 |
 | `MCRNPathProbeLate.cfg` | pass | 20,530,837 | 1,735,922 | 19 |
-| `MCRNPathProbeDeadline.cfg` | pass | 87,404,030 | 7,512,847 | 73 |
+| `MCRNPathProbeDeadline.cfg` | pass | 6,656,114 | 657,637 | 11 |
 | `MCRNPathProbeReachLateReply.cfg` | `NoLateReplyTaken` | 5,617 | 2,164 | 1 |
 | `MCRNPathProbeBrokenToday.cfg` | `CarriedBothWays` | 476 | 300 | 1 |
 | `MCRNPathProbeBrokenTodayHang.cfg` | `NoHang` | 47,072 | 9,408 | 2 |
