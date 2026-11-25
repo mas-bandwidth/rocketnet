@@ -1,4 +1,9 @@
-# Bans and whitelists
+# Recommended practices for client authentication and banning
+
+<a id="bans-and-whitelists"></a>
+
+A connect token lets the client present an authenticated account to a game
+server. The harder question is whether that account may still play here.
 
 ## How one purchase can become two live sessions
 
