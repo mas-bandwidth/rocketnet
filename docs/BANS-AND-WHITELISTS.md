@@ -6,12 +6,14 @@ bans and will not add them.
 
 ## Why IP bans fail
 
-With carrier-grade NAT (CGNAT), an internet provider can put many
-unrelated subscribers behind one public IPv4 address. Two players in
-different homes can appear to the game server at the same address.
-Banning that address for one player's conduct also locks out the other.
-A player who moves from home Wi-Fi to mobile data can return with a
-different address. See [RFC 6269, section 13.1](https://www.rfc-editor.org/rfc/rfc6269.html#section-13.1).
+On a mobile network that uses carrier-grade NAT (CGNAT), two strangers
+playing on separate phones with separate subscriptions can reach the game
+server from the same public IPv4 address at the same time. An IP ban for
+one player's conduct locks both out. Satellite broadband can use CGNAT
+too. Even households with separate satellite dishes can share a public
+IPv4 address. Meanwhile, a banned player who switches from home Wi-Fi to mobile
+data can return with a different address.
+See [RFC 6269, section 13.1](https://www.rfc-editor.org/rfc/rfc6269.html#section-13.1).
 
 Consider a game that checks an IP ban only when its backend issues a
 connect token. Alice's home IP is banned. She requests a token through a
