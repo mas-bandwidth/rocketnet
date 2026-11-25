@@ -83,19 +83,27 @@ those calls with a whitelist fetched from either of the
 
 ### Running multiple backend instances
 
-Each backend instance can act only on the bans and seat assignments it
-has learned about. Suppose instance A records Alice's ban, but the game
-server's next whitelist request goes to instance B. If B still lists Alice, the
-server keeps her connected. If her next match request also reaches B,
-it may issue her another token.
+When a backend scales horizontally, two match requests for one account
+can reach different instances at the same time. Suppose A and B both read
+the account as unbanned and unseated before either records its assignment.
+A issues a token for game server 1. B issues a different token for game
+server 2. Two people can now present genuine, unexpired tokens bearing the
+same `client_id`. Each game server sees only one connection for that id.
+If the servers consult only their local slots, both players can stay.
 
-Use the same user hash key on every instance so the same account always
-maps to the same `client_id`. Have every instance check bans, assign seats
-and build whitelists from a consistent view of the same records. One way
-to do this is to use a shared database with one seat per account and
-have match and whitelist requests read current ban decisions. If you use
-replicas or caches with delayed updates, that delay adds to the time it
-takes a game server to enforce a ban.
+Give all backend instances the same user hash key and one authoritative
+seat record per account. A shared database still allows the race if reading
+an available seat and claiming it are separate operations. Check the ban
+and claim or move the seat in one atomic operation for that account.
+Issue the token after the assignment commits. If a second request moves
+the seat, the first token may still pass its handshake. The old game server
+must receive the updated whitelist to disconnect its player. Polling leaves
+a window in which both players can be connected.
+
+Bans have the same visibility problem. If A records a ban and B serves a
+cached whitelist that still includes the account, the player stays until
+the game server receives the change. Replication lag and the whitelist
+poll interval both contribute to that delay.
 
 Each example backend keeps its own bans, seats and server registrations
 in memory. Running a second copy does not share those records.
