@@ -186,8 +186,9 @@ with `rocketnet_server_client_id`. See the [token format](STANDARD.md).
 ### What happens if players share a connect token?
 
 In the [one-purchase example](#how-one-purchase-can-become-two-live-sessions),
-Bob and Alice both present Alice's `client_id`. Which check can detect
-the second session depends on where they connect.
+Alice gives Bob her unused token. If Bob connects first, **he is playing
+in her seat**. Giving him the token means she can lose her own place in
+the game. Both players present Alice's `client_id`.
 
 - **On the same server:** Bob already occupies Alice's seat. The server
   reads the same `client_id` from Alice's fresh token, silently ignores
@@ -200,9 +201,10 @@ the second session depends on where they connect.
   [handshake rules](../standard/TRANSPORT.md#t12) and
   [binding lifetime](../standard/TRANSPORT.md#t17).
 - **On different servers:** Suppose Bob is playing on server A and Alice
-  gets a new match on server B. The backend moves the account's seat to B.
-  When A receives its updated whitelist, it disconnects Bob. The two
-  sessions can overlap until A receives that update.
+  gets a new match on server B. The backend's latest seat assignment wins.
+  It now lists Alice's id on B. When A receives its updated whitelist,
+  it disconnects Bob, even if Alice has yet to connect to B. If Alice
+  connects before A receives the update, the two sessions briefly overlap.
 
 Across servers, enforcement is **eventually consistent**. Once the account's
 seat assignment stops changing and every affected server receives and
