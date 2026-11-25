@@ -169,7 +169,9 @@ the client ends in `ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED` (-14) instead of ha
 own list gives. Set the list in code, or with `ROCKETNET_CLIENT_LINK_MTUS` and
 `ROCKETNET_SERVER_LINK_MTUS`. The backend examples take
 `--link-mtus <list>` on both `example_backend_server` and
-`example_backend_client`.
+`example_backend_client`. Given a list, both also raise
+`reliable_messages_in_flight` and `packets_in_flight` to 4096, so the list may
+reach 576.
 
 ```sh
 ./bin/example_backend_server --link-mtus 1500,1492

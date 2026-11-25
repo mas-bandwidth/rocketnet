@@ -248,6 +248,14 @@ int main( int argc, char ** argv )
     {
         memcpy( config.link_mtus, link_mtus, sizeof( int ) * (size_t) num_link_mtus );
         config.num_link_mtus = num_link_mtus;
+
+        // a list down to 576 carries the default 1 MiB message in 480-byte
+        // fragments, more than the default window of 1024 holds, so create
+        // would refuse it (LINK_MTUS_TOO_SMALL_FOR_MESSAGES): raise both
+        // windows, as "Path MTU" in examples/backend/README.md says
+
+        config.reliable_messages_in_flight = 4096;
+        config.packets_in_flight = 4096;
     }
 #if ROCKETNET_DEV
     const uint8_t dev_backend_public_key[] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
