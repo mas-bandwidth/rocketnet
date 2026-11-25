@@ -2216,7 +2216,7 @@ counter: PREFILTER_WRONG_VALUE
 ```vector t10.reserved-type
 input: a packet whose type is the first reserved packet type
 counter: RESERVED_TYPE
-09 00 b7 59 01 00
+0a 00 b7 59 01 00
 ```
 
 ```vector t10.server-wrong-direction
@@ -4083,7 +4083,16 @@ d7 01 00 00 1c 31 f2 57 00 00 00 d4 1f 4d 66 00
 de 00 00 00 d2 0c a4 a8 00 00 00 48 5b 6f 96 00
 00 00 11 00 6a 39 00 00 00 2a 89 85 22 00 00 00
 8b 63 94 cc 00 00 00 dd 5b 1f d0 01 00 00 4a 27
-5c 44 00 00 00 65 b8 a7 43 01 00 00
+5c 44 00 00 00 65 b8 a7 43 01 00 00 6e 86 85 b7
+03 00 00 de 1b dd 80 00 25 01 59 61 eb 79 00 25
+01 47 61 af d4 00 25 01 d3 4e 51 ec 01 25 01 26
+58 e6 cf 00 25 01 35 f7 c2 54 00 25 01 71 29 4e
+4a 00 25 01 23 ac 0a 08 00 25 01 9a 4d 5a c7 01
+25 01 26 6f ab 79 00 20 00 e3 56 66 44 03 00 00
+7b e2 d0 0e 01 30 01 0d 30 13 26 00 30 01 a6 e6
+93 bf 00 30 01 78 0e a7 13 00 30 01 76 1a 1f c8
+00 30 01 d1 19 6d ff 01 30 01 26 5e b5 77 01 00
+00 1e b2 99 12 01 00 00 6d e0 75 be 00 00 00
 ```
 <a id="t19"></a>
 ## t19. Security considerations

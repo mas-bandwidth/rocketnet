@@ -694,10 +694,10 @@ static void test_response_nonzero_padding_is_not_an_integrity_failure()
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
 
     // the response sealed under the mapping's own handshake key, with one
-    // padding byte set
+    // padding byte past the packet size field set
 
     uint8_t padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
-    padding[0] = 1;
+    padding[ROCKETNET_RESPONSE_PACKET_BYTES_BYTES] = 1;
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_RESPONSE_PACKET,

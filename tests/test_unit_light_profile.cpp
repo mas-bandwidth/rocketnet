@@ -216,8 +216,14 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // client, 576000 fewer at 1000 clients; 384 fewer to the client (its token
 // and its connection request, 192 each). Derived from the macOS reading, not
 // measured on Windows.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1576666847 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14349996 )
+// The link MTU list and the path probe: 21 appended counters, the link MTU
+// list and probe state in each client protocol and encryption mapping, and
+// each connection's packet size and block stride in the message layer: 40384
+// more to the server at 1000 clients and 512 more to the client:
+// actual=1664773371 and 15046602 (studio, Apple clang, Debug, DEV=ON),
+// measured; the other platforms derived from the macOS reading.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1576707231 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350508 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -344,8 +350,14 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // client, 576000 fewer at 1000 clients; 384 fewer to the client (its token
 // and its connection request, 192 each). actual=1664732987 and 15046090
 // (studio, Apple clang, Release, DEV=ON), measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1663684411 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997514 )
+// The link MTU list and the path probe: 21 appended counters, the link MTU
+// list and probe state in each client protocol and encryption mapping, and
+// each connection's packet size and block stride in the message layer: 40384
+// more to the server at 1000 clients and 512 more to the client:
+// actual=1664773371 and 15046602 (studio, Apple clang, Debug, DEV=ON),
+// measured; the other platforms derived from the macOS reading.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1663724795 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13998026 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -500,9 +512,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // client, 576000 fewer at 1000 clients; 384 fewer to the client (its token
 // and its connection request, 192 each). Derived from the macOS reading, not
 // measured on Linux.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145767098ULL )
+// The link MTU list and the path probe: 40384 more to the server at 1000
+// clients, derived from the macOS reading (actual=1664773371, studio).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145807482ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145767090ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145807474ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
@@ -521,7 +535,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Release, DEV ON), measured.
 // User data from 256 to 64 bytes: 384 fewer to the client (above), derived
 // from the macOS reading, not measured on Linux.
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146194 )
+// The link MTU list and the path probe: 21 appended counters, the link MTU
+// list and probe state in each client protocol and encryption mapping, and
+// each connection's packet size and block stride in the message layer: 40384
+// more to the server at 1000 clients and 512 more to the client:
+// actual=1664773371 and 15046602 (studio, Apple clang, Debug, DEV=ON),
+// measured; the other platforms derived from the macOS reading.
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146706 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

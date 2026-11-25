@@ -66,7 +66,7 @@ static const rn_standard_vector_t standard_receive_processing_table[] = {
                                                    "00000000000000000000000000" ),
     RN_STANDARD_VECTOR( "t10.prefilter-wrong-epoch", "0501b7590100" ),
     RN_STANDARD_VECTOR( "t10.prefilter-wrong-value", "050000000000" ),
-    RN_STANDARD_VECTOR( "t10.reserved-type", "0900b7590100" ),
+    RN_STANDARD_VECTOR( "t10.reserved-type", "0a00b7590100" ),
     RN_STANDARD_VECTOR( "t10.server-wrong-direction", "0100b7590100" ),
     RN_STANDARD_VECTOR( "t10.client-wrong-direction", "0000b7590100" ),
     RN_STANDARD_VECTOR( "t10.client-session-wrong-size", "0400b7590100" ),
@@ -863,14 +863,14 @@ static void standard_receive_processing_counters()
         standard_client_teardown( &client );
     }
 
-    // type 9 is the first reserved type: a session packet sealed under the
-    // live session key with its type byte set to 9 is refused at the type
+    // type 10 is the first reserved type: a session packet sealed under the
+    // live session key with its type byte set to 10 is refused at the type
     // gate before decryption on a connected client, and nothing else moves
     {
         static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-        rocketnet_unit_check( ROCKETNET_FIRST_RESERVED_PACKET_TYPE == 9 );
+        rocketnet_unit_check( ROCKETNET_FIRST_RESERVED_PACKET_TYPE == 10 );
         uint8_t * p = plaintext + standard_fresh_block( plaintext );
         memset( p, 0xEE, 7 );
         p += 7;

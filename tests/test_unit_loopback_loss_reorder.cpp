@@ -286,8 +286,11 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // The client's two connection requests are 518 bytes each, 192 fewer than
 // the 710 they were while connect-token user data was 256 bytes: the
 // client's bytes sent and the server's bytes received are 384 lower.
-static const struct loopback_trace_t loopback_base_trace_simulator_off = { 68, 67, 5639, 4389, 67, 67, 4389, 5578, UINT64_C( 0xc1248c7ef6dc7a06 ), UINT64_C( 0x00fd33bacda8bc04 ), 4 };
-static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5391, 4328, 67, 66, 4389, 5269,UINT64_C( 0xa9e115c8a3ce3467 ), UINT64_C( 0x612c7ed782c943c5 ), 10 };
+// The link MTU list's default sends nothing new: every packet and byte
+// count is the same, and only the counter hashes moved, the hash covering
+// the 21 path probe counters appended to the registry, all zero here.
+static const struct loopback_trace_t loopback_base_trace_simulator_off = { 68, 67, 5639, 4389, 67, 67, 4389, 5578, UINT64_C( 0x7108fb2c052ee5c6 ), UINT64_C( 0x51e3b5108077ae84 ), 4 };
+static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5391, 4328, 67, 66, 4389, 5269,UINT64_C( 0x20b98753fa61f8c7 ), UINT64_C( 0x8828188301a86ae5 ), 10 };
 
 static void test_loopback_transport_patterns_off_same_trace()
 {

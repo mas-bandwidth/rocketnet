@@ -674,11 +674,11 @@ static void test_client_drops_reserved_and_wrong_direction_types()
 
     const uint64_t packets_before = pair.client_counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED];
 
-    // types 9 through 255 are reserved and ignored: PACKETS_RECEIVED and
+    // types 10 through 255 are reserved and ignored: PACKETS_RECEIVED and
     // RESERVED_TYPE each rise by exactly one and nothing else moves, so the
-    // counter sum rises by exactly two. Type 9 is the first reserved type.
+    // counter sum rises by exactly two. Type 10 is the first reserved type.
 
-    static const uint8_t reserved_type[4] = { ROCKETNET_FIRST_RESERVED_PACKET_TYPE, 10, 200, 255 };
+    static const uint8_t reserved_type[4] = { ROCKETNET_FIRST_RESERVED_PACKET_TYPE, 11, 200, 255 };
 
     for ( int i = 0; i < 4; i++ )
     {
