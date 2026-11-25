@@ -270,7 +270,7 @@ static inline const char * rn_cli_http_header( const char * headers, const char 
             if ( i == name_bytes )
             {
                 const char * value = line + name_bytes + 1;
-                while ( value < line_end && *value == ' ' )
+                while ( value < line_end && ( *value == ' ' || *value == '\t' ) )
                 {
                     value++;
                 }
@@ -280,6 +280,33 @@ static inline const char * rn_cli_http_header( const char * headers, const char 
         line = line_end + 2;
     }
     return NULL;
+}
+
+// This client reads bodies with one decimal Content-Length and no transfer coding.
+static inline int rn_cli_http_length_matches( const char * headers, const char * end, int body_bytes )
+{
+    const char * p = rn_cli_http_header( headers, end, "Content-Length" );
+    if ( !p || *p < '0' || *p > '9' || rn_cli_http_header( headers, end, "Transfer-Encoding" ) )
+    {
+        return 0;
+    }
+
+    int64_t length = 0;
+    while ( *p >= '0' && *p <= '9' )
+    {
+        length = length * 10 + ( *p - '0' );
+        if ( length > body_bytes )
+        {
+            return 0;
+        }
+        p++;
+    }
+    while ( *p == ' ' || *p == '\t' )
+    {
+        p++;
+    }
+    return length == body_bytes && end - p >= 2 && p[0] == '\r' && p[1] == '\n' &&
+           !rn_cli_http_header( p + 2, end, "Content-Length" );
 }
 
 // One request. The response is read into response (response_bytes long,
@@ -325,7 +352,8 @@ static inline int rn_cli_http_request( const char * address, const char * method
 #ifdef _WIN32
         const int n = send( s, request + sent, request_bytes - sent, 0 );
 #else // #ifdef _WIN32
-        const int n = (int) send( s, request + sent, (size_t) ( request_bytes - sent ), 0 );
+        // A backend restart during the write must fail this fetch and leave the game running.
+        const int n = (int) send( s, request + sent, (size_t) ( request_bytes - sent ), MSG_NOSIGNAL );
 #endif // #ifdef _WIN32
         if ( n <= 0 )
         {
@@ -374,7 +402,7 @@ static inline int rn_cli_http_request( const char * address, const char * method
     // "HTTP/1.1 200 OK\r\n", headers, a blank line, then exactly Content-Length bytes
     const char * end = response + received;
     const char * headers_end = NULL;
-    for ( const char * p = response; p + 4 <= end; p++ )
+    for ( const char * p = response; end - p >= 4; p++ )
     {
         if ( memcmp( p, "\r\n\r\n", 4 ) == 0 )
         {
@@ -403,25 +431,15 @@ static inline int rn_cli_http_request( const char * address, const char * method
         return status;
     }
 
-    const char * length_text = rn_cli_http_header( response, headers_end, "Content-Length" );
-    if ( rn_cli_http_header( response, headers_end, "Transfer-Encoding" ) || !length_text || *length_text < '0' || *length_text > '9' )
+    const int received_body_bytes = (int) ( end - body_start );
+    if ( !rn_cli_http_length_matches( response, headers_end, received_body_bytes ) )
     {
-        snprintf( error, error_bytes, "%s %s: the response has no Content-Length (status %d)", method, path, status );
-        return 0;
-    }
-    long length = 0;
-    for ( const char * p = length_text; *p >= '0' && *p <= '9' && length <= response_bytes; p++ )
-    {
-        length = length * 10 + ( *p - '0' );
-    }
-    if ( length != (long) ( end - body_start ) )
-    {
-        snprintf( error, error_bytes, "%s %s: the body is %ld bytes, not its Content-Length %ld", method, path, (long) ( end - body_start ), length );
+        snprintf( error, error_bytes, "%s %s: expected one Content-Length matching the %d byte body", method, path, received_body_bytes );
         return 0;
     }
 
     *response_body = body_start;
-    *response_body_bytes = (int) length;
+    *response_body_bytes = received_body_bytes;
     return status;
 }
 
