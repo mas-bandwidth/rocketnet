@@ -7,10 +7,12 @@ Use these practices to enforce two rules for online play.
 - **One authenticated account, one server at a time.** Give each account
   one online seat. If the seat moves, the previous server disconnects its
   player when it receives the updated whitelist.
-- **A ban stops future and current play.** The backend refuses new tokens
-  for the banned account. Each game server disconnects anyone using that
-  account when its updated whitelist arrives, even if the token was
-  issued before the ban.
+- **A ban stops play for the banned account only.** The backend refuses
+  that account new tokens. Each game server disconnects anyone using it
+  when its updated whitelist arrives, even with a token issued before
+  the ban. Other players behind the same public IPv4 address keep their
+  seats because bans use the authenticated account id. This matters on
+  mobile and satellite networks that use carrier-grade NAT.
 
 ## How one purchase can become two live sessions
 
