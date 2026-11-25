@@ -12102,6 +12102,7 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
         uint8_t expected_bytes[256];
         int64_t expected_int = 0;
         uint64_t expected_uint64 = 0;
+        int expected_list[2] = { 0, 0 };
 
         switch ( field->kind )
         {
@@ -12164,6 +12165,17 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
             }
             break;
 
+            case ROCKETNET_CONFIG_KIND_INT_LIST:
+            {
+                // two entries, the row's largest then its smallest: a count
+                // and entries the one-entry default is not
+
+                expected_list[0] = (int) field->max_value;
+                expected_list[1] = (int) field->min_value;
+                snprintf( value_string, sizeof( value_string ), "%d,%d", expected_list[0], expected_list[1] );
+            }
+            break;
+
             default:
             {
                 rocketnet_check( false && "unknown config field kind" );
@@ -12207,6 +12219,19 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
             case ROCKETNET_CONFIG_KIND_STRING:
             {
                 rocketnet_check( strcmp( (const char *) base, value_string ) == 0 );
+            }
+            break;
+
+            case ROCKETNET_CONFIG_KIND_INT_LIST:
+            {
+                const int max_entries = field->size / (int) sizeof( int ) - 1;
+                int applied[2];
+                int count;
+                memcpy( applied, base, sizeof( applied ) );
+                memcpy( &count, base + sizeof( int ) * (size_t) max_entries, sizeof( count ) );
+
+                rocketnet_check( count == 2 );
+                rocketnet_check( applied[0] == expected_list[0] && applied[1] == expected_list[1] );
             }
             break;
         }
@@ -12294,6 +12319,8 @@ static const struct rn_test_config_field_t rn_test_client_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, time_callback ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, step_driven ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, token_epoch_unix_seconds ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, link_mtus ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, num_link_mtus ),
 };
 
 static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
@@ -12339,6 +12366,8 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, gso_reserve_cpu_0 ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, io_uring_reserve_cpu_0 ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, portable_reserve_cpu_0 ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, link_mtus ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_link_mtus ),
 };
 
 #undef RN_TEST_CONFIG_FIELD
@@ -12408,6 +12437,16 @@ static void rocketnet_test_public_config_fields_have_env( const char * type, con
     {
         const char * name = descriptors[i].name;
         rocketnet_check( name != NULL );
+
+        // the link MTU count is set with its list: one variable,
+        // ROCKETNET_<SIDE>_LINK_MTUS, the list row's
+
+        if ( strcmp( name, "num_link_mtus" ) == 0 )
+        {
+            const struct rocketnet_config_field_t * list = rocketnet_test_find_field( "link_mtus", transport_fields, num_transport_fields );
+            rocketnet_check( list != NULL && list->kind == ROCKETNET_CONFIG_KIND_INT_LIST );
+            name = "link_mtus";
+        }
 
         offsets[i] = descriptors[i].offset;
         sizes[i] = descriptors[i].size;

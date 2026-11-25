@@ -562,7 +562,7 @@ applications call only declarations in [rocketnet.h](../sdk/rocketnet.h).
 Status codes follow these rules:
 
 1. `ROCKETNET_STATUS_OK = 0` is the sole success value.
-2. Every failure code is negative, from `-1` to `-35`. `-9` is not a code
+2. Every failure code is negative, from `-1` to `-40`. `-9` is not a code
    and `-22` is reserved; no call returns either. `status < 0` means the call
    failed.
 3. There is no count value. `rocketnet_status_name` maps each code by value.
@@ -583,7 +583,9 @@ out-parameter, and log one `ERROR` line with the reason: `NOT_INITIALIZED`,
 `CONFIG_NOT_INITIALIZED`, `INVALID_ARGUMENT`, `CONFIG_ENV_INVALID`,
 `CONFIG_OUT_OF_RANGE`, `INVALID_TRANSPORT_LIST`,
 `LOOPBACK_HUB_MISSING`, `LOOPBACK_HUB_MISMATCH`,
-`TEST_PACKET_FILTER_IN_PRODUCTION`, `INVALID_ADDRESS` (server) or
+`TEST_PACKET_FILTER_IN_PRODUCTION`, `LINK_MTUS_EMPTY`,
+`LINK_MTUS_NOT_DESCENDING`, `LINK_MTUS_TOO_LARGE`, `LINK_MTUS_TOO_SMALL`,
+`LINK_MTUS_TOO_SMALL_FOR_MESSAGES`, `INVALID_ADDRESS` (server) or
 `OUT_OF_MEMORY`. Server create also returns `CRYPTO_INIT_FAILED`, with no
 error line, when its key could not be generated or derived. Client connect and server start
 return the token and transport codes: `CLIENT_NOT_DISCONNECTED`,
@@ -629,7 +631,7 @@ or layout id differ from this library's, one made by another build.
 `ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE` is -34:
 `rocketnet_loopback_hub_destroy` refuses while a server or client endpoint is
 registered with the hub, keeps the hub, logs one `ERROR` line and counts API
-misuse. `ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED` is -35, the last code: server
+misuse. `ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED` is -35: server
 start returns it when the platform refused the bind of at least one transport
 (another socket holds the address and port, or the address is not one this host
 can bind) and no other transport tried, except the xdp transport, failed for a
@@ -646,6 +648,26 @@ another socket holds, with neither bind field set, now reads this status where i
 read `NO_TRANSPORT_FOUND`. When no transport was refused its bind and
 every transport that was tried refused the address as invalid (the xdp transport
 does, for an address it cannot serve), start returns `INVALID_ADDRESS`.
+
+The link MTU list (`link_mtus` and `num_link_mtus` in the client and server
+configs, `ROCKETNET_CLIENT_LINK_MTUS` and `ROCKETNET_SERVER_LINK_MTUS`) is
+checked at client and server create, each refusal one `ERROR` line naming
+the rule, in this order:
+
+| Status | Value | The list create refuses |
+|---|---|---|
+| `ROCKETNET_STATUS_LINK_MTUS_EMPTY` | -36 | `num_link_mtus` is 0, negative, or above `ROCKETNET_MAX_LINK_MTUS` (8) |
+| `ROCKETNET_STATUS_LINK_MTUS_NOT_DESCENDING` | -37 | an entry is not below the one before it (an equal entry included) |
+| `ROCKETNET_STATUS_LINK_MTUS_TOO_LARGE` | -38 | an entry is above 1500 |
+| `ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL` | -39 | the smallest entry is below 738, the smallest IPv4 link that carries the connection request |
+| `ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES` | -40, the last code | one `max_message_bytes` message needs more fragments than `reliable_messages_in_flight` at the block stride of the smallest entry's packet size (1152 bytes down to a 1237-byte IPv4 link, 1024 down to 1109, 640 at 738) |
+
+**Action**: list the link MTUs largest first, each once, from 738 to 1500,
+the same list on both ends; for a small smallest entry raise
+`reliable_messages_in_flight` (and `packets_in_flight` with it) or lower
+`max_message_bytes`. The default list, the one entry 1500, never refuses.
+A variable that does not parse as a comma list of up to eight integers is
+`CONFIG_ENV_INVALID`.
 
 <a id="22-reporting"></a>
 

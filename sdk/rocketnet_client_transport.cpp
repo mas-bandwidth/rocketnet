@@ -1945,6 +1945,17 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
         return false;
     }
 
+    const int link_mtus = rocketnet_config_link_mtus_status( "client", effective_config.link_mtus, effective_config.num_link_mtus );
+    if ( link_mtus != ROCKETNET_STATUS_OK )
+    {
+        if ( status )
+        {
+            *status = link_mtus;
+        }
+
+        return false;
+    }
+
     config = &effective_config;
 
 #if ROCKETNET_DEV
@@ -2132,6 +2143,13 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     rocketnet_client_protocol_init( &client_transport->protocol, &client_transport->counters );
 
     memcpy( client_transport->protocol.packet_filter, config->packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
+
+    // the link MTU list, checked at the resolve: the path probe's candidates
+    // after the challenge (sdk/rocketnet_link_mtu.h), kept across the
+    // connection reset
+
+    memcpy( client_transport->protocol.link_mtus, config->link_mtus, sizeof( client_transport->protocol.link_mtus ) );
+    client_transport->protocol.num_link_mtus = config->num_link_mtus;
 
     // the create-time clock is checked the same way an update's is: a
     // non-finite, negative or above-ceiling seed would poison every later
@@ -4165,6 +4183,19 @@ const char * rocketnet_client_transport_io_name( rocketnet_client_transport_t * 
     rocketnet_assert( client_transport );
     return rocketnet_transport_name( client_transport->transport );
 }
+
+#if ROCKETNET_DEV
+// the unit seam for the list the protocol probes with: its entries into
+// link_mtus (ROCKETNET_MAX_LINK_MTUS of room), and its count
+
+int rocketnet_client_transport_link_mtus_for_test( const struct rocketnet_client_transport_t * client_transport, int * link_mtus )
+{
+    rocketnet_assert( client_transport );
+    rocketnet_assert( link_mtus );
+    memcpy( link_mtus, client_transport->protocol.link_mtus, sizeof( client_transport->protocol.link_mtus ) );
+    return client_transport->protocol.num_link_mtus;
+}
+#endif // #if ROCKETNET_DEV
 
 int rocketnet_client_transport_client_index( rocketnet_client_transport_t * client_transport )
 {

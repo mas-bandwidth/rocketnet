@@ -1824,6 +1824,19 @@ bool rocketnet_server_transport_network_simulator( struct rocketnet_server_trans
     return true;
 }
 
+#if ROCKETNET_DEV
+// the unit seam for the list the protocol answers probes with: its entries
+// into link_mtus (ROCKETNET_MAX_LINK_MTUS of room), and its count
+
+int rocketnet_server_transport_link_mtus_for_test( const struct rocketnet_server_transport_t * server_transport, int * link_mtus )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( link_mtus );
+    memcpy( link_mtus, server_transport->protocol.link_mtus, sizeof( server_transport->protocol.link_mtus ) );
+    return server_transport->protocol.num_link_mtus;
+}
+#endif // #if ROCKETNET_DEV
+
 // The unit seam for a lock miss without a second thread: the next `sends`
 // link sends through an active simulator take the lock-miss path, counting
 // link_lock_misses as a real miss does, and never touch the mutex.
@@ -3039,6 +3052,16 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
         return false;
     }
 
+    const int link_mtus = rocketnet_config_link_mtus_status( "server", effective_config.link_mtus, effective_config.num_link_mtus );
+    if ( link_mtus != ROCKETNET_STATUS_OK )
+    {
+        if ( status )
+        {
+            *status = link_mtus;
+        }
+        return false;
+    }
+
     config = &effective_config;
 
     // the config's public_address, when set, displaces the create call's
@@ -3746,6 +3769,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
     protocol->protocol_id = config->protocol_id;
     protocol->send_rate = ROCKETNET_DEFAULT_SEND_RATE;
+    memcpy( protocol->link_mtus, config->link_mtus, sizeof( protocol->link_mtus ) );       // checked at the resolve (rocketnet_config_link_mtus_status)
+    protocol->num_link_mtus = config->num_link_mtus;
     memcpy( protocol->packet_filter, config->packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( protocol->backend_public_key, config->backend_public_key, 32 );
     memcpy( protocol->server_public_key, config->server_public_key, 32 );

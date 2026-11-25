@@ -6,6 +6,7 @@
 #include "rocketnet_config.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_wire.h"
+#include "rocketnet_link_mtu.h"
 #include "rocketnet_base64.h"
 #include "rocketnet_allocator.h"
 #include "rocketnet_send_budget.h"
@@ -37,10 +38,23 @@
 #define ROCKETNET_CONFIG_DEFAULT_BYTES( name, size, def, flags )        { static const uint8_t rocketnet_default_##name[size] = def; memcpy( config->name, rocketnet_default_##name, size ); }
 #define ROCKETNET_CONFIG_DEFAULT_STRING( name, capacity, def, flags )   snprintf( config->name, capacity, "%s", def );
 
+// the link MTU list (sdk/rocketnet_link_mtu.h), the one field of each
+// transport config that is not a table row: an int array and its count have
+// no table kind, so the two configs carry it hand-written beside their
+// tables, here, in the descriptors and in the layout check below. The
+// default is the one entry 1500, a build without the list
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_LINK_MTUS == ROCKETNET_LINK_MTU_MAX_ENTRIES, "rocketnet.h's link MTU list holds the entries the list arithmetic takes" );
+
+#define ROCKETNET_CONFIG_DEFAULT_LINK_MTUS()                                        \
+    config->link_mtus[0] = ROCKETNET_LINK_MTU_MAX;                                  \
+    config->num_link_mtus = 1;
+
 void rocketnet_client_transport_default_config_current( struct rocketnet_client_transport_config_t * config )
 {
     memset( config, 0, sizeof( *config ) );
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
+    ROCKETNET_CONFIG_DEFAULT_LINK_MTUS()
 }
 
 void rocketnet_client_transport_default_config( struct rocketnet_client_transport_config_t * config )
@@ -57,6 +71,7 @@ void rocketnet_server_transport_default_config_current( struct rocketnet_server_
 {
     memset( config, 0, sizeof( *config ) );
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DEFAULT_INT, ROCKETNET_CONFIG_DEFAULT_UINT64, ROCKETNET_CONFIG_DEFAULT_BYTES, ROCKETNET_CONFIG_DEFAULT_STRING )
+    ROCKETNET_CONFIG_DEFAULT_LINK_MTUS()
 }
 
 void rocketnet_server_transport_default_config( struct rocketnet_server_transport_config_t * config )
@@ -90,10 +105,15 @@ void rocketnet_message_default_config( struct rocketnet_message_config_t * confi
 #define ROCKETNET_CONFIG_DESC_BYTES( name, size, def, flags )           { #name, ROCKETNET_CONFIG_KIND_BYTES,  (int) offsetof( ROCKETNET_CONFIG_DESC_STRUCT, name ), (size), 0, 0, (flags) },
 #define ROCKETNET_CONFIG_DESC_STRING( name, capacity, def, flags )      { #name, ROCKETNET_CONFIG_KIND_STRING, (int) offsetof( ROCKETNET_CONFIG_DESC_STRUCT, name ), (capacity), 0, 0, (flags) },
 
+// the link MTU list's row: the entries and the count after them, one field
+// of the env surface (ROCKETNET_<SIDE>_LINK_MTUS)
+#define ROCKETNET_CONFIG_DESC_LINK_MTUS                                 { "link_mtus", ROCKETNET_CONFIG_KIND_INT_LIST, (int) offsetof( ROCKETNET_CONFIG_DESC_STRUCT, link_mtus ), (int) ( sizeof( int ) * ( ROCKETNET_MAX_LINK_MTUS + 1 ) ), ROCKETNET_LINK_MTU_MIN, ROCKETNET_LINK_MTU_MAX, 0 },
+
 #define ROCKETNET_CONFIG_DESC_STRUCT struct rocketnet_client_transport_config_t
 
 static const struct rocketnet_config_field_t rocketnet_client_config_fields[] = {
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DESC_INT, ROCKETNET_CONFIG_DESC_UINT64, ROCKETNET_CONFIG_DESC_BYTES, ROCKETNET_CONFIG_DESC_STRING )
+    ROCKETNET_CONFIG_DESC_LINK_MTUS
 #if ROCKETNET_DEV
         { "step_driven", ROCKETNET_CONFIG_KIND_UINT64, (int) offsetof( struct rocketnet_client_transport_config_t, step_driven ), (int) sizeof( uint64_t ), 0, 1, 0 },
 #endif // #if ROCKETNET_DEV
@@ -104,6 +124,7 @@ static const struct rocketnet_config_field_t rocketnet_client_config_fields[] = 
 
 static const struct rocketnet_config_field_t rocketnet_server_config_fields[] = {
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DESC_INT, ROCKETNET_CONFIG_DESC_UINT64, ROCKETNET_CONFIG_DESC_BYTES, ROCKETNET_CONFIG_DESC_STRING )
+    ROCKETNET_CONFIG_DESC_LINK_MTUS
 };
 
 #undef ROCKETNET_CONFIG_DESC_STRUCT
@@ -133,6 +154,8 @@ struct rocketnet_client_transport_config_table_t
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V2( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE_V3( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
     struct rocketnet_loopback_hub_t * loopback_hub;
+    int link_mtus[ROCKETNET_MAX_LINK_MTUS];
+    int num_link_mtus;
 };
 
 #undef ROCKETNET_CLIENT_CONFIG_STRUCT_UINT64
@@ -144,6 +167,8 @@ struct rocketnet_server_transport_config_table_t
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V2( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V3( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE_V4( ROCKETNET_CONFIG_STRUCT_INT, ROCKETNET_CONFIG_STRUCT_UINT64, ROCKETNET_CONFIG_STRUCT_BYTES, ROCKETNET_CONFIG_STRUCT_STRING )
+    int link_mtus[ROCKETNET_MAX_LINK_MTUS];
+    int num_link_mtus;
 };
 
 struct rocketnet_message_config_table_t
@@ -167,6 +192,9 @@ ROCKETNET_CONFIG_LAYOUT_FIELD( state_change_callback )
 ROCKETNET_CONFIG_LAYOUT_FIELD( time_callback )
 ROCKETNET_CONFIG_LAYOUT_FIELD( step_driven )
 ROCKETNET_CONFIG_LAYOUT_FIELD( loopback_hub )
+ROCKETNET_CONFIG_LAYOUT_FIELD( link_mtus )
+ROCKETNET_CONFIG_LAYOUT_FIELD( num_link_mtus )
+static_assert( offsetof( ROCKETNET_CONFIG_LAYOUT_PUBLIC, num_link_mtus ) == offsetof( ROCKETNET_CONFIG_LAYOUT_PUBLIC, link_mtus ) + sizeof( int ) * ROCKETNET_MAX_LINK_MTUS, "the client link MTU count follows its entries" );
 static_assert( offsetof( struct rocketnet_client_transport_config_t, step_driven ) + sizeof( uint64_t ) == ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, "client revision 1 ends at step_driven" );
 static_assert( offsetof( struct rocketnet_client_transport_config_t, simulated_loss_percent ) == ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, "client revision 2 appends after revision 1" );
 static_assert( sizeof( ROCKETNET_CONFIG_LAYOUT_PUBLIC ) == sizeof( ROCKETNET_CONFIG_LAYOUT_TABLE ), "the rocketnet.h client transport config matches its table" );
@@ -177,6 +205,9 @@ static_assert( sizeof( ROCKETNET_CONFIG_LAYOUT_PUBLIC ) == sizeof( ROCKETNET_CON
 #define ROCKETNET_CONFIG_LAYOUT_TABLE struct rocketnet_server_transport_config_table_t
 ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_LAYOUT_INT, ROCKETNET_CONFIG_LAYOUT_UINT64, ROCKETNET_CONFIG_LAYOUT_BYTES, ROCKETNET_CONFIG_LAYOUT_STRING )
 ROCKETNET_CONFIG_LAYOUT_FIELD( loopback_hub )
+ROCKETNET_CONFIG_LAYOUT_FIELD( link_mtus )
+ROCKETNET_CONFIG_LAYOUT_FIELD( num_link_mtus )
+static_assert( offsetof( ROCKETNET_CONFIG_LAYOUT_PUBLIC, num_link_mtus ) == offsetof( ROCKETNET_CONFIG_LAYOUT_PUBLIC, link_mtus ) + sizeof( int ) * ROCKETNET_MAX_LINK_MTUS, "the server link MTU count follows its entries" );
 static_assert( sizeof( ROCKETNET_CONFIG_LAYOUT_PUBLIC ) == sizeof( ROCKETNET_CONFIG_LAYOUT_TABLE ), "the rocketnet.h server transport config matches its table" );
 #undef ROCKETNET_CONFIG_LAYOUT_PUBLIC
 #undef ROCKETNET_CONFIG_LAYOUT_TABLE
@@ -541,6 +572,60 @@ static bool rocketnet_config_parse_uint64( const char * value, uint64_t * out )
     return true;
 }
 
+bool rocketnet_config_parse_int_list_value( const char * value, int * out, int max_entries, int * num_out )
+{
+    // each entry the strict integer parse, between single commas: an empty
+    // entry (",1200", "1492,,1200", "1200,") or one past max_entries refuses
+    // the whole value, and out is written only for a value that parses
+
+    rocketnet_assert( value );
+    rocketnet_assert( out );
+    rocketnet_assert( num_out );
+
+    int entries[64];
+    if ( max_entries < 1 || max_entries > (int) ( sizeof( entries ) / sizeof( entries[0] ) ) )
+    {
+        return false;
+    }
+
+    int count = 0;
+    const char * cursor = value;
+
+    while ( true )
+    {
+        const char * comma = strchr( cursor, ',' );
+        const size_t length = comma ? (size_t) ( comma - cursor ) : strlen( cursor );
+
+        char entry[16];
+        if ( length == 0 || length >= sizeof( entry ) || count >= max_entries )
+        {
+            return false;
+        }
+
+        memcpy( entry, cursor, length );
+        entry[length] = '\0';
+
+        if ( !rocketnet_config_parse_int( entry, &entries[count] ) )
+        {
+            return false;
+        }
+
+        count++;
+
+        if ( !comma )
+        {
+            break;
+        }
+
+        cursor = comma + 1;
+    }
+
+    memcpy( out, entries, sizeof( int ) * (size_t) count );
+    *num_out = count;
+
+    return true;
+}
+
 static void rocketnet_config_field_to_string( const void * config, const struct rocketnet_config_field_t * field, char * buffer, int buffer_size )
 {
     // stringify a field's current value for the displaced-value log line.
@@ -578,6 +663,31 @@ static void rocketnet_config_field_to_string( const void * config, const struct 
         case ROCKETNET_CONFIG_KIND_STRING:
         {
             snprintf( buffer, (size_t) buffer_size, "%.*s", field->size, (const char *) base );
+        }
+        break;
+
+        case ROCKETNET_CONFIG_KIND_INT_LIST:
+        {
+            // the entries in use as the variable spells them; a count
+            // outside the field is printed as the count alone
+
+            const int max_entries = field->size / (int) sizeof( int ) - 1;
+            int count;
+            memcpy( &count, base + sizeof( int ) * (size_t) max_entries, sizeof( count ) );
+            if ( count < 0 || count > max_entries )
+            {
+                snprintf( buffer, (size_t) buffer_size, "(%d entries)", count );
+                break;
+            }
+
+            buffer[0] = '\0';
+            for ( int i = 0; i < count; i++ )
+            {
+                int entry;
+                memcpy( &entry, base + sizeof( int ) * (size_t) i, sizeof( entry ) );
+                const size_t used = strlen( buffer );
+                snprintf( buffer + used, (size_t) buffer_size - used, "%s%d", i > 0 ? "," : "", entry );
+            }
         }
         break;
 
@@ -751,6 +861,25 @@ static bool rocketnet_config_apply_env_value( const char * transport_name, void 
         }
         break;
 
+        case ROCKETNET_CONFIG_KIND_INT_LIST:
+        {
+            // the entries, then the count after them; entries past the
+            // count keep what they held, as the struct form leaves them
+
+            const int max_entries = field->size / (int) sizeof( int ) - 1;
+            int entries[ROCKETNET_MAX_LINK_MTUS];
+            int count = 0;
+            if ( max_entries > (int) ( sizeof( entries ) / sizeof( entries[0] ) ) || !rocketnet_config_parse_int_list_value( value, entries, max_entries, &count ) )
+            {
+                rocketnet_error( "%s config could not parse %s=\"%s\" as a list of 1 to %d integers joined by commas", transport_name, env_name, secret ? "(redacted)" : value, max_entries );
+                return false;
+            }
+
+            memcpy( base, entries, sizeof( int ) * (size_t) count );
+            memcpy( base + sizeof( int ) * (size_t) max_entries, &count, sizeof( count ) );
+        }
+        break;
+
         default:
         {
             rocketnet_error( "%s config field \"%s\" has an unknown kind %d", transport_name, field->name, field->kind );
@@ -893,6 +1022,14 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
             }
             break;
 
+            case ROCKETNET_CONFIG_KIND_INT_LIST:
+            {
+                // the link MTU list's checks each have their own status
+                // (rocketnet_config_link_mtus_status), run by the creates on
+                // the resolved config, not this range walk
+            }
+            break;
+
             case ROCKETNET_CONFIG_KIND_STRING:
             {
                 bool terminated = false;
@@ -922,6 +1059,57 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
     }
 
     return true;
+}
+
+int rocketnet_config_link_mtus_status( const char * endpoint, const int * link_mtus, int num_link_mtus )
+{
+    rocketnet_assert( endpoint );
+    rocketnet_assert( link_mtus );
+
+    switch ( rocketnet_link_mtus_check( link_mtus, num_link_mtus ) )
+    {
+        case ROCKETNET_LINK_MTUS_VALID:
+            return ROCKETNET_STATUS_OK;
+
+        case ROCKETNET_LINK_MTUS_EMPTY:
+            rocketnet_error( "%s config num_link_mtus %d is outside 1 .. %d", endpoint, num_link_mtus, ROCKETNET_MAX_LINK_MTUS );
+            return ROCKETNET_STATUS_LINK_MTUS_EMPTY;
+
+        case ROCKETNET_LINK_MTUS_NOT_DESCENDING:
+            rocketnet_error( "%s config link_mtus is not largest first, each entry below the one before it", endpoint );
+            return ROCKETNET_STATUS_LINK_MTUS_NOT_DESCENDING;
+
+        case ROCKETNET_LINK_MTUS_TOO_LARGE:
+            rocketnet_error( "%s config link_mtus entry %d is above %d", endpoint, link_mtus[0], ROCKETNET_LINK_MTU_MAX );
+            return ROCKETNET_STATUS_LINK_MTUS_TOO_LARGE;
+
+        default:
+            rocketnet_error( "%s config link_mtus entry %d is below %d, the smallest IPv4 link that carries the connection request", endpoint, link_mtus[num_link_mtus - 1], ROCKETNET_LINK_MTU_MIN );
+            return ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL;
+    }
+}
+
+int rocketnet_config_link_mtus_message_status( const char * endpoint, const int * link_mtus, int num_link_mtus, const struct rocketnet_message_config_t * message )
+{
+    rocketnet_assert( endpoint );
+    rocketnet_assert( link_mtus );
+    rocketnet_assert( message );
+
+    // a block takes one window number per fragment (rocketnet_message_validate_config_internal's
+    // rule 8), each fragment one block stride of the smallest packet size the list gives
+
+    const int packet_bytes = rocketnet_link_mtus_smallest_packet_bytes( link_mtus, num_link_mtus );
+    const int stride = rocketnet_link_mtu_block_stride( packet_bytes );
+    const int fragments = (int) ( ( (int64_t) message->max_message_bytes + stride - 1 ) / stride );
+
+    if ( fragments > message->reliable_messages_in_flight )
+    {
+        rocketnet_error( "%s config max_message_bytes %d needs %d fragments of %d bytes at the %d-byte packets of link MTU %d, above reliable_messages_in_flight %d",
+                         endpoint, message->max_message_bytes, fragments, stride, packet_bytes, link_mtus[num_link_mtus - 1], message->reliable_messages_in_flight );
+        return ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES;
+    }
+
+    return ROCKETNET_STATUS_OK;
 }
 
 bool rocketnet_public_link_simulator_development( void )

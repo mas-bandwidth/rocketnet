@@ -39,6 +39,8 @@ extern "C"
 #define ROCKETNET_SERVER_CONFIG_BYTES_6 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, bind_ipv6_address ) + sizeof( const char * ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_7 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, num_msgx_transmit_workers ) + sizeof( int ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_8 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, portable_reserve_cpu_0 ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_CLIENT_CONFIG_BYTES_5 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, num_link_mtus ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_BYTES_9 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, num_link_mtus ) + sizeof( int ), sizeof( void * ) )
 
 /// Receive bounds match the sender's datagram and payload limits.
 #define ROCKETNET_RECEIVE_PACKET_BYTES                     ROCKETNET_MAX_PACKET_BYTES
@@ -314,6 +316,10 @@ struct rocketnet_client_transport_config_t
     int simulated_reverse_window;                   // development only: reverse each window of W outgoing datagrams (2 .. 64), flushed whole at the end of each send_packets; 0 off
     /** @brief The loopback hub the loopback transport connects through; NULL refuses the loopback transport. */
     struct rocketnet_loopback_hub_t * loopback_hub;
+    /** @brief The link MTU list, IP MTUs in bytes, largest first; default the one entry 1500 (sdk/rocketnet_link_mtu.h). */
+    int link_mtus[ROCKETNET_MAX_LINK_MTUS];
+    /** @brief The entries of link_mtus in use, 1 through ROCKETNET_MAX_LINK_MTUS; default 1. */
+    int num_link_mtus;
 };
 
 // a NULL config is a counted no-op
@@ -593,6 +599,9 @@ const char * rocketnet_client_transport_io_name( struct rocketnet_client_transpo
 bool rocketnet_client_transport_network_simulator( struct rocketnet_client_transport_t * client_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 bool rocketnet_server_transport_network_simulator( struct rocketnet_server_transport_t * server_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 #if ROCKETNET_DEV
+/** @brief The link MTU list a transport's protocol holds, for a unit test: its entries written to link_mtus (ROCKETNET_MAX_LINK_MTUS of room), its count returned. */
+int rocketnet_client_transport_link_mtus_for_test( const struct rocketnet_client_transport_t * client_transport, int * link_mtus );
+int rocketnet_server_transport_link_mtus_for_test( const struct rocketnet_server_transport_t * server_transport, int * link_mtus );
 /** @brief Makes the next `sends` link sends through an active simulator take the lock-miss path, for a unit test. */
 void rocketnet_server_transport_link_busy_for_test( struct rocketnet_server_transport_t * server_transport, int sends );
 /** @brief Makes the next `takes` reads of the link setting meet the simulator's lock held, for a unit test. */
@@ -822,6 +831,10 @@ struct rocketnet_server_transport_config_t
     int io_uring_reserve_cpu_0;
     /** @brief portable on Linux: as gso_reserve_cpu_0, for its send (0) and receive (1) workers. */
     int portable_reserve_cpu_0;
+    /** @brief The link MTU list, IP MTUs in bytes, largest first; default the one entry 1500 (sdk/rocketnet_link_mtu.h). */
+    int link_mtus[ROCKETNET_MAX_LINK_MTUS];
+    /** @brief The entries of link_mtus in use, 1 through ROCKETNET_MAX_LINK_MTUS; default 1. */
+    int num_link_mtus;
 };
 
 /** @brief Resolves the local address a server transport binds from its config and served address.
