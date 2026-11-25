@@ -2,8 +2,15 @@
 
 <a id="bans-and-whitelists"></a>
 
-A connect token lets the client present an authenticated account to a game
-server. The harder question is whether that account may still play here.
+Use these practices to enforce two rules for online play.
+
+- **One authenticated account, one server at a time.** Give each account
+  one online seat. If the seat moves, the previous server disconnects its
+  player when it receives the updated whitelist.
+- **A ban stops future and current play.** The backend refuses new tokens
+  for the banned account. Each game server disconnects anyone using that
+  account when its updated whitelist arrives, even if the token was
+  issued before the ban.
 
 ## How one purchase can become two live sessions
 
