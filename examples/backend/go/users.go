@@ -178,6 +178,12 @@ func (users *users) hash(provider string, userID string) (uint64, error) {
 	return binary.LittleEndian.Uint64(hash.Sum(nil)), nil
 }
 
+func (users *users) isBanned(userHash uint64) bool {
+	users.mutex.Lock()
+	defer users.mutex.Unlock()
+	return users.banned[userHash]
+}
+
 func (users *users) setBanned(userHash uint64, banned bool) {
 	users.mutex.Lock()
 	defer users.mutex.Unlock()

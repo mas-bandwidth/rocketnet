@@ -187,6 +187,14 @@ namespace RocketNet.Backend
             return BinaryPrimitives.ReadUInt64LittleEndian( hash );
         }
 
+        public bool IsBanned( ulong userHash )
+        {
+            lock ( mutex )
+            {
+                return banned.Contains( userHash );
+            }
+        }
+
         public void SetBanned( ulong userHash, bool isBanned )
         {
             lock ( mutex )
@@ -329,13 +337,17 @@ namespace RocketNet.Backend
             {
                 return new Reply( 503, "no servers are registered" );
             }
-            // seated before the token goes out, so the user is on the
-            // server's whitelist before they can connect; a ban refuses the seat
-            if ( !users.Seat( userHash, picked.Value.Id ) )
+            if ( users.IsBanned( userHash ) )
             {
                 return new Reply( 403, "this user is banned" );
             }
             byte[] token = ConnectToken.Generate( config.ForServer( picked.Value.Server ), userHash, now, random, seal );
+            // Commit the seat only after minting succeeds. A ban during minting
+            // must still refuse this match before the token goes to the client.
+            if ( !users.Seat( userHash, picked.Value.Id ) )
+            {
+                return new Reply( 403, "this user is banned" );
+            }
             Console.Error.WriteLine( $"rocketnet-backend: matched user {userHash:x16} to server {picked.Value.Id}" );
             return new Reply( 200, Convert.ToBase64String( token ) );
         }

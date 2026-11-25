@@ -15,7 +15,7 @@ connected, follow [Bans and whitelists](../../docs/BANS-AND-WHITELISTS.md#run-it
 | `PUT /servers/{serverID}` | Register the server's advertised UDP addresses and 32-byte X25519 public key. The example game server sends its bound port and public key after startup. |
 | `GET /servers/{serverID}/whitelist` | Return the ids allowed on this server in ascending order, each as eight little-endian bytes. The response type is `application/octet-stream`. An empty list has a zero-length body. |
 | `POST /mock/ticket/{userID}` | Issue a short-lived mock sign-in ticket for the requested user. This route exists for local testing. |
-| `POST /match` | Send the ticket as the request body. The backend verifies it, derives the account's `client_id`, selects a server, checks the ban and records the seat before issuing a token. The response is base64 text with `Cache-Control: no-store`. Pass it directly to `rocketnet_client_connect`. |
+| `POST /match` | Send the ticket as the request body. The backend verifies it, derives the account's `client_id`, selects a server, and checks the ban. Once token generation succeeds, it rechecks the ban and records the seat before returning the token. A failed match leaves the previous seat in place. The response is base64 text with `Cache-Control: no-store`. Pass it directly to `rocketnet_client_connect`. |
 | `PUT /bans/{provider}/{userID}` | Ban the account. Each subsequent whitelist omits the id, and the backend refuses to issue another token for it. |
 | `DELETE /bans/{provider}/{userID}` | Lift the ban. The example retains the user's last seat, so that server's whitelist can include the id again. |
 

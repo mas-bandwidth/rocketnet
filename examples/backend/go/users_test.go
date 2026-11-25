@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -183,7 +184,7 @@ type testBackend struct {
 	now      uint64
 }
 
-func newTestBackend(t *testing.T) *testBackend {
+func newTestBackend(t *testing.T, seal sealFunction) *testBackend {
 	t.Helper()
 	config, err := readServiceConfig(environment(map[string]string{}))
 	if err != nil {
@@ -198,7 +199,7 @@ func newTestBackend(t *testing.T) *testBackend {
 	backend.router.HandleFunc("PUT /servers/{serverID}", registerHandler(backend.registry))
 	backend.router.HandleFunc("GET /servers/{serverID}/whitelist", whitelistHandler(backend.registry, backend.users))
 	backend.router.HandleFunc("POST /mock/ticket/{userID}", mockTicketHandler(backend.mock, now))
-	backend.router.HandleFunc("POST /match", matchTicketHandler(config, backend.registry, backend.users, verifyTicketWith(backend.mock), now, bytes.NewReader(bytes.Repeat([]byte{0x5a}, 1<<16)), sealAnonymous))
+	backend.router.HandleFunc("POST /match", matchTicketHandler(config, backend.registry, backend.users, verifyTicketWith(backend.mock), now, bytes.NewReader(bytes.Repeat([]byte{0x5a}, 1<<16)), seal))
 	backend.router.HandleFunc("PUT /bans/{provider}/{userID}", banHandler(backend.users, true))
 	backend.router.HandleFunc("DELETE /bans/{provider}/{userID}", banHandler(backend.users, false))
 	return backend
@@ -259,7 +260,7 @@ func tokenClientID(t *testing.T, text string) uint64 {
 }
 
 func TestMatchRoutes(t *testing.T) {
-	backend := newTestBackend(t)
+	backend := newTestBackend(t, sealAnonymous)
 	alice := mustHash(t, backend.users, "mock", "alice")
 	bob := mustHash(t, backend.users, "mock", "bob")
 
@@ -364,5 +365,38 @@ func TestCrossBackendVectors(t *testing.T) {
 	}
 	if userHash := mustHash(t, users, "mock", "alice"); userHash != aliceHashVector {
 		t.Fatalf("alice's hash is %.16x", userHash)
+	}
+}
+
+func TestMatchCommitsSeatAfterMint(t *testing.T) {
+	seal := sealFunction(sealAnonymous)
+	backend := newTestBackend(t, func(block []byte, key *[keyBytes]byte) ([]byte, error) {
+		return seal(block, key)
+	})
+	backend.register(t, "one")
+	ticket := backend.ticket(t, "alice")
+	alice := mustHash(t, backend.users, "mock", "alice")
+	if response := backend.do("POST", "/match", ticket); response.Code != http.StatusOK {
+		t.Fatalf("initial match: %d", response.Code)
+	}
+	backend.register(t, "two")
+	seal = func([]byte, *[keyBytes]byte) ([]byte, error) { return nil, errors.New("test mint failure") }
+	if response := backend.do("POST", "/match", ticket); response.Code != http.StatusInternalServerError {
+		t.Fatalf("failed mint: %d", response.Code)
+	}
+	if !slices.Equal(backend.whitelist(t, "one"), []uint64{alice}) || len(backend.whitelist(t, "two")) != 0 {
+		t.Fatal("failed mint moved the existing seat")
+	}
+
+	seal = func(block []byte, key *[keyBytes]byte) ([]byte, error) {
+		backend.users.setBanned(alice, true)
+		return sealAnonymous(block, key)
+	}
+	if response := backend.do("POST", "/match", ticket); response.Code != http.StatusForbidden {
+		t.Fatalf("ban during mint: %d", response.Code)
+	}
+	backend.users.setBanned(alice, false)
+	if !slices.Equal(backend.whitelist(t, "one"), []uint64{alice}) || len(backend.whitelist(t, "two")) != 0 {
+		t.Fatal("ban during mint moved the existing seat")
 	}
 }

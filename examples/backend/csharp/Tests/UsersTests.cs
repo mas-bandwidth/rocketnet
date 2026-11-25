@@ -197,6 +197,29 @@ static class UsersTests
         Check( routes.Match( ticket, Now + MockProvider.TicketSeconds ).Status == 401, "an expired ticket is 401" );
 
         registry.Register( "two", ServerTwo, serverKey );
+        UserRoutes failing = new UserRoutes( config, registry, users, mock, Users.VerifyWith( mock ),
+            buffer => throw new InvalidOperationException( "test mint failure" ), ConnectToken.SealAnonymous );
+        try
+        {
+            failing.Match( ticket, Now );
+            throw new TestFailure( "token generation should have failed" );
+        }
+        catch ( InvalidOperationException e ) when ( e.Message == "test mint failure" )
+        {
+            Check( ReadWhitelist( routes.Whitelist( "one" ) ).SequenceEqual( new[] { alice } ) &&
+                   ReadWhitelist( routes.Whitelist( "two" ) ).Length == 0, "failed mint moved the existing seat" );
+        }
+
+        UserRoutes interrupted = new UserRoutes( config, registry, users, mock, Users.VerifyWith( mock ),
+            buffer => buffer.AsSpan().Fill( 0x5a ), ( block, key ) => {
+                users.SetBanned( alice, true );
+                return ConnectToken.SealAnonymous( block, key );
+            } );
+        Check( interrupted.Match( ticket, Now ).Status == 403, "ban during mint refuses the token" );
+        users.SetBanned( alice, false );
+        Check( ReadWhitelist( routes.Whitelist( "one" ) ).SequenceEqual( new[] { alice } ) &&
+               ReadWhitelist( routes.Whitelist( "two" ) ).Length == 0, "ban during mint moved the existing seat" );
+
         Check( TokenClientId( routes.Match( routes.MockTicket( "alice", Now ).Text, Now ) ) == alice, "match to server two" );
         Check( ReadWhitelist( routes.Whitelist( "one" ) ).Length == 0 && ReadWhitelist( routes.Whitelist( "two" ) ).SequenceEqual( new[] { alice } ), "alice is on exactly one server's whitelist" );
 

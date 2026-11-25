@@ -71,9 +71,7 @@ func matchTicketHandler(config *config, registry *serverRegistry, users *users, 
 			http.Error(w, "no servers are registered", http.StatusServiceUnavailable)
 			return
 		}
-		// seated before the token goes out, so the user is on the server's
-		// whitelist before they can connect; a ban refuses the seat
-		if !users.seat(userHash, serverID) {
+		if users.isBanned(userHash) {
 			http.Error(w, "this user is banned", http.StatusForbidden)
 			return
 		}
@@ -84,6 +82,12 @@ func matchTicketHandler(config *config, registry *serverRegistry, users *users, 
 		if err != nil {
 			stderrLogger.Printf("failed to generate a connect token: %v", err)
 			http.Error(w, "failed to generate a connect token", http.StatusInternalServerError)
+			return
+		}
+		// Commit the seat only after minting succeeds. A ban during minting
+		// must still refuse this match before the token goes to the client.
+		if !users.seat(userHash, serverID) {
+			http.Error(w, "this user is banned", http.StatusForbidden)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
