@@ -30,7 +30,7 @@
 
 // the smallest entry: an IPv4 link whose UDP payload carries the connection
 // request, the largest handshake packet, so the smallest entry of any list
-// can still connect over IPv4 (738 = 710 + 20 + 8)
+// can still connect over IPv4 (546 = 518 + 20 + 8)
 #define ROCKETNET_LINK_MTU_MIN                  ( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES + ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES )
 
 // every IPv6 link carries at least 1280 bytes (RFC 8200 section 5): an IPv6
@@ -56,7 +56,7 @@ static inline int rocketnet_link_mtu_packet_bytes( int link_mtu, int address_typ
 // rocketnet_link_mtus_check; 0 for an address with no family.
 //
 //   { 1500 }               IPv4 { 1452 }               IPv6 { 1452 }
-//   { 1492, 1200, 738 }    IPv4 { 1452, 1172, 710 }    IPv6 { 1444 }
+//   { 1492, 1200, 576 }    IPv4 { 1452, 1172, 548 }    IPv6 { 1444 }
 
 static inline int rocketnet_link_mtu_candidates( const int * link_mtus, int num_link_mtus, int address_type, int * out_packet_bytes )
 {

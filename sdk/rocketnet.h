@@ -486,7 +486,7 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_LINK_MTUS_TOO_LARGE = -38,
 
-    /// Create refused: the smallest entry of the link MTU list is below 738,
+    /// Create refused: the smallest entry of the link MTU list is below 546,
     /// the smallest IPv4 link that carries the connection request.
 
     ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL = -39,
@@ -1741,26 +1741,26 @@ struct rocketnet_client_config_t
     /// Use the same list on the client and the server. The default is the
     /// one entry 1500, exactly the behaviour of earlier builds: no probe and
     /// nothing new on the wire. A longer list, for example the three steps
-    /// { 1492, 1400, 1200 }, makes the client probe each size after the
+    /// { 1492, 1200, 576 }, makes the client probe each size after the
     /// challenge, and the connection uses the largest size the path carries
     /// both ways for its whole life (rocketnet_client_state
     /// MTU_PROBE_FAILED when none is carried). An entry's packet size is the
     /// MTU less 28 bytes over IPv4 or 48 over IPv6, at most
     /// ROCKETNET_MAX_PACKET_BYTES; an IPv6 connection skips the entries below
-    /// 1280. The variable is a comma list with no spaces, "1492,1400,1200";
+    /// 1280. The variable is a comma list with no spaces, "1492,1200,576";
     /// a value that does not parse, or has more than ROCKETNET_MAX_LINK_MTUS
     /// entries, returns ROCKETNET_STATUS_CONFIG_ENV_INVALID. Create refuses
     /// num_link_mtus outside 1 .. ROCKETNET_MAX_LINK_MTUS with
     /// ROCKETNET_STATUS_LINK_MTUS_EMPTY, an entry not below the one before it
     /// with ROCKETNET_STATUS_LINK_MTUS_NOT_DESCENDING, an entry above 1500
-    /// with ROCKETNET_STATUS_LINK_MTUS_TOO_LARGE, a smallest entry below 738
+    /// with ROCKETNET_STATUS_LINK_MTUS_TOO_LARGE, a smallest entry below 546
     /// with ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL, and a list whose smallest
     /// entry fragments one max_message_bytes message into more than
     /// reliable_messages_in_flight blocks with
     /// ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES: below a 1237-byte
     /// IPv4 link a block carries less than 1152 bytes, and below 1109 less
     /// than 1024, so there the default 1048576-byte message needs more than
-    /// the default window of 1024 (2048 at 738, where a block carries 640).
+    /// the default window of 1024 (4096 at 576, where a block carries 480).
 
     int link_mtus[ROCKETNET_MAX_LINK_MTUS];
 
@@ -2212,13 +2212,13 @@ struct rocketnet_server_config_t
     /// answers a client's probe only at a size its own list gives the
     /// client's family. The default is the one entry 1500, exactly the
     /// behaviour of earlier builds: no probe and nothing new on the wire. A
-    /// longer list, for example the three steps { 1492, 1400, 1200 }, lets
+    /// longer list, for example the three steps { 1492, 1200, 576 }, lets
     /// each client probe after the challenge, and each connection uses the
     /// largest size its path carries both ways for its whole life. An
     /// entry's packet size is the MTU less 28 bytes over IPv4 or 48 over
     /// IPv6, at most ROCKETNET_MAX_PACKET_BYTES; an IPv6 connection skips
     /// the entries below 1280. The variable is a comma list with no spaces,
-    /// "1492,1400,1200"; a value that does not parse, or has more than
+    /// "1492,1200,576"; a value that does not parse, or has more than
     /// ROCKETNET_MAX_LINK_MTUS entries, returns
     /// ROCKETNET_STATUS_CONFIG_ENV_INVALID. Create refuses the list as the
     /// client's link_mtus does: ROCKETNET_STATUS_LINK_MTUS_EMPTY,

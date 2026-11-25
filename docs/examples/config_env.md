@@ -89,9 +89,9 @@ updates. Zero and values above 1024 are refused with
 `link_mtus` and `num_link_mtus` have the same precedence rules, on the client
 and the server. Their environment names are `ROCKETNET_CLIENT_LINK_MTUS` and
 `ROCKETNET_SERVER_LINK_MTUS`, one variable for the list and its count: decimal
-entries joined by commas, `ROCKETNET_SERVER_LINK_MTUS=1492,1400,1200`. The
+entries joined by commas, `ROCKETNET_SERVER_LINK_MTUS=1492,1200,576`. The
 default is the one entry 1500, which probes nothing and sends nothing new. A
-list is 1 through 8 IP MTUs, largest first, from 738 through 1500, the same
+list is 1 through 8 IP MTUs, largest first, from 546 through 1500, the same
 on both ends; create refuses the others with `LINK_MTUS_EMPTY`,
 `LINK_MTUS_NOT_DESCENDING`, `LINK_MTUS_TOO_LARGE` or `LINK_MTUS_TOO_SMALL`,
 and a list whose smallest entry fragments one `max_message_bytes` message

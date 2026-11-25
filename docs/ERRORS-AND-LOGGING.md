@@ -659,10 +659,10 @@ the rule, in this order:
 | `ROCKETNET_STATUS_LINK_MTUS_EMPTY` | -36 | `num_link_mtus` is 0, negative, or above `ROCKETNET_MAX_LINK_MTUS` (8) |
 | `ROCKETNET_STATUS_LINK_MTUS_NOT_DESCENDING` | -37 | an entry is not below the one before it (an equal entry included) |
 | `ROCKETNET_STATUS_LINK_MTUS_TOO_LARGE` | -38 | an entry is above 1500 |
-| `ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL` | -39 | the smallest entry is below 738, the smallest IPv4 link that carries the connection request |
-| `ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES` | -40, the last code | one `max_message_bytes` message needs more fragments than `reliable_messages_in_flight` at the block stride of the smallest entry's packet size (1152 bytes down to a 1237-byte IPv4 link, 1024 down to 1109, 640 at 738) |
+| `ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL` | -39 | the smallest entry is below 546, the smallest IPv4 link that carries the connection request |
+| `ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES` | -40, the last code | one `max_message_bytes` message needs more fragments than `reliable_messages_in_flight` at the block stride of the smallest entry's packet size (1152 bytes down to a 1237-byte IPv4 link, 1024 down to 1109, 480 at 576) |
 
-**Action**: list the link MTUs largest first, each once, from 738 to 1500,
+**Action**: list the link MTUs largest first, each once, from 546 to 1500,
 the same list on both ends; for a small smallest entry raise
 `reliable_messages_in_flight` (and `packets_in_flight` with it) or lower
 `max_message_bytes`. The default list, the one entry 1500, never refuses.

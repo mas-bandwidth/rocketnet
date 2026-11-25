@@ -7,8 +7,8 @@
 // {1500} on the public and the transport configs; each refusal at client and
 // server create, public and transport (EMPTY for no entry or more than
 // ROCKETNET_MAX_LINK_MTUS, TOO_LARGE for an entry above 1500, NOT_DESCENDING
-// including equal entries, TOO_SMALL below 738, the smallest IPv4 link that
-// carries the 710-byte connection request, and TOO_SMALL_FOR_MESSAGES when
+// including equal entries, TOO_SMALL below 546, the smallest IPv4 link that
+// carries the 518-byte connection request, and TOO_SMALL_FOR_MESSAGES when
 // the message config cannot fit its largest message at the smallest entry);
 // valid lists create; the environment form, decimal entries joined by
 // commas, parses and junk is refused; an older caller's config reads the
@@ -100,9 +100,7 @@ static const link_mtus_refusal_t link_mtus_refusals[] =
     { "ascending", { 1200, 1300 }, 2, ROCKETNET_STATUS_LINK_MTUS_NOT_DESCENDING },
     { "1501", { 1501 }, 1, ROCKETNET_STATUS_LINK_MTUS_TOO_LARGE },
     { "545", { 545 }, 1, ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL },
-    { "576", { 576 }, 1, ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL },
-    { "737", { 737 }, 1, ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL },
-    { "1500 then 737", { 1500, 737 }, 2, ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL },
+    { "1500 then 545", { 1500, 545 }, 2, ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL },
 };
 
 static void test_link_mtus_default_is_1500()
@@ -169,10 +167,10 @@ static void test_link_mtus_public_create_refusals()
     }
 
     // the default message config's largest message (1 MiB) takes more
-    // fragments than its window of 1024 below a 1109-byte link: 1639 of 640
-    // bytes at 738, 1041 of 1008 at 1108
+    // fragments than its window of 1024 below a 1109-byte link: 2185 of 480
+    // bytes at 576, 1041 of 1008 at 1108
 
-    const int smallest[] = { 738, 1108 };
+    const int smallest[] = { 576, 1108 };
 
     for ( int i = 0; i < LINK_MTUS_COUNT( smallest ); i++ )
     {
@@ -239,8 +237,8 @@ static void test_link_mtus_transport_create_refusals()
 }
 
 // Valid lists create on both sides: a three-step list down to the smallest
-// entry, 738, once the message window holds the largest message there (1 MiB
-// is 1639 fragments of 640 bytes, inside a window of 2048); a two-step list
+// entry, 576, once the message window holds the largest message there (1 MiB
+// is 2185 fragments of 480 bytes, inside a window of 4096); a two-step list
 // at 1109, the smallest entry the default window of 1024 holds; and a full
 // list of eight.
 
@@ -279,8 +277,8 @@ static void link_mtus_creates( const int * entries, int count, int window )
 
 static void test_link_mtus_valid_list_creates()
 {
-    const int three_step[] = { 1492, 1200, 738 };
-    link_mtus_creates( three_step, 3, 2048 );
+    const int three_step[] = { 1492, 1200, 576 };
+    link_mtus_creates( three_step, 3, 4096 );
 
     const int two_step[] = { 1500, 1109 };
     link_mtus_creates( two_step, 2, 1024 );
@@ -376,7 +374,7 @@ static void test_link_mtus_older_config_reads_the_default()
 static const char * link_mtus_env_junk[] =
 {
     "a",
-    "1492,,738",
+    "1492,,576",
     ",1492",
     "1492,",
     " 1200",
@@ -407,8 +405,8 @@ static void test_link_mtus_env_parses_and_refuses_junk()
     const bool client_had = rocketnet_test_env_getenv( "ROCKETNET_CLIENT_LINK_MTUS", client_prior, sizeof( client_prior ) ) != 0;
     const bool server_had = rocketnet_test_env_getenv( "ROCKETNET_SERVER_LINK_MTUS", server_prior, sizeof( server_prior ) ) != 0;
 
-    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_LINK_MTUS", "1492,1200,738", 1 );
-    rocketnet_test_env_setenv( "ROCKETNET_SERVER_LINK_MTUS", "1492,1200,738", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_LINK_MTUS", "1492,1200,576", 1 );
+    rocketnet_test_env_setenv( "ROCKETNET_SERVER_LINK_MTUS", "1492,1200,576", 1 );
 
     {
         struct rocketnet_client_config_t config;
@@ -420,7 +418,7 @@ static void test_link_mtus_env_parses_and_refuses_junk()
         check( transport.num_link_mtus == 3 );
         check( transport.link_mtus[0] == 1492 );
         check( transport.link_mtus[1] == 1200 );
-        check( transport.link_mtus[2] == 738 );
+        check( transport.link_mtus[2] == 576 );
     }
 
     {
@@ -433,7 +431,7 @@ static void test_link_mtus_env_parses_and_refuses_junk()
         check( transport.num_link_mtus == 3 );
         check( transport.link_mtus[0] == 1492 );
         check( transport.link_mtus[1] == 1200 );
-        check( transport.link_mtus[2] == 738 );
+        check( transport.link_mtus[2] == 576 );
     }
 
     for ( int i = 0; i < LINK_MTUS_COUNT( link_mtus_env_junk ); i++ )
@@ -550,16 +548,16 @@ static void test_link_mtus_reach_the_protocols()
     int client_count = 0;
     int server_count = 0;
 
-    const int three_step[] = { 1492, 1200, 738 };
-    link_mtus_pair_protocols( three_step, 3, 2048, client_link_mtus, server_link_mtus, &client_count, &server_count );
+    const int three_step[] = { 1492, 1200, 576 };
+    link_mtus_pair_protocols( three_step, 3, 4096, client_link_mtus, server_link_mtus, &client_count, &server_count );
     check( client_count == 3 );
     check( client_link_mtus[0] == 1492 );
     check( client_link_mtus[1] == 1200 );
-    check( client_link_mtus[2] == 738 );
+    check( client_link_mtus[2] == 576 );
     check( server_count == 3 );
     check( server_link_mtus[0] == 1492 );
     check( server_link_mtus[1] == 1200 );
-    check( server_link_mtus[2] == 738 );
+    check( server_link_mtus[2] == 576 );
 
     // the default reaches the protocols as {1500}
 
