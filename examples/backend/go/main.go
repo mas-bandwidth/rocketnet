@@ -2,9 +2,8 @@
    RocketNet. Copyright 2026 Más Bandwidth LLC.
    Licensed under the GNU Affero General Public License v3.0
 
-   A very simple backend: one HTTP
-   endpoint that mints a RocketNet connect token for a client and returns it
-   as base64. The client passes the string to rocketnet_client_connect, and
+   A very simple backend: it mints a RocketNet connect token for a
+   signed-in player and returns it as base64. The client passes the string to rocketnet_client_connect, and
    the token sends it to the one server it names.
 
    The token is the 768 byte connect token of STANDARD.md, byte for byte the
@@ -19,8 +18,10 @@
    is for local runs only, and a production server (built with
    ROCKETNET_DEV=0) refuses it at start.
 
-   A real backend authenticates the player before minting a token for them;
-   this one mints for any client id it is asked for.
+   The player signs in with an auth provider (here a mock, users.go) and
+   sends the ticket to POST /match. The backend checks the ticket, refuses a
+   banned user, and mints a token whose client id is the user's hash, for
+   one server whose whitelist then holds that user.
 */
 
 package main
@@ -240,23 +241,8 @@ func (registry *serverRegistry) register(id string, addresses []string, publicKe
 }
 
 func (registry *serverRegistry) random() (registeredServer, bool, error) {
-	registry.mutex.Lock()
-	defer registry.mutex.Unlock()
-	if len(registry.servers) == 0 {
-		return registeredServer{}, false, nil
-	}
-	index, err := registry.choose(len(registry.servers))
-	if err != nil || index < 0 || index >= len(registry.servers) {
-		return registeredServer{}, false, errors.New("failed to select a registered server")
-	}
-	for _, server := range registry.servers {
-		if index == 0 {
-			server.addresses = append([]string(nil), server.addresses...)
-			return server, true, nil
-		}
-		index--
-	}
-	return registeredServer{}, false, errors.New("failed to select a registered server")
+	_, server, found, err := registry.pick()
+	return server, found, err
 }
 
 // mints a token for clientID with fresh session keys, created at
@@ -406,39 +392,6 @@ func readServiceConfig(getenv func(string) string) (*config, error) {
 
 var stderrLogger = log.New(os.Stderr, "rocketnet-backend: ", log.LstdFlags)
 
-func matchHandler(config *config, registry *serverRegistry) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		clientID, err := strconv.ParseUint(r.PathValue("clientID"), 10, 64)
-		if err != nil {
-			http.Error(w, "the client id is not a decimal 64 bit number", http.StatusBadRequest)
-			return
-		}
-		server, found, err := registry.random()
-		if err != nil {
-			http.Error(w, "failed to select a server", http.StatusInternalServerError)
-			return
-		}
-		if !found {
-			http.Error(w, "no servers are registered", http.StatusServiceUnavailable)
-			return
-		}
-		selected := *config
-		selected.serverAddresses = server.addresses
-		selected.serverPublicKey = server.publicKey
-		token, err := generateConnectToken(&selected, clientID, uint64(time.Now().Unix()), rand.Reader, sealAnonymous)
-		if err != nil {
-			stderrLogger.Printf("failed to generate a connect token: %v", err)
-			http.Error(w, "failed to generate a connect token", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		// a token is for one client, once: never cached
-		w.Header().Set("Cache-Control", "no-store")
-		io.WriteString(w, base64.StdEncoding.EncodeToString(token))
-		stderrLogger.Printf("matched client %.16x to %s", clientID, strings.Join(server.addresses, ","))
-	}
-}
-
 const registrationBodyBytes = 4096
 
 func registerHandler(registry *serverRegistry) http.HandlerFunc {
@@ -536,8 +489,26 @@ func main() {
 			stderrLogger.Fatalf("error: %v", err)
 		}
 	}
+	mockKey, _, err := readSecretKey(os.Getenv, "ROCKETNET_BACKEND_MOCK_PROVIDER_KEY", rand.Reader)
+	if err != nil {
+		stderrLogger.Fatalf("error: %v", err)
+	}
+	hashKey, hashKeySet, err := readSecretKey(os.Getenv, "ROCKETNET_BACKEND_USER_HASH_KEY", rand.Reader)
+	if err != nil {
+		stderrLogger.Fatalf("error: %v", err)
+	}
+	if !hashKeySet {
+		stderrLogger.Printf("warning: ROCKETNET_BACKEND_USER_HASH_KEY is not set, so user hashes (client ids) change when the backend restarts")
+	}
+	mock := &mockProvider{key: mockKey}
+	users := newUsers(hashKey)
+	now := func() uint64 { return uint64(time.Now().Unix()) }
 	router.HandleFunc("PUT /servers/{serverID}", registerHandler(registry))
-	router.HandleFunc("GET /match/{clientID}", matchHandler(config, registry))
+	router.HandleFunc("GET /servers/{serverID}/whitelist", whitelistHandler(registry, users))
+	router.HandleFunc("POST /mock/ticket/{userID}", mockTicketHandler(mock, now))
+	router.HandleFunc("POST /match", matchTicketHandler(config, registry, users, verifyTicketWith(mock), now, rand.Reader, sealAnonymous))
+	router.HandleFunc("PUT /bans/{provider}/{userID}", banHandler(users, true))
+	router.HandleFunc("DELETE /bans/{provider}/{userID}", banHandler(users, false))
 
 	if !listenAddressIsLoopback(config.listenAddress) {
 		stderrLogger.Printf("warning: listening on %s, not loopback: server registration and token issuance are unauthenticated here; production needs authenticated registration and player authorization", config.listenAddress)

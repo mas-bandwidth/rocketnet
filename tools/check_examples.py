@@ -4,7 +4,8 @@
 Each examples/*.c may include only "rocketnet.h", "dev_keys.h" (the examples'
 protocol id and packet filter), "shutdown.h" (the command-line wait for
 shutdown), "thread.h" (the platform's threads, start and join, for the
-server examples' split-off half of the network update) and the C standard
+server examples' split-off half of the network update), "whitelist.h" (the
+backend server's whitelist fetch over plain sockets) and the C standard
 headers below, and may name only rocketnet_
 identifiers that sdk/rocketnet.h declares. A rocketnet_client_connect call's
 status is kept in a variable, never compared where it is made, so a refused
@@ -27,6 +28,7 @@ ALLOWED_HEADERS = {
     "dev_keys.h",
     "shutdown.h",
     "thread.h",
+    "whitelist.h",
     "stdio.h",
     "time.h",
     "stdlib.h",
@@ -45,6 +47,9 @@ HARNESS_HEADERS = {
     # thread.h is the server examples' stand-in for a game's job system: the
     # platform's own threads and locks, and nothing of rocketnet
     "thread.h": {"windows.h", "pthread.h"},
+    # whitelist.h is the backend server's side of its backend: a small HTTP
+    # client on the platform's sockets, a lock, and nothing of rocketnet
+    "whitelist.h": {"winsock2.h", "ws2tcpip.h", "windows.h", "fcntl.h", "netdb.h", "netinet/in.h", "poll.h", "pthread.h", "sys/socket.h", "unistd.h"},
     # config_env.c runs itself again with one variable set, spawned from its
     # executable path with an explicit environment, never through a shell
     "config_env.c": {"windows.h", "wchar.h", "spawn.h", "sys/wait.h"},
@@ -86,7 +91,7 @@ def main(argv=None):
     root = args.root.resolve()
     examples = root / "examples"
     header = root / "sdk" / "rocketnet.h"
-    sources = sorted(examples.glob("*.c")) + sorted(examples.glob("thread.h"))
+    sources = sorted(examples.glob("*.c")) + sorted(examples.glob("thread.h")) + sorted(examples.glob("whitelist.h"))
     if not sources:
         print(f"FAIL: 0 files match {examples}/*.c", file=sys.stderr)
         return 1

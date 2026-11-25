@@ -7,12 +7,17 @@ exactly 1024 characters of base64 in a
 backend mints that token.
 
 This directory contains two minimal reference backend services — one in Go and
-one in C#.
-Each exposes two HTTP routes:
+one in C#. Both show the right way to keep banned players out: ban by user,
+never by IP address. [Bans and whitelists](../../docs/BANS-AND-WHITELISTS.md)
+explains the pattern and why. Each exposes these HTTP routes:
 
 ```
-PUT /servers/{serverID}
-GET /match/{clientID}
+PUT    /servers/{serverID}
+GET    /servers/{serverID}/whitelist
+POST   /mock/ticket/{userID}
+POST   /match
+PUT    /bans/{provider}/{userID}
+DELETE /bans/{provider}/{userID}
 ```
 
 - `PUT /servers/{serverID}` registers or updates a live game server's served UDP
@@ -20,10 +25,24 @@ GET /match/{clientID}
   clients connect to, with the port the server bound, as
   `rocketnet_server_ipv4_address` and `rocketnet_server_ipv6_address` write
   them) and 32-byte X25519 public key (`rocketnet_server_public_key`).
-- `GET /match/{clientID}` selects a registered server, mints a fresh connect
-  token bound to that server and `clientID`, and returns it as base64 text
-  (`Content-Type: text/plain; charset=utf-8`, `Cache-Control: no-store`). The C
-  game client passes that opaque string directly to `rocketnet_client_connect`.
+  `example_backend_server` registers itself at start.
+- `GET /servers/{serverID}/whitelist` returns the client ids allowed on that
+  server: the users matched there and not banned, each as 8 bytes little
+  endian, ascending (`Content-Type: application/octet-stream`). The game
+  server fetches it every few seconds and disconnects any client not on it.
+- `POST /mock/ticket/{userID}` is a mock auth provider: it signs a ticket for
+  any user id. It stands in for a platform's sign-in; a title has none.
+- `POST /match` takes the ticket as its body, checks it through one seam
+  function (the place a title plugs in its real auth provider), computes the
+  user's `client_id` as a keyed hash of `"<provider>:<user id>"`, refuses a
+  banned user, seats the user on one registered server (taking them off any
+  other server's whitelist), mints a fresh connect token for that server and
+  `client_id`, and returns it as base64 text (`Content-Type: text/plain;
+  charset=utf-8`, `Cache-Control: no-store`). The C game client passes that
+  opaque string directly to `rocketnet_client_connect`. The client never
+  sends or chooses its `client_id`.
+- `PUT /bans/{provider}/{userID}` and `DELETE /bans/{provider}/{userID}` ban
+  a user and lift the ban.
 
 Both backends implement the 768-byte connect-token format specified in [STANDARD.md](../../docs/STANDARD.md) and implemented in
 [`sdk/rocketnet_connect_token.cpp`](../../sdk/rocketnet_connect_token.cpp):
@@ -45,8 +64,8 @@ Both backends implement the 768-byte connect-token format specified in [STANDARD
 
 | Backend | Source | Dependencies |
 | --- | --- | --- |
-| Go | [go/main.go](go/main.go) | Go standard library, plus `golang.org/x/crypto` (`nacl/box` for `crypto_box_seal` and `blake2b`) |
-| C# | [csharp/Backend/](csharp/Backend/) | ASP.NET Core minimal API, plus `Sodium.Core` |
+| Go | [go/main.go](go/main.go), [go/users.go](go/users.go), [go/users_http.go](go/users_http.go) | Go standard library, plus `golang.org/x/crypto` (`nacl/box` for `crypto_box_seal` and `blake2b`) |
+| C# | [csharp/Backend/](csharp/Backend/) (users in [Users.cs](csharp/Backend/Users.cs)) | ASP.NET Core minimal API, plus `Sodium.Core` |
 
 The C# project targets .NET 10 and uses `Sodium.Core` for token cryptography
 (which wraps `libsodium`,
@@ -59,7 +78,7 @@ no C# client API.**
 ## Title-owned integration seams (development vs. production)
 
 These examples keep the HTTP surface minimal so the cryptographic token flow can
-be read and tested end-to-end on `localhost`. Two routes are **title-owned
+be read and tested end-to-end on `localhost`. These are **title-owned
 integration seams** whose authentication and policy belong to the game's
 platform infrastructure in production:
 
@@ -73,20 +92,27 @@ platform infrastructure in production:
    credential, or authenticated orchestrator registration) before calling
    `registry.put` / `registry.Put` so an untrusted caller cannot register a
    rogue server or overwrite a live server's address and public key.
-2. **Player authentication and server selection seam (`GET /match/{clientID}`) —
-   unauthenticated URL parameter and random server pick in this example
-   (development only):**
-   In `go/main.go` and `csharp/Backend/Program.cs`, `GET /match/{clientID}`
-   trusts the decimal `clientID` in the URL path and calls `registry.random()` /
-   `registry.Random()` to pick a registered server uniformly at random. **In
-   production, a client must never choose its own `client_id`.** Your match or
-   session endpoint must first verify the player's platform or account session
-   credential, derive the authoritative `uint64_t` `client_id` on the backend,
-   and select a target server by region, available capacity, or match assignment before calling
-   `generateConnectToken` / `ConnectToken.Generate`.
+2. **Player authentication seam (`POST /match`) — a mock auth provider in
+   this example (development only):**
+   The ticket check is one function: `verifyTicketWith` in `go/users.go` and
+   `Users.VerifyWith` in `csharp/Backend/Users.cs`. It returns the provider's
+   name and the provider's user id. Here it checks tickets from the mock
+   provider (`POST /mock/ticket/{userID}`), which signs a ticket for anyone.
+   **In production, replace it with your platform's own ticket check**, and
+   remove the mock route. The backend derives the `client_id` from what the
+   check returns; a client never chooses its own `client_id`.
+3. **Server selection (`POST /match`) — a random pick in this example:**
+   `registry.pick()` / `registry.Pick()` picks a registered server uniformly
+   at random. Select a target server by region, available capacity, or match
+   assignment instead.
+4. **Bans (`PUT` and `DELETE /bans/{provider}/{userID}`) and the whitelist
+   (`GET /servers/{serverID}/whitelist`) — unauthenticated, in memory, in
+   this example (development only):** authenticate the ban routes as an
+   operator tool and the whitelist route as fleet traffic, and keep bans and
+   seats in your database.
 
 **Join pacing is title-owned too, and these examples do not do it.**
-`GET /match/{clientID}` mints one token per request as it arrives and does not
+`POST /match` mints one token per request as it arrives and does not
 pace the issue. When many clients join one server at once, the backend is
 expected to spread the issue of their tokens over time: the server takes at
 most `handshakes_per_update` connection requests (default 16) to the signature
@@ -110,8 +136,8 @@ depends on your update rate, round trip and loss: measure yours. See
 ## Build and run
 
 The complete [production integration walkthrough](../../docs/PRODUCTION.md)
-shows key generation, a production SDK build, server startup, registration, and
-a client exchange in three terminals. Follow it for the manual path. A Release
+shows key generation, a production SDK build, backend and server startup, and
+a client exchange. Follow it for the manual path. A Release
 compiler configuration alone does not set `ROCKETNET_DEV=0`.
 
 For an automated exchange from the repository root:
@@ -127,6 +153,16 @@ selected `rocketnet` library; `backend_check_token` links `rocketnet_dev` becaus
 it is a fixed-development-server-key test fixture. It cannot inspect a token
 sealed to a live production server. The harness supplies its fixture token on
 standard input, then tests a separate live server/token/client exchange.
+
+`example_backend_server` registers itself with the backend at
+`127.0.0.1:8080` (`--backend <ip:port>`) as `example-<port>`
+(`--server-id <id>`), fetches its whitelist every 2 seconds on its own
+thread ([whitelist.h](../whitelist.h)), and disconnects any client not on
+it; a failed fetch keeps the last good list, and a client on no list is
+disconnected (see [Bans and whitelists](../../docs/BANS-AND-WHITELISTS.md)).
+It exits once a client has come and gone (`--sessions N`: N clients).
+`example_backend_client --stay` stays connected after its echo until the
+server disconnects it, and passes only if that happens within `--seconds`.
 
 `example_backend_server` runs a 60 Hz frame. By default every server call is
 made on the main thread. With `--game-threads N` it runs a game server's
@@ -148,7 +184,9 @@ Each backend also provides two command-line modes:
   instructions in [Keys](../../docs/KEYS.md).
 - `--mint <clientID>` prints one token without starting the HTTP listener.
   Supply `ROCKETNET_BACKEND_SERVER_PUBLIC_KEY`, the server addresses, and the
-  backend signing key through the variables below.
+  backend signing key through the variables below. It is an operator tool:
+  it checks no ticket and no ban and seats nobody, so a server's whitelist
+  does not hold the minted `clientID` and the server disconnects that client.
 
 The long-running service retains its signing secret for successive tokens;
 protect its process and environment. Key-generation mode clears its temporary
@@ -169,6 +207,8 @@ address is hardcoded in source control.
 | `ROCKETNET_BACKEND_PORT` | Backend HTTP listen port (`1..65535`). | `8080` |
 | `ROCKETNET_BACKEND_LISTEN_ADDRESS` | Literal IP for the HTTP listener; non-loopback addresses expose the unauthenticated example routes. | `127.0.0.1` |
 | `ROCKETNET_BACKEND_TOKEN_EXPIRE_SECONDS` | Token validity window in seconds (`expire_timestamp - create_timestamp`, `1..4294967295`). | `30` |
+| `ROCKETNET_BACKEND_USER_HASH_KEY` | 32-byte secret, base64, that keys the user hash (`client_id`). Keep it fixed: a new key gives every user a new `client_id`, and bans keyed by the old ones stop matching. | A fresh random key at each start, with a warning |
+| `ROCKETNET_BACKEND_MOCK_PROVIDER_KEY` | 32-byte secret, base64, that the mock auth provider signs tickets with. | A fresh random key at each start |
 | `ROCKETNET_BACKEND_TOKEN_TIMEOUT_SECONDS` | Connection keepalive/handshake timeout in seconds (`1..2147483647`); the server also enforces its configured `max_timeout_seconds`. | `10` |
 
 ---
@@ -189,12 +229,16 @@ from network loss.
 | Production build (`ROCKETNET_DEV=0`) given the published test packet filter | `rocketnet_server_create` / `rocketnet_client_create` | `ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION` (`-29`) | Set a 4-byte title `packet_filter` (or `ROCKETNET_SERVER_PACKET_FILTER` / `ROCKETNET_CLIENT_PACKET_FILTER`). |
 | `config.protocol_id` is `0` | `rocketnet_server_start` | `ROCKETNET_STATUS_INVALID_PROTOCOL_ID` (`-11`) | Set a nonzero 64-bit `protocol_id` matching `ROCKETNET_BACKEND_PROTOCOL_ID`. |
 
-### 2. Backend HTTP refusals (`PUT /servers/{serverID}` and `GET /match/{clientID}`)
+### 2. Backend HTTP refusals
 
 | Route & condition | HTTP status | Safe action |
 | --- | --- | --- |
-| `GET /match/{clientID}` when no servers have registered | `503 Service Unavailable` | Register at least one live server via `PUT /servers/{serverID}` (or wait for fleet registration) before matching players. |
-| `GET /match/{clientID}` with a non-decimal or out-of-range `uint64` `clientID` | `400 Bad Request` | Pass a valid unsigned 64-bit integer derived by the backend's player authentication layer. |
+| `POST /match` when no servers have registered | `503 Service Unavailable` | Start a game server (it registers itself via `PUT /servers/{serverID}`) before matching players. |
+| `POST /match` with a ticket that is malformed, forged, edited or expired | `401 Unauthorized` | Sign in again with the auth provider and send the fresh ticket. |
+| `POST /match` for a banned user | `403 Forbidden` | None for the client: the user is banned. An operator lifts the ban with `DELETE /bans/{provider}/{userID}`. |
+| `POST /match` with a body three or more bytes longer than the longest valid ticket | `400 Bad Request` | Send only the ticket. |
+| `POST /mock/ticket/{userID}`, `PUT` or `DELETE /bans/{provider}/{userID}` with a user id that is not 1 to 128 bytes of UTF-8, or a provider name that is empty or holds `:` | `400 Bad Request` | Fix the user id or provider name. |
+| `GET /servers/{serverID}/whitelist` for a server that is not registered | `404 Not Found` | The game server registers again (`example_backend_server` does this on its own). |
 | `PUT /servers/{serverID}` with empty `serverID` or one over the limit (Go: `> 128` bytes; C#: `> 128` characters), malformed JSON, `0` or `> 2` addresses, two addresses of the same IP family, port `0`, a hostname (`localhost:40000`) instead of a literal IP, an IPv6 zone (`%en0`), or a `public_key` that is not 32-byte base64 | `400 Bad Request` | Export the served literal IP addresses (`rocketnet_server_ipv4_address`, `rocketnet_server_ipv6_address`) with nonzero ports and the 32-byte `rocketnet_server_public_key` in base64. |
 | `PUT /servers/{serverID}` contains an unknown JSON field | `400 Bad Request` (Go); accepted and ignored (C#) | Send only the documented `addresses` and `public_key` fields. Do not rely on the C# backend ignoring additional fields. |
 | `PUT /servers/{serverID}` body exceeds 4096 bytes | `400 Bad Request` (Go) / `413 Payload Too Large` (C#) | Keep registration payload within the 4096-byte bound (1–2 literal address strings and one base64 public key). |
@@ -235,7 +279,7 @@ mismatched requests and sends an explicit denial only when all slots are full:
    `rocketnet_client_update` if the client is step-driven) until it returns
    `true`.
 3. If reconnecting, request a **brand-new** connect token from the backend
-   (`GET /match/{clientID}`) and pass it to `rocketnet_client_connect(client, new_token)`.
+   (`POST /match` with a fresh ticket) and pass it to `rocketnet_client_connect(client, new_token)`.
    If exiting, call `rocketnet_client_destroy(client)`.
 
 ---
@@ -246,10 +290,14 @@ The backend unit suites use no sockets and no wall-clock sleeps (`create_timesta
 is passed explicitly). They reproduce every deterministic vector in
 [`standard/vectors/connect_token_v1.json`](../../standard/vectors/connect_token_v1.json)
 byte-for-byte, verify IPv4/IPv6 address encoding, open freshly minted tokens the
-way a server does, and exercise configuration, registration, and match refusal
-logic at the function level. The HTTP handlers return `204`, `400`, and `413`
-(registration) and `200`, `400`, and `503` (match), but the unit suites do not
-assert those HTTP status codes:
+way a server does, and exercise configuration and registration logic at the
+function level. The user tests (`go/users_test.go`, `csharp/Tests/UsersTests.cs`)
+check tickets (forged, edited and expired ones get no token), user hashes,
+bans, seats and whitelists, and run the ticket, match, ban and whitelist routes
+with a fixed clock and no socket (Go through an in-process recorder, C# as
+plain functions), asserting their status codes; both backends produce the same
+ticket and user hash for the same keys. The registration handlers return
+`204`, `400`, and `413`, but the unit suites do not assert those:
 
 ```sh
 (cd examples/backend/go && go test -v ./...)
@@ -263,9 +311,12 @@ keypair in memory (never written to the test receipt). The harness first mints a
 separate token sealed to the published development server key and passes it on
 standard input to `backend_check_token`, with the expected client ID and
 protocol ID as arguments. It then starts the backend with an empty registry to
-verify HTTP `503`, registers the live server over `PUT /servers/example` (`HTTP 204`), obtains a fresh token from the HTTP match route, and runs the production
-client-server message exchange without passing that live-server token to the
-checker. Passing `--production` requires both `example_backend_server` and
+verify HTTP `503`, starts the server (which registers itself), and runs the
+ban, whitelist and sharing steps listed in
+[Bans and whitelists](../../docs/BANS-AND-WHITELISTS.md#testing): a ban kicks
+the client within one whitelist interval plus 0.5 seconds, a shared token or a
+second sign-in as the same user gets no second seat, and with the backend gone
+the server keeps its last good list and still kicks a client on no list. Passing `--production` requires both `example_backend_server` and
 `example_backend_client` to report `mode=production transport=portable`:
 
 ```sh

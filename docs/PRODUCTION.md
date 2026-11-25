@@ -105,14 +105,16 @@ exports its advertised UDP address, with the port it bound, and its 32-byte
 X25519 public key. The complete
 [backend server example](../examples/backend_server.c) checks create and start
 separately, calls `rocketnet_server_ipv4_address` and
-`rocketnet_server_public_key`, and writes the public registration fields to
+`rocketnet_server_public_key`, registers them with the backend
+(`PUT /servers/{serverID}`, from its own thread in
+[examples/whitelist.h](../examples/whitelist.h)), and also writes them to
 `backend.env`. Its shutdown helper waits for completion before destroying the
 server. Use reachable advertised addresses in a deployment; a loopback address
 in this local example is reachable only from the same host.
 
 The create/start failure branch below is an excerpt, with `config`, `address`,
 and the example shutdown helper already defined. From
-[examples/backend_server.c](../examples/backend_server.c), lines 238 to 257:
+[examples/backend_server.c](../examples/backend_server.c), lines 297 to 316:
 
 ```c
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
@@ -137,31 +139,28 @@ and the example shutdown helper already defined. From
     }
 ```
 
-Start the production server in Terminal 1 with only the public verification key,
-and start the Go or C# backend in Terminal 2 with the private signing key:
+Start the Go or C# backend in Terminal 1 with the private signing key, and
+the production server in Terminal 2 with only the public verification key:
 
 ```sh
-# Terminal 1: production server
-export ROCKETNET_SERVER_BACKEND_PUBLIC_KEY="$(grep '^ROCKETNET_SERVER_BACKEND_PUBLIC_KEY=' backend-keys.env | cut -d= -f2-)"
-./bin/example_backend_server
-```
-
-```sh
-# Terminal 2: Go or C# backend (port 8080)
+# Terminal 1: Go or C# backend (port 8080)
 export ROCKETNET_BACKEND_PRIVATE_KEY="$(grep '^ROCKETNET_BACKEND_PRIVATE_KEY=' backend-keys.env | cut -d= -f2-)"
 (cd examples/backend/go && go run .)
 # Or: (cd examples/backend/csharp && dotnet run --project Backend)
 ```
 
-In Terminal 3, register the live server with `PUT /servers/{serverID}`:
-
 ```sh
-. ./backend.env
-curl -i -X PUT http://localhost:8080/servers/local \
-  -H 'Content-Type: application/json' \
-  --data "{\"addresses\":[\"${ROCKETNET_BACKEND_SERVER_ADDRESSES}\"],\"public_key\":\"${ROCKETNET_BACKEND_SERVER_PUBLIC_KEY}\"}"
-# HTTP/1.1 204 No Content
+# Terminal 2: production server
+export ROCKETNET_SERVER_BACKEND_PUBLIC_KEY="$(grep '^ROCKETNET_SERVER_BACKEND_PUBLIC_KEY=' backend-keys.env | cut -d= -f2-)"
+./bin/example_backend_server
+# whitelist: registered as example-40000 with the backend at 127.0.0.1:8080
 ```
+
+The server registers itself with the backend at `127.0.0.1:8080`
+(`--backend <ip:port>` to change it) under the id `example-<port>`
+(`--server-id <id>` to change it), then fetches its whitelist every 2
+seconds and disconnects any client not on it. If the backend is not up yet,
+it tries again at each fetch. See [Bans and whitelists](BANS-AND-WHITELISTS.md).
 
 **Title-owned seam — server registration authentication:** The example backend
 accepts unauthenticated `PUT /servers/{serverID}` requests on `localhost` (up to
@@ -172,12 +171,16 @@ untrusted callers cannot add or overwrite servers in the registry.
 ## 4. Authenticate a player, mint a token, and connect the C client
 
 **Title-owned seam — player authentication and server selection:** In the
-example backends, `GET /match/{clientID}` accepts an unauthenticated decimal
-64-bit `clientID` in the URL path and selects a registered server uniformly at
-random (`registry.random()` / `registry.Random()`). In production, your match
-endpoint authenticates the player's platform or account session first, derives
-the authoritative `uint64_t` `client_id` on the backend, and selects a server by
-region, available capacity, or match assignment before minting the token.
+example backends, `POST /match` takes a ticket from a mock auth provider
+(`POST /mock/ticket/{userID}` signs one for any user id), checks it through one
+seam function (`verifyTicketWith` in Go, `Users.VerifyWith` in C#), derives
+the `client_id` on the backend as a keyed hash of the provider and user id,
+refuses a banned user, and selects a registered server uniformly at random
+(`registry.pick()` / `registry.Pick()`). In production, replace the seam with
+your platform's ticket check and select a server by region, available
+capacity, or match assignment before minting the token. The client never
+sends or chooses its `client_id`. See
+[Bans and whitelists](BANS-AND-WHITELISTS.md).
 
 The minted 768-byte connect token (encoded as 1024 base64 characters, the
 `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES` string with its NUL) binds:
@@ -212,7 +215,8 @@ Request a fresh token and connect the production C client (or run the automated
 end-to-end verification across both Go and C# backends):
 
 ```sh
-./bin/example_backend_client --token "$(curl -sSf http://localhost:8080/match/42)"
+ticket="$(curl -sSf -X POST http://localhost:8080/mock/ticket/alice)"
+./bin/example_backend_client --token "$(curl -sSf --data "$ticket" http://localhost:8080/match)"
 python3 tools/run_backend_examples.py --build build-production --production
 ```
 
@@ -235,7 +239,7 @@ the budget are dropped and resent, and a later update takes them, so a large
 burst can outlast the token's `timeout_seconds`. Measure join time at your own update
 rate and client count.
 
-The example backends mint one token for each `GET /match/{clientID}` as it
+The example backends mint one token for each `POST /match` as it
 arrives and do not pace the issue; a backend serving many joins at once adds
 the pacing.
 
@@ -244,8 +248,9 @@ the pacing.
 Treat each stage separately:
 
 - HTTP failures come from registration or matching. An empty registry returns
-  503; malformed registration or client IDs are rejected. Correct the request
-  or fleet state before retrying.
+  503; a bad or expired ticket returns 401; a banned user returns 403;
+  malformed registration is rejected. Correct the request or fleet state
+  before retrying.
 - A negative status from `rocketnet_client_connect` refuses the attempt
   immediately. Check the specific status: invalid or expired token, production
   development-key guard, port zero, pending shutdown, or transport failure.

@@ -14,6 +14,7 @@ message exchange → integrate a frame loop → connect a backend → qualify a 
 | Understand channels, delivery, and receipts | [Messages and channels](CHANNELS.md), [reliability example](examples/reliability.md), [receive pressure](RECEIVE-PRESSURE.md) |
 | Understand connection identity | [Sessions](SESSION.md), [Keys](KEYS.md) |
 | Replace local development tokens | [Production integration](PRODUCTION.md), [backend service examples](../examples/backend/README.md) |
+| Keep banned players out | [Bans and whitelists](BANS-AND-WHITELISTS.md) |
 | Work with an AI coding agent | [Agent integration guide](AGENTS.md) |
 | Explore one feature at a time | [Example catalogue](../examples/README.md) |
 
