@@ -5,12 +5,12 @@ tokens for a running game server. Complete [Getting started](GETTING-STARTED.md)
 first. For key ownership and rotation, use [Keys](KEYS.md); for operational
 limits, use [qualification](TESTING.md) and [memory planning](MEMORY.md).
 
-The Go and C# examples are token services. They are **not production services
-as shipped**: their HTTP registration and token endpoints do not authenticate
-callers. Put server registration and player matching behind your own
-authentication and authorization, use a protected channel, and do not expose
-the example service to untrusted clients. RocketNet does not supply that
-service or a C# game-client API.
+The Go and C# backends demonstrate sign-in, matching and bans on loopback.
+Their mock provider issues a ticket for any requested user. Before
+deployment, replace it with your game's sign-in provider, authenticate game
+servers for registration and whitelist reads, and restrict ban changes to
+authorized operators. Use a protected channel for these requests. The C#
+example is a backend service. Game clients use the RocketNet C API.
 
 Before deployment:
 
@@ -156,31 +156,21 @@ export ROCKETNET_SERVER_BACKEND_PUBLIC_KEY="$(grep '^ROCKETNET_SERVER_BACKEND_PU
 # whitelist: registered as example-40000 with the backend at 127.0.0.1:8080
 ```
 
-The server registers itself with the backend at `127.0.0.1:8080`
-(`--backend <ip:port>` to change it) under the id `example-<port>`
-(`--server-id <id>` to change it), then fetches its whitelist every 2
-seconds and disconnects any client not on it. If the backend is not up yet,
-it tries again at each fetch. See [Bans and whitelists](BANS-AND-WHITELISTS.md).
-
-**Title-owned seam — server registration authentication:** The example backend
-accepts unauthenticated `PUT /servers/{serverID}` requests on `localhost` (up to
-4096 bytes) for local testing. In production, authenticate server registration
-on a trusted control plane (for example, mTLS or fleet credentials) so
-untrusted callers cannot add or overwrite servers in the registry.
+At startup the server registers as `example-<port>` with the backend at
+`127.0.0.1:8080`. Change those defaults with `--server-id <id>` and
+`--backend <ip:port>`. It fetches its whitelist every two seconds and
+retries registration if the backend was unavailable. A failed fetch keeps
+the last good list. See [how the server decides when to disconnect a player](BANS-AND-WHITELISTS.md#the-example-game-server).
 
 ## 4. Authenticate a player, mint a token, and connect the C client
 
-**Title-owned seam — player authentication and server selection:** In the
-example backends, `POST /match` takes a ticket from a mock auth provider
-(`POST /mock/ticket/{userID}` signs one for any user id), checks it through one
-seam function (`verifyTicketWith` in Go, `Users.VerifyWith` in C#), derives
-the `client_id` on the backend as a keyed hash of the provider and user id,
-refuses a banned user, and selects a registered server uniformly at random
-(`registry.pick()` / `registry.Pick()`). In production, replace the seam with
-your platform's ticket check and select a server by region, available
-capacity, or match assignment before minting the token. The client never
-sends or chooses its `client_id`. See
-[Bans and whitelists](BANS-AND-WHITELISTS.md).
+The client posts a sign-in ticket to `/match`. The backend verifies the
+ticket, derives a stable `client_id` from the provider and user id, and
+selects a registered server. It checks the account's ban before assigning
+the seat and minting a token. The example selects a server at random.
+A game can select by match, region or capacity. The [backend integration
+guide](../examples/backend/README.md#connecting-a-real-game-backend) identifies
+the functions to replace.
 
 The minted 768-byte connect token (encoded as 1024 base64 characters, the
 `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES` string with its NUL) binds:
@@ -211,12 +201,20 @@ packet filter, checks create and connect separately, then drives updates until
 terminal state. It drains received messages and waits for disconnect completion
 before destroying the client.
 
-Request a fresh token and connect the production C client (or run the automated
-end-to-end verification across both Go and C# backends):
+Request a fresh token, then connect the production C client from a third terminal.
 
 ```sh
-ticket="$(curl -sSf -X POST http://localhost:8080/mock/ticket/alice)"
-./bin/example_backend_client --token "$(curl -sSf --data "$ticket" http://localhost:8080/match)"
+backend=http://127.0.0.1:8080
+ticket="$(curl -fsS -X POST "$backend/mock/ticket/alice")"
+token="$(curl -fsS --data-binary "$ticket" "$backend/match")"
+./bin/example_backend_client --token "$token"
+```
+
+The client should receive an echo and disconnect. To exercise a ban during
+play, follow the [interactive example](BANS-AND-WHITELISTS.md#run-it).
+To run the full exchange against both example backends, use the test harness.
+
+```sh
 python3 tools/run_backend_examples.py --build build-production --production
 ```
 

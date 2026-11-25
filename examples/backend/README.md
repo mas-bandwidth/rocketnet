@@ -6,43 +6,18 @@ exactly 1024 characters of base64 in a
 `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES` = 1025-byte buffer), and the game's
 backend mints that token.
 
-This directory contains two minimal reference backend services — one in Go and
-one in C#. Both show the right way to keep banned players out: ban by user,
-never by IP address. [Bans and whitelists](../../docs/BANS-AND-WHITELISTS.md)
-explains the pattern and why. Each exposes these HTTP routes:
+The Go and C# examples issue tokens and keep one seat per authenticated
+account. Both expose the same HTTP API. To try a ban while a player is
+connected, follow [Bans and whitelists](../../docs/BANS-AND-WHITELISTS.md#run-it).
 
-```
-PUT    /servers/{serverID}
-GET    /servers/{serverID}/whitelist
-POST   /mock/ticket/{userID}
-POST   /match
-PUT    /bans/{provider}/{userID}
-DELETE /bans/{provider}/{userID}
-```
-
-- `PUT /servers/{serverID}` registers or updates a live game server's served UDP
-  addresses (`a.b.c.d:port`, `[ipv6]:port`, or one of each: the addresses its
-  clients connect to, with the port the server bound, as
-  `rocketnet_server_ipv4_address` and `rocketnet_server_ipv6_address` write
-  them) and 32-byte X25519 public key (`rocketnet_server_public_key`).
-  `example_backend_server` registers itself at start.
-- `GET /servers/{serverID}/whitelist` returns the client ids allowed on that
-  server: the users matched there and not banned, each as 8 bytes little
-  endian, ascending (`Content-Type: application/octet-stream`). The game
-  server fetches it every few seconds and disconnects any client not on it.
-- `POST /mock/ticket/{userID}` is a mock auth provider: it signs a ticket for
-  any user id. It stands in for a platform's sign-in; a title has none.
-- `POST /match` takes the ticket as its body, checks it through one seam
-  function (the place a title plugs in its real auth provider), computes the
-  user's `client_id` as a keyed hash of `"<provider>:<user id>"`, refuses a
-  banned user, seats the user on one registered server (taking them off any
-  other server's whitelist), mints a fresh connect token for that server and
-  `client_id`, and returns it as base64 text (`Content-Type: text/plain;
-  charset=utf-8`, `Cache-Control: no-store`). The C game client passes that
-  opaque string directly to `rocketnet_client_connect`. The client never
-  sends or chooses its `client_id`.
-- `PUT /bans/{provider}/{userID}` and `DELETE /bans/{provider}/{userID}` ban
-  a user and lift the ban.
+| Method and route | Request and response |
+| --- | --- |
+| `PUT /servers/{serverID}` | Register the server's advertised UDP addresses and 32-byte X25519 public key. The example game server sends its bound port and public key after startup. |
+| `GET /servers/{serverID}/whitelist` | Return the ids allowed on this server in ascending order, each as eight little-endian bytes. The response type is `application/octet-stream`. An empty list has a zero-length body. |
+| `POST /mock/ticket/{userID}` | Issue a short-lived mock sign-in ticket for the requested user. This route exists for local testing. |
+| `POST /match` | Send the ticket as the request body. The backend verifies it, derives the account's `client_id`, selects a server, checks the ban and records the seat before issuing a token. The response is base64 text with `Cache-Control: no-store`. Pass it directly to `rocketnet_client_connect`. |
+| `PUT /bans/{provider}/{userID}` | Ban the account. Each subsequent whitelist omits the id, and the backend refuses to issue another token for it. |
+| `DELETE /bans/{provider}/{userID}` | Lift the ban. The example retains the user's last seat, so that server's whitelist can include the id again. |
 
 Both backends implement the 768-byte connect-token format specified in [STANDARD.md](../../docs/STANDARD.md) and implemented in
 [`sdk/rocketnet_connect_token.cpp`](../../sdk/rocketnet_connect_token.cpp):
@@ -75,41 +50,24 @@ no C# client API.**
 
 ---
 
-## Title-owned integration seams (development vs. production)
+<a id="title-owned-integration-seams-development-vs-production"></a>
 
-These examples keep the HTTP surface minimal so the cryptographic token flow can
-be read and tested end-to-end on `localhost`. These are **title-owned
-integration seams** whose authentication and policy belong to the game's
-platform infrastructure in production:
+## Connecting a real game backend
 
-1. **Server registration seam (`PUT /servers/{serverID}`) — unauthenticated in
-   this example (development only):**
-   In `go/main.go` and `csharp/Backend/Program.cs`, `PUT /servers/{serverID}`
-   accepts any syntactically valid registration JSON up to 4096 bytes without
-   caller authentication. **In production, server registration must never be
-   exposed unauthenticated on a public network.** Authenticate fleet
-   registrations (for example with mTLS, a fleet control-plane bearer/HMAC
-   credential, or authenticated orchestrator registration) before calling
-   `registry.put` / `registry.Put` so an untrusted caller cannot register a
-   rogue server or overwrite a live server's address and public key.
-2. **Player authentication seam (`POST /match`) — a mock auth provider in
-   this example (development only):**
-   The ticket check is one function: `verifyTicketWith` in `go/users.go` and
-   `Users.VerifyWith` in `csharp/Backend/Users.cs`. It returns the provider's
-   name and the provider's user id. Here it checks tickets from the mock
-   provider (`POST /mock/ticket/{userID}`), which signs a ticket for anyone.
-   **In production, replace it with your platform's own ticket check**, and
-   remove the mock route. The backend derives the `client_id` from what the
-   check returns; a client never chooses its own `client_id`.
-3. **Server selection (`POST /match`) — a random pick in this example:**
-   `registry.pick()` / `registry.Pick()` picks a registered server uniformly
-   at random. Select a target server by region, available capacity, or match
-   assignment instead.
-4. **Bans (`PUT` and `DELETE /bans/{provider}/{userID}`) and the whitelist
-   (`GET /servers/{serverID}/whitelist`) — unauthenticated, in memory, in
-   this example (development only):** authenticate the ban routes as an
-   operator tool and the whitelist route as fleet traffic, and keep bans and
-   seats in your database.
+- **Player sign-in.** Replace the ticket verifier constructed by
+  `verifyTicketWith` in Go or `Users.VerifyWith` in C#. Have it return
+  the provider and user id from a verified ticket. Remove the mock issuer,
+  which issues a ticket for any requested account.
+- **Server identity.** Authenticate the game server before accepting a
+  registration or returning its whitelist. The example accepts registration
+  JSON up to 4096 bytes on its local HTTP listener. In a deployment,
+  authorize each server for its own `serverID` and protect the channel.
+- **Match selection.** The example picks a registered server uniformly at
+  random. A game can use its match assignment, region and available capacity.
+  Matching the account to a new server moves its one seat.
+- **Ban administration.** Authorize operators before accepting ban or unban
+  requests. Persist bans and the user hash key across backend restarts.
+  The example keeps bans, seats and registrations in memory.
 
 **Join pacing is title-owned too, and these examples do not do it.**
 `POST /match` mints one token per request as it arrives and does not
@@ -158,8 +116,9 @@ standard input, then tests a separate live server/token/client exchange.
 `127.0.0.1:8080` (`--backend <ip:port>`) as `example-<port>`
 (`--server-id <id>`), fetches its whitelist every 2 seconds on its own
 thread ([whitelist.h](../whitelist.h)), and disconnects any client not on
-it; a failed fetch keeps the last good list, and a client on no list is
-disconnected (see [Bans and whitelists](../../docs/BANS-AND-WHITELISTS.md)).
+it after a qualifying fetch. If a fetch fails, the server keeps the last
+good list. Six seconds after connection it enforces that list even if it is
+stale. See [server behavior during an outage](../../docs/BANS-AND-WHITELISTS.md#the-example-game-server).
 It exits once a client has come and gone (`--sessions N`: N clients).
 `example_backend_client --stay` stays connected after its echo until the
 server disconnects it, and passes only if that happens within `--seconds`.
@@ -185,8 +144,8 @@ Each backend also provides two command-line modes:
 - `--mint <clientID>` prints one token without starting the HTTP listener.
   Supply `ROCKETNET_BACKEND_SERVER_PUBLIC_KEY`, the server addresses, and the
   backend signing key through the variables below. It is an operator tool:
-  it checks no ticket and no ban and seats nobody, so a server's whitelist
-  does not hold the minted `clientID` and the server disconnects that client.
+  it issues a token without checking a ticket, checking a ban or changing a
+  seat. The game server still checks the id against its whitelist.
 
 The long-running service retains its signing secret for successive tokens;
 protect its process and environment. Key-generation mode clears its temporary
