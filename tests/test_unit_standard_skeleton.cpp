@@ -6,7 +6,7 @@
 // test_unit_standard_skeleton.cpp -- the vector twins of RN-1 t3
 // (standard/TRANSPORT.md, Constants and registries), regenerated through the
 // implementation. The one vector is the token identifier of the frozen
-// connect token: crypto_generichash, 16 bytes, no key, over the token's 576
+// connect token: crypto_generichash, 16 bytes, no key, over the token's 384
 // signed connect data bytes, which begin at offset 0 of the token.
 
 #include "test_unit_standard.h"

@@ -201,7 +201,7 @@ one per input, as `name: value`; then the bytes, lower-case hex, 16 bytes to a
 row separated by single spaces, the last row 1 to 16 bytes:
 
     ```vector t3.token-identifier
-    input: the 576 signed connect data bytes of the frozen connect token
+    input: the 384 signed connect data bytes of the frozen connect token
     f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61
     ```
 

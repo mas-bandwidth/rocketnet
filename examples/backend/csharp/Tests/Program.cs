@@ -106,7 +106,7 @@ static class Tests
                 ClientId = UnhexUInt64( v, "client_id" ),
                 ClientToServerKey = Unhex( v, "client_to_server_key", 32 ),
                 ServerToClientKey = Unhex( v, "server_to_client_key", 32 ),
-                UserData = Unhex( v, "user_data", 256 ),
+                UserData = Unhex( v, "user_data", 64 ),
             };
             byte[] backendPrivateKey = PublicKeyAuth.GenerateKeyPair( Unhex( v, "backend_signing_seed", 32 ) ).PrivateKey;
 
@@ -185,7 +185,7 @@ static class Tests
         byte[] keys = Enumerable.Repeat( (byte) 0x5a, 64 ).ToArray();
         int offset = 0;
         byte[] token = ConnectToken.Generate( config, 0x0123456789abcdef, 1000, buffer => { Array.Copy( keys, offset, buffer, 0, buffer.Length ); offset += buffer.Length; }, ConnectToken.SealAnonymous );
-        Check( token.Length == ConnectToken.ConnectTokenBytes && Convert.ToBase64String( token ).Length == 1024, "token size" );
+        Check( token.Length == ConnectToken.ConnectTokenBytes && Convert.ToBase64String( token ).Length == 768, "token size" );
 
         byte[] devBackendPublicKey = BackendConfig.DevBackendPrivateKey.AsSpan( 32, 32 ).ToArray();
         byte[] signedData = token.AsSpan( 0, ConnectToken.SignedConnectDataBytes ).ToArray();
@@ -205,7 +205,7 @@ static class Tests
                BinaryPrimitives.ReadUInt64LittleEndian( block.AsSpan( 16 ) ) == 1030 &&
                block.AsSpan( 24, 64 ).SequenceEqual( keys ) &&
                token.AsSpan( ConnectToken.SignedConnectDataBytes + ConnectToken.SignatureBytes, 64 ).SequenceEqual( keys ), "private block" );
-        Check( block.AsSpan( 88 ).IndexOfAnyExcept( (byte) 0 ) < 0 && token.AsSpan( 704 ).IndexOfAnyExcept( (byte) 0 ) < 0, "padding is zero" );
+        Check( block.AsSpan( 88 ).IndexOfAnyExcept( (byte) 0 ) < 0 && token.AsSpan( 512 ).IndexOfAnyExcept( (byte) 0 ) < 0, "padding is zero" );
     }
 
     static void test_config_refused()

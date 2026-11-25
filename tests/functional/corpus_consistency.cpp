@@ -250,7 +250,7 @@ static pcapng_outcome_t pcapng_connect_request( const uint8_t * packet, int byte
     }
 
     // after the prefilter header: return cookie (24), salt (8), client
-    // ephemeral public key (32), signed connect data (576), signature (64)
+    // ephemeral public key (32), signed connect data (384), signature (64)
 
     const uint8_t * signed_connect_data = packet + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES +
                                           ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;

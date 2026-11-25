@@ -378,11 +378,11 @@ Registry rules:
 | associated data with ephemeral key | `53` | bytes | size | [t9 Packet protection](#t9) |
 | connection salt | `8` | bytes | size | [t7 Key schedule](#t7) |
 | session nonce | `8` | bytes | size | [t7 Key schedule](#t7) |
-| connect token | `768` | bytes | size | [t6 Connect token](#t6) |
-| signed connect data | `576` | bytes | size | [t6 Connect token](#t6) |
-| sealed block | `432` | bytes | size | [t6 Connect token](#t6) |
-| private block | `384` | bytes | size | [t6 Connect token](#t6) |
-| user data | `256` | bytes | size | [t6 Connect token](#t6) |
+| connect token | `576` | bytes | size | [t6 Connect token](#t6) |
+| signed connect data | `384` | bytes | size | [t6 Connect token](#t6) |
+| sealed block | `240` | bytes | size | [t6 Connect token](#t6) |
+| private block | `192` | bytes | size | [t6 Connect token](#t6) |
+| user data | `64` | bytes | size | [t6 Connect token](#t6) |
 | token key | `32` | bytes | size | [t6 Connect token](#t6) |
 | token identifier | `16` | bytes | size | [t6 Connect token](#t6) |
 | ack block minimum | `7` | bytes | size | [t15 Acknowledgement](#t15) |
@@ -407,7 +407,7 @@ identifier size and with no key, of the token's signed connect data. For the
 frozen connect token of [t6 Connect token](#t6) it is:
 
 ```vector t3.token-identifier
-input: signed connect data, bytes 0 to 575 of the frozen connect token
+input: signed connect data, bytes 0 to 383 of the frozen connect token
 input: crypto_generichash, output 16 bytes, no key
 f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61
 ```
@@ -799,8 +799,10 @@ The private connect token data is the block that only the target server reads. B
 | expire timestamp | 16 | 8 | u64 | the time the token expires | any; MUST equal the signed expire timestamp |
 | client to server key | 24 | 32 | bytes[32] | the session key from client to server | any |
 | server to client key | 56 | 32 | bytes[32] | the session key from server to client | any |
-| user data | 88 | 256 | bytes[256] | application-defined data bound to the session | any |
-| zero pad | 344 | 40 | zero[40] | zero | zero |
+| user data | 88 | 64 | bytes[64] | application-defined data bound to the session | any |
+| zero pad | 152 | 40 | zero[40] | zero | zero |
+
+User data is for small items: an index or key into the backend's own records, such as a session key or a user hash, not the data itself. The game server uses that key to fetch whatever else it needs from the backend after connect, so the `user data` size of [t3 Constants and registries](#t3) is enough, and it keeps the connection request inside the smallest IPv4 MTU ([t8.11 Packet sizes](#t8.11)).
 
 A backend MUST seal this block with crypto_box_seal to the server's X25519 public key: draw an ephemeral X25519 key pair, write the ephemeral public key, then the ciphertext of crypto_box_easy under the nonce that is the BLAKE2b-192 hash of the ephemeral public key concatenated with the server public key. The sealed block is the `sealed block` size of [t3 Constants and registries](#t3): the private block plus the `sealed box overhead` size of [t3 Constants and registries](#t3). A server MUST open the sealed block with its own X25519 secret key.
 
@@ -820,8 +822,8 @@ Everything the server checks is gathered into one fixed buffer of the `signed co
 | ipv4 address | 33 | 6 | bytes[6] | four octets then the port little-endian; zero when bit 0 is clear | any; a client refuses a token whose flagged address has port 0 ([t11 Handshake: client](#t11) rule 2) |
 | ipv6 address | 39 | 18 | bytes[18] | eight uint16 groups little-endian then the port little-endian; zero when bit 1 is clear | any; a client refuses a token whose flagged address has port 0 ([t11 Handshake: client](#t11) rule 2) |
 | server public key | 57 | 32 | bytes[32] | the X25519 key the private block is sealed to | any |
-| sealed private block | 89 | 432 | bytes[432] | the sealed block of [t6.1 Private connect token data](#t6.1) | any |
-| zero pad | 521 | 55 | zero[55] | zero | zero |
+| sealed private block | 89 | 240 | bytes[240] | the sealed block of [t6.1 Private connect token data](#t6.1) | any |
+| zero pad | 329 | 55 | zero[55] | zero | zero |
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
@@ -838,7 +840,7 @@ The full token is handed to the client over the secure channel. The client split
 0                   1                   2                   3
 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|                signed connect data (576 bytes)               |
+|                signed connect data (384 bytes)               |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                   signature (64 bytes)                       |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -852,11 +854,11 @@ The full token is handed to the client over the secure channel. The client split
 
 | Name | Offset | Size | Type | Meaning | Valid values |
 |---|---|---|---|---|---|
-| signed connect data | 0 | 576 | bytes[576] | the buffer of [t6.2 Signed connect data](#t6.2) | any |
-| signature | 576 | 64 | bytes[64] | the detached signature over the signed connect data | any |
-| client to server key | 640 | 32 | bytes[32] | the clear session key, for the client | any |
-| server to client key | 672 | 32 | bytes[32] | the clear session key, for the client | any |
-| zero pad | 704 | 64 | zero[64] | zero | zero |
+| signed connect data | 0 | 384 | bytes[384] | the buffer of [t6.2 Signed connect data](#t6.2) | any |
+| signature | 384 | 64 | bytes[64] | the detached signature over the signed connect data | any |
+| client to server key | 448 | 32 | bytes[32] | the clear session key, for the client | any |
+| server to client key | 480 | 32 | bytes[32] | the clear session key, for the client | any |
+| zero pad | 512 | 64 | zero[64] | zero | zero |
 
 <a id="t6.4"></a>
 ### t6.4. Verification and refusal order
@@ -879,7 +881,7 @@ input: the minting inputs of the frozen token: IPv4 203.0.113.10, port 40000, em
 input: client id 0123456789abcdef, protocol id 1122334455667788, create timestamp 1756166400, expire timestamp 1756166700, timeout 10 seconds, address flags 01
 input: token keys 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20 (client to server) and a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0 (server to client)
 input: signed with the development backend signing key and sealed to the development server public key, both printed under Development keys; the seal's ephemeral key was a random draw and is not published, so the sealed block is checked by opening it, not by minting it again
-input: the signed connect data (576 bytes) then the signature, then the clear keys, then zero pad
+input: the signed connect data (384 bytes) then the signature, then the clear keys, then zero pad
 93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
 00 00 00 00 2c fa ac 68 00 00 00 00 0a 00 00 00
 01 cb 00 71 0a 40 9c 00 00 00 00 00 00 00 00 00
@@ -1100,9 +1102,9 @@ b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf c0
 
 A backend in any language MAY write connect tokens. This section and [t6.1 Private connect token data](#t6.1) to [t6.4 Verification and refusal order](#t6.4) are the whole contract; an implementation that follows them interoperates with every RocketNet server without the SDK.
 
-1. The token is carried to the client, and handed to the client's connect call, as text: the 768 bytes of [t6.3 Connect token format](#t6.3) encoded in standard base64 (RFC 4648 section 4, alphabet `A-Z a-z 0-9 + /`), which is exactly 1024 characters with no padding and no line breaks. A client MUST refuse a string of any other length or one that does not decode to exactly the `connect token` size of [t3 Constants and registries](#t3).
+1. The token is carried to the client, and handed to the client's connect call, as text: the 576 bytes of [t6.3 Connect token format](#t6.3) encoded in standard base64 (RFC 4648 section 4, alphabet `A-Z a-z 0-9 + /`), which is exactly 768 characters with no padding and no line breaks. A client MUST refuse a string of any other length or one that does not decode to exactly the `connect token` size of [t3 Constants and registries](#t3).
 2. Every integer in the token is little-endian. Every reserved and pad byte MUST be zero and is covered by the signature where it lies inside the signed connect data.
-3. The signature is Ed25519 (RFC 8032, pure, no context) by the backend's 64-byte secret key over the 576 bytes of the signed connect data. The private block is sealed as [t6.1 Private connect token data](#t6.1) states: X25519 ephemeral key pair, nonce the 24-byte BLAKE2b hash of the ephemeral public key then the server public key, XSalsa20-Poly1305 (crypto_box_easy). A writer MUST draw a fresh ephemeral key for every token and fresh session keys for every token; the nonce is a function of the ephemeral key, so it never repeats while the ephemeral key does not.
+3. The signature is Ed25519 (RFC 8032, pure, no context) by the backend's 64-byte secret key over the 384 bytes of the signed connect data. The private block is sealed as [t6.1 Private connect token data](#t6.1) states: X25519 ephemeral key pair, nonce the 24-byte BLAKE2b hash of the ephemeral public key then the server public key, XSalsa20-Poly1305 (crypto_box_easy). A writer MUST draw a fresh ephemeral key for every token and fresh session keys for every token; the nonce is a function of the ephemeral key, so it never repeats while the ephemeral key does not.
 4. The format is versioned by the `version` constant alone. A change to any byte of the layout, the encoding or the crypto takes a new, unrelated version constant ([t3 Constants and registries](#t3)) and a new vector file; no field is ever reinterpreted under an existing version.
 5. The published known answers for this version are the version 1 connect token vector file published with this standard. Its `version` field equals the `version` constant; each vector gives every minting input, including the ephemeral secret that replaces the random draw, and the 768-byte token. A writer MUST reproduce every `token` byte for byte from its inputs. The file is generated only by the SDK's `connect_token_vectors` tool from the library's own writer and is checked against the library on every unit run, so the file and the library cannot disagree. Its keys are published test keys; a deployment MUST NOT use them.
 
@@ -1328,10 +1330,10 @@ Ed25519 group order to S, and equality of token identifiers after changing
 only the appended signature. A result of `01` is true; `00` is false.
 
 ```vector t7.signature-verification
-input: signed data is 576 bytes; byte i is i modulo 256, starting at i = 0
+input: signed data is 384 bytes; byte i is i modulo 256, starting at i = 0
 public key: 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
-signature 1: 5ebb1841a19d7dc4f15bfc4d1129ca25e0b89592e7707191046dc3b9c0d55468febcf49e12a5cb474f05c82607820f87591ca54e13d9d6bbeb288beccdd1e404
-signature 2: c1feb7cd2979a67e446dce907b856166f65c876623531d5e51ae737beea27912dba084da7f6ff698e0001e75f846b23a7c54eb9a84fdaa3213477d318cd6a505
+signature 1: 3662e81b25c927a6da6b39d111d968ca06fec8ec3edccb94767ac50f2570114033264e762879fc1e0ce448733dd449ef0a1f70b8b7d4a56f33f82bbf4b8a930e
+signature 2: c1feb7cd2979a67e446dce907b856166f65c876623531d5e51ae737beea27912ac726e0cb3c82097a02437741cf735fbcc8e1e4ac06cd43efe22ae2dd4460608
 01 01 00 00 01
 ```
 
@@ -1365,7 +1367,7 @@ The connection request is not sealed. It carries the client's per-attempt salt a
 |         client ephemeral public key (bytes[32])               |
 |                              ...                              |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|            signed connect data (bytes[576])                   |
+|            signed connect data (bytes[384])                   |
 |                              ...                              |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                 signature (bytes[64])                         |
@@ -1381,8 +1383,8 @@ The connection request is not sealed. It carries the client's per-attempt salt a
 | return cookie | 6 | 24 | bytes[24] | the cookie expire timestamp followed by the cookie MAC, echoed from a type 7 packet | all zero on the first request of an attempt |
 | connection salt | 30 | 8 | bytes[8] | the client's salt for this attempt | any |
 | client ephemeral public key | 38 | 32 | bytes[32] | the client's X25519 ephemeral public key | any |
-| signed connect data | 70 | 576 | bytes[576] | bytes 0 to 575 of the connect token | any |
-| signature | 646 | 64 | bytes[64] | the token's Ed25519 signature | any |
+| signed connect data | 70 | 384 | bytes[384] | bytes 0 to 383 of the connect token | any |
+| signature | 454 | 64 | bytes[64] | the token's Ed25519 signature | any |
 
 <a id="t8.2"></a>
 ### t8.2. Connection denied packet (type 1)
@@ -1642,7 +1644,7 @@ The wire size of each type is the sum of its fields. The handshake types have a 
 
 | Name | Value | Unit | Composition |
 |---|---|---|---|
-| connection request packet wire size | `710` | bytes | 6 + 704 |
+| connection request packet wire size | `518` | bytes | 6 + 24 + 8 + 32 + 384 + 64 |
 | connection denied packet wire size | `34` | bytes | 6 + 4 + 8 + 16 |
 | connection challenge packet wire size | `66` | bytes | 6 + 4 + 8 + 32 + 16 |
 | connection response packet wire size | `50` | bytes | 6 + 4 + 24 + 16 |
@@ -1654,6 +1656,8 @@ The wire size of each type is the sum of its fields. The handshake types have a 
 
 A session packet MUST NOT exceed the receive ceiling, and a sender MUST NOT emit one larger than the maximum packet size. The payload capacity and the receive payload maximum are rows of [t3 Constants and registries](#t3).
 
+Every handshake type fits 548 bytes, the UDP payload of a 576-byte IPv4 MTU (576 less a 20-byte IPv4 header and an 8-byte UDP header), the smallest datagram every IPv4 host accepts, so a client on any IPv4 path can connect. The connection request is the largest of them.
+
 <a id="t8.12"></a>
 ### t8.12. Vectors
 
@@ -1664,7 +1668,7 @@ input: packet type 0, filter value b7 59 01 00
 input: return cookie 24 zero bytes
 input: connection salt bytes 30 31 32 33 34 35 36 37
 input: client ephemeral public key bytes 20 to 3f
-input: signed connect data byte i is i, for i 0 to 575
+input: signed connect data byte i is i, for i 0 to 383
 input: signature byte i is ff minus i, for i 0 to 63
 00 00 b7 59 01 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 30 31
@@ -1694,19 +1698,7 @@ fa fb fc fd fe ff 00 01 02 03 04 05 06 07 08 09
 4a 4b 4c 4d 4e 4f 50 51 52 53 54 55 56 57 58 59
 5a 5b 5c 5d 5e 5f 60 61 62 63 64 65 66 67 68 69
 6a 6b 6c 6d 6e 6f 70 71 72 73 74 75 76 77 78 79
-7a 7b 7c 7d 7e 7f 80 81 82 83 84 85 86 87 88 89
-8a 8b 8c 8d 8e 8f 90 91 92 93 94 95 96 97 98 99
-9a 9b 9c 9d 9e 9f a0 a1 a2 a3 a4 a5 a6 a7 a8 a9
-aa ab ac ad ae af b0 b1 b2 b3 b4 b5 b6 b7 b8 b9
-ba bb bc bd be bf c0 c1 c2 c3 c4 c5 c6 c7 c8 c9
-ca cb cc cd ce cf d0 d1 d2 d3 d4 d5 d6 d7 d8 d9
-da db dc dd de df e0 e1 e2 e3 e4 e5 e6 e7 e8 e9
-ea eb ec ed ee ef f0 f1 f2 f3 f4 f5 f6 f7 f8 f9
-fa fb fc fd fe ff 00 01 02 03 04 05 06 07 08 09
-0a 0b 0c 0d 0e 0f 10 11 12 13 14 15 16 17 18 19
-1a 1b 1c 1d 1e 1f 20 21 22 23 24 25 26 27 28 29
-2a 2b 2c 2d 2e 2f 30 31 32 33 34 35 36 37 38 39
-3a 3b 3c 3d 3e 3f ff fe fd fc fb fa f9 f8 f7 f6
+7a 7b 7c 7d 7e 7f ff fe fd fc fb fa f9 f8 f7 f6
 f5 f4 f3 f2 f1 f0 ef ee ed ec eb ea e9 e8 e7 e6
 e5 e4 e3 e2 e1 e0 df de dd dc db da d9 d8 d7 d6
 d5 d4 d3 d2 d1 d0 cf ce cd cc cb ca c9 c8 c7 c6
@@ -2227,7 +2219,7 @@ types, and the response padding are:
 
 | Name | Value | Unit | Kind | Defined in |
 |---|---|---|---|---|
-| receive connection request wire size | `710` | bytes | size | [t8 Packet formats](#t8) |
+| receive connection request wire size | `518` | bytes | size | [t8 Packet formats](#t8) |
 | receive connection denied wire size | `34` | bytes | size | [t8 Packet formats](#t8) |
 | receive connection challenge wire size | `66` | bytes | size | [t8 Packet formats](#t8) |
 | receive connection response wire size | `50` | bytes | size | [t8 Packet formats](#t8) |
@@ -2579,13 +2571,13 @@ A session packet opens under the session keys from sending connection response (
 An event a state does not list is ignored in that state with no state change. A packet that fails a guard is refused and counted, with no state change except where the table states one.
 
 ```vector t11.client-transcript
-input: the frozen connect token of 768 bytes and its protocol id
+input: the frozen connect token of 576 bytes and its protocol id
 input: connection salt 53 41 4c 54 30 30 30 31
 input: the published client ephemeral keypair and server ephemeral keypair
 input: the published session nonce 4e 4f 4e 43 45 30 30 31
 input: the cookie is the one the cookie vector of Handshake: server issues to 198.51.100.7:56789 at server time 1756166400 with cookie lifetime 3: expire 1756166403
 input: updates at 1000.0, 1000.1, 1000.2 and 1000.31 seconds; the challenge is lost
-input: bytes 1 to 710 are the first request, 711 to 1420 the request with the cookie, 1421 to 2130 the request retransmitted after the lost challenge, 2131 to 2180 the response
+input: bytes 1 to 518 are the first request, 519 to 1036 the request with the cookie, 1037 to 1554 the request retransmitted after the lost challenge, 1555 to 1604 the response
 state after packet 1: requesting cookie (1)
 state after packet 2: sending connection request (2)
 state after packet 3: sending connection request (2), the challenge lost
@@ -4248,7 +4240,7 @@ answered traffic, never an amplifier.
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
-| connection request wire size | `710` | bytes | the whole connection request packet |
+| connection request wire size | `518` | bytes | the whole connection request packet |
 | connection cookie wire size | `38` | bytes | the answer to a request without a valid cookie |
 | connection challenge wire size | `66` | bytes | a fresh or resent connection challenge |
 | connection response wire size | `50` | bytes | the whole connection response packet |
@@ -4268,7 +4260,7 @@ an address whose mapping a request with a valid cookie created.
 
 ```vector t19.amplification
 input: each row's packet type (u8) and wire size (u16), in the rows' order
-00 c6 02 07 26 00 02 42 00 03 32 00 04 29 00 01
+00 06 02 07 26 00 02 42 00 03 32 00 04 29 00 01
 22 00
 ```
 

@@ -1,9 +1,9 @@
 # RocketNet backend examples
 
 A client never connects to a RocketNet server by passing a raw IP address to the
-client API. Every client connects with a 768-byte connect token (encoded as
-exactly 1024 characters of base64 in a
-`ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES` = 1025-byte buffer), and the game's
+client API. Every client connects with a 576-byte connect token (encoded as
+exactly 768 characters of base64 in a
+`ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES` = 769-byte buffer), and the game's
 backend mints that token.
 
 This directory contains two minimal reference backend services — one in Go and
@@ -25,21 +25,21 @@ GET /match/{clientID}
   (`Content-Type: text/plain; charset=utf-8`, `Cache-Control: no-store`). The C
   game client passes that opaque string directly to `rocketnet_client_connect`.
 
-Both backends implement the 768-byte connect-token format specified in [STANDARD.md](../../docs/STANDARD.md) and implemented in
+Both backends implement the 576-byte connect-token format specified in [STANDARD.md](../../docs/STANDARD.md) and implemented in
 [`sdk/rocketnet_connect_token.cpp`](../../sdk/rocketnet_connect_token.cpp):
 
-- The backend signs the 576-byte `signed_connect_data` prefix (`offsets 0..575`)
-  with its 64-byte Ed25519 secret key (`signature` at `offsets 576..639`), so
+- The backend signs the 384-byte `signed_connect_data` prefix (`offsets 0..383`)
+  with its 64-byte Ed25519 secret key (`signature` at `offsets 384..447`), so
   any server holding the matching 32-byte Ed25519 `backend_public_key` can
   verify that the backend issued the token.
-- Inside `signed_connect_data`, the backend seals a 384-byte private block into
-  the 432-byte `sealed_private_block` (`offsets 89..520`) using
+- Inside `signed_connect_data`, the backend seals a 192-byte private block into
+  the 240-byte `sealed_private_block` (`offsets 89..328`) using
   `crypto_box_seal` with the selected server's 32-byte X25519
   `server_public_key` (`offsets 57..88`), so only that server instance can open
   the client's session keys and `client_id`.
-- The trailing client section (`offsets 640..703`) carries the client's copy of
+- The trailing client section (`offsets 448..511`) carries the client's copy of
   the 32-byte `client_to_server_key` and 32-byte `server_to_client_key`
-  (followed by 64 zero bytes at `offsets 704..767`), allowing the client to
+  (followed by 64 zero bytes at `offsets 512..575`), allowing the client to
   complete the handshake without being able to forge the backend's signature or
   open the server's sealed block.
 
@@ -207,8 +207,8 @@ sent, it returns a negative `rocketnet_status_t` immediately:
 | Condition | `rocketnet_client_connect` return | `rocketnet_client_state(client)` after refusal | Safe client action |
 | --- | --- | --- | --- |
 | `client` or `token` pointer is `NULL` | `ROCKETNET_STATUS_INVALID_ARGUMENT` (`-6`) | A non-NULL client keeps its previous state; do not query a NULL client | Fix the caller argument; do not enter the connected loop. |
-| Token string is empty, not 1024 base64 characters, or invalid base64 (`./bin/example_backend_client --token "not-base64"`) | `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN` (`-15`) | Previous state (DISCONNECTED on a fresh client) | Request a fresh token from the backend and call `rocketnet_client_connect` again. |
-| Token decodes to 768 bytes, but `wire_version != 0x4E7C1A93`, `address_flags` invalid, `timeout_seconds <= 0`, or `create_timestamp > expire_timestamp` | `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN` (`-15`) | `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`) | Check backend token writer configuration; fetch a fresh valid token before retrying. |
+| Token string is empty, not 768 base64 characters, or invalid base64 (`./bin/example_backend_client --token "not-base64"`) | `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN` (`-15`) | Previous state (DISCONNECTED on a fresh client) | Request a fresh token from the backend and call `rocketnet_client_connect` again. |
+| Token decodes to 576 bytes, but `wire_version != 0x4E7C1A93`, `address_flags` invalid, `timeout_seconds <= 0`, or `create_timestamp > expire_timestamp` | `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN` (`-15`) | `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`) | Check backend token writer configuration; fetch a fresh valid token before retrying. |
 | Token's `expire_timestamp <= current_timestamp` before the first packet is sent | `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED` (`-16`) | `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`) | Never cache or reuse connect tokens; request a fresh token from the backend immediately before connecting. |
 | Production client (`ROCKETNET_DEV=0`) given a token sealed to the published development server key | `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` (`-30`) | `ROCKETNET_CLIENT_STATE_DISCONNECTED` (`0`), also on a client retrying from a terminal state | Register the live production server's X25519 public key with the backend and mint a production token. |
 | Token names a flagged server address with port `0` | `ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO` (`-31`) | `ROCKETNET_CLIENT_STATE_DISCONNECTED` (`0`), also on a client retrying from a terminal state | Register the server's actual bound port (`rocketnet_server_ipv4_address` after `rocketnet_server_start`), never `:0`. |

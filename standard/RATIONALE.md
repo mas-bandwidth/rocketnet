@@ -200,7 +200,7 @@ commodity flood tooling not work.
 
 [RN-1 t5 Prefilter header](TRANSPORT.md#t5)
 **How magics reach servers and clients is deliberately not specified here, and 1.0
-provides no channel for it.** The connect token is a fixed 768 bytes with every field
+provides no channel for it.** The connect token is a fixed 576 bytes with every field
 enumerated, and its free space inside the signature travels in the clear inside every
 connection request, so a secret cannot be carried there. Sixty-four bytes of pad do sit
 outside the signature, beside the clear session keys, and that is the one place in the
@@ -327,8 +327,11 @@ server to end a session when the same player appears elsewhere.
 [RN-1 t6 Connect token](TRANSPORT.md#t6)
 **The protocol carries what those steps need and no more.** The client id in the sealed
 private connect token data is the identity a backend keys on, unforgeable because it is
-sealed to the server and covered by the signature. The 256 bytes of user data carry
-whatever else a backend wants bound to the session. And a server implementation must
+sealed to the server and covered by the signature. The 64 bytes of user data carry
+whatever else a backend wants bound to the session: small items, an index or key into the
+backend's own records (a session key or a user hash), not the data itself. The game server
+uses that key to fetch whatever else it needs from the backend after connect, so 64 bytes
+is enough, and it keeps the connection request inside a 576-byte MTU. And a server implementation must
 expose a means of disconnecting a specific connected client, which is the one verb this
 posture needs from the transport — the reasons for disconnecting are the game's and the
 backend's, never the transport's.
@@ -448,7 +451,7 @@ send rate — exactly the constraint this protocol must not impose.
 **A cookie packet does not provoke a reply.** A client that receives one stores it and
 includes it in its next *scheduled* request; it must not send a request in answer to each
 cookie that arrives. Otherwise the packet becomes an amplifier pointed at the server — 38
-bytes in, 710 out — that anyone able to see a client's salt could drive at whatever rate
+bytes in, 518 out — that anyone able to see a client's salt could drive at whatever rate
 they chose. With the rule, the client's request rate is its own retransmit rate, plus the
 one request the first cookie brings forward (below), no matter how many cookie packets
 arrive, and the pair is not a provoked pair at all.
@@ -790,7 +793,7 @@ against a constant that rejects silently and costs nothing, so a server must not
 a packet that fails one of them: doing so would emit a cookie packet for any datagram
 carrying a passing filter value and a zero type byte, making the server a packet-rate
 reflector for garbage and spending a hash and a system call on every piece of it.
-Everything below it is expensive — the used-token lookup hashes 576 bytes, and the three
+Everything below it is expensive — the used-token lookup hashes 384 bytes, and the three
 asymmetric operations follow — so nothing below may run for an address that has not
 answered. * **A server must send at most one cookie to each source address and port in
 one update.** A cookie is smaller than the request, but one source repeating its
@@ -851,7 +854,7 @@ default.** Once the budget is spent, a request from a source that has already fa
 this window is refused before the verify. A refused request sees no answer, and the
 server increments `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. The budget and its window
 are local policy; an implementation may choose other values. * **Verify the signature
-over the 576-byte signed connect data against the backend public key
+over the 384-byte signed connect data against the backend public key
 (`crypto_sign_verify_detached`). If it fails, ignore the packet.** This is the
 authenticity check and it comes before the seal is opened. * Open the sealed private
 block with the keypair named by the server public key field (`crypto_box_seal_open`). If

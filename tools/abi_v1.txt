@@ -455,7 +455,7 @@ field rocketnet_server_config_t portable_reserve_cpu_0 248 4
 struct rocketnet_receipt_t 8
 field rocketnet_receipt_t serial 0 4
 field rocketnet_receipt_t status 4 4
-struct rocketnet_connect_token_config_t 408
+struct rocketnet_connect_token_config_t 216
 field rocketnet_connect_token_config_t config_bytes 0 8
 field rocketnet_connect_token_config_t backend_secret_key 8 64
 field rocketnet_connect_token_config_t server_address_ipv4 72 8
@@ -463,10 +463,10 @@ field rocketnet_connect_token_config_t server_address_ipv6 80 8
 field rocketnet_connect_token_config_t server_public_key 88 32
 field rocketnet_connect_token_config_t client_id 120 8
 field rocketnet_connect_token_config_t protocol_id 128 8
-field rocketnet_connect_token_config_t user_data 136 256
-field rocketnet_connect_token_config_t expire_seconds 392 4
-field rocketnet_connect_token_config_t timeout_seconds 396 4
-field rocketnet_connect_token_config_t unix_timestamp 400 8
+field rocketnet_connect_token_config_t user_data 136 64
+field rocketnet_connect_token_config_t expire_seconds 200 4
+field rocketnet_connect_token_config_t timeout_seconds 204 4
+field rocketnet_connect_token_config_t unix_timestamp 208 8
 struct rocketnet_message_batch_t 1572872
 field rocketnet_message_batch_t num_messages 0 4
 field rocketnet_message_batch_t client_index 4 262144
@@ -558,7 +558,7 @@ enum rocketnet_status_t ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED -35
 macro ROCKETNET_ALLOCATION_ALIGNMENT 64
 macro ROCKETNET_BACKEND_PUBLIC_KEY_BYTES 32
 macro ROCKETNET_BACKEND_SECRET_KEY_BYTES 64
-macro ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES 256
+macro ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES 64
 macro ROCKETNET_CPU_0_NOT_RESERVED 2
 macro ROCKETNET_CPU_0_RESERVED 1
 macro ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS 1000
@@ -567,7 +567,7 @@ macro ROCKETNET_FLOW_ID_BIT 9223372036854775808
 macro ROCKETNET_MAX_ADDRESS_STRING_BYTES 256
 macro ROCKETNET_MAX_CHANNELS 32
 macro ROCKETNET_MAX_CLIENTS 1000
-macro ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES 1025
+macro ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES 769
 macro ROCKETNET_MAX_MESSAGE_BYTES 1048576
 macro ROCKETNET_MAX_PACKET_BYTES 1452
 macro ROCKETNET_MAX_PACKET_PAYLOAD_BYTES 1416

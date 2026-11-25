@@ -1,7 +1,7 @@
 # The rows of RN-1 t8 (standard/TRANSPORT.md, Packet formats) this card wrote.
 # Format and rules: standard/STYLE.md section 10.
 #include "rocketnet_wire.h"
-connection request packet wire size	ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES	710
+connection request packet wire size	ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES	518
 connection denied packet wire size	ROCKETNET_CONNECTION_DENIED_WIRE_BYTES	34
 connection challenge packet wire size	ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES	66
 connection response packet wire size	ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES	50

@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// test_unit_connect_token_vectors.cpp -- byte-stable 768-byte connect token
+// test_unit_connect_token_vectors.cpp -- byte-stable 576-byte connect token
 // vectors in standard/vectors/connect_token_v1.json, the known answers another
 // implementation of the backend's minting (a Go backend first) is checked
 // against byte for byte.

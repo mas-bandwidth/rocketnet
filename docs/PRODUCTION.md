@@ -179,7 +179,7 @@ endpoint authenticates the player's platform or account session first, derives
 the authoritative `uint64_t` `client_id` on the backend, and selects a server by
 region, available capacity, or match assignment before minting the token.
 
-The minted 768-byte connect token (encoded as 1024 base64 characters, the
+The minted 576-byte connect token (encoded as 768 base64 characters, the
 `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES` string with its NUL) binds:
 
 - `protocol_id`: 64-bit game protocol ID (`0x52434b544e455431` default via
@@ -195,9 +195,9 @@ The minted 768-byte connect token (encoded as 1024 base64 characters, the
 - `addresses` and `address_flags`: 1 or 2 literal UDP server endpoints (`IPv4`,
   `IPv6`, or one of each);
 - `server_public_key`: the selected server's 32-byte X25519 public key, to which
-  the 432-byte `sealed_private_block` (`client_id`, inner `protocol_id` and
+  the 240-byte `sealed_private_block` (`client_id`, inner `protocol_id` and
   `expire_timestamp`, `client_to_server_key`, `server_to_client_key`, and
-  256-byte `user_data`) is sealed via `crypto_box_seal`, with the 576-byte
+  64-byte `user_data`) is sealed via `crypto_box_seal`, with the 384-byte
   `signed_connect_data` signed by `ROCKETNET_BACKEND_PRIVATE_KEY`.
 
 Pass the opaque base64 token to `rocketnet_client_connect`. A return of

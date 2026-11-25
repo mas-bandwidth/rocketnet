@@ -314,19 +314,19 @@ REGISTER_UNIT_TEST( test_standard_connect_token_vectors );
 
 // The zero fields of the token (TRANSPORT.md t1 rule 3, t6.1 to t6.3): a
 // receiver drops a structure whose zero[n] field is not all zero. The outer
-// pad (bytes 704..767) is checked where the client admits the token, the
-// signed pad (521..575) there too and again before the server admits the
-// request, and the private pad (344..383) right after the sealed block
+// pad (bytes 512..575) is checked where the client admits the token, the
+// signed pad (329..383) there too and again before the server admits the
+// request, and the private pad (152..191) right after the sealed block
 // opens. Each field is poked at its first and last byte; the
 // signed buffer is re-signed and the private block re-sealed so every refusal
 // is the zero field's alone. Time is an argument and nothing here opens a
 // socket.
 
-#define RN_ZERO_OUTER_OFFSET        704
+#define RN_ZERO_OUTER_OFFSET        512
 #define RN_ZERO_OUTER_BYTES         64
-#define RN_ZERO_SIGNED_OFFSET       521
+#define RN_ZERO_SIGNED_OFFSET       329
 #define RN_ZERO_SIGNED_BYTES        55
-#define RN_ZERO_PRIVATE_OFFSET      344
+#define RN_ZERO_PRIVATE_OFFSET      152
 #define RN_ZERO_PRIVATE_BYTES       40
 
 ROCKETNET_STATIC_ASSERT( RN_ZERO_OUTER_OFFSET + RN_ZERO_OUTER_BYTES == ROCKETNET_CONNECT_TOKEN_BYTES, "the outer pad ends the token" );

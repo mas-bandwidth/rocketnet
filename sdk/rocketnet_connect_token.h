@@ -27,17 +27,22 @@ extern "C"
 #define ROCKETNET_WIRE_VERSION                       0x4E7C1A93
 
 /** @brief Byte size of the sealed private data block. */
-#define ROCKETNET_PRIVATE_BLOCK_BYTES           384
+#define ROCKETNET_PRIVATE_BLOCK_BYTES           192
 /** @brief Byte size of the private block after public-key sealing. */
-#define ROCKETNET_SEALED_BLOCK_BYTES            432     // private block + crypto_box_SEALBYTES
+#define ROCKETNET_SEALED_BLOCK_BYTES            240     // private block + crypto_box_SEALBYTES
 /** @brief Byte size of the signed connect-data region. */
-#define ROCKETNET_SIGNED_CONNECT_DATA_BYTES     576
+#define ROCKETNET_SIGNED_CONNECT_DATA_BYTES     384
 /** @brief Byte size of the detached signature. */
 #define ROCKETNET_SIGNATURE_BYTES               64
 /** @brief Byte size of a complete connect token. */
-#define ROCKETNET_CONNECT_TOKEN_BYTES           768
-/** @brief Byte capacity for application data inside the sealed private block. */
-#define ROCKETNET_USER_DATA_BYTES               256
+#define ROCKETNET_CONNECT_TOKEN_BYTES           576
+/** @brief Byte capacity for application data inside the sealed private block.
+ * User data is for small items: an index or key into the backend's own
+ * records (a session key, a user hash), not the data itself. The game server
+ * uses that key to fetch whatever else it needs from the backend after
+ * connect, so 64 bytes is enough, and the connection request stays inside a
+ * 576-byte MTU. */
+#define ROCKETNET_USER_DATA_BYTES               64
 /** @brief Byte size of each directional session key. */
 #define ROCKETNET_KEY_BYTES                     32
 /** @brief Byte size of the unkeyed token identifier. */
@@ -201,7 +206,7 @@ int rocketnet_write_connect_token_deterministic( const struct rocketnet_signed_c
 
 #endif // #if ROCKETNET_DEV
 
-// client-side split of a 768-byte token into its parts. Pure layout
+// client-side split of a 576-byte token into its parts. Pure layout
 
 /** The regions of a complete connect token, split without validation. */
 struct rocketnet_connect_token_t
@@ -316,6 +321,15 @@ extern const uint8_t rocketnet_dev_server_secret_key[32];
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES <= ROCKETNET_SIGNED_CONNECT_DATA_BYTES, "the sealed private block fits the signed connect data" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SIGNED_CONNECT_DATA_BYTES < ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, "the signed connect data fits the connection request" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES <= ROCKETNET_MAX_PACKET_BYTES, "the connection request fits one IPv6 datagram" );
+
+// The layout sums, from the standard's t6 tables: each region is its fields
+// and a zero pad of fixed size (private 40, signed 55, token 64), so a change
+// to one size that is not carried through the others fails to compile.
+ROCKETNET_STATIC_ASSERT( ROCKETNET_PRIVATE_BLOCK_BYTES == 3 * 8 + 2 * ROCKETNET_KEY_BYTES + ROCKETNET_USER_DATA_BYTES + 40, "the private block is its fields then a 40-byte zero pad" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SEALED_BLOCK_BYTES == ROCKETNET_PRIVATE_BLOCK_BYTES + 48, "the sealed block is the private block plus the 48-byte sealed box overhead" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SIGNED_CONNECT_DATA_BYTES == ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES + 55, "the signed connect data is its fields then a 55-byte zero pad" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_CONNECT_TOKEN_BYTES == ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES + 2 * ROCKETNET_KEY_BYTES + 64, "the token is the signed data, signature and clear keys then a 64-byte zero pad" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES == 6 + 24 + 8 + 32 + ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES, "the connection request is prefilter, cookie, salt, ephemeral key, signed data and signature" );
 
 ROCKETNET_STATIC_ASSERT( ( ( ROCKETNET_CONNECT_TOKEN_BYTES + 2 ) / 3 ) * 4 + 1 == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES, "ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES is the base64 of the token" );
 

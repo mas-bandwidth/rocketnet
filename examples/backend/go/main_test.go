@@ -213,7 +213,7 @@ func TestGeneratedTokenOpens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(token) != connectTokenBytes || len(base64.StdEncoding.EncodeToString(token)) != 1024 {
+	if len(token) != connectTokenBytes || len(base64.StdEncoding.EncodeToString(token)) != 768 {
 		t.Fatalf("token is %d bytes", len(token))
 	}
 
@@ -240,7 +240,7 @@ func TestGeneratedTokenOpens(t *testing.T) {
 		!bytes.Equal(token[signedConnectDataBytes+signatureBytes:signedConnectDataBytes+signatureBytes+keyBytes*2], keys) {
 		t.Fatalf("private block %x", block[:88])
 	}
-	if !bytes.Equal(block[88:], make([]byte, privateBlockBytes-88)) || !bytes.Equal(token[704:], make([]byte, connectTokenBytes-704)) {
+	if !bytes.Equal(block[88:], make([]byte, privateBlockBytes-88)) || !bytes.Equal(token[512:], make([]byte, connectTokenBytes-512)) {
 		t.Fatal("padding is not zero")
 	}
 }

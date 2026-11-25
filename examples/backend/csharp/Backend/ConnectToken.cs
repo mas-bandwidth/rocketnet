@@ -2,7 +2,7 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    The connect token a backend mints: the 768 byte token of STANDARD.md,
+    The connect token a backend mints: the 576 byte token of STANDARD.md,
     byte for byte the one sdk/rocketnet_connect_token.cpp writes. The backend
     signs the signed connect data with its Ed25519 key, and the private block
     inside it is sealed (crypto_box_seal) to the server's X25519 public key,
@@ -53,13 +53,13 @@ namespace RocketNet.Backend
         // the wire format (sdk/rocketnet_connect_token.h)
 
         public const uint WireVersion = 0x4E7C1A93;
-        public const int ConnectTokenBytes = 768;
-        public const int SignedConnectDataBytes = 576;
-        public const int PrivateBlockBytes = 384;
-        public const int SealedBlockBytes = 432;
+        public const int ConnectTokenBytes = 576;
+        public const int SignedConnectDataBytes = 384;
+        public const int PrivateBlockBytes = 192;
+        public const int SealedBlockBytes = 240;
         public const int SignatureBytes = 64;
         public const int KeyBytes = 32;
-        public const int UserDataBytes = 256;
+        public const int UserDataBytes = 64;
         public const byte AddressFlagIpv4 = 1 << 0;
         public const byte AddressFlagIpv6 = 1 << 1;
         public const int OffsetSealedBlock = 89;

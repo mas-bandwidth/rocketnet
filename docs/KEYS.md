@@ -90,8 +90,8 @@ title's. The example backends take it as `PUT /servers/{serverID}`, with no
 authentication, and say so.
 
 **The client holds no long-lived signing or server secret key.** It holds a
-connect token, an opaque string of exactly 1024 base64 characters
-followed by a NUL (`ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES`, 1025, is the
+connect token, an opaque string of exactly 768 base64 characters
+followed by a NUL (`ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES`, 769, is the
 buffer size with the NUL), which it passes to `rocketnet_client_connect`.
 Connect refuses a string of any other length. The token carries the two token keys for that one
 connection, which the backend draws fresh for each token; they are not

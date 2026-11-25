@@ -411,7 +411,7 @@ struct fz_seed_type_t
 };
 
 static const fz_seed_type_t fz_seed_types[] = {
-    { "request", 0, 710 },
+    { "request", 0, 518 },
     { "response", 3, 50 },
     { "keepalive", 4, 41 },
     { "keepalive", 4, 60 },

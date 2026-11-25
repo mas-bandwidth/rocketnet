@@ -151,13 +151,17 @@
 
 #define ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES             1411
 
-/// Connect-token buffer bytes: 1024 base64 characters plus the terminating NUL.
+/// Connect-token buffer bytes: 768 base64 characters plus the terminating NUL.
 
-#define ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES           1025
+#define ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES           769
 
-/// Connect-token user-data bytes.
+/// Connect-token user-data bytes. User data is for small items: an index or
+/// key into the backend's own records (a session key or a user hash), not
+/// the data itself. The game server uses that key to fetch whatever else it
+/// needs from the backend after connect, so 64 bytes is enough, and the
+/// connection request stays inside a 576-byte MTU.
 
-#define ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES            256
+#define ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES            64
 
 /// Packet-filter bytes in each config.
 
@@ -2202,7 +2206,7 @@ struct rocketnet_receipt_t
 /// Connect tokens
 
 /// A connect token is an opaque base64 string identifying one server.
-/// It is exactly ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 (1024)
+/// It is exactly ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 (768)
 /// characters, followed by a NUL terminator. Any other length is refused.
 /// Production tokens come from your backend. Development tokens come from
 /// rocketnet_create_dev_connect_token.
@@ -2301,7 +2305,11 @@ struct rocketnet_connect_token_config_t
 
     uint64_t protocol_id;
 
-    /// User data carried to the server. Default is all zeros.
+    /// User data carried to the server: ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES
+    /// (64) bytes for small items, an index or key into the backend's own
+    /// records (a session key or a user hash), not the data itself. The game
+    /// server uses that key to fetch whatever else it needs from the backend
+    /// after connect. Default is all zeros.
 
     uint8_t user_data[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
 
@@ -2704,7 +2712,7 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 
 /// Starts a connection using a token string.
 /// The string must be exactly ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1
-/// (1024) base64 characters followed by a NUL; any other length is refused.
+/// (768) base64 characters followed by a NUL; any other length is refused.
 /// Malformed strings return ROCKETNET_STATUS_INVALID_CONNECT_TOKEN without
 /// changing the client.
 ///

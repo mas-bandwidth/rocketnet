@@ -31,13 +31,7 @@ static const rn_standard_vector_t standard_packet_formats_table[] = {
                         "1a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30313233343536373839"
                         "3a3b3c3d3e3f404142434445464748494a4b4c4d4e4f50515253545556575859"
                         "5a5b5c5d5e5f606162636465666768696a6b6c6d6e6f70717273747576777879"
-                        "7a7b7c7d7e7f808182838485868788898a8b8c8d8e8f90919293949596979899"
-                        "9a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9"
-                        "babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9"
-                        "dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9"
-                        "fafbfcfdfeff000102030405060708090a0b0c0d0e0f10111213141516171819"
-                        "1a1b1c1d1e1f202122232425262728292a2b2c2d2e2f30313233343536373839"
-                        "3a3b3c3d3e3ffffefdfcfbfaf9f8f7f6f5f4f3f2f1f0efeeedecebeae9e8e7e6"
+                        "7a7b7c7d7e7ffffefdfcfbfaf9f8f7f6f5f4f3f2f1f0efeeedecebeae9e8e7e6"
                         "e5e4e3e2e1e0dfdedddcdbdad9d8d7d6d5d4d3d2d1d0cfcecdcccbcac9c8c7c6"
                         "c5c4c3c2c1c0" ),
     RN_STANDARD_VECTOR( "t8.denied",

@@ -497,7 +497,7 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
 
     // fixed-offset comparisons against constants, in the standard's order.
     // the request after the prefilter header: return cookie (24), salt (8),
-    // client ephemeral public key (32), signed connect data (576),
+    // client ephemeral public key (32), signed connect data (384),
     // signature (64).
 
     const uint8_t * return_cookie = packet_data + ROCKETNET_PREFILTER_BYTES;

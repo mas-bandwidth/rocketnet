@@ -514,7 +514,7 @@ static void xdp_host_redirect_rows( int family, std::vector<xdp_host_row_t> & ro
     {
         uint8_t type;
         int bytes;
-    } inbound[] = { { 0, 710 }, { 3, 50 }, { 4, 41 }, { 5, 34 }, { 6, 33 }, { 8, 33 } };
+    } inbound[] = { { 0, 518 }, { 3, 50 }, { 4, 41 }, { 5, 34 }, { 6, 33 }, { 8, 33 } };
 
     for ( size_t i = 0; i < sizeof( inbound ) / sizeof( inbound[0] ); i++ )
     {
@@ -1762,7 +1762,7 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
         int max_bytes;
     };
     const inbound_t standard[] = {
-        { 0, 710, 710 },        // connection request
+        { 0, 518, 518 },        // connection request
         { 3, 50, 50 },          // connection response
         { 4, 41, ceiling },     // keep-alive
         { 5, 34, ceiling },     // payload

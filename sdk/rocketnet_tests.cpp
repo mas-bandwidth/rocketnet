@@ -1384,7 +1384,7 @@ void rocketnet_test_connect_token_private()
     rocketnet_write_connect_token_private( &input, buffer );
 
     // exact offsets: client id at 0, protocol id at 8, expire at 16, keys at
-    // 24 and 56, user data at 88, zero padding from 344
+    // 24 and 56, user data at 88, zero padding from 152
 
     const uint8_t * p = buffer;
     rocketnet_check( rocketnet_read_uint64( &p ) == ROCKETNET_TEST_CLIENT_ID );
@@ -1393,7 +1393,7 @@ void rocketnet_test_connect_token_private()
     rocketnet_check( memcmp( buffer + 24, rocketnet_test_token_c2s_key, 32 ) == 0 );
     rocketnet_check( memcmp( buffer + 56, rocketnet_test_token_s2c_key, 32 ) == 0 );
 
-    for ( int i = 344; i < ROCKETNET_PRIVATE_BLOCK_BYTES; i++ )
+    for ( int i = 152; i < ROCKETNET_PRIVATE_BLOCK_BYTES; i++ )
     {
         rocketnet_check( buffer[i] == 0 );
     }
@@ -1423,7 +1423,7 @@ void rocketnet_test_signed_connect_data()
 
     rocketnet_check( memcmp( buffer, rocketnet_test_frozen_token, ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK ) == 0 );
 
-    // and the padding after the used 521 bytes is zero
+    // and the padding after the used 329 bytes is zero
 
     for ( int i = ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES; i < ROCKETNET_SIGNED_CONNECT_DATA_BYTES; i++ )
     {
@@ -1471,12 +1471,12 @@ void rocketnet_test_connect_token_frozen()
 
     rocketnet_check( rocketnet_connect_token_private_consistent( &opened, token.signed_connect_data ) );
 
-    // the clear token keys ride at 640 and 672, and the tail pad is zero
+    // the clear token keys ride at 448 and 480, and the tail pad is zero
 
     rocketnet_check( memcmp( token.client_to_server_key, rocketnet_test_token_c2s_key, 32 ) == 0 );
     rocketnet_check( memcmp( token.server_to_client_key, rocketnet_test_token_s2c_key, 32 ) == 0 );
 
-    for ( int i = 704; i < ROCKETNET_CONNECT_TOKEN_BYTES; i++ )
+    for ( int i = 512; i < ROCKETNET_CONNECT_TOKEN_BYTES; i++ )
     {
         rocketnet_check( rocketnet_test_frozen_token[i] == 0 );
     }
@@ -1530,7 +1530,7 @@ void rocketnet_test_connect_token_refusals()
 
     // NEGATIVE: any flipped byte in the signed data fails verification
 
-    const int tamper_offsets[] = { 0, 4, 20, 32, 57, 89, 520 };
+    const int tamper_offsets[] = { 0, 4, 20, 32, 57, 89, 328 };
 
     for ( int i = 0; i < (int) ( sizeof( tamper_offsets ) / sizeof( tamper_offsets[0] ) ); i++ )
     {
