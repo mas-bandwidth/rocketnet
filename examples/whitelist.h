@@ -349,10 +349,10 @@ static inline int rn_cli_http_request( const char * address, const char * method
             snprintf( error, error_bytes, "%s %s: timed out sending", method, path );
             return 0;
         }
+        // A backend restart during the write must fail this fetch and leave the game running.
 #ifdef _WIN32
         const int n = send( s, request + sent, request_bytes - sent, 0 );
 #else // #ifdef _WIN32
-        // A backend restart during the write must fail this fetch and leave the game running.
         const int n = (int) send( s, request + sent, (size_t) ( request_bytes - sent ), MSG_NOSIGNAL );
 #endif // #ifdef _WIN32
         if ( n <= 0 )
