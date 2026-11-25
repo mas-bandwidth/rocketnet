@@ -146,12 +146,16 @@ with `rocketnet_server_client_id`. See the [token format](STANDARD.md).
 ### What happens if players share a connect token?
 
 Alice and Bob buy one copy of the game. The purchase is on Alice's
-account and entitles that account to one online seat. They both want to
-play at the same time. What happens if Alice shares a connect token?
+account and entitles that account to one online seat. Alice gives Bob her
+unused connect token, and he connects. While Bob is still playing, Alice
+can sign in again and request a fresh token. If her account is in good
+standing and the match succeeds, the backend issues one. Bob and Alice
+now have two different tokens carrying the same `client_id`. Neither
+player has to reuse the other's token, so detecting a copied token alone
+cannot enforce the one-seat rule.
 
-- **On the same server:** If Bob connects first with Alice's unused token,
-  he occupies Alice's seat. The server refuses a second connection with
-  her `client_id` while that seat is occupied, even if Alice gets a fresh
+- **On the same server:** Bob already occupies Alice's seat. The server
+  sees her `client_id` in both connections and refuses Alice's fresh
   token. The transport also refuses reuse of a token from another address
   while it retains the original address binding. See the
   [handshake rules](../standard/TRANSPORT.md#t12) and
