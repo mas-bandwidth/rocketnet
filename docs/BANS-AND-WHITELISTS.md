@@ -81,6 +81,21 @@ The [example game server](../examples/backend_server.c) shows how to use
 those calls with a whitelist fetched from either of the
 [Go and C# example backends](../examples/backend/README.md).
 
+### Running one backend instance
+
+If every match and ban goes through one backend process, that process can
+make every seat decision locally. It still needs to handle simultaneous
+requests. In each example backend, a lock protects the ban check and the
+seat assignment together. Each game server fetches its whitelist from
+that one authority.
+
+Even a single token issuer cannot disconnect a player on a separate game
+server just by changing a record in memory. If Bob is already playing
+when his seat is revoked, the game server must receive the change to act
+on it. Adding a second backend instance for capacity or failover introduces
+another problem: its own process lock cannot protect the first instance's
+records.
+
 ### Running multiple backend instances
 
 When a backend scales horizontally, two match requests for one account
