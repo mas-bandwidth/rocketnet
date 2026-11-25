@@ -1772,7 +1772,7 @@ sequence 1.
 **The frozen connect token** is a fixed known answer. Its seal's ephemeral key was a
 random draw that is not published, so its sealed block is checked by opening it, not by
 minting it again; byte-for-byte minting from published inputs, the ephemeral secret
-included, is what the version 1 connect token vector file covers ([RN-1 t6.5 Token string and published vectors](TRANSPORT.md#t6.5) rule 5). A conforming
+included, is what the version 2 connect token vector file covers ([RN-1 t6.5 Token string and published vectors](TRANSPORT.md#t6.5) rule 5). A conforming
 server-side implementation verifies the frozen token's signature against the development
 backend public key, opens its sealed block with the development server keypair
 ([RN-1 t19.2 Development keys](TRANSPORT.md#t19.2)), and recovers the private fields

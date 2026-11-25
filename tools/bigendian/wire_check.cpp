@@ -157,7 +157,7 @@ static void check_read_write()
     uint8_t * a = ad;
     rocketnet_write_uint32( &a, ROCKETNET_WIRE_VERSION );
     rocketnet_write_uint64( &a, 0x1122334455667788ULL );
-    const uint8_t expected_ad[12] = { 0x93, 0x1a, 0x7c, 0x4e,
+    const uint8_t expected_ad[12] = { 0xd9, 0x14, 0x50, 0x06,
                                       0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11 };
     CHECK( memcmp( ad, expected_ad, 12 ) == 0 );
 }

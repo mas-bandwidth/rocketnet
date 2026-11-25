@@ -27,8 +27,8 @@ epoch_keyed="\x01"
 
 # --- the connect token (sdk/rocketnet_connect_token.h) ---
 
-# ROCKETNET_VERSION 0x4E7C1A93, little-endian on the wire
-version="\x93\x1a\x7c\x4e"
+# ROCKETNET_VERSION 0x065014D9, little-endian on the wire
+version="\xd9\x14\x50\x06"
 
 # ROCKETNET_DEV_PROTOCOL_ID 0x1122334455667788, little-endian
 dev_protocol_id="\x88\x77\x66\x55\x44\x33\x22\x11"

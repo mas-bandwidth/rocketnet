@@ -24,7 +24,7 @@ extern "C"
 // format and never change independently of it.
 
 /** @brief Connect-token wire-format version stored in signed data. */
-#define ROCKETNET_WIRE_VERSION                       0x4E7C1A93
+#define ROCKETNET_WIRE_VERSION                       0x065014D9
 
 /** @brief Byte size of the sealed private data block. */
 #define ROCKETNET_PRIVATE_BLOCK_BYTES           192
@@ -178,7 +178,7 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
 #if ROCKETNET_DEV
 
 // TEST-ONLY. Exists for the known-answer vectors in
-// standard/vectors/connect_token_v1.json, which another implementation of the
+// standard/vectors/connect_token_v2.json, which another implementation of the
 // backend's minting is checked against byte for byte; nothing ships calling
 // it. The same token as rocketnet_write_connect_token, except the private
 // block is sealed with the caller's 32-byte ephemeral X25519 secret instead

@@ -52,7 +52,7 @@ import (
 // The connect token wire format (sdk/rocketnet_connect_token.h).
 
 const (
-	wireVersion            = 0x4E7C1A93
+	wireVersion            = 0x065014D9
 	connectTokenBytes      = 576
 	signedConnectDataBytes = 384
 	privateBlockBytes      = 192

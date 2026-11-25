@@ -208,7 +208,7 @@ sent, it returns a negative `rocketnet_status_t` immediately:
 | --- | --- | --- | --- |
 | `client` or `token` pointer is `NULL` | `ROCKETNET_STATUS_INVALID_ARGUMENT` (`-6`) | A non-NULL client keeps its previous state; do not query a NULL client | Fix the caller argument; do not enter the connected loop. |
 | Token string is empty, not 768 base64 characters, or invalid base64 (`./bin/example_backend_client --token "not-base64"`) | `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN` (`-15`) | Previous state (DISCONNECTED on a fresh client) | Request a fresh token from the backend and call `rocketnet_client_connect` again. |
-| Token decodes to 576 bytes, but `wire_version != 0x4E7C1A93`, `address_flags` invalid, `timeout_seconds <= 0`, or `create_timestamp > expire_timestamp` | `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN` (`-15`) | `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`) | Check backend token writer configuration; fetch a fresh valid token before retrying. |
+| Token decodes to 576 bytes, but `wire_version != 0x065014D9`, `address_flags` invalid, `timeout_seconds <= 0`, or `create_timestamp > expire_timestamp` | `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN` (`-15`) | `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`) | Check backend token writer configuration; fetch a fresh valid token before retrying. |
 | Token's `expire_timestamp <= current_timestamp` before the first packet is sent | `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED` (`-16`) | `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`) | Never cache or reuse connect tokens; request a fresh token from the backend immediately before connecting. |
 | Production client (`ROCKETNET_DEV=0`) given a token sealed to the published development server key | `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` (`-30`) | `ROCKETNET_CLIENT_STATE_DISCONNECTED` (`0`), also on a client retrying from a terminal state | Register the live production server's X25519 public key with the backend and mint a production token. |
 | Token names a flagged server address with port `0` | `ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO` (`-31`) | `ROCKETNET_CLIENT_STATE_DISCONNECTED` (`0`), also on a client retrying from a terminal state | Register the server's actual bound port (`rocketnet_server_ipv4_address` after `rocketnet_server_start`), never `:0`. |
@@ -244,7 +244,7 @@ mismatched requests and sends an explicit denial only when all slots are full:
 
 The backend unit suites use no sockets and no wall-clock sleeps (`create_timestamp`
 is passed explicitly). They reproduce every deterministic vector in
-[`standard/vectors/connect_token_v1.json`](../../standard/vectors/connect_token_v1.json)
+[`standard/vectors/connect_token_v2.json`](../../standard/vectors/connect_token_v2.json)
 byte-for-byte, verify IPv4/IPv6 address encoding, open freshly minted tokens the
 way a server does, and exercise configuration, registration, and match refusal
 logic at the function level. The HTTP handlers return `204`, `400`, and `413`

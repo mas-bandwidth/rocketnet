@@ -211,8 +211,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // before) adds 68947128 to the server, the iocp memory plan's growth, and
 // nothing to the client: actual=1578291423 (AWS m7i.16xlarge, MSVC, Release
 // and Debug, DEV=ON, 2026-11-14), measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1577242847 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350380 )
+// Connect-token user data from 256 to 64 bytes: 192 fewer a client in the
+// slots' user data and 192 in each of the encryption map's two entries a
+// client, 576000 fewer at 1000 clients; 384 fewer to the client (its token
+// and its connection request, 192 each). Derived from the macOS reading, not
+// measured on Windows.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1576666847 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14349996 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -334,8 +339,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // cursors in place of the ready-slot banks): 64 more to the server, the
 // client unchanged: actual=1665308987 and 15046474 (studio, Apple clang,
 // Debug, DEV=ON), measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664260411 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997898 )
+// Connect-token user data from 256 to 64 bytes: 192 fewer a client in the
+// slots' user data and 192 in each of the encryption map's two entries a
+// client, 576000 fewer at 1000 clients; 384 fewer to the client (its token
+// and its connection request, 192 each). actual=1664732987 and 15046090
+// (studio, Apple clang, Release, DEV=ON), measured.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1663684411 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997514 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -485,9 +495,14 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (one more 64-byte rounding of its counter blocks): actual=2147391666
 // (integration/v1.1.58, aws-mut-3, gcc, Debug and Release, DEV ON), measured;
 // arm64 the same 64, computed.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146343098ULL )
+// Connect-token user data from 256 to 64 bytes: 192 fewer a client in the
+// slots' user data and 192 in each of the encryption map's two entries a
+// client, 576000 fewer at 1000 clients; 384 fewer to the client (its token
+// and its connection request, 192 each). Derived from the macOS reading, not
+// measured on Linux.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145767098ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146343090ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145767090ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
@@ -504,7 +519,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counter XDP_KERNEL_DROPPED_NO_SESSION adds 64 more to the
 // client: actual=15195154 (integration/v1.1.58, aws-mut-3, gcc, Debug and
 // Release, DEV ON), measured.
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146578 )
+// User data from 256 to 64 bytes: 384 fewer to the client (above), derived
+// from the macOS reading, not measured on Linux.
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146194 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

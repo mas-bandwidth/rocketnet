@@ -343,7 +343,7 @@ Registry rules:
 
 | Name | Value | Unit | Kind | Defined in |
 |---|---|---|---|---|
-| version | `0x4E7C1A93` | | version | [t6 Connect token](#t6) |
+| version | `0x065014D9` | | version | [t6 Connect token](#t6) |
 | connection request packet | `0` | | packet type | [t8 Packet formats](#t8) |
 | connection denied packet | `1` | | packet type | [t8 Packet formats](#t8) |
 | connection challenge packet | `2` | | packet type | [t8 Packet formats](#t8) |
@@ -409,7 +409,7 @@ frozen connect token of [t6 Connect token](#t6) it is:
 ```vector t3.token-identifier
 input: signed connect data, bytes 0 to 383 of the frozen connect token
 input: crypto_generichash, output 16 bytes, no key
-f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61
+f1 09 52 a0 db 61 d3 61 30 36 75 89 cb bc 40 61
 ```
 
 <a id="t4"></a>
@@ -882,46 +882,34 @@ input: client id 0123456789abcdef, protocol id 1122334455667788, create timestam
 input: token keys 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20 (client to server) and a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0 (server to client)
 input: signed with the development backend signing key and sealed to the development server public key, both printed under Development keys; the seal's ephemeral key was a random draw and is not published, so the sealed block is checked by opening it, not by minting it again
 input: the signed connect data (384 bytes) then the signature, then the clear keys, then zero pad
-93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
+d9 14 50 06 88 77 66 55 44 33 22 11 00 f9 ac 68
 00 00 00 00 2c fa ac 68 00 00 00 00 0a 00 00 00
 01 cb 00 71 0a 40 9c 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 3d 24 90 88 9d 37 4c
 29 6f ab 1d 57 70 cb 71 47 6a 06 f7 4e f2 f2 54
-0c f2 21 5f 76 14 f4 80 1c b3 10 fd d3 03 d6 aa
-d8 c7 90 0d fc 42 52 d9 4d 21 34 f1 e6 e1 73 20
-f4 c5 b1 bd 4f 28 79 da 3c e2 f2 87 72 08 61 88
-73 78 ed f0 1d e9 be fc 09 f1 bf 01 fd 3d f1 9e
-2a 79 e6 08 59 e8 96 34 6e b6 0c 08 f6 86 72 1d
-81 94 6e 78 1e 1a e2 c3 71 6a 46 58 80 a3 a5 f0
-68 ed e0 b0 39 cf 52 81 a9 7c d3 67 17 76 6b 5b
-b1 38 69 83 8e cb 33 3d 9e eb 10 42 bf 7a 7b 8f
-62 f9 cb b0 20 dd bd a6 cb 5f 44 e4 de f4 36 66
-64 2f f8 e6 f8 35 a5 f2 95 dd 8d 7b f2 26 86 84
-b2 a9 3e c1 7a c8 fd c4 c4 f0 5e 5b 09 92 7b 6a
-fa c3 ec 0f 00 50 8e 9d 43 31 66 00 c6 b7 45 d6
-db b9 c6 8f 12 d5 69 a1 95 73 d4 60 ba 34 e8 01
-d7 44 d6 db 6a 0a 01 bd 35 b4 e0 8d 52 03 bb bd
-44 36 7e f8 9b cb b3 82 7f d8 02 95 f2 b9 40 4c
-dd 29 79 e3 aa 17 51 3f f9 f4 2b 67 06 24 8e a7
-62 28 20 28 d4 fe 0c f7 11 56 55 4f 26 bf 90 cb
-2b fc fe f4 38 b5 e6 8a d2 50 1f 9e 3b e2 4b c0
-b3 36 51 ec 75 6f 60 f4 23 f3 24 d9 03 23 ad c9
-f6 c8 f1 76 2b 02 ba 31 c7 e7 96 26 06 7f e7 f1
-09 59 4a 80 3d 33 05 02 fe b0 3f 61 e9 29 7e c1
-1a ad eb cd 69 ba c0 bf d0 5c 1c 5c 14 4a e2 3b
-cd 11 4c 35 32 2e 79 78 43 e9 5c cb 8b c9 74 8f
-da 08 19 7c e6 d5 a1 0c 83 bc b0 eb 7f f4 71 d7
-38 a7 42 f6 8f a3 eb 77 df ad d3 20 a1 1a 55 42
-0e 3c cd 03 f1 5e fc 18 3a 5d d3 5c f8 65 7f a7
-12 b7 c9 74 96 00 0e 6a 54 68 d8 00 d4 9d 13 45
-ce 18 5d c0 f7 bc 71 47 a9 00 00 00 00 00 00 00
+0c f2 21 5f 76 14 f4 80 1c d6 22 aa ba 9c 50 e7
+63 fe e5 24 35 9b 34 6d ad 15 5b bc ba 83 69 e2
+91 f8 a9 66 c2 33 8f 2a 04 07 1c 9d f8 19 c6 f1
+ae 0c 3b ac d7 b6 f5 b1 d0 a8 b7 ca 04 89 c0 1d
+03 c1 ea 5c 84 73 8e 35 a2 79 05 95 ed 64 5a a7
+af be ea 24 22 77 a7 de 07 c8 3f 9e ef ea 8c 2c
+bf c7 bc 2d 29 8f f8 26 a4 62 c9 5f ff 2f a9 d1
+1c cc 23 2b 20 99 0c 54 17 e2 b2 67 4d fd 87 1c
+f3 7c 6e 79 7a a7 bc 4d 7c b4 17 f6 90 c5 d0 b1
+68 8f 1f 49 7f 82 86 0f 70 5e bd f3 a9 23 76 ea
+0f ea 50 7d 18 d7 3e 4d 7a 21 e1 0f 88 b9 fc f8
+f9 81 ea 74 a7 7d 75 31 ed ca 80 1b cb 8e 76 84
+24 9c 47 40 0d cd bf 5c a4 ea 6a af 3f 4f 97 63
+3d b2 b5 d0 35 31 5f de 51 9f 78 52 ed b9 43 e8
+6e a2 ca 71 52 63 2f c0 2b 48 1d 0c fd b4 03 ad
+f2 3a fe 80 e7 98 9e 63 53 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-6b 36 92 b4 9d 36 b7 a2 76 30 33 40 ab 83 99 b9
-85 61 ac 68 81 fc 7a a2 bb 60 ff e0 77 32 ea 71
-21 fe 50 44 eb b5 f5 3d be 76 8b 80 0c 30 d7 53
-70 eb 9b eb 49 14 ae 13 3d a6 4e a6 b0 9e 76 0d
+ee 93 da 92 a3 42 ff 6c aa 56 c6 db 74 12 4a e5
+0c 74 b6 dc 23 d3 ce 65 4a 35 59 06 f8 1d ed 1b
+04 98 a6 cc 65 76 1e dc bb 35 b5 5c 55 dc e7 07
+9c f6 e2 2f a6 f3 b6 76 3c d8 39 ab be ec 0b 09
 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20
 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0
@@ -935,21 +923,21 @@ b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf c0
 ```vector t6.token-identifier
 input: the signed connect data, bytes 0 to 575 of the frozen connect token
 input: BLAKE2b, output 16 bytes, no key
-f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61
+f1 09 52 a0 db 61 d3 61 30 36 75 89 cb bc 40 61
 ```
 
 ```vector t6.bad-address-flags
 input: IPv4 127.0.0.1, port 40000, empty user data, address flags 0x05 (a bit above bit 1 set)
 input: a token the server MUST refuse at the address-flags check, before any signature work
-93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
+d9 14 50 06 88 77 66 55 44 33 22 11 00 f9 ac 68
 00 00 00 00 2c fa ac 68 00 00 00 00 0a 00 00 00
 05 7f 00 00 01 40 9c 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 3d 24 90 88 9d 37 4c
 29 6f ab 1d 57 70 cb 71 47 6a 06 f7 4e f2 f2 54
 0c f2 21 5f 76 14 f4 80 1c 39 2d 17 4a 38 b3 b1
 be af af 1f e8 24 87 08 41 c5 fa 53 1b c6 ea fd
-b6 40 2c 12 46 64 48 8c 1c a2 b9 57 f0 72 74 7e
-f5 ea 9e 73 f1 a1 d1 c2 d1 18 60 72 cd 71 30 5c
+b6 40 2c 12 46 64 48 8c 1c 2a 99 50 13 90 34 3b
+cc 14 fe 86 f6 bf f6 76 0c 18 60 72 cd 71 30 5c
 22 e1 e4 84 55 14 6f 1b 4d 53 03 ab 2f 8c 0c f0
 08 62 b2 7b b9 46 f0 e6 8d 71 10 d0 d0 2c 7d 32
 a8 32 54 57 e1 98 48 28 35 3d 13 d8 84 01 34 99
@@ -961,26 +949,14 @@ dd 86 6c 56 a5 09 15 ff 44 8c 3f 2f f1 4d c2 db
 b0 60 e5 c5 fc 88 56 5a 00 c4 2a e4 a6 57 a3 38
 7e 5d b9 97 a9 f9 62 27 57 33 d0 29 a8 f6 f1 f3
 bb 09 a1 e3 e6 ad 15 5f cd 02 e4 69 42 c0 6a c8
-75 97 ee 1e 14 ee df a4 b6 4c 43 1f 63 ef fc b2
-4a ef 3e 22 ec 05 f2 ef b1 4a 59 bc 5a 80 a1 2e
-cb d0 d4 c7 51 bc 21 62 35 37 d5 a5 a6 8b 98 3a
-8b 69 4a 9b 9d ed 5e e7 d6 8c 90 c2 0d 0d e3 fb
-88 45 5e bc c6 95 27 b6 52 e8 58 8c 90 98 a3 af
-c7 61 5d 65 91 92 fe cc 28 29 06 63 e3 62 fc e1
-b3 df f5 f0 74 bb 04 fa e3 73 d2 a4 b0 14 5c 12
-34 a0 08 7c 44 73 12 21 79 68 2c 1f a1 36 c2 f1
-c3 9f 18 b3 48 78 78 ef 05 53 db a3 e9 01 a6 a1
-b3 58 a7 3c 8d 34 d2 fd e7 ff 83 ad 04 a1 c7 65
-69 5f 9a b9 5f e8 2e 31 71 e6 a0 d5 15 da fd ff
-12 b0 91 2a 4c ac 7e ec 77 14 10 19 83 4f 3e b8
-af 6a 8d 23 bf ba 36 79 4a 00 00 00 00 00 00 00
+75 97 ee 1e 14 ee df a4 b6 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-80 6f 9f 78 d4 60 9e 47 5d ae 14 5d 4d 0c dc 9b
-cc 3f 46 2c d8 83 10 2d d1 dd 1c 65 e6 8b 39 f3
-fb 89 f8 82 50 47 65 0f a5 0d e6 b0 70 e0 01 1a
-90 a5 2f 7c ac 91 39 a7 85 f2 b6 b6 52 fd 7f 07
+11 c9 be 06 73 69 1b ca 89 e2 1b 4f 04 3a 75 3e
+cf bc 10 6b 35 da 4f bd 0e 75 82 06 18 74 6e 9e
+46 f1 a0 4b a0 2a a8 56 68 7b 55 6b af 78 58 e1
+d9 a3 4f 7e a6 db 99 01 5a e3 9f ce ce 9c 5a 00
 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20
 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0
@@ -994,15 +970,15 @@ b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf c0
 ```vector t6.wrong-server-key
 input: IPv4 127.0.0.1, port 40000, empty user data, the signed server public key replaced by a fixed key that is not the target server's
 input: a token the server MUST refuse at the server-public-key check
-93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
+d9 14 50 06 88 77 66 55 44 33 22 11 00 f9 ac 68
 00 00 00 00 2c fa ac 68 00 00 00 00 0a 00 00 00
 01 7f 00 00 01 40 9c 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 11 22 33 44 55 66 77
 88 99 aa bb cc dd ee ff 00 10 20 30 40 50 60 70
 80 90 a0 b0 c0 d0 e0 f0 01 23 b7 bb 8c 91 ae 00
 87 11 fb 12 84 67 80 bc df 1e 06 5f 82 1b df ec
-49 f5 7e 7c 7d cd 4c 48 23 d2 10 cb 80 cd 26 ae
-d6 3b 32 c3 03 f7 a1 c5 c2 35 1e 3b 77 87 5c e2
+49 f5 7e 7c 7d cd 4c 48 23 3c 1b 73 30 96 27 db
+4a 05 07 19 0c f7 7e 80 ad 35 1e 3b 77 87 5c e2
 fa 40 20 77 ec e6 68 29 70 6f b8 b4 9c ed 85 0c
 90 cc 84 bc e7 7d 3e 1c f7 53 62 ec 49 c0 23 6a
 44 bf 63 7f bb cf aa d7 bb b1 59 83 63 d2 8a fb
@@ -1014,26 +990,14 @@ b5 17 6e e6 2f c4 ac 79 29 6b ba 3a 67 cd a2 c6
 23 57 2c f8 bf ec 80 8b 3c 3e 9e e4 43 de cf 14
 31 a7 c6 78 7c 03 2f d9 17 65 d5 63 42 da 1f 02
 59 b0 31 3b 73 b5 5f be b9 1f 3a ef c0 2d 6f 87
-91 31 97 11 76 bf 03 37 a9 a8 0e a1 39 a3 b7 92
-2e 0b 80 de 84 27 a3 33 84 2d 31 16 08 56 30 78
-4a 39 fa b9 6a d2 3e c9 27 60 77 be 6f ff 38 02
-85 41 68 ef d3 69 72 89 3b ea ac c0 86 4f 4f 78
-5c fe 0d 8a 04 23 f9 c7 9e ed 62 40 7a 78 d5 0b
-41 21 ad ff 38 1a c9 0c e3 2c 0b 37 f8 ab 3f 9d
-06 8e 02 3b bd 89 c0 1f d3 f4 cc 96 8e b1 d5 9c
-94 5d fa 4f 7d c0 ee 5d 5c aa 4c 39 9b 3a 4f cf
-83 24 c8 3e ac 3f 78 da 50 a1 d8 8d 47 c2 4a 43
-e1 08 83 06 3e e1 89 f5 cd 3a 17 ea 20 c5 f8 7a
-bf ae 42 a2 6c 75 d5 36 d1 05 90 0d 91 69 15 96
-51 4a c8 c1 c1 6e 4c 92 7c a3 56 0d 59 c3 de 9e
-86 0e e1 6f c3 6e 4a 40 2c 00 00 00 00 00 00 00
+91 31 97 11 76 bf 03 37 a9 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-f7 cf 86 58 f0 9f 18 16 96 e5 99 c0 d2 09 d2 61
-5c 8b 62 ed c5 d6 f1 6a 69 c7 59 b3 91 9a 37 80
-d2 c7 64 0e bd 57 b2 79 ae df fe 74 32 cb 63 e4
-3e 26 01 b2 c6 a0 9c 30 06 9f 32 1c 22 c3 e3 0b
+8a ab e0 84 61 20 79 25 49 db 7a 9e e8 ac fa bc
+e5 32 38 6d cc 28 ac 0d 35 76 2a 39 ce 5b 2b 31
+b8 dd f3 51 82 92 2b e8 33 8b f7 5e 70 f8 f9 4f
+80 08 23 8d 4c d5 19 5c e4 8a 7e 46 1e 92 ce 0f
 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20
 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0
@@ -1047,15 +1011,15 @@ b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf c0
 ```vector t6.sealed-mismatch
 input: IPv4 127.0.0.1, port 40000, empty user data, the sealed private block's protocol id is the signed protocol id plus one
 input: a token whose signature verifies and whose sealed block opens, but whose private fields disagree with the signed fields
-93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9 ac 68
+d9 14 50 06 88 77 66 55 44 33 22 11 00 f9 ac 68
 00 00 00 00 2c fa ac 68 00 00 00 00 0a 00 00 00
 01 7f 00 00 01 40 9c 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 3d 24 90 88 9d 37 4c
 29 6f ab 1d 57 70 cb 71 47 6a 06 f7 4e f2 f2 54
 0c f2 21 5f 76 14 f4 80 1c 9f d7 ad 6d cf f4 29
 8d d3 f9 6d 5b 1b 2a f9 10 a0 53 5b 14 88 d7 f8
-fa bb 34 9a 98 28 80 b6 15 c9 ae 23 6b 18 ad 61
-1e bf 16 e2 3c 9d cc 80 b2 0b 7b 3a 4a ad 40 f4
+fa bb 34 9a 98 28 80 b6 15 c5 62 4f 46 19 32 10
+18 a2 cf 61 04 cb 93 10 53 0b 7b 3a 4a ad 40 f4
 20 63 e2 ea 16 12 d1 4e 23 e6 34 58 b6 04 5c 44
 32 5a 1f 38 a0 d6 d0 f4 d0 e3 74 5b 28 e4 9a 87
 2f 30 e8 b9 2c d2 ec 71 a7 f1 7c be 71 ff 64 1e
@@ -1067,26 +1031,14 @@ f5 52 f1 eb a7 a2 87 f9 b9 f2 e1 41 d9 b6 50 68
 04 ae fd 78 70 c1 cf 53 93 16 ef 9a 6f 1f ec 93
 ab 6a 9e cf 66 45 de 72 91 e7 58 47 94 5e e9 1c
 f4 f5 3c 36 de 56 d7 cb b5 17 53 30 11 5a 67 14
-20 85 c4 7d 79 50 02 b6 29 79 fb 54 eb 33 f4 56
-4a 34 58 52 b5 1f ea e8 4b 07 ae 42 6d 12 3f fd
-42 80 2a 44 a4 1f b0 1f 03 0a 5f f3 1a c4 df 3f
-d8 26 50 a2 43 64 89 9a bb a5 b3 0f f2 80 70 56
-00 b0 1c ea d1 fb ac 12 f6 8d 13 d4 ef 19 48 57
-42 42 b7 24 4e 18 42 85 0b 68 43 91 d8 dd 58 e9
-85 19 9f 03 ec d5 f1 b2 28 b6 2e 6b 38 4b 18 b0
-6f 9a 17 1a 39 a6 64 ef 49 6a 9f 87 11 93 fa 31
-6d eb da de da ca 44 00 fa 44 09 c5 be 84 30 79
-c0 70 2b 52 ee dd 59 5e 58 37 b8 9c e2 0a 27 19
-74 eb b3 84 17 5f 54 dc b9 21 ea fb 64 65 be ff
-fe e0 3d 07 71 7e 56 7e 80 0b 7b 22 2a 31 b0 11
-7b 1d 4d fc 8e 66 89 14 3f 00 00 00 00 00 00 00
+20 85 c4 7d 79 50 02 b6 29 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-61 99 ef a8 e8 67 01 40 c3 1b 0e 6c ea b4 29 81
-f7 7d 88 51 69 01 87 b2 15 69 9b b2 4d ea c5 52
-5f c1 5a 46 22 f7 2e 68 f7 af 40 cf 2b d9 3e fd
-5a 4d 79 ca fb 1e 9c d9 f5 40 fc 5a f3 f0 03 05
+fe 96 7c 27 a1 8a 0a 27 3d 7f ee 64 d0 26 1f c1
+ea d1 7d 08 a2 8a a5 07 e1 16 f5 89 b4 2a c8 40
+d9 e3 20 ec 0a 2a 9e e7 46 a5 51 be a6 02 73 99
+9d 1c f4 b2 cb b6 e3 0f 8c 47 93 3b 92 ee 6a 0e
 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10
 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f 20
 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0
@@ -1106,7 +1058,7 @@ A backend in any language MAY write connect tokens. This section and [t6.1 Priva
 2. Every integer in the token is little-endian. Every reserved and pad byte MUST be zero and is covered by the signature where it lies inside the signed connect data.
 3. The signature is Ed25519 (RFC 8032, pure, no context) by the backend's 64-byte secret key over the 384 bytes of the signed connect data. The private block is sealed as [t6.1 Private connect token data](#t6.1) states: X25519 ephemeral key pair, nonce the 24-byte BLAKE2b hash of the ephemeral public key then the server public key, XSalsa20-Poly1305 (crypto_box_easy). A writer MUST draw a fresh ephemeral key for every token and fresh session keys for every token; the nonce is a function of the ephemeral key, so it never repeats while the ephemeral key does not.
 4. The format is versioned by the `version` constant alone. A change to any byte of the layout, the encoding or the crypto takes a new, unrelated version constant ([t3 Constants and registries](#t3)) and a new vector file; no field is ever reinterpreted under an existing version.
-5. The published known answers for this version are the version 1 connect token vector file published with this standard. Its `version` field equals the `version` constant; each vector gives every minting input, including the ephemeral secret that replaces the random draw, and the 768-byte token. A writer MUST reproduce every `token` byte for byte from its inputs. The file is generated only by the SDK's `connect_token_vectors` tool from the library's own writer and is checked against the library on every unit run, so the file and the library cannot disagree. Its keys are published test keys; a deployment MUST NOT use them.
+5. The published known answers for this version are the version 2 connect token vector file published with this standard. Its `version` field equals the `version` constant; each vector gives every minting input, including the ephemeral secret that replaces the random draw, and the 576-byte token. A writer MUST reproduce every `token` byte for byte from its inputs. The file is generated only by the SDK's `connect_token_vectors` tool from the library's own writer and is checked against the library on every unit run, so the file and the library cannot disagree. Its keys are published test keys; a deployment MUST NOT use them.
 
 <a id="t7"></a>
 ## t7. Key schedule
@@ -1714,8 +1666,8 @@ input: session nonce bytes 40 to 47
 input: handshake server-to-client key bytes 80 to 9f
 input: sealed data empty
 01 00 b7 59 01 00 01 00 00 00 40 41 42 43 44 45
-46 47 9c c7 b0 41 7c 4d 93 52 f9 a1 98 ef 49 ad
-6f cb
+46 47 fc df c8 18 c8 dd dc e7 42 3d 54 ac fe 5c
+2b 39
 ```
 
 ```vector t8.challenge
@@ -1730,8 +1682,8 @@ input: handshake server-to-client key bytes 80 to 9f
 02 00 b7 59 01 00 01 00 00 00 40 41 42 43 44 45
 46 47 a3 50 36 4e 3a 3a 61 a1 2a 4c 90 5d c6 39
 c8 a5 49 1e 7e 8d 4b 7c 58 51 98 cd 4b 94 4e e9
-d1 90 f4 2a d8 21 0f ab 19 e4 1a 3b 96 dc 06 08
-3d 31
+d1 90 5f cf 36 73 c8 0d ec 08 fa ae 4f c2 fd bc
+99 a8
 ```
 
 ```vector t8.response
@@ -1744,8 +1696,8 @@ input: client ephemeral public key bytes 20 to 3f
 input: handshake client-to-server key bytes 60 to 7f
 03 00 b7 59 01 00 01 00 00 00 f6 0f fd 9b d3 d8
 bd e8 c3 8b e5 af 01 f3 eb a1 47 55 ea 1a 6a ff
-0c 04 71 79 8c f7 4a 64 66 7d bc d6 ea 5f 4c a5
-b9 97
+0c 04 4e 53 9c 2f 73 dd 98 94 98 68 94 c7 39 c8
+2d 12
 ```
 
 ```vector t8.keep-alive
@@ -1757,8 +1709,8 @@ input: ack block 00 00 00 00 00 00 00
 input: client index 3, max clients 1000
 input: session server-to-client key bytes c0 to df
 04 00 b7 59 01 00 01 00 00 00 93 f3 ae 3f 05 4a
-38 d0 41 ec 2f 98 38 7a ff bf 5e 31 4c df 50 0e
-03 e1 28 04 ec 28 00 1b 99
+38 d0 41 ec 2f 98 38 7a ff 1c 76 25 f1 4e ff 09
+86 31 24 46 e4 28 93 b9 06
 ```
 
 ```vector t8.payload
@@ -1770,8 +1722,8 @@ input: ack block 00 00 00 00 00 00 00
 input: payload bytes 68 65 6c 6c 6f
 input: session client-to-server key bytes a0 to bf
 05 00 b7 59 01 00 03 00 00 00 d2 ca 22 7d 0d e1
-9a dc 82 7d ea d4 4a 38 fd 84 26 82 9a 5d b6 7b
-80 e5 85 fe 54 0c
+9a dc 82 7d ea d4 8a e4 21 af 89 ac b9 61 10 0e
+fd 13 c6 67 b2 8f
 ```
 
 ```vector t8.disconnect
@@ -1783,8 +1735,8 @@ input: ack block 00 00 00 00 00 00 00
 input: no type data
 input: session client-to-server key bytes a0 to bf
 06 00 b7 59 01 00 04 00 00 00 17 e7 37 e8 c4 f6
-f2 25 6f b7 76 70 25 43 e9 59 d3 09 27 85 70 ed
-91
+f2 08 88 71 2e 3c ce 0e b5 f1 09 91 80 61 54 46
+58
 ```
 
 ```vector t8.cookie
@@ -1806,8 +1758,8 @@ input: ack block 00 00 00 00 00 00 00
 input: no type data
 input: session client-to-server key bytes a0 to bf
 08 00 b7 59 01 00 05 00 00 00 18 11 d7 e6 43 54
-2c 6e a6 b4 9e e8 de 56 b3 3d ba 0d 4f 61 7e 85
-b5
+2c 1d 89 18 c4 2e e6 d0 08 37 b3 1c 5f 35 30 1b
+7b
 ```
 
 <a id="t9"></a>
@@ -1942,7 +1894,7 @@ the session server-to-client key is
 
 ```vector t9.challenge-ad
 input: the fixed inputs, packet type 2, with the client ephemeral public key
-93 1a 7c 4e 88 77 66 55 44 33 22 11 02 53 41 4c
+d9 14 50 06 88 77 66 55 44 33 22 11 02 53 41 4c
 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
 fd a1 4c be 24
@@ -1952,23 +1904,23 @@ fd a1 4c be 24
 input: the challenge associated data, the handshake server-to-client key, sequence 1, plaintext the server ephemeral public key (32 bytes)
 68 6f b7 09 43 5f f0 0e 1a c2 60 ee ea fb b2 91
 20 20 10 86 c8 27 62 55 d7 d3 87 c3 92 32 94 7b
-3d a1 3d dd 68 56 b0 94 15 f3 08 6c 59 f7 6f 88
+5f eb 32 ff c5 7d f0 17 13 d5 bd 55 59 d1 df 5c
 ```
 
 ```vector t9.denied-ad
 input: the fixed inputs and packet type 1, with no client ephemeral public key
-93 1a 7c 4e 88 77 66 55 44 33 22 11 01 53 41 4c
+d9 14 50 06 88 77 66 55 44 33 22 11 01 53 41 4c
 54 30 30 30 31
 ```
 
 ```vector t9.denied-sealed
 input: the denied associated data, the handshake server-to-client key, sequence 2, empty plaintext
-e7 12 b8 8e e2 36 cf d9 05 38 7c bc 0f 9d ee 13
+21 f7 a4 5d e3 61 b0 c7 f7 c0 4a b9 4b e2 ac 63
 ```
 
 ```vector t9.response-ad
 input: the fixed inputs, packet type 3, with the client ephemeral public key
-93 1a 7c 4e 88 77 66 55 44 33 22 11 03 53 41 4c
+d9 14 50 06 88 77 66 55 44 33 22 11 03 53 41 4c
 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
 fd a1 4c be 24
@@ -1977,58 +1929,58 @@ fd a1 4c be 24
 ```vector t9.response-sealed
 input: the response associated data, the handshake client-to-server key, sequence 1, plaintext 24 zero bytes
 9c 08 60 98 96 b9 d4 05 d5 14 9e 1e d9 da e4 dc
-2b d2 4a e4 cd a1 93 10 5c bf a9 ce 74 61 b3 97
-ce 4b 50 c0 1b 2f 8f 7e
+2b d2 4a e4 cd a1 93 10 f9 7b e6 8d 1e bb 19 3b
+b9 22 ae d5 d1 5e 0a ea
 ```
 
 ```vector t9.keepalive-ad
 input: the fixed inputs and packet type 4, with no client ephemeral public key
-93 1a 7c 4e 88 77 66 55 44 33 22 11 04 53 41 4c
+d9 14 50 06 88 77 66 55 44 33 22 11 04 53 41 4c
 54 30 30 30 31
 ```
 
 ```vector t9.keepalive-sealed
 input: the keep-alive associated data, the session server-to-client key, sequence 1, plaintext the keep-alive block and fields
 input: plaintext an ack block of seven zero bytes, client index 3, slot count 1000: 00 00 00 00 00 00 00 03 00 00 00 e8 03 00 00
-d2 48 d8 10 b0 69 78 85 27 a0 51 d0 6e bc ea da
-25 a6 66 38 35 c4 71 ac 21 66 38 3b a8 42 1c
+d2 48 d8 10 b0 69 78 85 27 a0 51 d0 6e bc ea 74
+8d c5 10 c7 16 57 6e 5c e0 7b e6 d1 1c 36 24
 ```
 
 ```vector t9.payload-ad
 input: the fixed inputs and packet type 5, with no client ephemeral public key
-93 1a 7c 4e 88 77 66 55 44 33 22 11 05 53 41 4c
+d9 14 50 06 88 77 66 55 44 33 22 11 05 53 41 4c
 54 30 30 30 31
 ```
 
 ```vector t9.payload-sealed
 input: the payload associated data, the session client-to-server key, sequence 3, plaintext an empty ack block of seven zero bytes and the five bytes 68 65 6c 6c 6f: 00 00 00 00 00 00 00 68 65 6c 6c 6f
-e3 e6 e1 ab c8 d7 33 fe f9 d5 e1 e2 af 0d f9 49
-ae 6d 5e bc aa df f1 94 89 74 4c b4
+e3 e6 e1 ab c8 d7 33 fe f9 d5 e1 e2 12 05 80 c5
+ec aa 64 e8 e1 14 a1 c7 6a 96 89 49
 ```
 
 ```vector t9.disconnect-ad
 input: the fixed inputs and packet type 6, with no client ephemeral public key
-93 1a 7c 4e 88 77 66 55 44 33 22 11 06 53 41 4c
+d9 14 50 06 88 77 66 55 44 33 22 11 06 53 41 4c
 54 30 30 30 31
 ```
 
 ```vector t9.disconnect-sealed
 input: the disconnect associated data, the session client-to-server key, sequence 4, plaintext seven zero bytes
-e4 db 4c 3d 2d 40 30 39 31 ba 13 55 32 5b fd 8f
-2f 3a 2b 31 75 bd a2
+e4 db 4c 3d 2d 40 30 25 44 09 e4 e5 ff 0c 42 f3
+03 ab ee 1c db 18 15
 ```
 
 ```vector t9.ack-ad
 input: the fixed inputs and packet type 8, with no client ephemeral public key
-93 1a 7c 4e 88 77 66 55 44 33 22 11 08 53 41 4c
+d9 14 50 06 88 77 66 55 44 33 22 11 08 53 41 4c
 54 30 30 30 31
 ```
 
 ```vector t9.ack-sealed
 input: the ack associated data, the session client-to-server key, sequence 5, plaintext the ack block
 input: plaintext the 11-byte ack block of the one-loss vector of Acknowledgement: e8 03 00 00 01 0a 00 01 00 5a 00
-cb ac a3 98 67 d9 e7 2a 0e 3f b6 04 85 51 28 e1
-5b d4 b1 18 bd d5 96 38 f7 9a e2
+cb ac a3 98 67 d9 e7 2a 0e 3f b6 84 cd 2b 3e 77
+dc 0c 03 cc 1f e5 da 89 79 2b 4d
 ```
 
 The tamper vectors below are the challenge associated data with one field
@@ -2036,7 +1988,7 @@ altered. No sealed vector opens under any of them.
 
 ```vector t9.version-tampered
 input: the challenge associated data with the version low byte changed from 93 to 92
-92 1a 7c 4e 88 77 66 55 44 33 22 11 02 53 41 4c
+d8 14 50 06 88 77 66 55 44 33 22 11 02 53 41 4c
 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
 fd a1 4c be 24
@@ -2044,7 +1996,7 @@ fd a1 4c be 24
 
 ```vector t9.protocol-id-tampered
 input: the challenge associated data with the protocol id low byte changed from 88 to 89
-93 1a 7c 4e 89 77 66 55 44 33 22 11 02 53 41 4c
+d9 14 50 06 89 77 66 55 44 33 22 11 02 53 41 4c
 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
 fd a1 4c be 24
@@ -2052,7 +2004,7 @@ fd a1 4c be 24
 
 ```vector t9.packet-type-tampered
 input: the challenge associated data with the packet type changed from 2 to 3
-93 1a 7c 4e 88 77 66 55 44 33 22 11 03 53 41 4c
+d9 14 50 06 88 77 66 55 44 33 22 11 03 53 41 4c
 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
 fd a1 4c be 24
@@ -2060,7 +2012,7 @@ fd a1 4c be 24
 
 ```vector t9.connection-salt-tampered
 input: the challenge associated data with the connection salt first byte changed from 53 to 52
-93 1a 7c 4e 88 77 66 55 44 33 22 11 02 52 41 4c
+d9 14 50 06 88 77 66 55 44 33 22 11 02 52 41 4c
 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a
 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
 fd a1 4c be 24
@@ -2068,7 +2020,7 @@ fd a1 4c be 24
 
 ```vector t9.client-ephemeral-tampered
 input: the challenge associated data with the client ephemeral public key first byte changed from 3a to 3b
-93 1a 7c 4e 88 77 66 55 44 33 22 11 02 53 41 4c
+d9 14 50 06 88 77 66 55 44 33 22 11 02 53 41 4c
 54 30 30 30 31 3b 55 3d 74 79 2d 72 7e fa 9b 9a
 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0
 fd a1 4c be 24
@@ -2391,8 +2343,8 @@ counter: CLIENT_COOKIE_WRONG_STATE
 input: a connection keep-alive packet at a client not in a session state
 counter: CLIENT_KEEP_ALIVE_WRONG_STATE
 04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
-a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
-f2 cd e8 36 13 03 f3 45 c3
+a0 8f 69 ab 93 07 a5 3c d6 86 81 89 26 e9 b3 91
+91 de 9e b8 b6 a8 b9 27 8b
 ```
 
 ```vector t10.server-no-mapping
@@ -2407,56 +2359,56 @@ counter: KEEP_ALIVE_NO_MAPPING
 input: a connection keep-alive packet for a mapping with no assigned slot
 counter: KEEP_ALIVE_NOT_CONNECTED
 04 00 b7 59 01 00 e8 03 00 00 2e 73 ac 3a 5d df
-e7 a5 8a f0 4a f3 97 9d f3 b7 56 9c a5 e6 86 63
-30 2e d1 bf d8 4e f9 ac 23
+e7 a5 8a f0 4a f3 97 9d f3 27 e2 2c ca 3f 8d 6b
+c9 3d 93 8a cb a8 60 3c f8
 ```
 
 ```vector t10.zero-sequence
 input: a connection keep-alive packet whose reconstructed sequence is zero
 counter: CLIENT_KEEP_ALIVE_ZERO_SEQUENCE
 04 00 b7 59 01 00 00 00 00 00 1e 9e 15 64 b9 d8
-a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
-f2 cd e8 36 13 03 f3 45 c3
+a0 8f 69 ab 93 07 a5 3c d6 86 81 89 26 e9 b3 91
+91 de 9e b8 b6 a8 b9 27 8b
 ```
 
 ```vector t10.already-received
 input: a connection keep-alive packet whose sequence is already marked received
 counter: CLIENT_KEEP_ALIVE_ALREADY_RECEIVED
 04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
-a0 8f 69 ab 93 07 a5 3c d6 85 92 16 2d f7 28 3f
-f2 cd e8 36 13 03 f3 45 c3
+a0 8f 69 ab 93 07 a5 3c d6 86 81 89 26 e9 b3 91
+91 de 9e b8 b6 a8 b9 27 8b
 ```
 
 ```vector t10.did-not-open
 input: a connection keep-alive packet sealed under a key the receiver does not hold
 counter: CLIENT_KEEP_ALIVE_DID_NOT_OPEN
 04 00 b7 59 01 00 e8 03 00 00 f8 c3 ad 9b 05 4e
-a2 d3 b5 79 df 29 48 34 2f ad 2d ca b4 05 1d 60
-e7 be f3 17 65 04 cf 34 2a
+a2 d3 b5 79 df 29 48 34 2f 0c d1 72 16 42 7d 93
+b8 65 b5 dc b4 ed 45 03 57
 ```
 
 ```vector t10.bad-ack-block
 input: a connection keep-alive packet whose ack block is malformed
 counter: CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK
 04 00 b7 59 01 00 e8 03 00 00 1b 9e 15 64 b9 d8
-a0 8f 69 ab 93 03 a5 3c d6 c1 26 ae 3c ae 1b d1
-78 c4 a3 c6 ca 6f 48 a0 17
+a0 8f 69 ab 93 03 a5 3c d6 c2 15 21 36 a0 a6 23
+18 d5 59 48 6e 15 0f 82 df
 ```
 
 ```vector t10.wrong-opened-size
 input: a connection keep-alive packet with nine type bytes after the ack block
 counter: CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE
 04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
-a0 8f 69 ab 93 03 a5 3c d6 c6 2e 2c 88 af c2 45
-4f 6f 62 77 03 4b 30 f3 49 2a
+a0 8f 69 ab 93 03 a5 3c d6 c6 2f 1b fb a8 b4 d0
+a1 0e 73 2d 85 ee d5 b9 2b f2
 ```
 
 ```vector t10.keep-alive-invalid-index
 input: a validly opened keep-alive whose client index equals its slot count
 counter: CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE
 04 00 b7 59 01 00 e8 03 00 00 1e 9e 15 64 b9 d8
-a0 8b 69 ab 93 07 a5 3c d6 11 13 7c 3d 36 90 4e
-d3 30 e5 ec f7 45 2e 8e 62
+a0 8b 69 ab 93 07 a5 3c d6 12 02 ef 36 28 1b a1
+72 41 9b 6e 9b eb f4 6f 2a
 ```
 
 <a id="t11"></a>
@@ -2586,139 +2538,103 @@ state after packet 4: sending connection response (3)
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 53 41
 4c 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b
 9a 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3
-c0 fd a1 4c be 24 93 1a 7c 4e 88 77 66 55 44 33
+c0 fd a1 4c be 24 d9 14 50 06 88 77 66 55 44 33
 22 11 00 f9 ac 68 00 00 00 00 2c fa ac 68 00 00
 00 00 0a 00 00 00 01 cb 00 71 0a 40 9c 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 3d
 24 90 88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47 6a
-06 f7 4e f2 f2 54 0c f2 21 5f 76 14 f4 80 1c b3
-10 fd d3 03 d6 aa d8 c7 90 0d fc 42 52 d9 4d 21
-34 f1 e6 e1 73 20 f4 c5 b1 bd 4f 28 79 da 3c e2
-f2 87 72 08 61 88 73 78 ed f0 1d e9 be fc 09 f1
-bf 01 fd 3d f1 9e 2a 79 e6 08 59 e8 96 34 6e b6
-0c 08 f6 86 72 1d 81 94 6e 78 1e 1a e2 c3 71 6a
-46 58 80 a3 a5 f0 68 ed e0 b0 39 cf 52 81 a9 7c
-d3 67 17 76 6b 5b b1 38 69 83 8e cb 33 3d 9e eb
-10 42 bf 7a 7b 8f 62 f9 cb b0 20 dd bd a6 cb 5f
-44 e4 de f4 36 66 64 2f f8 e6 f8 35 a5 f2 95 dd
-8d 7b f2 26 86 84 b2 a9 3e c1 7a c8 fd c4 c4 f0
-5e 5b 09 92 7b 6a fa c3 ec 0f 00 50 8e 9d 43 31
-66 00 c6 b7 45 d6 db b9 c6 8f 12 d5 69 a1 95 73
-d4 60 ba 34 e8 01 d7 44 d6 db 6a 0a 01 bd 35 b4
-e0 8d 52 03 bb bd 44 36 7e f8 9b cb b3 82 7f d8
-02 95 f2 b9 40 4c dd 29 79 e3 aa 17 51 3f f9 f4
-2b 67 06 24 8e a7 62 28 20 28 d4 fe 0c f7 11 56
-55 4f 26 bf 90 cb 2b fc fe f4 38 b5 e6 8a d2 50
-1f 9e 3b e2 4b c0 b3 36 51 ec 75 6f 60 f4 23 f3
-24 d9 03 23 ad c9 f6 c8 f1 76 2b 02 ba 31 c7 e7
-96 26 06 7f e7 f1 09 59 4a 80 3d 33 05 02 fe b0
-3f 61 e9 29 7e c1 1a ad eb cd 69 ba c0 bf d0 5c
-1c 5c 14 4a e2 3b cd 11 4c 35 32 2e 79 78 43 e9
-5c cb 8b c9 74 8f da 08 19 7c e6 d5 a1 0c 83 bc
-b0 eb 7f f4 71 d7 38 a7 42 f6 8f a3 eb 77 df ad
-d3 20 a1 1a 55 42 0e 3c cd 03 f1 5e fc 18 3a 5d
-d3 5c f8 65 7f a7 12 b7 c9 74 96 00 0e 6a 54 68
-d8 00 d4 9d 13 45 ce 18 5d c0 f7 bc 71 47 a9 00
+06 f7 4e f2 f2 54 0c f2 21 5f 76 14 f4 80 1c d6
+22 aa ba 9c 50 e7 63 fe e5 24 35 9b 34 6d ad 15
+5b bc ba 83 69 e2 91 f8 a9 66 c2 33 8f 2a 04 07
+1c 9d f8 19 c6 f1 ae 0c 3b ac d7 b6 f5 b1 d0 a8
+b7 ca 04 89 c0 1d 03 c1 ea 5c 84 73 8e 35 a2 79
+05 95 ed 64 5a a7 af be ea 24 22 77 a7 de 07 c8
+3f 9e ef ea 8c 2c bf c7 bc 2d 29 8f f8 26 a4 62
+c9 5f ff 2f a9 d1 1c cc 23 2b 20 99 0c 54 17 e2
+b2 67 4d fd 87 1c f3 7c 6e 79 7a a7 bc 4d 7c b4
+17 f6 90 c5 d0 b1 68 8f 1f 49 7f 82 86 0f 70 5e
+bd f3 a9 23 76 ea 0f ea 50 7d 18 d7 3e 4d 7a 21
+e1 0f 88 b9 fc f8 f9 81 ea 74 a7 7d 75 31 ed ca
+80 1b cb 8e 76 84 24 9c 47 40 0d cd bf 5c a4 ea
+6a af 3f 4f 97 63 3d b2 b5 d0 35 31 5f de 51 9f
+78 52 ed b9 43 e8 6e a2 ca 71 52 63 2f c0 2b 48
+1d 0c fd b4 03 ad f2 3a fe 80 e7 98 9e 63 53 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00 00 00 00 00 00 6b 36 92 b4 9d 36 b7 a2 76 30
-33 40 ab 83 99 b9 85 61 ac 68 81 fc 7a a2 bb 60
-ff e0 77 32 ea 71 21 fe 50 44 eb b5 f5 3d be 76
-8b 80 0c 30 d7 53 70 eb 9b eb 49 14 ae 13 3d a6
-4e a6 b0 9e 76 0d 00 00 b7 59 01 00 03 f9 ac 68
+00 00 00 00 00 00 ee 93 da 92 a3 42 ff 6c aa 56
+c6 db 74 12 4a e5 0c 74 b6 dc 23 d3 ce 65 4a 35
+59 06 f8 1d ed 1b 04 98 a6 cc 65 76 1e dc bb 35
+b5 5c 55 dc e7 07 9c f6 e2 2f a6 f3 b6 76 3c d8
+39 ab be ec 0b 09 00 00 b7 59 01 00 03 f9 ac 68
 00 00 00 00 0f b2 b2 8f 32 db d6 c9 eb 36 4f 57
 74 86 f3 e9 53 41 4c 54 30 30 30 31 3a 55 3d 74
 79 2d 72 7e fa 9b 9a 4c de 3d a1 ad 93 f1 a2 d0
-c0 9c b6 39 b1 a3 c0 fd a1 4c be 24 93 1a 7c 4e
+c0 9c b6 39 b1 a3 c0 fd a1 4c be 24 d9 14 50 06
 88 77 66 55 44 33 22 11 00 f9 ac 68 00 00 00 00
 2c fa ac 68 00 00 00 00 0a 00 00 00 01 cb 00 71
 0a 40 9c 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 3d 24 90 88 9d 37 4c 29 6f ab 1d
 57 70 cb 71 47 6a 06 f7 4e f2 f2 54 0c f2 21 5f
-76 14 f4 80 1c b3 10 fd d3 03 d6 aa d8 c7 90 0d
-fc 42 52 d9 4d 21 34 f1 e6 e1 73 20 f4 c5 b1 bd
-4f 28 79 da 3c e2 f2 87 72 08 61 88 73 78 ed f0
-1d e9 be fc 09 f1 bf 01 fd 3d f1 9e 2a 79 e6 08
-59 e8 96 34 6e b6 0c 08 f6 86 72 1d 81 94 6e 78
-1e 1a e2 c3 71 6a 46 58 80 a3 a5 f0 68 ed e0 b0
-39 cf 52 81 a9 7c d3 67 17 76 6b 5b b1 38 69 83
-8e cb 33 3d 9e eb 10 42 bf 7a 7b 8f 62 f9 cb b0
-20 dd bd a6 cb 5f 44 e4 de f4 36 66 64 2f f8 e6
-f8 35 a5 f2 95 dd 8d 7b f2 26 86 84 b2 a9 3e c1
-7a c8 fd c4 c4 f0 5e 5b 09 92 7b 6a fa c3 ec 0f
-00 50 8e 9d 43 31 66 00 c6 b7 45 d6 db b9 c6 8f
-12 d5 69 a1 95 73 d4 60 ba 34 e8 01 d7 44 d6 db
-6a 0a 01 bd 35 b4 e0 8d 52 03 bb bd 44 36 7e f8
-9b cb b3 82 7f d8 02 95 f2 b9 40 4c dd 29 79 e3
-aa 17 51 3f f9 f4 2b 67 06 24 8e a7 62 28 20 28
-d4 fe 0c f7 11 56 55 4f 26 bf 90 cb 2b fc fe f4
-38 b5 e6 8a d2 50 1f 9e 3b e2 4b c0 b3 36 51 ec
-75 6f 60 f4 23 f3 24 d9 03 23 ad c9 f6 c8 f1 76
-2b 02 ba 31 c7 e7 96 26 06 7f e7 f1 09 59 4a 80
-3d 33 05 02 fe b0 3f 61 e9 29 7e c1 1a ad eb cd
-69 ba c0 bf d0 5c 1c 5c 14 4a e2 3b cd 11 4c 35
-32 2e 79 78 43 e9 5c cb 8b c9 74 8f da 08 19 7c
-e6 d5 a1 0c 83 bc b0 eb 7f f4 71 d7 38 a7 42 f6
-8f a3 eb 77 df ad d3 20 a1 1a 55 42 0e 3c cd 03
-f1 5e fc 18 3a 5d d3 5c f8 65 7f a7 12 b7 c9 74
-96 00 0e 6a 54 68 d8 00 d4 9d 13 45 ce 18 5d c0
-f7 bc 71 47 a9 00 00 00 00 00 00 00 00 00 00 00
+76 14 f4 80 1c d6 22 aa ba 9c 50 e7 63 fe e5 24
+35 9b 34 6d ad 15 5b bc ba 83 69 e2 91 f8 a9 66
+c2 33 8f 2a 04 07 1c 9d f8 19 c6 f1 ae 0c 3b ac
+d7 b6 f5 b1 d0 a8 b7 ca 04 89 c0 1d 03 c1 ea 5c
+84 73 8e 35 a2 79 05 95 ed 64 5a a7 af be ea 24
+22 77 a7 de 07 c8 3f 9e ef ea 8c 2c bf c7 bc 2d
+29 8f f8 26 a4 62 c9 5f ff 2f a9 d1 1c cc 23 2b
+20 99 0c 54 17 e2 b2 67 4d fd 87 1c f3 7c 6e 79
+7a a7 bc 4d 7c b4 17 f6 90 c5 d0 b1 68 8f 1f 49
+7f 82 86 0f 70 5e bd f3 a9 23 76 ea 0f ea 50 7d
+18 d7 3e 4d 7a 21 e1 0f 88 b9 fc f8 f9 81 ea 74
+a7 7d 75 31 ed ca 80 1b cb 8e 76 84 24 9c 47 40
+0d cd bf 5c a4 ea 6a af 3f 4f 97 63 3d b2 b5 d0
+35 31 5f de 51 9f 78 52 ed b9 43 e8 6e a2 ca 71
+52 63 2f c0 2b 48 1d 0c fd b4 03 ad f2 3a fe 80
+e7 98 9e 63 53 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00 00 00 00 00 00 00 00 00 00 00 00 6b 36 92 b4
-9d 36 b7 a2 76 30 33 40 ab 83 99 b9 85 61 ac 68
-81 fc 7a a2 bb 60 ff e0 77 32 ea 71 21 fe 50 44
-eb b5 f5 3d be 76 8b 80 0c 30 d7 53 70 eb 9b eb
-49 14 ae 13 3d a6 4e a6 b0 9e 76 0d 00 00 b7 59
+00 00 00 00 00 00 00 00 00 00 00 00 ee 93 da 92
+a3 42 ff 6c aa 56 c6 db 74 12 4a e5 0c 74 b6 dc
+23 d3 ce 65 4a 35 59 06 f8 1d ed 1b 04 98 a6 cc
+65 76 1e dc bb 35 b5 5c 55 dc e7 07 9c f6 e2 2f
+a6 f3 b6 76 3c d8 39 ab be ec 0b 09 00 00 b7 59
 01 00 03 f9 ac 68 00 00 00 00 0f b2 b2 8f 32 db
 d6 c9 eb 36 4f 57 74 86 f3 e9 53 41 4c 54 30 30
 30 31 3a 55 3d 74 79 2d 72 7e fa 9b 9a 4c de 3d
 a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3 c0 fd a1 4c
-be 24 93 1a 7c 4e 88 77 66 55 44 33 22 11 00 f9
+be 24 d9 14 50 06 88 77 66 55 44 33 22 11 00 f9
 ac 68 00 00 00 00 2c fa ac 68 00 00 00 00 0a 00
 00 00 01 cb 00 71 0a 40 9c 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 3d 24 90 88 9d
 37 4c 29 6f ab 1d 57 70 cb 71 47 6a 06 f7 4e f2
-f2 54 0c f2 21 5f 76 14 f4 80 1c b3 10 fd d3 03
-d6 aa d8 c7 90 0d fc 42 52 d9 4d 21 34 f1 e6 e1
-73 20 f4 c5 b1 bd 4f 28 79 da 3c e2 f2 87 72 08
-61 88 73 78 ed f0 1d e9 be fc 09 f1 bf 01 fd 3d
-f1 9e 2a 79 e6 08 59 e8 96 34 6e b6 0c 08 f6 86
-72 1d 81 94 6e 78 1e 1a e2 c3 71 6a 46 58 80 a3
-a5 f0 68 ed e0 b0 39 cf 52 81 a9 7c d3 67 17 76
-6b 5b b1 38 69 83 8e cb 33 3d 9e eb 10 42 bf 7a
-7b 8f 62 f9 cb b0 20 dd bd a6 cb 5f 44 e4 de f4
-36 66 64 2f f8 e6 f8 35 a5 f2 95 dd 8d 7b f2 26
-86 84 b2 a9 3e c1 7a c8 fd c4 c4 f0 5e 5b 09 92
-7b 6a fa c3 ec 0f 00 50 8e 9d 43 31 66 00 c6 b7
-45 d6 db b9 c6 8f 12 d5 69 a1 95 73 d4 60 ba 34
-e8 01 d7 44 d6 db 6a 0a 01 bd 35 b4 e0 8d 52 03
-bb bd 44 36 7e f8 9b cb b3 82 7f d8 02 95 f2 b9
-40 4c dd 29 79 e3 aa 17 51 3f f9 f4 2b 67 06 24
-8e a7 62 28 20 28 d4 fe 0c f7 11 56 55 4f 26 bf
-90 cb 2b fc fe f4 38 b5 e6 8a d2 50 1f 9e 3b e2
-4b c0 b3 36 51 ec 75 6f 60 f4 23 f3 24 d9 03 23
-ad c9 f6 c8 f1 76 2b 02 ba 31 c7 e7 96 26 06 7f
-e7 f1 09 59 4a 80 3d 33 05 02 fe b0 3f 61 e9 29
-7e c1 1a ad eb cd 69 ba c0 bf d0 5c 1c 5c 14 4a
-e2 3b cd 11 4c 35 32 2e 79 78 43 e9 5c cb 8b c9
-74 8f da 08 19 7c e6 d5 a1 0c 83 bc b0 eb 7f f4
-71 d7 38 a7 42 f6 8f a3 eb 77 df ad d3 20 a1 1a
-55 42 0e 3c cd 03 f1 5e fc 18 3a 5d d3 5c f8 65
-7f a7 12 b7 c9 74 96 00 0e 6a 54 68 d8 00 d4 9d
-13 45 ce 18 5d c0 f7 bc 71 47 a9 00 00 00 00 00
+f2 54 0c f2 21 5f 76 14 f4 80 1c d6 22 aa ba 9c
+50 e7 63 fe e5 24 35 9b 34 6d ad 15 5b bc ba 83
+69 e2 91 f8 a9 66 c2 33 8f 2a 04 07 1c 9d f8 19
+c6 f1 ae 0c 3b ac d7 b6 f5 b1 d0 a8 b7 ca 04 89
+c0 1d 03 c1 ea 5c 84 73 8e 35 a2 79 05 95 ed 64
+5a a7 af be ea 24 22 77 a7 de 07 c8 3f 9e ef ea
+8c 2c bf c7 bc 2d 29 8f f8 26 a4 62 c9 5f ff 2f
+a9 d1 1c cc 23 2b 20 99 0c 54 17 e2 b2 67 4d fd
+87 1c f3 7c 6e 79 7a a7 bc 4d 7c b4 17 f6 90 c5
+d0 b1 68 8f 1f 49 7f 82 86 0f 70 5e bd f3 a9 23
+76 ea 0f ea 50 7d 18 d7 3e 4d 7a 21 e1 0f 88 b9
+fc f8 f9 81 ea 74 a7 7d 75 31 ed ca 80 1b cb 8e
+76 84 24 9c 47 40 0d cd bf 5c a4 ea 6a af 3f 4f
+97 63 3d b2 b5 d0 35 31 5f de 51 9f 78 52 ed b9
+43 e8 6e a2 ca 71 52 63 2f c0 2b 48 1d 0c fd b4
+03 ad f2 3a fe 80 e7 98 9e 63 53 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00 00 6b 36 92 b4 9d 36 b7 a2 76 30 33 40 ab 83
-99 b9 85 61 ac 68 81 fc 7a a2 bb 60 ff e0 77 32
-ea 71 21 fe 50 44 eb b5 f5 3d be 76 8b 80 0c 30
-d7 53 70 eb 9b eb 49 14 ae 13 3d a6 4e a6 b0 9e
-76 0d 03 00 b7 59 01 00 01 00 00 00 9c 08 60 98
+00 00 ee 93 da 92 a3 42 ff 6c aa 56 c6 db 74 12
+4a e5 0c 74 b6 dc 23 d3 ce 65 4a 35 59 06 f8 1d
+ed 1b 04 98 a6 cc 65 76 1e dc bb 35 b5 5c 55 dc
+e7 07 9c f6 e2 2f a6 f3 b6 76 3c d8 39 ab be ec
+0b 09 03 00 b7 59 01 00 01 00 00 00 9c 08 60 98
 96 b9 d4 05 d5 14 9e 1e d9 da e4 dc 2b d2 4a e4
-cd a1 93 10 5c bf a9 ce 74 61 b3 97 ce 4b 50 c0
-1b 2f 8f 7e
+cd a1 93 10 f9 7b e6 8d 1e bb 19 3b b9 22 ae d5
+d1 5e 0a ea
 ```
 The cookie moves the client from requesting cookie (1) to sending connection request (2); the lost challenge leaves it in sending connection request (2) until the retransmitted request draws the same challenge again; the accepted challenge moves it to sending connection response (3); the server's keep-alive moves it to connected (4).
 
@@ -2875,8 +2791,8 @@ input: protocol id 1122334455667788, filter value b7590100, sequence 1
 02 00 b7 59 01 00 01 00 00 00 4e 4f 4e 43 45 30
 30 31 68 6f b7 09 43 5f f0 0e 1a c2 60 ee ea fb
 b2 91 20 20 10 86 c8 27 62 55 d7 d3 87 c3 92 32
-94 7b 3d a1 3d dd 68 56 b0 94 15 f3 08 6c 59 f7
-6f 88
+94 7b 5f eb 32 ff c5 7d f0 17 13 d5 bd 55 59 d1
+df 5c
 ```
 
 ```vector t12.keep-alive
@@ -2885,8 +2801,8 @@ input: the ephemeral keypairs whose public keys are 3a553d74792d727efa9b9a4cde3d
 input: client index 0, max_clients 4, protocol id 1122334455667788, filter value b7590100, sequence 1
 input: an empty receive replay state, so the ack block is the minimum
 04 00 b7 59 01 00 01 00 00 00 d2 48 d8 10 b0 69
-78 86 27 a0 51 3c 6d bc ea 6d 28 2c 39 1b b9 28
-8e fb 4c 5d ba 9c 70 72 4b
+78 86 27 a0 51 3c 6d bc ea 07 90 4b e3 a9 9a bb
+8a ab 0b 73 68 33 e5 65 53
 ```
 
 ```vector t12.token-created-in-future
@@ -2897,15 +2813,15 @@ input: the return cookie is valid for the source and connection salt
 b2 8f 32 db d6 c9 eb 36 4f 57 74 86 f3 e9 53 41
 4c 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b
 9a 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3
-c0 fd a1 4c be 24 93 1a 7c 4e 88 77 66 55 44 33
+c0 fd a1 4c be 24 d9 14 50 06 88 77 66 55 44 33
 22 11 1f f9 ac 68 00 00 00 00 2c fa ac 68 00 00
 00 00 0a 00 00 00 01 cb 00 71 0a 40 9c 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 3d
 24 90 88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47 6a
 06 f7 4e f2 f2 54 0c f2 21 5f 76 14 f4 80 1c 34
 e4 2d 4a f5 ef 94 a0 7a 3a 84 20 1b 88 9d 4c d1
-a7 43 cb 27 b1 1b 6a 10 43 8a 8f eb 8e 58 47 d5
-da 88 97 83 41 4a 57 bb 78 b0 11 46 db 8f 9a 3f
+a7 43 cb 27 b1 1b 6a 10 43 8a 8f eb 8e 58 47 99
+ff 81 6b dc da 88 47 5e 29 81 51 1d 73 2d 3c 3f
 0c bd b6 0f 45 ee cb e3 8e a0 a7 2c ec 1b 6b 42
 e3 4a fd 6e fb 43 6d 00 34 5c 40 4c 4d e3 92 57
 86 d2 59 cc 06 b1 23 9e 25 9c a8 eb 13 7f 93 49
@@ -2917,27 +2833,15 @@ b7 f3 62 48 71 75 57 ad 34 0a 1a 21 11 eb 1f 6b
 8b aa 2d e5 bf 46 1e e4 f9 b3 26 38 73 2e 4f 4d
 9e a8 37 61 de a2 a1 73 c2 e7 4f 13 83 bb 45 09
 26 b3 cd 38 89 ef 3b 4d d3 d8 4f b8 5a ad 0a 12
-e5 a7 7b e7 01 40 2d 52 07 05 78 41 e3 58 89 d9
-9f 82 43 09 bf 6b 60 e2 40 3c 77 16 53 be ac 7b
-23 68 00 70 fa f4 a9 19 5e 31 69 fb 4d d8 36 91
-b7 7e 19 bf a6 51 03 42 21 6a 03 49 39 1e 2e 9c
-c7 c9 68 b0 16 63 7d 9f 8a e4 9c 24 52 8a 35 75
-42 ae c0 1e f8 32 4a 94 6a f6 ac d6 15 6b 9c 17
-7f 06 cf 3b 82 9b fc e6 0e c0 09 d5 79 2d 16 2e
-6d 9b 58 85 2d 11 b4 df 6c 62 3a 1d 39 3a e3 15
-c2 46 ed 69 60 57 f4 f8 d7 b9 18 af 57 43 1a 7e
-c5 0c dd 40 aa 72 bf ed 55 c0 cf 4a a8 c9 18 8b
-d9 4c 05 63 fe 96 fe cc 32 27 7a bf cc 8b fb 18
-d6 e3 db be b2 b5 84 65 f3 57 11 e6 2e 91 41 1c
-4d 80 76 ed 82 74 32 f3 3d 0c f7 3b a8 81 af 00
+e5 a7 7b e7 01 40 2d 52 07 05 78 41 e3 58 89 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00 00 00 00 00 00 e1 60 8a e2 f7 0d 6b f4 d4 68
-ad 25 1e c3 c3 2a 00 78 ee 3d 48 7d 30 de 25 51
-5d 59 7d 32 da 40 e4 e0 b6 a1 c7 1c 45 35 4d ea
-bd 52 02 95 e5 2d d6 3e 4a 0e 4d 1a 13 b4 7d 87
-67 5d 4a b0 af 01
+00 00 00 00 00 00 7d e7 3f 9d ac ba d2 6e bf b0
+d8 cd b8 ee 66 97 b6 00 24 c5 ce 31 52 a8 78 3b
+75 15 ef 01 72 b8 a3 12 bf f1 a9 3e 30 dc 88 2c
+b8 c9 f5 61 23 e0 1e 8c 54 a1 ea 3c 6c c7 32 a0
+ab e7 ca c7 63 04
 ```
 
 ```vector t12.token-expired
@@ -2948,15 +2852,15 @@ input: the return cookie is valid for the source and connection salt
 b2 8f 32 db d6 c9 eb 36 4f 57 74 86 f3 e9 53 41
 4c 54 30 30 30 31 3a 55 3d 74 79 2d 72 7e fa 9b
 9a 4c de 3d a1 ad 93 f1 a2 d0 c0 9c b6 39 b1 a3
-c0 fd a1 4c be 24 93 1a 7c 4e 88 77 66 55 44 33
+c0 fd a1 4c be 24 d9 14 50 06 88 77 66 55 44 33
 22 11 9c f8 ac 68 00 00 00 00 ce f8 ac 68 00 00
 00 00 0a 00 00 00 01 cb 00 71 0a 40 9c 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 3d
 24 90 88 9d 37 4c 29 6f ab 1d 57 70 cb 71 47 6a
 06 f7 4e f2 f2 54 0c f2 21 5f 76 14 f4 80 1c 34
 e4 2d 4a f5 ef 94 a0 7a 3a 84 20 1b 88 9d 4c d1
-a7 43 cb 27 b1 1b 6a 10 43 8a 8f eb 8e 58 47 08
-df eb b3 86 fe 9d 32 82 32 59 14 c7 92 00 5b 3f
+a7 43 cb 27 b1 1b 6a 10 43 8a 8f eb 8e 58 47 ed
+c2 05 76 0d 9a 85 91 2c 58 07 b6 d3 40 ac a0 3f
 0c bd b6 0f 45 ee cb e3 8e a0 a7 2c ec 1b 6b a0
 e1 4a fd 6e fb 43 6d 00 34 5c 40 4c 4d e3 92 57
 86 d2 59 cc 06 b1 23 9e 25 9c a8 eb 13 7f 93 49
@@ -2968,27 +2872,15 @@ b7 f3 62 48 71 75 57 ad 34 0a 1a 21 11 eb 1f 6b
 8b aa 2d e5 bf 46 1e e4 f9 b3 26 38 73 2e 4f 4d
 9e a8 37 61 de a2 a1 73 c2 e7 4f 13 83 bb 45 09
 26 b3 cd 38 89 ef 3b 4d d3 d8 4f b8 5a ad 0a 12
-e5 a7 7b e7 01 40 2d 52 07 05 78 41 e3 58 89 d9
-9f 82 43 09 bf 6b 60 e2 40 3c 77 16 53 be ac 7b
-23 68 00 70 fa f4 a9 19 5e 31 69 fb 4d d8 36 91
-b7 7e 19 bf a6 51 03 42 21 6a 03 49 39 1e 2e 9c
-c7 c9 68 b0 16 63 7d 9f 8a e4 9c 24 52 8a 35 75
-42 ae c0 1e f8 32 4a 94 6a f6 ac d6 15 6b 9c 17
-7f 06 cf 3b 82 9b fc e6 0e c0 09 d5 79 2d 16 2e
-6d 9b 58 85 2d 11 b4 df 6c 62 3a 1d 39 3a e3 15
-c2 46 ed 69 60 57 f4 f8 d7 b9 18 af 57 43 1a 7e
-c5 0c dd 40 aa 72 bf ed 55 c0 cf 4a a8 c9 18 8b
-d9 4c 05 63 fe 96 fe cc 32 27 7a bf cc 8b fb 18
-d6 e3 db be b2 b5 84 65 f3 57 11 e6 2e 91 41 1c
-4d 80 76 ed 82 74 32 f3 3d 0c f7 3b a8 81 af 00
+e5 a7 7b e7 01 40 2d 52 07 05 78 41 e3 58 89 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-00 00 00 00 00 00 b2 89 10 2e ed 08 cc 04 fa f6
-3d b4 bc fe 50 bd 70 e8 ef 89 80 a3 75 9f 79 f5
-5d 90 ef 7c 76 82 25 64 c4 01 68 1b 65 ff 37 81
-c6 cb 4d 2b e9 6e 69 da dc 39 95 9d d6 7f 85 ea
-f8 24 2b 06 9d 06
+00 00 00 00 00 00 2c 2f d1 ff f1 3b 38 8c a0 f8
+03 db 2d fc 37 ff 1e fb f1 eb c9 2a 50 00 12 3b
+f1 63 cc 17 1d c7 f0 83 53 f5 93 d8 6f 6e 3a b0
+56 93 8e ae 7e cf 10 6d f2 6a f0 b6 94 1f d8 a5
+76 53 81 4c eb 06
 ```
 
 

@@ -1,8 +1,8 @@
 # The connect-token fuzz target's own constants and field boundaries.
 # Every value is spelled in the byte order the parser reads it.
 
-# ROCKETNET_WIRE_VERSION, 0x4E7C1A93, little-endian (sdk/rocketnet_connect_token.h)
-version="\x93\x1a\x7c\x4e"
+# ROCKETNET_WIRE_VERSION, 0x065014D9, little-endian (sdk/rocketnet_connect_token.h)
+version="\xd9\x14\x50\x06"
 
 # ROCKETNET_DEV_PROTOCOL_ID, 0x1122334455667788, little-endian (sdk/rocketnet_connect_token.h)
 protocol_id="\x88\x77\x66\x55\x44\x33\x22\x11"
@@ -47,13 +47,13 @@ clear_client_to_server_key="\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d
 clear_server_to_client_key="\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0"
 
 # rocketnet_test_token_identifier (sdk/rocketnet_test_vectors.h)
-token_identifier="\xf5\x20\xda\x9d\x95\xfd\x07\x22\x56\xb4\x7d\x75\x5f\x81\x0f\x61"
+token_identifier="\xf1\x09\x52\xa0\xdb\x61\xd3\x61\x30\x36\x75\x89\xcb\xbc\x40\x61"
 
 # rocketnet_test_frozen_token at ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK (sdk/rocketnet_test_vectors.h)
-sealed_block_head="\xb3\x10\xfd\xd3\x03\xd6\xaa\xd8\xc7\x90\x0d\xfc\x42\x52\xd9\x4d"
+sealed_block_head="\xd6\x22\xaa\xba\x9c\x50\xe7\x63\xfe\xe5\x24\x35\x9b\x34\x6d\xad"
 
 # rocketnet_test_frozen_token at the signature offset, after the signed data (sdk/rocketnet_test_vectors.h)
-signature_head="\x6b\x36\x92\xb4\x9d\x36\xb7\xa2\x76\x30\x33\x40\xab\x83\x99\xb9\x85\x61\xac\x68"
+signature_head="\xee\x93\xda\x92\xa3\x42\xff\x6c\xaa\x56\xc6\xdb\x74\x12\x4a\xe5\x0c\x74\xb6\xdc"
 
 # ROCKETNET_SIGNED_OFFSET_VERSION, 0 (sdk/rocketnet_connect_token.h)
 signed_version_offset="\x00"

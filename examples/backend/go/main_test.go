@@ -3,7 +3,7 @@
    Licensed under the GNU Affero General Public License v3.0
 
    Unit tests: no sockets, no real time. The known answers are the C
-   library's own, standard/vectors/connect_token_v1.json, minted by
+   library's own, standard/vectors/connect_token_v2.json, minted by
    rocketnet_write_connect_token_deterministic; this backend must write
    every one of them byte for byte.
 */
@@ -18,8 +18,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
-	"strconv"
 	"testing"
 
 	"golang.org/x/crypto/blake2b"
@@ -47,7 +47,7 @@ type vector struct {
 }
 
 func loadVectors(t *testing.T) []vector {
-	data, err := os.ReadFile("../../../standard/vectors/connect_token_v1.json")
+	data, err := os.ReadFile("../../../standard/vectors/connect_token_v2.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func loadVectors(t *testing.T) []vector {
 	if err := json.Unmarshal(data, &file); err != nil {
 		t.Fatal(err)
 	}
-	if file.Version != strconv.FormatUint(wireVersion, 16) || len(file.Vectors) < 4 {
+	if file.Version != fmt.Sprintf("%08x", wireVersion) || len(file.Vectors) < 4 {
 		t.Fatalf("vectors file version %s with %d vectors", file.Version, len(file.Vectors))
 	}
 	return file.Vectors

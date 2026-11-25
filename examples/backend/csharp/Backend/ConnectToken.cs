@@ -52,7 +52,7 @@ namespace RocketNet.Backend
     {
         // the wire format (sdk/rocketnet_connect_token.h)
 
-        public const uint WireVersion = 0x4E7C1A93;
+        public const uint WireVersion = 0x065014D9;
         public const int ConnectTokenBytes = 576;
         public const int SignedConnectDataBytes = 384;
         public const int PrivateBlockBytes = 192;
