@@ -1224,6 +1224,7 @@ MCRNPathProbeOneEntry.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeLate.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeForged.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeDeadline.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
+MCRNPathProbeDeadlineFull.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	bench	full-instance-over-budget-reduced-replacement-MCRNPathProbeDeadline.cfg
 MCRNPathProbeReachLateReply.cfg	MCRNPathProbe.tla	invariant	NoLateReplyTaken	check	rnpathprobe	required	-
 MCRNPathProbeBrokenToday.cfg	MCRNPathProbe.tla	invariant	CarriedBothWays	check	rnpathprobe	required	-
 MCRNPathProbeBrokenTodayHang.cfg	MCRNPathProbe.tla	temporal	NoHang	check	rnpathprobe	required	-

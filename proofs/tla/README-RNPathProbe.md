@@ -153,7 +153,8 @@ FALSE, `Deadline` = 0, `Timed` = TRUE unless the case says otherwise.
 | `MCRNPathProbeOneEntry.cfg` | `{3, 2, 1}` | client set `{3}`, no probing |
 | `MCRNPathProbeLate.cfg` | `{3, 2, 1}` | `Timed` = FALSE, capacities `{1, 3}` each way, invariants only (`Spec`) |
 | `MCRNPathProbeForged.cfg` | `{3, 2, 1}` | `Forger` = TRUE, no other attacker, capacities `{0, 1, 3}`: `ForgedNeverStarves` and `Ends` under `FairSpec` |
-| `MCRNPathProbeDeadline.cfg` | `{3, 2, 1}` | `Deadline` = 3, `Budget` = 6, `Timed` = FALSE, capacities `{1, 3}`, `AttackBudget` = 0: `WalkInsideDeadline` (safety) |
+| `MCRNPathProbeDeadline.cfg` | `{2, 1}` | the per-PR deadline check, reduced to two candidates (`Ceiling` = 2, client set `{2, 1}`) to fit the 110 s case budget: `Deadline` = 3, `Budget` = 4, `Timed` = FALSE, capacities `{1, 2}`, one loss and one attacker send: `WalkInsideDeadline` (safety) |
+| `MCRNPathProbeDeadlineFull.cfg` | `{3, 2, 1}` | the same check at three candidates: `Deadline` = 3, `Budget` = 6, `Timed` = FALSE, capacities `{1, 3}`, one loss and one attacker send; over the case budget, so `bench` timeout debt run every night (`NIGHTLY-DEBT.tsv`) |
 | `MCRNPathProbeReachLateReply.cfg` | `{3, 2, 1}` | `Timed` = FALSE, must violate `NoLateReplyTaken` |
 | each `MCRNPathProbeBroken*.cfg` | as named | must violate the one property it names |
 
@@ -189,9 +190,9 @@ model as it matches the code).
   before the client's, fails to open and spends the allowance, so the client's
   probe of 1 is withheld and never answered: the client probes forever on a
   path that carries 1 (the code before 1527892f9).
-- **NoBudget** (`WalkInsideDeadline`): capacity 0 up; the client's two probes
-  of 3 are dropped, it moves to 2 at the third Tick, and the mapping is
-  removed at that Tick while it probes.
+- **NoBudget** (`WalkInsideDeadline`, the per-PR instance, 7 states): capacity
+  1 up; the client's two probes of 2 are dropped, it moves to 1 at the second
+  Tick, and the mapping is removed at the third Tick while it probes 1.
 - **TimeoutProbing** (`NoTimeoutWhileProbing`): the silence timeout ends the
   attempt -4 while the client is still probing its first candidate.
 - **ReachLateReply** (`NoLateReplyTaken`): the client sends two probes of 3 (one
@@ -227,32 +228,35 @@ whose list probes adds the probe's bound to the handshake deadline
 
 The records in `RUNS.tsv` are measured on a Linux bench with the pinned
 tlacheck (`tlacheck run --group rnpathprobe`, which refuses to run on
-macOS), one case per bounded run: the 20 records of this model were measured
-on space (2 workers, 2026-11-25). For comparison, TLC 2.19 run directly on
-studio.local, 4 workers (`MCRNPathProbeDeadline.cfg`: 2), 2026-11-25:
+macOS), one case per bounded run, two workers: the 21 records of this model
+were measured on space, 2026-11-25. `MCRNPathProbeDeadlineFull.cfg` is over
+the 110 s record cap, so its record is the bounded FAIL/124 and its completed
+counts are in `NIGHTLY-DEBT.tsv`, from one run with no record cap
+(`--manual`, space, 2 workers):
 
 | Case | Result | Generated | Distinct | Seconds |
 | --- | --- | --- | --- | --- |
-| `MCRNPathProbe.cfg` | pass | 286,182 | 44,741 | 12 |
-| `MCRNPathProbeServerList.cfg` | pass | 286,268 | 44,902 | 12 |
-| `MCRNPathProbeOneEntry.cfg` | pass | 47,072 | 9,408 | 2 |
-| `MCRNPathProbeForged.cfg` | pass | 109,993 | 14,232 | 3 |
-| `MCRNPathProbeLate.cfg` | pass | 20,530,837 | 1,735,922 | 19 |
-| `MCRNPathProbeDeadline.cfg` | pass | 6,656,114 | 657,637 | 11 |
-| `MCRNPathProbeReachLateReply.cfg` | `NoLateReplyTaken` | 5,617 | 2,164 | 1 |
-| `MCRNPathProbeBrokenToday.cfg` | `CarriedBothWays` | 476 | 300 | 1 |
-| `MCRNPathProbeBrokenTodayHang.cfg` | `NoHang` | 47,072 | 9,408 | 2 |
-| `MCRNPathProbeBrokenTodayConnects.cfg` | `FailsWhenNoneFits` | 47,072 | 9,408 | 1 |
-| `MCRNPathProbeBrokenUnproven.cfg` | `ReplyOnlyProven` | 166 | 160 | 1 |
-| `MCRNPathProbeBrokenLarger.cfg` | `ReplyNoLarger` | 2,547 | 1,061 | 1 |
-| `MCRNPathProbeBrokenOffList.cfg` | `ReplyOwnList` | 2,547 | 1,061 | 1 |
-| `MCRNPathProbeBrokenNoAllowance.cfg` | `OneReplyPerUpdate` | 1,497 | 708 | 1 |
-| `MCRNPathProbeBrokenSlotCeiling.cfg` | `SlotAgrees` | 11,294 | 3,676 | 1 |
-| `MCRNPathProbeBrokenNoExpire.cfg` | `Ends` | 34,269 | 5,714 | 1 |
-| `MCRNPathProbeBrokenSkipLast.cfg` | `ConnectsWhenFits` | 130,202 | 20,881 | 2 |
-| `MCRNPathProbeBrokenForgedStarves.cfg` | `ForgedNeverStarves` | 170,985 | 20,960 | 3 |
-| `MCRNPathProbeBrokenNoBudget.cfg` | `WalkInsideDeadline` | 2,622 | 1,153 | 1 |
-| `MCRNPathProbeBrokenTimeoutProbing.cfg` | `NoTimeoutWhileProbing` | 12 | 12 | 1 |
+| `MCRNPathProbe.cfg` | pass | 286,182 | 44,741 | 22.5 |
+| `MCRNPathProbeServerList.cfg` | pass | 286,268 | 44,902 | 22.5 |
+| `MCRNPathProbeOneEntry.cfg` | pass | 47,072 | 9,408 | 4.1 |
+| `MCRNPathProbeLate.cfg` | pass | 20,530,837 | 1,735,922 | 38.1 |
+| `MCRNPathProbeForged.cfg` | pass | 109,993 | 14,232 | 6.2 |
+| `MCRNPathProbeDeadline.cfg` | pass | 9,812,282 | 987,571 | 17.7 |
+| `MCRNPathProbeDeadlineFull.cfg` | pass (nightly debt; bounded record FAIL/124 at 110 s) | 87,404,030 | 7,512,847 | 154.4 |
+| `MCRNPathProbeReachLateReply.cfg` | `NoLateReplyTaken` | 5,720 | 2,194 | 1.0 |
+| `MCRNPathProbeBrokenToday.cfg` | `CarriedBothWays` | 465 | 289 | 0.9 |
+| `MCRNPathProbeBrokenTodayHang.cfg` | `NoHang` | 47,072 | 9,408 | 3.3 |
+| `MCRNPathProbeBrokenTodayConnects.cfg` | `FailsWhenNoneFits` | 47,072 | 9,408 | 3.2 |
+| `MCRNPathProbeBrokenUnproven.cfg` | `ReplyOnlyProven` | 137 | 136 | 0.7 |
+| `MCRNPathProbeBrokenLarger.cfg` | `ReplyNoLarger` | 2,505 | 1,037 | 0.9 |
+| `MCRNPathProbeBrokenOffList.cfg` | `ReplyOwnList` | 2,505 | 1,037 | 0.9 |
+| `MCRNPathProbeBrokenNoAllowance.cfg` | `OneReplyPerUpdate` | 1,229 | 604 | 0.8 |
+| `MCRNPathProbeBrokenSlotCeiling.cfg` | `SlotAgrees` | 8,756 | 3,006 | 1.0 |
+| `MCRNPathProbeBrokenNoExpire.cfg` | `Ends` | 34,269 | 5,714 | 2.9 |
+| `MCRNPathProbeBrokenSkipLast.cfg` | `ConnectsWhenFits` | 130,202 | 20,881 | 6.3 |
+| `MCRNPathProbeBrokenForgedStarves.cfg` | `ForgedNeverStarves` | 170,985 | 20,960 | 8.7 |
+| `MCRNPathProbeBrokenNoBudget.cfg` | `WalkInsideDeadline` | 847 | 374 | 0.8 |
+| `MCRNPathProbeBrokenTimeoutProbing.cfg` | `NoTimeoutWhileProbing` | 6 | 6 | 0.7 |
 
 ## Trace binding
 
