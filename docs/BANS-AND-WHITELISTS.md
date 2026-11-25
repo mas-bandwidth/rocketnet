@@ -23,7 +23,7 @@ a token, and its game servers check tokens only when a player connects.
 | What happens | What the game server sees |
 | --- | --- |
 | Alice gives Bob her token for server A. Bob joins. | A sees a valid token for Alice's account. Nobody else on A has that id, so Bob starts playing. |
-| Alice gets a fresh token for A and tries to join Bob. | A finds Alice's `client_id` already connected. It silently ignores her request. Bob keeps playing. |
+| Alice gets a fresh token for A and tries to join server A. | A finds Alice's `client_id` already connected. It silently ignores her request. Bob keeps playing. |
 | While Bob plays, Alice gets a fresh token for server B and joins. | B also sees a valid token for Alice's account. Nobody else on B has that id, so Alice starts playing too. |
 | An operator bans Alice's account. | The backend refuses her next token. A and B receive no update, so both friends keep playing. |
 
@@ -50,6 +50,12 @@ too. Even households with separate satellite dishes can share a public
 IPv4 address. Meanwhile, a banned player who switches from home Wi-Fi to mobile
 data can return with a different address.
 See [RFC 6269, section 13.1](https://www.rfc-editor.org/rfc/rfc6269.html#section-13.1).
+
+An IP address is personal data under the GDPR when it can be linked to
+an identifiable person. Using those addresses for ban lists, logs or
+lookups requires a lawful basis, limits on retention and a way to handle
+access requests. An account-based ban list can work without storing any
+IP addresses. See [GDPR recital 30 and articles 5, 6 and 15](https://eur-lex.europa.eu/eli/reg/2016/679/oj/eng/).
 
 Consider a game that checks an IP ban only when its backend issues a
 connect token. Alice's home IP is banned. She requests a token through a
@@ -129,10 +135,10 @@ records.
 ### Running multiple backend instances
 
 When a backend scales horizontally, two match requests for one account
-can reach different instances at the same time. Suppose A and B both read
-the account as unbanned and unseated before either records its assignment.
-A issues a token for game server 1. B issues a different token for game
-server 2. Two people can now present genuine, unexpired tokens bearing the
+can reach different instances at the same time. Both can see an account
+as unbanned and unseated before either records its assignment. The first
+instance issues a token for game server A. The second instance issues a
+different token for game server B. Two people can now present genuine, unexpired tokens bearing the
 same `client_id`. Each game server sees only one connection for that id.
 If the servers consult only their local slots, both players can stay.
 
@@ -145,8 +151,9 @@ the seat, the first token may still pass its handshake. The old game server
 must receive the updated whitelist to disconnect its player. Polling leaves
 a window in which both players can be connected.
 
-Bans have the same visibility problem. If A records a ban and B serves a
-cached whitelist that still includes the account, the player stays until
+Bans have the same visibility problem. If the first instance records a ban
+and the second serves a cached whitelist that still includes the account,
+the player stays until
 the game server receives the change. Replication lag and the whitelist
 poll interval both contribute to that delay.
 
