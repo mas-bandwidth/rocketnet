@@ -30,6 +30,10 @@
 // (proofs/tla/RNPathProbe.tla W; rocketnet_client_protocol.cpp)
 #define ROCKETNET_CLIENT_PROBE_WINDOW_SENDS                 4
 
+// the most sends a window is, however long the round trip
+// (sdk/rocketnet_link_mtu.h, the probe's time bound)
+#define ROCKETNET_CLIENT_PROBE_WINDOW_MAX_SENDS             ROCKETNET_LINK_MTU_PROBE_WINDOW_MAX_SENDS
+
 // Pointer-only dependency, deliberately incomplete here: the counters
 // (rocketnet_counters.h). The implementation file includes the full
 // definition it consumes.

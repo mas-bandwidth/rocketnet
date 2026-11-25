@@ -5,6 +5,8 @@
 
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_platform.h"
+
+static double rocketnet_server_handshake_deadline_seconds( const struct rocketnet_server_protocol_t * server, const struct rocketnet_address_t * from );
 #include "rocketnet_read_write.h"
 #include "rocketnet_keys.h"
 #include "rocketnet_replay.h"
@@ -893,7 +895,7 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
     // so this record cannot fail; a failure is a bug, refused closed
 
     if ( !rocketnet_used_token_history_claim_record( server->used_token_history, token_identifier, from,
-                                                     current_time + server->handshake_deadline_seconds, current_time ) )
+                                                     current_time + rocketnet_server_handshake_deadline_seconds( server, from ), current_time ) )
     {
         rocketnet_assert( 0 );
         rocketnet_debug( "server ignored connection request. could not claim connect token" );
@@ -1079,7 +1081,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
             rocketnet_encryption_map_remove_current( server->encryption_map, replace_index );
         }
 
-        int index = rocketnet_encryption_map_add( server->encryption_map, from, current_time + server->handshake_deadline_seconds );
+        int index = rocketnet_encryption_map_add( server->encryption_map, from, current_time + rocketnet_server_handshake_deadline_seconds( server, from ) );
         if ( index == -1 )
         {
             sodium_memzero( &keys, sizeof( keys ) );
@@ -1374,6 +1376,21 @@ static const int * rocketnet_server_link_mtus( const struct rocketnet_server_pro
     return server->link_mtus;
 }
 
+// a half-open mapping's handshake deadline from its creation: the configured
+// deadline, and, when the server's list gives the source's family more than
+// one packet size, the probe's whole bound on top, so a client walking any
+// allowed list finishes before its mapping is removed (standard/TRANSPORT.md
+// t12 rule 14; sdk/rocketnet_link_mtu.h). The default list adds nothing.
+
+static double rocketnet_server_handshake_deadline_seconds( const struct rocketnet_server_protocol_t * server, const struct rocketnet_address_t * from )
+{
+    int num_link_mtus = 0;
+    const int * link_mtus = rocketnet_server_link_mtus( server, &num_link_mtus );
+    int candidates[ROCKETNET_LINK_MTU_MAX_ENTRIES];
+    const bool probes = rocketnet_link_mtu_candidates( link_mtus, num_link_mtus, from->type, candidates ) > 1;
+    return (double) server->handshake_deadline_seconds + ( probes ? ROCKETNET_LINK_MTU_PROBE_BUDGET_SECONDS : 0.0 );
+}
+
 static bool rocketnet_server_packet_bytes_allowed( const struct rocketnet_server_protocol_t * server,
                                                    const struct rocketnet_address_t * from,
                                                    int packet_bytes )
@@ -1486,7 +1503,7 @@ static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * 
     }
 
     const uint8_t * p = packet_data + ROCKETNET_PREFILTER_BYTES;
-    const uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), mapping->handshake_highest_opened );
+    const uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), mapping->replay_session.highest_opened );
 
     if ( sequence == 0 )
     {
@@ -1495,16 +1512,11 @@ static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * 
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // the allowance is spent by the open, whatever it finds: a forged probe
-    // costs its source the update's one open as much as a genuine one
-
-    mapping->probe_update = server->update_number + 1;
-
     uint8_t opened[ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES];
     const int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, (int) sizeof( opened ), packet_data, packet_bytes,
                                                            ROCKETNET_CONNECTION_PROBE_PACKET, sequence,
                                                            server->protocol_id, mapping->connection_salt, NULL,
-                                                           mapping->keys.handshake_client_to_server );
+                                                           mapping->keys.session_client_to_server );
     if ( opened_bytes < 0 )
     {
         rocketnet_spam( "server ignored connection probe. did not open" );
@@ -1512,6 +1524,13 @@ static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * 
         rocketnet_server_integrity_failure( server, mapping_index, mapping );
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
+
+    // only a probe that opened under the session key spends the update's
+    // allowance: a probe forged at the client's address costs one failed
+    // open and never withholds the genuine probe of the same update
+    // (proofs/tla/RNPathProbe.tla ServerRecvForged, ForgedNeverStarves)
+
+    mapping->probe_update = server->update_number + 1;
 
     for ( int i = 0; i < opened_bytes; i++ )
     {
@@ -1523,25 +1542,21 @@ static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * 
         }
     }
 
-    if ( sequence > mapping->handshake_highest_opened )
-    {
-        mapping->handshake_highest_opened = sequence;
-    }
-
     // a probing client is a live half-open connection: its probes refresh
     // the half-open idle clock as its response does
 
     mapping->control->last_receive_time = current_time;
 
-    // the reply: the same wire size, sealed zero padding under the handshake
-    // server-to-client key, on the mapping's handshake sequence
+    // the reply: the same wire size, sealed zero padding under the session
+    // server-to-client key, on the mapping's session sequence
 
     memset( opened, 0, (size_t) opened_bytes );
+    const uint64_t reply_sequence = rocketnet_session_sequence_take( &mapping->send_sequence_session );
     const int reply_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_PROBE_PACKET,
-                                                           server->packet_filter, mapping->send_sequence_handshake,
+                                                           server->packet_filter, reply_sequence,
                                                            NULL, opened_bytes > 0 ? opened : NULL, opened_bytes,
                                                            server->protocol_id, mapping->connection_salt, NULL,
-                                                           mapping->keys.handshake_server_to_client );
+                                                           mapping->keys.session_server_to_client );
     rocketnet_assert( reply_bytes == packet_bytes );
     if ( reply_bytes != packet_bytes )
     {

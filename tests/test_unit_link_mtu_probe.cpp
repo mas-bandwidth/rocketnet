@@ -47,7 +47,8 @@
 static const int probe_three_step[3] = { 1492, 1200, 576 };
 
 // a probe, or a probe reply, of wire_bytes: zero padding (one byte set when
-// nonzero_padding) sealed under key on sequence
+// nonzero_padding) sealed under key on sequence; an end seals it under its
+// session key of its direction
 
 static int probe_write( uint8_t * out, int wire_bytes, uint64_t sequence, const uint8_t * salt, const uint8_t * key, bool nonzero_padding )
 {
@@ -74,6 +75,9 @@ struct probe_server_t
     double time;
 };
 
+// the handshake deadline the next server is set up with
+static int probe_server_deadline_seconds = 30;
+
 // a server on link_mtus (none: the default list), with one client that has
 // sent its request and holds the challenge: a mapping, no slot
 
@@ -91,7 +95,7 @@ static void probe_server_setup( struct probe_server_t * test, const int * link_m
     memcpy( server->cookie_key, rocketnet_test_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     server->cookie_lifetime_seconds = 3;
     server->handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
-    server->handshake_deadline_seconds = 30;
+    server->handshake_deadline_seconds = probe_server_deadline_seconds;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
@@ -190,7 +194,7 @@ static int probe_server_receive( struct probe_server_t * test, const struct rock
 static int probe_server_client_probe( struct probe_server_t * test, uint8_t * out, int wire_bytes, uint64_t sequence, bool nonzero_padding )
 {
     return probe_write( out, wire_bytes, sequence, test->mapping->connection_salt,
-                        test->mapping->keys.handshake_client_to_server, nonzero_padding );
+                        test->mapping->keys.session_client_to_server, nonzero_padding );
 }
 
 // the client's response, with field in its packet size field
@@ -231,7 +235,7 @@ static void test_server_probe_answered_at_its_size_once_per_update()
     const int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, (int) sizeof( opened ), reply, reply_bytes,
                                                            ROCKETNET_CONNECTION_PROBE_PACKET, reply_sequence,
                                                            ROCKETNET_TEST_PROTOCOL_ID, test.mapping->connection_salt, NULL,
-                                                           test.mapping->keys.handshake_server_to_client );
+                                                           test.mapping->keys.session_server_to_client );
     check( opened_bytes == 1172 - PROBE_SEALED_OVERHEAD_BYTES );
     for ( int i = 0; i < opened_bytes; i++ )
     {
@@ -297,9 +301,10 @@ static void test_server_probe_refusals()
         check( reply_bytes == 0 );
         check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_NO_MAPPING] == 1 );
 
-        // sealed under the wrong key: an integrity failure
+        // sealed under the handshake key, not the session key: an integrity
+        // failure
 
-        check( probe_write( probe, 1172, 2, test.mapping->connection_salt, test.mapping->keys.handshake_server_to_client, false ) == 1172 );
+        check( probe_write( probe, 1172, 2, test.mapping->connection_salt, test.mapping->keys.handshake_client_to_server, false ) == 1172 );
         check( probe_server_receive( &test, &test.client_address, probe, 1172, reply, &reply_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
         check( reply_bytes == 0 );
         check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_DID_NOT_OPEN] == 1 );
@@ -395,6 +400,99 @@ static void test_server_response_packet_size_field()
 
 REGISTER_UNIT_TEST( test_server_response_packet_size_field );
 
+
+// A probe forged at the client's address, which does not open under the
+// session key, spends nothing: the genuine probe of the same update is still
+// answered, every update, however many forgeries arrive first (standard/
+// TRANSPORT.md t12 rule 15; proofs/tla/RNPathProbe.tla ForgedNeverStarves).
+// Planted: the allowance spent before the open, the genuine probe is withheld.
+
+static void test_server_forged_probe_does_not_starve_the_client()
+{
+    struct probe_server_t test;
+    probe_server_setup( &test, probe_three_step, 3 );
+
+    uint8_t forged[ROCKETNET_RECEIVE_CEILING];
+    uint8_t probe[ROCKETNET_RECEIVE_CEILING];
+    uint8_t reply[ROCKETNET_RECEIVE_CEILING];
+    int reply_bytes = 0;
+
+    for ( int update = 0; update < 3; update++ )
+    {
+        // a forger knows the address, the size and the sequence, not the key
+        for ( int i = 0; i < 4; i++ )
+        {
+            uint8_t wrong_key[32];
+            memset( wrong_key, 0x5A + i, sizeof( wrong_key ) );
+            check( probe_write( forged, 1172, (uint64_t) ( 2 + update ), test.mapping->connection_salt, wrong_key, false ) == 1172 );
+            check( probe_server_receive( &test, &test.client_address, forged, 1172, reply, &reply_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+            check( reply_bytes == 0 );
+        }
+
+        check( probe_server_client_probe( &test, probe, 1172, (uint64_t) ( 2 + update ), false ) == 1172 );
+        check( probe_server_receive( &test, &test.client_address, probe, 1172, reply, &reply_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_PROBE );
+        check( reply_bytes == 1172 );
+
+        probe_server_next_update( &test );
+    }
+
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_DID_NOT_OPEN] == 12 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_WITHHELD] == 0 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_ANSWERED] == 3 );
+
+    probe_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_server_forged_probe_does_not_starve_the_client );
+
+// The handshake deadline of a half-open mapping: the configured deadline on
+// the default list; on a list that probes, the probe's whole bound more, so a
+// walk of the longest list ends before the mapping does (standard/
+// TRANSPORT.md t12 rule 14). Planted: no bound added, the mapping of a
+// probing server is removed at 5 s, before the walk can end.
+
+static void test_server_probe_bound_extends_the_handshake_deadline()
+{
+    probe_server_deadline_seconds = 5;
+
+    {
+        struct probe_server_t test;
+        probe_server_setup( &test, NULL, 0 );
+        check( test.mapping->control->handshake_deadline == test.time + 5.0 );
+        probe_server_teardown( &test );
+    }
+
+    {
+        const int longest[8] = { 1500, 1400, 1300, 1200, 1000, 800, 700, 576 };
+        struct probe_server_t test;
+        probe_server_setup( &test, longest, 8 );
+        const double created = test.time;
+        check( test.mapping->control->handshake_deadline == created + 5.0 + ROCKETNET_LINK_MTU_PROBE_BUDGET_SECONDS );
+
+        // the client's eighth window ends 8 s after the challenge; its last
+        // probe, answered, refreshes the half-open clock, and the mapping is
+        // still there for the response
+
+        uint8_t probe[ROCKETNET_RECEIVE_CEILING];
+        uint8_t reply[ROCKETNET_RECEIVE_CEILING];
+        int reply_bytes = 0;
+        for ( int step = 0; step < 790; step++ )
+        {
+            probe_server_next_update( &test );
+        }
+        check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) != -1 );
+        check( probe_server_client_probe( &test, probe, 548, 2, false ) == 548 );
+        check( probe_server_receive( &test, &test.client_address, probe, 548, reply, &reply_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_PROBE );
+        check( test.counters.values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 0 );
+
+        probe_server_teardown( &test );
+    }
+
+    probe_server_deadline_seconds = 30;
+}
+
+REGISTER_UNIT_TEST( test_server_probe_bound_extends_the_handshake_deadline );
+
 // ---------------------------------------------------------------------------
 // the client
 
@@ -486,7 +584,7 @@ static int probe_client_reply( struct probe_client_t * test, int wire_bytes, con
 {
     uint8_t reply[ROCKETNET_RECEIVE_CEILING];
     check( probe_write( reply, wire_bytes, test->reply_sequence++, rocketnet_test_salt,
-                        key ? key : test->client.keys.handshake_server_to_client, nonzero_padding ) == wire_bytes );
+                        key ? key : test->client.keys.session_server_to_client, nonzero_padding ) == wire_bytes );
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     return rocketnet_client_protocol_process_packet( &test->client, reply, wire_bytes, test->time, payload, sizeof( payload ), &payload_bytes );
@@ -581,9 +679,10 @@ static void test_client_probe_windows_and_replies()
     check( probe_client_reply( &test, 548, NULL, false ) == 0 );
     check( test.counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SIZE_NOT_CANDIDATE] == 2 );
 
-    // a reply that does not open, and one whose padding is not zero
+    // a reply sealed under the handshake key, which does not open, and one
+    // whose padding is not zero
 
-    check( probe_client_reply( &test, 1172, test.client.keys.handshake_client_to_server, false ) == 0 );
+    check( probe_client_reply( &test, 1172, test.client.keys.handshake_server_to_client, false ) == 0 );
     check( test.counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_DID_NOT_OPEN] == 1 );
     check( probe_client_reply( &test, 1172, NULL, true ) == 0 );
     check( test.counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_PADDING_NOT_ZERO] == 1 );
@@ -611,14 +710,41 @@ static void test_client_probe_windows_and_replies()
 
 REGISTER_UNIT_TEST( test_client_probe_windows_and_replies );
 
+// A window is never longer than its bound, however long the round trip: at
+// a 2 s round trip, ten sends, not sixty (planted: the cap removed, the
+// window is sixty).
+
+static void test_client_probe_window_capped()
+{
+    struct probe_client_t test;
+    probe_client_setup( &test, probe_three_step, 3 );
+    test.client.rtt_estimate = 2.0;
+
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    for ( int i = 0; i < ROCKETNET_CLIENT_PROBE_WINDOW_MAX_SENDS; i++ )
+    {
+        check( probe_client_next_send( &test, packet ) == 1452 );
+    }
+    check( probe_client_next_send( &test, packet ) == 1172 );
+    check( test.counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_WINDOW_EXPIRED] == 1 );
+}
+
+REGISTER_UNIT_TEST( test_client_probe_window_capped );
+
 // Every window expires: four probes of each candidate, then the attempt ends
-// in MTU_PROBE_FAILED with nothing more sent (planted: past the last
-// candidate the client starts over, and the attempt never ends).
+// in MTU_PROBE_FAILED with nothing more sent, though the walk outlasts the
+// silence timeout (planted: past the last candidate the client starts over,
+// and the attempt never ends; or the silence timeout runs while probing, and
+// the attempt ends in -4).
 
 static void test_client_probe_fails_past_the_last_candidate()
 {
     struct probe_client_t test;
     probe_client_setup( &test, probe_three_step, 3 );
+
+    // a silence timeout shorter than the walk: the walk still ends in its own
+    // error, never connection response timed out (-4)
+    test.client.timeout_seconds = 1;
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     const int sizes[3] = { 1452, 1172, 548 };

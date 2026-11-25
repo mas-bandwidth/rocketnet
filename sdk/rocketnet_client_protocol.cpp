@@ -161,11 +161,15 @@ int rocketnet_client_protocol_packet_bytes( const struct rocketnet_client_protoc
 // rest of the handshake is today's. A one-entry list sends no probe.
 // ROCKETNET_CLIENT_PROBE_WINDOW_SENDS is in rocketnet_client_protocol.h.
 
+static_assert( ROCKETNET_LINK_MTU_MAX_ENTRIES * ROCKETNET_CLIENT_PROBE_WINDOW_MAX_SENDS / ROCKETNET_DEFAULT_SEND_RATE <= ROCKETNET_LINK_MTU_PROBE_BUDGET_SECONDS,
+               "a walk of the longest list at the handshake send rate fits the probe's time bound" );
+
 static int rocketnet_client_probe_window_sends( const struct rocketnet_client_protocol_t * client )
 {
     const double rtt_sends = 3.0 * client->rtt_estimate * client->send_rate;
     const int sends = rtt_sends < 1000.0 ? (int) ceil( rtt_sends ) : 1000;
-    return sends > ROCKETNET_CLIENT_PROBE_WINDOW_SENDS ? sends : ROCKETNET_CLIENT_PROBE_WINDOW_SENDS;
+    const int window = sends > ROCKETNET_CLIENT_PROBE_WINDOW_SENDS ? sends : ROCKETNET_CLIENT_PROBE_WINDOW_SENDS;
+    return window < ROCKETNET_CLIENT_PROBE_WINDOW_MAX_SENDS ? window : ROCKETNET_CLIENT_PROBE_WINDOW_MAX_SENDS;
 }
 
 // the connection response, built once: its padding opens with the
@@ -204,15 +208,18 @@ static int rocketnet_client_write_probe( struct rocketnet_client_protocol_t * cl
 {
     rocketnet_assert( packet_bytes >= ROCKETNET_CONNECTION_PROBE_MIN_WIRE_BYTES && packet_bytes <= ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES );
 
+    // sealed under the session client-to-server key, which only the ends of
+    // the ephemeral exchange hold, on the session sequence: a probe is
+    // authenticated as every packet after the challenge is
+
     const int padding_bytes = packet_bytes - ROCKETNET_PACKET_OVERHEAD_BYTES;
+    const uint64_t sequence = rocketnet_session_sequence_take( &client->send_sequence_session );
     const int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_PROBE_PACKET,
-                                                     client->packet_filter, client->send_sequence_handshake,
+                                                     client->packet_filter, sequence,
                                                      NULL, rocketnet_client_probe_zeros, padding_bytes,
                                                      client->signed_fields.protocol_id, client->connection_salt,
-                                                     NULL, client->keys.handshake_client_to_server );
+                                                     NULL, client->keys.session_client_to_server );
     rocketnet_assert( bytes == packet_bytes );
-
-    client->send_sequence_handshake++;
 
     return bytes;
 }
@@ -431,7 +438,11 @@ static void rocketnet_client_check_deadlines( struct rocketnet_client_protocol_t
         return;
     }
 
-    if ( client->timeout_seconds > 0 &&
+    // while the client probes, the probe's own bound ends the attempt (-14,
+    // proofs/tla/RNPathProbe.tla ClientExpireFail): the silence timeout
+    // waits until the probe has chosen a size (standard/TRANSPORT.md t11.4)
+
+    if ( client->timeout_seconds > 0 && !client->probing &&
          current_time - client->last_receive_time >= (double) client->timeout_seconds )
     {
         int timed_out_state = -( client->state + 1 );
@@ -988,7 +999,7 @@ static int rocketnet_client_process_probe( struct rocketnet_client_protocol_t * 
     }
 
     const uint8_t * p = packet_data + ROCKETNET_PREFILTER_BYTES;
-    const uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), client->handshake_highest_opened );
+    const uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), client->replay_session.highest_opened );
     if ( sequence == 0 )
     {
         rocketnet_spam( "client ignored probe reply. zero sequence" );
@@ -1001,7 +1012,7 @@ static int rocketnet_client_process_probe( struct rocketnet_client_protocol_t * 
     const int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, (int) sizeof( opened ), packet_data, packet_bytes,
                                                            ROCKETNET_CONNECTION_PROBE_PACKET, sequence,
                                                            client->signed_fields.protocol_id, client->connection_salt,
-                                                           NULL, client->keys.handshake_server_to_client );
+                                                           NULL, client->keys.session_server_to_client );
     if ( opened_bytes < 0 )
     {
         rocketnet_spam( "client ignored probe reply. did not open" );
@@ -1020,11 +1031,6 @@ static int rocketnet_client_process_probe( struct rocketnet_client_protocol_t * 
             counters[ROCKETNET_COUNTER_CLIENT_PROBE_PADDING_NOT_ZERO]++;
             return 0;
         }
-    }
-
-    if ( sequence > client->handshake_highest_opened )
-    {
-        client->handshake_highest_opened = sequence;
     }
 
     client->last_receive_time = current_time;

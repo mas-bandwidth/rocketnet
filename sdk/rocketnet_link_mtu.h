@@ -108,6 +108,16 @@ static inline bool rocketnet_link_mtu_allows( const int * link_mtus, int num_lin
     return false;
 }
 
+// The probe's time bound (standard/TRANSPORT.md t11.4, t12 rule 14): a
+// window is at most ROCKETNET_LINK_MTU_PROBE_WINDOW_MAX_SENDS sends at the
+// handshake send rate (10 a second), so a client walks a list of
+// ROCKETNET_LINK_MTU_MAX_ENTRIES candidates within
+// ROCKETNET_LINK_MTU_PROBE_BUDGET_SECONDS of the challenge, and a server
+// whose list probes holds a half-open mapping that much longer.
+
+#define ROCKETNET_LINK_MTU_PROBE_WINDOW_MAX_SENDS   10
+#define ROCKETNET_LINK_MTU_PROBE_BUDGET_SECONDS     8.0
+
 // the list checks, each with its own refusal (rocketnet.h, the
 // ROCKETNET_STATUS_LINK_MTU_* statuses): 0 for a valid list
 
