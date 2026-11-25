@@ -155,8 +155,6 @@ int rocketnet_client_protocol_packet_bytes( const struct rocketnet_client_protoc
 // size: the client builds its response once, carrying that size, and the
 // rest of the handshake is today's. A one-entry list sends no probe.
 
-#define ROCKETNET_CLIENT_PROBE_WINDOW_SENDS     4
-
 static int rocketnet_client_probe_window_sends( const struct rocketnet_client_protocol_t * client )
 {
     const double rtt_sends = 3.0 * client->rtt_estimate * client->send_rate;

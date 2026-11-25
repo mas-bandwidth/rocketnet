@@ -125,6 +125,10 @@ struct rocketnet_client_protocol_t
 
 void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters );
 
+// the fewest probes of one candidate packet size before its window expires
+// (rocketnet_client_protocol.cpp, the path probe)
+#define ROCKETNET_CLIENT_PROBE_WINDOW_SENDS     4
+
 // The connection's packet size (sdk/rocketnet_link_mtu.h): the size the
 // response carries, fixed when it is built for the connection's life;
 // ROCKETNET_MAX_PACKET_BYTES before then and on the default link MTU list.
