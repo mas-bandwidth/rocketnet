@@ -1,5 +1,9 @@
 # The rows of RN-1 t11 (TRANSPORT.md), the client state numbers.
 # Format and rules: standard/STYLE.md section 10.
+#include "rocketnet_layers.h"
+#include "rocketnet_link_mtu.h"
+#include "rocketnet_client_protocol.h"
+mtu probe failed	ROCKETNET_CLIENT_TRANSPORT_STATE_MTU_PROBE_FAILED	-14
 protocol violation	ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION	-10
 connect token expired	ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED	-7
 invalid connect token	ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN	-6
@@ -13,3 +17,7 @@ requesting cookie	ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE	1
 sending connection request	ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST	2
 sending connection response	ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE	3
 connected	ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED	4
+link MTU list maximum entries	ROCKETNET_LINK_MTU_MAX_ENTRIES	8
+smallest link MTU	ROCKETNET_LINK_MTU_MIN	546
+IPv6 minimum link MTU	ROCKETNET_LINK_MTU_IPV6_MIN	1280
+probe window sends	ROCKETNET_CLIENT_PROBE_WINDOW_SENDS	4

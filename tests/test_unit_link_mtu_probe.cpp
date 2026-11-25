@@ -4,7 +4,7 @@
 */
 
 // test_unit_link_mtu_probe.cpp -- the path probe, one end at a time
-// (standard/TRANSPORT.md t8.10, t11.4, t12 rule 15; proofs/tla/RNPathProbe.tla).
+// (standard/TRANSPORT.md t8.13, t11.4, t12 rule 15; proofs/tla/RNPathProbe.tla).
 //
 // The server: a probe is answered at its own size only from an address that
 // holds a mapping and no connected slot, one opened per mapping per update,

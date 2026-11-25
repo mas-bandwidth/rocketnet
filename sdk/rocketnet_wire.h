@@ -178,7 +178,7 @@ ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES <= ROCKET
 ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MIN_MTU_WIRE_BYTES, "the connection cookie fits 548 bytes, the UDP payload of a 576-byte IPv4 MTU (576 - 20 - 8)" );
 #define ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES         33  // 6 + 4 + 7 + 0 + 16
 
-// The connection probe (standard/TRANSPORT.md t8.10): sealed zero padding,
+// The connection probe (standard/TRANSPORT.md t8.13): sealed zero padding,
 // sent by a client whose link MTU list gives more than one packet size, after
 // the challenge, at each candidate size; the server answers one at the same
 // size. Its size is a packet size of a link MTU list: from the smallest

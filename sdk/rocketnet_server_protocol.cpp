@@ -1408,7 +1408,7 @@ int rocketnet_server_protocol_mapping_packet_bytes( const struct rocketnet_encry
     return mapping->packet_bytes > 0 ? mapping->packet_bytes : ROCKETNET_MAX_PACKET_BYTES;
 }
 
-// The connection probe (standard/TRANSPORT.md t8.10 and t10;
+// The connection probe (standard/TRANSPORT.md t8.13 and t10;
 // proofs/tla/RNPathProbe.tla ServerRecvProbe). The probe is answered only
 // where the challenge's receiver proved the address: a mapping exists for the
 // source, holds no slot yet, and the probe opens under that mapping's

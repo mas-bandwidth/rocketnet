@@ -1915,7 +1915,7 @@ The constants this section names are:
 |---|---|---|---|
 | message code count | `5` | codes | wire codes 0 to 4 are defined |
 | wide channel threshold | `256` | channels | the lowest channel a WIDE record carries |
-| message fragment bytes | `1152` | bytes | the block stride F at the ceiling; F(P) on a connection of packet size P ([m2.2](#m2.2)) |
+| message fragment bytes | `1152` | bytes | the block stride F at the ceiling; F(P) on a connection of packet size P ([m2.2 Constants](#m2.2)) |
 | message number modulus | `16777216` | numbers | 2^24, the number, sequencing and ordering space |
 | config body bytes | `28` | bytes | the CONFIG control body |
 | payload capacity | `1416` | bytes | the largest payload a sender emits in one packet |

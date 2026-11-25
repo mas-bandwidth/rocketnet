@@ -10,3 +10,5 @@ connection payload packet minimum wire size	ROCKETNET_CONNECTION_PAYLOAD_MIN_WIR
 connection disconnect packet minimum wire size	ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES	33
 connection cookie packet wire size	ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES	38
 connection ack packet minimum wire size	ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES	33
+connection probe packet minimum wire size	ROCKETNET_CONNECTION_PROBE_MIN_WIRE_BYTES	518
+connection probe packet maximum wire size	ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES	1452
