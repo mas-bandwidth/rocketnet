@@ -108,7 +108,13 @@ jobs:
           # 0700 directory under /tmp keeps it short.
           GNUPGHOME=$(mktemp -d /tmp/rn-gnupg.XXXXXX)
           export GNUPGHOME
-          trap 'gpgconf --kill all >/dev/null 2>&1; rm -rf "$GNUPGHOME"' EXIT
+          cleanup_gnupg() {
+            local status=0
+            gpgconf --kill all || status=$?
+            rm -rf "$GNUPGHOME" || status=$?
+            return "$status"
+          }
+          trap cleanup_gnupg EXIT
           gpg --batch --keyid-format long --keyserver hkps://keyserver.ubuntu.com --recv-keys "$PIN"
           FP=$(gpg --batch --with-colons --fingerprint "$PIN" | awk -F: '/^fpr:/ {print $10; exit}')
           echo "signing-key fingerprint ${FP}"
@@ -116,8 +122,8 @@ jobs:
           gpg --batch --status-fd 1 --keyid-format long --verify SHA256SUMS.gpg SHA256SUMS | tee gpg-status.txt
           grep -q '^\[GNUPG:\] GOODSIG ' gpg-status.txt
           grep -q "^\[GNUPG:\] VALIDSIG ${PIN} " gpg-status.txt
-          gpgconf --kill all >/dev/null 2>&1 || true
-          rm -rf "$GNUPGHOME"
+          trap - EXIT
+          cleanup_gnupg
           curl -fL --retry 3 -o "$IMAGE" "$BASE/$IMAGE"
           grep -F "*${IMAGE}" SHA256SUMS | sha256sum -c -
 
