@@ -51,12 +51,6 @@ IPv4 address. Meanwhile, a banned player who switches from home Wi-Fi to mobile
 data can return with a different address.
 See [RFC 6269, section 13.1](https://www.rfc-editor.org/rfc/rfc6269.html#section-13.1).
 
-An IP address is personal data under the GDPR when it can be linked to
-an identifiable person. Using those addresses for ban lists, logs or
-lookups requires a lawful basis, limits on retention and a way to handle
-access requests. An account-based ban list can work without storing any
-IP addresses. See [GDPR recital 30 and articles 5, 6 and 15](https://eur-lex.europa.eu/eli/reg/2016/679/oj/eng/).
-
 Consider a game that checks an IP ban only when its backend issues a
 connect token. Alice's home IP is banned. She requests a token through a
 VPN, disconnects the VPN, and then plays from home. The backend saw the
