@@ -67,7 +67,10 @@ no C# client API.**
   Matching the account to a new server moves its one seat.
 - **Ban administration.** Authorize operators before accepting ban or unban
   requests. Persist bans and the user hash key across backend restarts.
-  The example keeps bans, seats and registrations in memory.
+  The example keeps bans, seats and registrations in memory. If you run
+  multiple backend instances, give them the same user hash key and share
+  the records used for matches and whitelists. See
+  [Running multiple backend instances](../../docs/BANS-AND-WHITELISTS.md#running-multiple-backend-instances).
 
 **Join pacing is title-owned too, and these examples do not do it.**
 `POST /match` mints one token per request as it arrives and does not

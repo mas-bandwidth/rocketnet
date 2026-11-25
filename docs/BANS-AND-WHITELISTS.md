@@ -59,6 +59,24 @@ The [example game server](../examples/backend_server.c) shows how to use
 those calls with a whitelist fetched from either of the
 [Go and C# example backends](../examples/backend/README.md).
 
+### Running multiple backend instances
+
+Suppose instance A records Alice's ban, but the game server's next
+whitelist request goes to instance B. If B still has Alice listed, the
+server keeps her connected. If her next match request also reaches B,
+it may issue her another token.
+
+Use the same user hash key on every instance so the same account always
+maps to the same `client_id`. Have every instance check bans, assign seats
+and build whitelists from a consistent view of the same records. One way
+to do this is to use a shared database with one seat per account and
+have match and whitelist requests read current ban decisions. If you use
+replicas or caches with delayed updates, that delay adds to the time it
+takes a game server to enforce a ban.
+
+Each example backend keeps its own bans, seats and server registrations
+in memory. Running a second copy does not share those records.
+
 ## Run it
 
 Follow steps 1 through 3 of [Production integration](PRODUCTION.md) to build
