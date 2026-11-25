@@ -895,6 +895,7 @@ static const prefilter_seed_t prefilter_seeds[] = {
     { "prefilter_payload_near_ceiling", ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1433 },
     { "prefilter_wrong_epoch", ROCKETNET_PREFILTER_WRONG_EPOCH, -1 },
     { "prefilter_wrong_value", ROCKETNET_PREFILTER_WRONG_VALUE, -1 },
+    { "prefilter_probe", ROCKETNET_CONNECTION_PROBE_PACKET, -1 },
     { "prefilter_reserved_type", SEED_ACCEPTED_ANY_TYPE, -1 },
     { "prefilter_keep_alive_min", ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, -1 },
     { "prefilter_payload_full", ROCKETNET_CONNECTION_PAYLOAD_PACKET, -1 },

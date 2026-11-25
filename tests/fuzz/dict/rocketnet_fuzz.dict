@@ -25,7 +25,8 @@ type_payload="\x05"
 type_disconnect="\x06"
 type_cookie="\x07"
 type_ack="\x08"
-type_reserved="\x09"
+type_probe="\x09"
+type_reserved="\x0a"
 
 # full 6-byte prefilter headers at epoch 0: type, epoch, filter value
 prefilter_request="\x00\x00\xb7\x59\x01\x00"
@@ -37,6 +38,7 @@ prefilter_payload="\x05\x00\xb7\x59\x01\x00"
 prefilter_disconnect="\x06\x00\xb7\x59\x01\x00"
 prefilter_cookie="\x07\x00\xb7\x59\x01\x00"
 prefilter_ack="\x08\x00\xb7\x59\x01\x00"
+prefilter_probe="\x09\x00\xb7\x59\x01\x00"
 
 # ROCKETNET_FILTER_EPOCH_UNKEYED is 0 and every other epoch is refused
 epoch_unkeyed="\x00"
