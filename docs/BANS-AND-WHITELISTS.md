@@ -1,10 +1,25 @@
 # Bans and whitelists
 
-RocketNet recommends banning the authenticated account by its user hash and
-enforcing the ban with each game server's whitelist. RocketNet has no IP
-bans and will not add them.
+## How one purchase can become two live sessions
+
+Alice and Bob buy one copy of a game that allows one online player per
+purchase. Imagine its backend checks ownership and bans whenever it issues
+a token, and its game servers check tokens only when a player connects.
+
+| What happens | What the game server sees |
+| --- | --- |
+| Alice gives Bob her token for server A. Bob joins. | A sees a valid token for Alice's account. Nobody else on A has that id, so Bob starts playing. |
+| While Bob plays, Alice gets a fresh token for server B and joins. | B also sees a valid token for Alice's account. Nobody else on B has that id, so Alice starts playing too. |
+| An operator bans Alice's account. | The backend refuses her next token. A and B receive no update, so both friends keep playing. |
+
+One purchase is now supporting two simultaneous players. Both tokens are
+genuine, each was used just once, and neither server has a duplicate
+connection in its own slots. The same failure applies if the account
+supplies fresh tokens on demand to more friends across more servers.
 
 ## Why IP bans fail
+
+RocketNet has no IP bans and will not add them.
 
 On a mobile network that uses carrier-grade NAT (CGNAT), two strangers
 playing on separate phones with separate subscriptions can reach the game
@@ -24,11 +39,12 @@ address. A ban on Alice's account would apply on either network.
 
 ## How to enforce an account ban
 
-**May this account occupy a seat on this server right now?** The game
-server asks the same question whether the player presents the original
-connect token or a copy. An account in good standing can hold one seat.
-A banned account can hold none. Copying or reusing a token grants no
-additional seat, because every copy carries the same account id.
+RocketNet recommends banning the authenticated account by its user hash
+and enforcing one seat through per-server whitelists. In the example
+above, moving Alice's seat to B removes her id from A's whitelist. A
+disconnects Bob when it receives that update. Banning the account removes
+her id from both lists, so neither friend keeps a seat once the servers
+receive the ban.
 
 The backend verifies the player's sign-in ticket, derives a stable keyed
 user hash from the provider name and user id, and puts that hash in the
@@ -145,19 +161,9 @@ with `rocketnet_server_client_id`. See the [token format](STANDARD.md).
 
 ### What happens if players share a connect token?
 
-Alice and Bob buy one copy of the game. The purchase is on Alice's
-account and entitles that account to one online seat. Alice gives Bob her
-unused connect token, and he connects. While Bob is playing, Alice can
-request another token for herself. The same problem applies to a group of
-friends running unauthorized copies of the game: requests from Alice's
-account could automatically supply a fresh token whenever a friend wants
-to play. The backend can accept each match request while her account is in
-good standing. Every friend could use a different, valid token exactly
-once. A check for token reuse would see no duplicates.
-
-Every token issued for Alice's account carries the same `client_id`.
-Whether two people or ten receive tokens, the backend assigns that id to
-one server at a time.
+In the [one-purchase example](#how-one-purchase-can-become-two-live-sessions),
+Bob and Alice both present Alice's `client_id`. Which check can detect
+the second session depends on where they connect.
 
 - **On the same server:** Bob already occupies Alice's seat. The server
   sees her `client_id` in both connections and refuses Alice's fresh
