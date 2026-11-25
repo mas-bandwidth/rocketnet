@@ -191,7 +191,10 @@ the second session depends on where they connect.
 
 - **On the same server:** Bob already occupies Alice's seat. The server
   reads the same `client_id` from Alice's fresh token, silently ignores
-  the duplicate connection request, and leaves Bob connected. The transport
+  the duplicate connection request, and leaves Bob connected. If both
+  handshakes start while the slot is free, the server checks the id again
+  before assigning a slot. The first player admitted keeps the seat. The
+  server ignores the other handshake before that player joins. The transport
   also refuses reuse of a token from another address while it retains the
   original address binding. See the
   [handshake rules](../standard/TRANSPORT.md#t12) and
