@@ -20,6 +20,11 @@ grows from 292 to 313 counters, appended at the end.
   that needed a full packet, while keep-alives held the connection open; now
   the connection runs at a size the path carries, or the attempt ends in the
   new client state `ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED` (-14).
+  Probes are sealed under the session keys, so only the two ends of the
+  challenge can make one; a forged probe spends nothing. A window is at most
+  10 sends, so a walk of the longest list ends within 8 s; a server whose
+  list probes holds the half-open mapping 8 s longer, and the client's
+  silence timeout waits while it probes.
   standard/TRANSPORT.md t2.3, t8.4, t8.13, t11.4 and t12 rules 15 and 16;
   proofs/tla/RNPathProbe.tla.
 - Create refuses a bad list with its own status:
