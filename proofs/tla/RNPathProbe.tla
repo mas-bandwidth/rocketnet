@@ -3,22 +3,25 @@
 (* The path packet size probe of the handshake: the client's walk down its *)
 (* candidate packet sizes after the challenge, the server's answer to each *)
 (* probe, the size the connection response carries and the slot the server *)
-(* assigns with it (the MTU fallback design: link_mtus in the client and   *)
-(* server configs, packet type 9 connection probe, the response's u16      *)
-(* packet size, the client state -14 mtu probe failed).                    *)
+(* assigns with it (sdk/rocketnet_client_protocol.cpp: the probing branch  *)
+(* of rocketnet_client_protocol_update, rocketnet_client_process_probe;    *)
+(* sdk/rocketnet_server_protocol.cpp: rocketnet_server_process_probe, the  *)
+(* response's size field and rocketnet_server_process_connection_response; *)
+(* standard/TRANSPORT.md t8.10 and t11.4).                                 *)
 (*                                                                         *)
 (* The model starts after the challenge: the client holds the handshake   *)
 (* keys and the server's mapping for the client's address is half-open    *)
-(* (proven).  One client C and one unproven address X, which has no        *)
-(* mapping and no keys: anything X sends fails to open.                    *)
+(* (proven).  Sources: "C", the client; "F", a forger at the client's      *)
+(* address, whose probes find C's mapping and fail to open; "X", an        *)
+(* address with no mapping.                                                *)
 (*                                                                         *)
-(* Sizes are abstract wire sizes 1 .. Ceiling, Ceiling the packet ceiling  *)
-(* (1452 bytes in the code); a control packet (response, keep-alive) is    *)
-(* size 0 and fits any path.  ClientList is the client's candidate list   *)
-(* for the committed family, strictly descending (P of each link_mtus      *)
-(* entry, equal sizes collapsed); ServerList is the server's own candidate *)
-(* set for that family, which may differ.  A one-entry ClientList does no  *)
-(* probing: the response goes at once with that entry's size, as today.    *)
+(* Sizes are wire sizes up to Ceiling (1452 in the code); a control packet *)
+(* (response, keep-alive) is wire size 0 here and fits any path.  ClientSet *)
+(* is the client's candidate set for the committed family (P of each       *)
+(* link_mtus entry, equal sizes collapsed); the walk takes it largest      *)
+(* first, Cand(1) > Cand(2) > ....  ServerList is the server's own        *)
+(* candidate set for that family, which may differ.  A one-entry set does  *)
+(* no probing: the response goes at once with that entry's size.           *)
 (*                                                                         *)
 (* The path has a capacity in each direction, chosen at Init from CapsUp   *)
 (* and CapsDown and fixed for the behaviour: a packet larger than its      *)
@@ -27,43 +30,55 @@
 (* honest probe the server's allowance withholds counted as one) and      *)
 (* packets in flight are a set, delivered in any order.  An on-path       *)
 (* attacker may replay a client probe in flight (a second copy, n = 1) or *)
-(* send a probe of any size from X, at most AttackBudget times in all.     *)
+(* send a probe of any size from X or F, at most AttackBudget times in     *)
+(* all.                                                                    *)
 (*                                                                         *)
 (* Time.  Tick is one client send interval: the client may send one packet *)
-(* (maySend), and the server runs at least one update, which resets the   *)
-(* mapping's probe reply allowance (answered); ServerUpdate is a further   *)
-(* server update inside the interval.  The probe window of candidate idx   *)
-(* is an abstract timer: W sends of the candidate's probe, the client      *)
-(* sending again only when nothing of the last exchange is in flight (the  *)
-(* window, max(4 send intervals, 3 x the challenge RTT), covers a round    *)
-(* trip), and Expire when all W are spent and nothing is in flight.  With  *)
-(* LateExpire the window may expire early, after any send and with packets *)
-(* still in flight, so a reply may arrive in a later window: that is the  *)
-(* safety case of a slow round trip and has no liveness claim.  The        *)
-(* response phase has the same shape (W responses, then the response      *)
-(* timeout, the client state -4).                                          *)
+(* (maySend: the send is due, or the early send an advance armed), and the *)
+(* server runs an update, which resets the mapping's probe reply allowance *)
+(* (answered); ServerUpdate is a further server update inside it.  A probe *)
+(* window is W sends of the candidate's probe (ROCKETNET_CLIENT_PROBE_     *)
+(* WINDOW_SENDS); at the send after the W-th, the client moves to the next *)
+(* candidate and sends its probe (ClientExpireNext) or, past the last,      *)
+(* fails -14 (ClientExpireFail).                                           *)
+(*                                                                         *)
+(* Timed.  FALSE is the code: the client sends at every send opportunity  *)
+(* whatever is in flight, a window can end with its probe or reply still   *)
+(* in flight (so a reply may arrive in a later window, and a reply at a    *)
+(* size at or below the one being probed is taken), the response is      *)
+(* resent at every opportunity, and the silence timeout (-4, the client    *)
+(* state -(3 + 1)) can end sending connection response, probing or not,   *)
+(* at any time.  TRUE adds the assumption the liveness properties need:    *)
+(* the window covers a round trip, so the client sends again only when     *)
+(* nothing of its last exchange is in flight and a window ends only then,  *)
+(* and the response phase is W responses, ended -4 only while the server  *)
+(* holds no slot and nothing is in flight.                                 *)
 (*                                                                         *)
 (* After connected, both ends send payload at the connection's packet     *)
 (* size (the client's size, the server's slot size); upGot and downGot are *)
-(* ghosts set when one arrives.  No connection timeout is modelled: in the *)
-(* code small keep-alives keep a connection whose full-size packets are   *)
-(* all dropped alive forever (reliable_message_timeout_ms defaults to 0),  *)
-(* which is the hang NoHang names.                                         *)
+(* ghosts set when one arrives.  No connection timeout is modelled: small  *)
+(* keep-alives keep a connection whose full-size packets are all dropped   *)
+(* alive, which is the hang NoHang names.                                  *)
 (*                                                                         *)
 (*   ClientSendProbe        a probe of the current candidate's size        *)
-(*   ClientExpire           the probe window ends: next candidate, or -14  *)
+(*   ClientExpireNext       the window ends: the next candidate's probe    *)
+(*   ClientExpireFail       the window of the last candidate ends: -14,    *)
+(*                          the attempt's state zeroed (ClientReset)       *)
 (*   ClientRecvReply(r)     a matching reply (a size at an index <= idx)   *)
-(*                          fixes the packet size and moves to sending the *)
-(*                          response, with one early send                  *)
+(*                          fixes the packet size, builds the response and *)
+(*                          arms the early send                            *)
 (*   ClientSendResponse     the response, carrying the packet size         *)
-(*   ClientTimeout          the response phase ends: -4                    *)
+(*   ClientTimeout          silence: -4, the attempt's state zeroed        *)
 (*   ClientRecvKeepAlive(r) connected                                      *)
-(*   ServerRecvProbe(p)     answer (proven mapping, half-open, a size on   *)
-(*                          the server's own list, the update's allowance  *)
-(*                          unspent, a reply of the same size) or ignore   *)
+(*   ServerRecvProbe(p)     in the code's order: a size on the server's    *)
+(*                          own list, a mapping for the source, no slot,   *)
+(*                          the update's allowance unspent (else withheld) *)
+(*                          then the allowance is spent, and a probe that  *)
+(*                          opens is answered with a reply of its size     *)
 (*   ServerRecvResponse(p)  half-open and the size on its list: the slot,  *)
-(*                          with that size, and a keep-alive; connected:   *)
-(*                          a keep-alive again                             *)
+(*                          with that size, and the first keep-alive;      *)
+(*                          otherwise ignored                              *)
+(*   ServerSendKeepAlive    the connected slot's keep-alive on its clock   *)
 (*   ClientSendData, ServerSendData, ClientRecvData, ServerRecvData        *)
 (*   Tick, ServerUpdate     the clocks                                     *)
 (*   LoseUp, LoseDown, Replay, AttackProbe   the environment               *)
@@ -71,13 +86,13 @@
 (*                                                                         *)
 (* Broken selects a reversed witness:                                      *)
 (*   "today"       no probe: the client sends its response at once with   *)
-(*                 the ceiling, the code before the design; on a path     *)
-(*                 that cannot carry it the client connects on the small  *)
+(*                 the ceiling, the code before the probe; on a path that *)
+(*                 cannot carry it the client connects on the small        *)
 (*                 keep-alive and full-size payload never arrives          *)
 (*                 (CarriedBothWays, and NoHang and FailsWhenNoneFits as   *)
 (*                 temporal properties);                                   *)
-(*   "unproven"    the server answers a probe from an address with no     *)
-(*                 mapping whose probe did not open (ReplyOnlyProven);     *)
+(*   "unproven"    the server answers a probe with no mapping, or one     *)
+(*                 that did not open (ReplyOnlyProven);                    *)
 (*   "larger"      the server answers with its largest size, not the      *)
 (*                 probe's (ReplyNoLarger);                                *)
 (*   "offlist"     the server answers a size not on its own list          *)
@@ -90,46 +105,45 @@
 (*                 candidate the path drops probes forever (Ends);         *)
 (*   "skiplast"    the walk ends one candidate early, so a client whose   *)
 (*                 path carries only its last candidate fails -14          *)
-(*                 (ConnectsWhenFits).  "today" also connects a client    *)
-(*                 whose path carries none of its candidates               *)
-(*                 (FailsWhenNoneFits).                                    *)
+(*                 (ConnectsWhenFits).                                     *)
 (***************************************************************************)
-EXTENDS Integers, Sequences, FiniteSets
+EXTENDS Integers, FiniteSets
 
 CONSTANTS
-    Ceiling,        \* the packet ceiling: sizes are 1 .. Ceiling
-    ClientList,     \* the client's candidates, strictly descending
+    Ceiling,        \* the packet ceiling, ROCKETNET_MAX_PACKET_BYTES
+    ClientSet,      \* the client's candidate packet sizes
     ServerList,     \* the server's own candidate set
     CapsUp,         \* the path capacities client -> server to explore
     CapsDown,       \* the path capacities server -> client to explore
-    W,              \* sends in one probe window, and in the response phase
+    W,              \* sends in one probe window, and responses when Timed
     MaxLoss,        \* the most packets that fit and are lost, in a behaviour
-    AttackBudget,   \* the most attacker sends (replays and probes from X)
-    LateExpire,     \* TRUE: a window may expire with packets in flight
+    AttackBudget,   \* the most attacker sends (replays and probes from X or F)
+    Timed,          \* TRUE: the window covers a round trip (the liveness cases)
     Broken          \* "none", or the reversed witness
 
-Sizes == 1..Ceiling
-Range(f) == {f[i] : i \in DOMAIN f}
-
 ASSUME /\ Ceiling \in Nat \ {0}
-       /\ ClientList \in Seq(Sizes) /\ Len(ClientList) >= 1
-       /\ \A i \in 1..Len(ClientList) - 1 : ClientList[i] > ClientList[i + 1]
-       /\ ServerList \subseteq Sizes /\ ServerList # {}
+       /\ ClientSet \subseteq 1..Ceiling /\ ClientSet # {}
+       /\ ServerList \subseteq 1..Ceiling /\ ServerList # {}
        /\ CapsUp \subseteq 0..Ceiling /\ CapsUp # {}
        /\ CapsDown \subseteq 0..Ceiling /\ CapsDown # {}
        /\ W \in Nat \ {0} /\ MaxLoss \in Nat /\ AttackBudget \in Nat
-       /\ LateExpire \in BOOLEAN
+       /\ Timed \in BOOLEAN
        /\ Broken \in {"none", "today", "unproven", "larger", "offlist",
                       "noallowance", "slotceiling", "noexpire", "skiplast"}
 
-Probing == Len(ClientList) > 1
-Cand(i) == ClientList[i]
+N == Cardinality(ClientSet)
+Probing == N > 1
+\* the i-th largest candidate: the walk's order
+Cand(i) == CHOOSE c \in ClientSet : Cardinality({d \in ClientSet : d > c}) = i - 1
 Max(S) == CHOOSE m \in S : \A x \in S : x <= m
+
+\* every size a packet can carry here
+Sizes == ClientSet \cup ServerList \cup {Ceiling}
 
 \* packets: one record shape for both directions
 Pkt(k, src, s, p, n) == [k |-> k, src |-> src, s |-> s, p |-> p, n |-> n]
 UpPackets ==
-    {Pkt("probe", a, s, 0, n) : a \in {"C", "X"}, s \in Sizes, n \in {0, 1}}
+    {Pkt("probe", a, s, 0, n) : a \in {"C", "F", "X"}, s \in Sizes, n \in {0, 1}}
     \cup {Pkt("resp", "C", s, 0, 0) : s \in Sizes}
     \cup {Pkt("data", "C", s, 0, 0) : s \in Sizes}
 DownPackets ==
@@ -141,21 +155,21 @@ VARIABLES
     capUp,          \* the path's capacity client -> server (environment)
     capDown,        \* the path's capacity server -> client (environment)
     phase,          \* "probe", "response", "connected", "failed" (-14), "timedout" (-4)
-    idx,            \* the candidate being probed
-    size,           \* the client's packet size, 0 until chosen
-    sends,          \* sends of this window (probe) or of the response phase
-    maySend,        \* the client may send this interval
+    idx,            \* probe_index + 1: the candidate being probed
+    size,           \* the client's packet_bytes, 0 until chosen
+    sends,          \* probe_sends (and, when Timed, the responses sent)
+    maySend,        \* the client's send is due, or its early send armed
     mapping,        \* the server's mapping of C: "halfopen" or "connected"
-    slot,           \* the slot's packet size, 0 until assigned
-    answered,       \* the mapping's probe reply allowance is spent this update
-    up,             \* packets in flight client -> server
-    down,           \* packets in flight server -> client
+    slot,           \* the mapping's packet_bytes, 0 until the slot
+    answered,       \* the mapping's probe_update is this update
+    up,             \* packets in flight client -> server (environment)
+    down,           \* packets in flight server -> client (environment)
     losses,         \* packets lost so far (environment)
     attacks,        \* attacker sends so far (environment)
     proof,          \* ghost: the reply the client took: [up, down] sizes that crossed
     upGot,          \* ghost: a payload reached the server
     downGot,        \* ghost: a payload reached the client
-    badUnproven,    \* ghost: a reply went to an address that never opened
+    badUnproven,    \* ghost: a reply to a probe with no mapping or that did not open
     badLarger,      \* ghost: a reply larger than the probe it answers
     badOffList,     \* ghost: a reply of a size not on the server's list
     badTwice        \* ghost: a second reply to one mapping in one update
@@ -163,8 +177,6 @@ VARIABLES
 vars == << capUp, capDown, phase, idx, size, sends, maySend, mapping, slot,
            answered, up, down, losses, attacks, proof, upGot, downGot,
            badUnproven, badLarger, badOffList, badTwice >>
-
-ghosts == << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
 \* the wire size: a response and a keep-alive are control packets, size 0
 \* (the response carries the packet size s in its padding)
@@ -178,6 +190,10 @@ ProbeInFlight == \E p \in up : p.k = "probe" /\ p.src = "C" /\ p.s = Cand(idx)
 ReplyInFlight == \E r \in down : r.k = "reply" /\ r.s = Cand(idx)
 ResponseInFlight == \E p \in up : p.k = "resp"
 KeepAliveInFlight == \E r \in down : r.k = "ka"
+ExchangeIdle == ~ProbeInFlight /\ ~ReplyInFlight
+
+\* the last candidate the walk reaches
+LastIdx == IF Broken = "skiplast" THEN N - 1 ELSE N
 
 Init ==
     /\ capUp \in CapsUp
@@ -189,7 +205,7 @@ Init ==
             ELSE /\ phase = "response" /\ size = Cand(1)
     /\ idx = 1
     /\ sends = 0
-    /\ maySend = TRUE                \* the challenge's early send
+    /\ maySend = TRUE                \* the challenge armed the early send
     /\ mapping = "halfopen"
     /\ slot = 0
     /\ answered = FALSE
@@ -208,46 +224,67 @@ Init ==
 -----------------------------------------------------------------------------
 (* The client *)
 
+\* A terminal state ends the attempt and zeroes it (rocketnet_client_set_state,
+\* rocketnet_client_connection_reset): the probe index and count, the packet
+\* size and the send clock, so the next send is due at once.
+ClientReset ==
+    /\ idx' = 1
+    /\ size' = 0
+    /\ sends' = 0
+    /\ maySend' = TRUE
+
 ClientSendProbe ==
     /\ phase = "probe"
     /\ maySend
     /\ sends < W \/ Broken = "noexpire"
-    /\ ~ProbeInFlight /\ ~ReplyInFlight
+    /\ Timed => ExchangeIdle
     /\ up' = SendUp(Pkt("probe", "C", Cand(idx), 0, 0))
     /\ sends' = IF sends < W THEN sends + 1 ELSE sends
     /\ maySend' = FALSE
     /\ UNCHANGED << capUp, capDown, phase, idx, size, mapping, slot, answered,
                     down, losses, attacks >>
-    /\ UNCHANGED ghosts
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
-ClientExpire ==
+ClientExpireNext ==
     /\ phase = "probe"
+    /\ maySend
+    /\ sends >= W
     /\ Broken # "noexpire"
-    /\ IF LateExpire
-       THEN sends >= 1
-       ELSE sends = W /\ ~ProbeInFlight /\ ~ReplyInFlight
-    /\ IF idx < Len(ClientList) - (IF Broken = "skiplast" THEN 1 ELSE 0)
-       THEN /\ idx' = idx + 1
-            /\ sends' = 0
-            /\ UNCHANGED phase
-       ELSE /\ phase' = "failed"
-            /\ UNCHANGED << idx, sends >>
-    /\ UNCHANGED << capUp, capDown, size, maySend, mapping, slot, answered,
-                    up, down, losses, attacks >>
-    /\ UNCHANGED ghosts
+    /\ idx < LastIdx
+    /\ Timed => ExchangeIdle
+    /\ idx' = idx + 1
+    /\ sends' = 1
+    /\ up' = SendUp(Pkt("probe", "C", Cand(idx + 1), 0, 0))
+    /\ maySend' = FALSE
+    /\ UNCHANGED << capUp, capDown, phase, size, mapping, slot, answered,
+                    down, losses, attacks >>
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
+
+ClientExpireFail ==
+    /\ phase = "probe"
+    /\ maySend
+    /\ sends >= W
+    /\ Broken # "noexpire"
+    /\ idx >= LastIdx
+    /\ Timed => ExchangeIdle
+    /\ phase' = "failed"
+    /\ ClientReset
+    /\ UNCHANGED << capUp, capDown, mapping, slot, answered, up, down, losses,
+                    attacks >>
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
 \* A reply opens under the handshake server-to-client key (every reply here
-\* is the server's to C); it matches when its size is a candidate at an index
-\* at or below the one being probed. Anything else is ignored.
+\* is sealed under C's mapping); it matches when its size is a candidate at
+\* an index at or below the one being probed. Anything else is ignored.
 ClientRecvReply(r) ==
     /\ r \in down
     /\ r.k = "reply"
     /\ down' = down \ {r}
-    /\ IF phase = "probe" /\ r.s \in {Cand(j) : j \in 1..idx}
+    /\ IF phase = "probe" /\ \E j \in 1..idx : Cand(j) = r.s
        THEN /\ phase' = "response"
             /\ size' = r.s
-            /\ sends' = 0
-            /\ maySend' = TRUE        \* one early send for this advance
+            /\ sends' = IF Timed THEN 0 ELSE sends
+            /\ maySend' = TRUE        \* the early send for this advance
             /\ proof' = [up |-> r.p, down |-> r.s]
        ELSE /\ UNCHANGED << phase, size, sends, maySend >>
             /\ UNCHANGED proof
@@ -258,23 +295,26 @@ ClientRecvReply(r) ==
 ClientSendResponse ==
     /\ phase = "response"
     /\ maySend
-    /\ sends < W
-    /\ ~ResponseInFlight /\ ~KeepAliveInFlight
+    /\ Timed => sends < W /\ ~ResponseInFlight /\ ~KeepAliveInFlight
     /\ up' = SendUp(Pkt("resp", "C", size, 0, 0))
-    /\ sends' = sends + 1
+    /\ sends' = IF Timed THEN sends + 1 ELSE sends
     /\ maySend' = FALSE
     /\ UNCHANGED << capUp, capDown, phase, idx, size, mapping, slot, answered,
                     down, losses, attacks >>
-    /\ UNCHANGED ghosts
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
 ClientTimeout ==
-    /\ phase = "response"
-    /\ sends = W
-    /\ ~ResponseInFlight /\ ~KeepAliveInFlight
+    /\ IF Timed
+       THEN /\ phase = "response"
+            /\ sends = W
+            /\ ~ResponseInFlight /\ ~KeepAliveInFlight
+            /\ mapping = "halfopen"
+       ELSE phase \in {"probe", "response"}
     /\ phase' = "timedout"
-    /\ UNCHANGED << capUp, capDown, idx, size, sends, maySend, mapping, slot,
-                    answered, up, down, losses, attacks >>
-    /\ UNCHANGED ghosts
+    /\ ClientReset
+    /\ UNCHANGED << capUp, capDown, mapping, slot, answered, up, down, losses,
+                    attacks >>
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
 ClientRecvKeepAlive(r) ==
     /\ r \in down
@@ -283,7 +323,7 @@ ClientRecvKeepAlive(r) ==
     /\ phase' = IF phase = "response" THEN "connected" ELSE phase
     /\ UNCHANGED << capUp, capDown, idx, size, sends, maySend, mapping, slot,
                     answered, up, losses, attacks >>
-    /\ UNCHANGED ghosts
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
 ClientSendData ==
     /\ phase = "connected"
@@ -292,7 +332,7 @@ ClientSendData ==
     /\ up' # up
     /\ UNCHANGED << capUp, capDown, phase, idx, size, sends, maySend, mapping,
                     slot, answered, down, losses, attacks >>
-    /\ UNCHANGED ghosts
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
 ClientRecvData(r) ==
     /\ r \in down
@@ -306,19 +346,26 @@ ClientRecvData(r) ==
 -----------------------------------------------------------------------------
 (* The server *)
 
-\* the probe opens under the handshake client-to-server key: only C's do
-Opens(p) == p.src = "C"
-
-\* the checks, each of which a witness drops
-Proven(p) == Broken = "unproven" \/ (Opens(p) /\ mapping = "halfopen")
+\* the code's checks, in its order; each witness drops one
 OnList(p) == Broken = "offlist" \/ p.s \in ServerList
+Mapped(p) == p.src \in {"C", "F"}            \* the source address has C's mapping
+HalfOpen(p) == Mapped(p) /\ mapping = "halfopen"
 Allowed == Broken = "noallowance" \/ ~answered
+Opens(p) == p.src = "C"                      \* only C holds the handshake keys
 ReplySize(p) == IF Broken = "larger" THEN Max(ServerList) ELSE p.s
 
+\* the allowance is spent by the open, whatever it finds
+Spend(p) == OnList(p) /\ HalfOpen(p) /\ Allowed
+Answer(p) ==
+    IF Broken = "unproven"
+    THEN OnList(p) /\ (~Mapped(p) \/ Spend(p))
+    ELSE Spend(p) /\ Opens(p)
+
 \* An honest probe the allowance withholds: the client's probe arrived in the
-\* same server update as an earlier one (delay bunched them). To the client
-\* that is a lost attempt, so it spends the loss budget.
-Withheld(p) == Proven(p) /\ OnList(p) /\ ~Allowed /\ Opens(p) /\ p.n = 0
+\* same server update as an earlier one (delay bunched them, or a forger
+\* spent the allowance first). To the client that is a lost attempt, so it
+\* spends the loss budget.
+Withheld(p) == OnList(p) /\ HalfOpen(p) /\ ~Allowed /\ Opens(p) /\ p.n = 0
 
 ServerRecvProbe(p) ==
     /\ p \in up
@@ -326,21 +373,21 @@ ServerRecvProbe(p) ==
     /\ up' = up \ {p}
     /\ Withheld(p) => losses < MaxLoss
     /\ losses' = IF Withheld(p) THEN losses + 1 ELSE losses
-    /\ IF Proven(p) /\ OnList(p) /\ Allowed
-       THEN /\ answered' = TRUE
-            /\ down' = IF Opens(p)
-                       THEN SendDown(Pkt("reply", "S", ReplySize(p), p.s, 0))
-                       ELSE down     \* a reply to X: never reaches C
-            /\ IF ~Opens(p) THEN badUnproven' = TRUE ELSE UNCHANGED badUnproven
-            /\ IF ReplySize(p) > p.s THEN badLarger' = TRUE ELSE UNCHANGED badLarger
-            /\ IF ReplySize(p) \notin ServerList THEN badOffList' = TRUE ELSE UNCHANGED badOffList
-            /\ IF answered THEN badTwice' = TRUE ELSE UNCHANGED badTwice
-       ELSE /\ UNCHANGED << answered, down >>
-            /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ answered' = IF Spend(p) THEN TRUE ELSE answered
+    /\ down' = IF Answer(p) /\ Mapped(p)
+               THEN SendDown(Pkt("reply", "S", ReplySize(p), p.s, 0))
+               ELSE down     \* no reply, or one to X: never reaches C
+    /\ IF Answer(p) /\ ~(Mapped(p) /\ Opens(p)) THEN badUnproven' = TRUE ELSE UNCHANGED badUnproven
+    /\ IF Answer(p) /\ ReplySize(p) > p.s THEN badLarger' = TRUE ELSE UNCHANGED badLarger
+    /\ IF Answer(p) /\ ReplySize(p) \notin ServerList THEN badOffList' = TRUE ELSE UNCHANGED badOffList
+    /\ IF Answer(p) /\ Mapped(p) /\ answered THEN badTwice' = TRUE ELSE UNCHANGED badTwice
     /\ UNCHANGED << capUp, capDown, phase, idx, size, sends, maySend, mapping,
                     slot, attacks, proof, upGot, downGot >>
 
-\* the response opens; the size it carries must be on the server's own list
+\* the response opens; the size it carries must be on the server's own list;
+\* the slot is assigned with it and the first keep-alive goes back at once.
+\* A response to a connected mapping is ignored (its keep-alives are on their
+\* own clock, ServerSendKeepAlive).
 ServerRecvResponse(p) ==
     /\ p \in up
     /\ p.k = "resp"
@@ -349,13 +396,18 @@ ServerRecvResponse(p) ==
        THEN /\ mapping' = "connected"
             /\ slot' = IF Broken = "slotceiling" THEN Ceiling ELSE p.s
             /\ down' = SendDown(Pkt("ka", "S", 0, 0, 0))
-       ELSE IF mapping = "connected"
-            THEN /\ down' = SendDown(Pkt("ka", "S", 0, 0, 0))
-                 /\ UNCHANGED << mapping, slot >>
-            ELSE UNCHANGED << mapping, slot, down >>
+       ELSE UNCHANGED << mapping, slot, down >>
     /\ UNCHANGED << capUp, capDown, phase, idx, size, sends, maySend, answered,
                     losses, attacks >>
-    /\ UNCHANGED ghosts
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
+
+ServerSendKeepAlive ==
+    /\ mapping = "connected"
+    /\ Timed => ~KeepAliveInFlight
+    /\ down' = SendDown(Pkt("ka", "S", 0, 0, 0))
+    /\ UNCHANGED << capUp, capDown, phase, idx, size, sends, maySend, mapping,
+                    slot, answered, up, losses, attacks >>
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
 ServerSendData ==
     /\ mapping = "connected"
@@ -364,7 +416,7 @@ ServerSendData ==
     /\ down' # down
     /\ UNCHANGED << capUp, capDown, phase, idx, size, sends, maySend, mapping,
                     slot, answered, up, losses, attacks >>
-    /\ UNCHANGED ghosts
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
 ServerRecvData(p) ==
     /\ p \in up
@@ -384,14 +436,14 @@ Tick ==
     /\ answered' = FALSE
     /\ UNCHANGED << capUp, capDown, phase, idx, size, sends, mapping, slot, up,
                     down, losses, attacks >>
-    /\ UNCHANGED ghosts
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
 ServerUpdate ==
     /\ answered
     /\ answered' = FALSE
     /\ UNCHANGED << capUp, capDown, phase, idx, size, sends, maySend, mapping,
                     slot, up, down, losses, attacks >>
-    /\ UNCHANGED ghosts
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
 \* a packet that fits is lost on the way (an attacker's needs no loss)
 LoseUp(p) ==
@@ -402,7 +454,7 @@ LoseUp(p) ==
     /\ losses' = losses + 1
     /\ UNCHANGED << capUp, capDown, phase, idx, size, sends, maySend, mapping,
                     slot, answered, down, attacks >>
-    /\ UNCHANGED ghosts
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
 LoseDown(r) ==
     /\ losses < MaxLoss
@@ -411,7 +463,7 @@ LoseDown(r) ==
     /\ losses' = losses + 1
     /\ UNCHANGED << capUp, capDown, phase, idx, size, sends, maySend, mapping,
                     slot, answered, up, attacks >>
-    /\ UNCHANGED ghosts
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
 \* an on-path copy of a client probe in flight, the client's address its source
 Replay(p) ==
@@ -423,27 +475,31 @@ Replay(p) ==
     /\ attacks' = attacks + 1
     /\ UNCHANGED << capUp, capDown, phase, idx, size, sends, maySend, mapping,
                     slot, answered, down, losses >>
-    /\ UNCHANGED ghosts
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
-\* a probe of any size from an address that never opened
-AttackProbe(s) ==
+\* a probe of any size that does not open: from X, an address with no
+\* mapping, or from F, a forger at the client's own address
+AttackProbe(a, s) ==
     /\ attacks < AttackBudget
-    /\ up' = up \cup {Pkt("probe", "X", s, 0, 0)}
+    /\ up' = up \cup {Pkt("probe", a, s, 0, 0)}
     /\ up' # up
     /\ attacks' = attacks + 1
     /\ UNCHANGED << capUp, capDown, phase, idx, size, sends, maySend, mapping,
                     slot, answered, down, losses >>
-    /\ UNCHANGED ghosts
+    /\ UNCHANGED << proof, upGot, downGot, badUnproven, badLarger, badOffList, badTwice >>
 
 \* the attempt is over: failed and timed out end it, and a connected client
 \* whose packets are all delivered or dropped has nothing left to do
 Done ==
     /\ phase \in {"connected", "failed", "timedout"}
-    /\ UNCHANGED vars
+    /\ UNCHANGED << capUp, capDown, phase, idx, size, sends, maySend, mapping, slot,
+                    answered, up, down, losses, attacks, proof, upGot, downGot,
+                    badUnproven, badLarger, badOffList, badTwice >>
 
 Next ==
     \/ ClientSendProbe
-    \/ ClientExpire
+    \/ ClientExpireNext
+    \/ ClientExpireFail
     \/ \E r \in down : ClientRecvReply(r)
     \/ ClientSendResponse
     \/ ClientTimeout
@@ -452,6 +508,7 @@ Next ==
     \/ \E r \in down : ClientRecvData(r)
     \/ \E p \in up : ServerRecvProbe(p)
     \/ \E p \in up : ServerRecvResponse(p)
+    \/ ServerSendKeepAlive
     \/ ServerSendData
     \/ \E p \in up : ServerRecvData(p)
     \/ Tick
@@ -459,17 +516,19 @@ Next ==
     \/ \E p \in up : LoseUp(p)
     \/ \E r \in down : LoseDown(r)
     \/ \E p \in up : Replay(p)
-    \/ \E s \in Sizes : AttackProbe(s)
+    \/ \E a \in {"X", "F"}, s \in Sizes : AttackProbe(a, s)
     \/ Done
 
 \* Every step of the two ends and every delivery is weakly fair; the clocks
 \* too. Loss, the attacker and the extra server update are not.
 Fairness ==
     /\ WF_vars(ClientSendProbe)
-    /\ WF_vars(ClientExpire)
+    /\ WF_vars(ClientExpireNext)
+    /\ WF_vars(ClientExpireFail)
     /\ WF_vars(ClientSendResponse)
     /\ WF_vars(ClientTimeout)
     /\ WF_vars(ClientSendData)
+    /\ WF_vars(ServerSendKeepAlive)
     /\ WF_vars(ServerSendData)
     /\ WF_vars(Tick)
     /\ \A r \in DownPackets : WF_vars(ClientRecvReply(r))
@@ -488,18 +547,18 @@ FairSpec == Spec /\ Fairness
 TypeOK ==
     /\ capUp \in 0..Ceiling /\ capDown \in 0..Ceiling
     /\ phase \in {"probe", "response", "connected", "failed", "timedout"}
-    /\ idx \in 1..Len(ClientList)
-    /\ size \in 0..Ceiling
+    /\ idx \in 1..N
+    /\ size \in {0} \cup Sizes
     /\ sends \in 0..W
     /\ maySend \in BOOLEAN
     /\ mapping \in {"halfopen", "connected"}
-    /\ slot \in 0..Ceiling
+    /\ slot \in {0} \cup Sizes
     /\ answered \in BOOLEAN
     /\ up \subseteq UpPackets
     /\ down \subseteq DownPackets
     /\ losses \in 0..MaxLoss
     /\ attacks \in 0..AttackBudget
-    /\ proof \in [up : 0..Ceiling, down : 0..Ceiling]
+    /\ proof \in [up : {0} \cup Sizes, down : {0} \cup Sizes]
     /\ {upGot, downGot, badUnproven, badLarger, badOffList, badTwice} \subseteq BOOLEAN
 
 \* (1) both ends hold the same packet size: when the client is connected the
@@ -507,19 +566,19 @@ TypeOK ==
 SlotAgrees == phase = "connected" => mapping = "connected" /\ slot = size
 
 \* the chosen size is one of the client's own candidates
-ChosenIsCandidate == phase \in {"response", "connected"} => size \in Range(ClientList)
+ChosenIsCandidate == phase \in {"response", "connected"} => size \in ClientSet
 
 \* (2) a probing client is connected only at a size the path carries both
 \* ways, and a packet of that size has crossed each way: the probe the reply
-\* answers up, the reply down. A one-entry list does no probing.
+\* answers up, the reply down. A one-entry set does no probing.
 CarriedBothWays ==
     (phase = "connected" /\ Probing) => size <= capUp /\ size <= capDown
 CrossedBothWays ==
     (phase = "connected" /\ Probing) => proof.up >= size /\ proof.down >= size
 
-\* (3) the server never answers an address whose probe did not open under the
-\* handshake keys of a proven mapping, never with a packet larger than the one
-\* it answers, and only with sizes on its own list
+\* (3) the server never answers a probe that has no mapping or did not open
+\* under the handshake keys, never with a packet larger than the one it
+\* answers, and only with sizes on its own list
 ReplyOnlyProven == ~badUnproven
 ReplyNoLarger == ~badLarger
 ReplyOwnList == ~badOffList
@@ -529,15 +588,15 @@ OneReplyPerUpdate == ~badTwice
 
 \* Reachability, not a rule: a probing client never takes a reply from an
 \* earlier window than the one it is in. MCRNPathProbeReachLateReply.cfg
-\* must violate it, so the late-reply path of LateExpire is explored.
+\* must violate it, so the late-reply path of the code is explored.
 NoLateReplyTaken ==
     (phase \in {"response", "connected"} /\ Probing) => size = Cand(idx)
 
 -----------------------------------------------------------------------------
-(* Liveness, under FairSpec *)
+(* Liveness, under FairSpec with Timed *)
 
 Fits(c) == c \in ServerList /\ c <= capUp /\ c <= capDown
-SomeFits == IF Probing THEN \E i \in 1..Len(ClientList) : Fits(Cand(i))
+SomeFits == IF Probing THEN \E i \in 1..N : Fits(Cand(i))
                        ELSE Cand(1) \in ServerList
 LossNotTotal == MaxLoss < W
 

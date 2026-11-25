@@ -1253,7 +1253,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     mapping->control->client_index = client_index;
     mapping->control->established = 1;
 
-    // proofs/tla/RNPathProbe.tla Connect, SlotAgrees: the connection's packet
+    // proofs/tla/RNPathProbe.tla ServerRecvResponse, SlotAgrees: the connection's packet
     // size is the one its response carried, fixed here for the connection's
     // life; the client fixed the same size when it built the response
 
@@ -1402,6 +1402,11 @@ int rocketnet_server_protocol_client_packet_bytes( const struct rocketnet_server
     return rocketnet_server_protocol_mapping_packet_bytes( rocketnet_encryption_map_entry( server->encryption_map, mapping_index ) );
 }
 
+// proofs/tla/RNPathProbe.tla ServerSendData and ServerRecvData: after
+// connect, every session packet the server seals to this mapping is at most
+// the slot's size, the one the response carried, and the client's packets
+// arrive at its own size, the same one (SlotAgrees)
+
 int rocketnet_server_protocol_mapping_packet_bytes( const struct rocketnet_encryption_mapping_t * mapping )
 {
     rocketnet_assert( mapping );
@@ -1466,7 +1471,14 @@ static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * 
     // probe_update holds the update number plus one, so a mapping's zero
     // means no probe opened yet, even before the server's first update
 
+#if defined( ROCKETNET_PATH_PROBE_PLANT )
+    // the trace check's plant (tests/tla_trace_path_probe.cpp): the
+    // allowance is spent but never read, so a second probe of one update is
+    // opened and answered
+    if ( mapping->probe_update == server->update_number + 1 && mapping->probe_update == 0 )
+#else  // #if defined( ROCKETNET_PATH_PROBE_PLANT )
     if ( mapping->probe_update == server->update_number + 1 )
+#endif // #if defined( ROCKETNET_PATH_PROBE_PLANT )
     {
         rocketnet_spam( "server ignored connection probe. one probe per mapping per update" );
         counters[ROCKETNET_COUNTER_CONNECTION_PROBE_WITHHELD]++;
@@ -2123,6 +2135,8 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
 
     server->counters->handshakes_processed_this_update = 0;
     server->num_repeat_tokens = 0;
+    // proofs/tla/RNPathProbe.tla ServerUpdate and Tick: a new update renews
+    // every mapping's one probe reply (probe_update, OneReplyPerUpdate)
     server->update_number++;
     if ( server->cookie_reply_sources && server->cookie_reply_sources_dirty )
     {
@@ -2429,6 +2443,9 @@ static int rocketnet_server_keep_alive_due( const struct rocketnet_server_protoc
 }
 
 // proofs/tla/ServerConnection.tla ServerKeepAlive
+// proofs/tla/RNPathProbe.tla ServerSendKeepAlive: the connected slot's
+// keep-alives on their own clock; a response to a connected mapping is
+// ignored, so these are what a client whose first keep-alive was lost hears
 int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_protocol_t * server,
                                                        int client_index,
                                                        double current_time,

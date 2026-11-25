@@ -307,6 +307,25 @@ LAYERS = {
         # time grows faster than the walk: 200 steps a seed stays in budget
         "steps": 200,
     },
+    "path-probe": {
+        "modules": ["RNPathProbe.tla", "TraceRNPathProbe.tla"],
+        "untraced": {
+            "ClientSendData": "the payload after connect is the session layer's; the walk stops sending from the client at connect",
+            "ServerSendData": "the payload after connect is the session layer's; the walk sends the slot only keep-alives",
+            "ClientRecvData": "no payload is sent (ClientSendData, ServerSendData)",
+            "ServerRecvData": "no payload is sent (ClientSendData, ServerSendData)",
+        },
+        "ghost": {
+            "proof": "the reply the client took, kept for CrossedBothWays; the code keeps only the size",
+            "upGot": "a payload reached the server, kept for NoHang; no payload is sent",
+            "downGot": "a payload reached the client, kept for NoHang; no payload is sent",
+            "badUnproven": "the history of ReplyOnlyProven, computed by the model",
+            "badLarger": "the history of ReplyNoLarger, computed by the model",
+            "badOffList": "the history of ReplyOwnList, computed by the model",
+            "badTwice": "the history of OneReplyPerUpdate, computed by the model",
+        },
+        "reach": ["LateReplyTaken", "ConnectedBelowFirst"],
+    },
 }
 
 # The CI shards (ci.yml tla-trace, --shard I/10 with --seeds 1-4; 5, 7, 8 and 9
@@ -339,7 +358,7 @@ SHARDS = [
     ["msgx:4", "msgxsendruns", "gather"],
     ["xdp-reply-macs:1", "example", "queue-worker"],
     ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring", "fillphase"],
-    ["xdp-reply-macs:4", "xdp-gateway-refresh"],
+    ["xdp-reply-macs:4", "xdp-gateway-refresh", "path-probe"],
     ["ackapply", "bank", "receive", "receive-handoff-xdp", "msgxreceivefill", "client-receive-handoff"],
     ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks", "receive-handoff"],
     ["msgx:reach"],

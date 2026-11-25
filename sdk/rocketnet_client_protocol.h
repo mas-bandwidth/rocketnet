@@ -26,6 +26,10 @@
 
 #define ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS             10
 
+// the sends of one path probe window, the least a window is
+// (proofs/tla/RNPathProbe.tla W; rocketnet_client_protocol.cpp)
+#define ROCKETNET_CLIENT_PROBE_WINDOW_SENDS                 4
+
 // Pointer-only dependency, deliberately incomplete here: the counters
 // (rocketnet_counters.h). The implementation file includes the full
 // definition it consumes.
@@ -164,6 +168,13 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
                                        double current_time,
                                        uint8_t * out_packet,
                                        int * out_packet_bytes );
+
+// Whether the next update sends its state's packet: the early send a
+// handshake advance armed, or the send interval elapsed. The update reads
+// its send decision here and nowhere else (proofs/tla/RNPathProbe.tla
+// maySend, which the TLA+ trace check reads through this call).
+
+bool rocketnet_client_protocol_send_ready( const struct rocketnet_client_protocol_t * client, double current_time );
 
 // Processes one received packet. Returns 1 when the packet was accepted and
 // advanced or fed the connection, 0 when it was refused -- the counters name

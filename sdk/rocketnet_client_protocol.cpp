@@ -134,6 +134,11 @@ void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client
     rocketnet_ack_endpoint_reset( &client->ack );
 }
 
+// proofs/tla/RNPathProbe.tla ClientSendData and ClientRecvData: after
+// connect, every session packet the client seals is at most this size, the
+// one its response carried, and the server's packets to it are at the slot's
+// size, the same one (SlotAgrees)
+
 int rocketnet_client_protocol_packet_bytes( const struct rocketnet_client_protocol_t * client )
 {
     rocketnet_assert( client );
@@ -154,6 +159,7 @@ int rocketnet_client_protocol_packet_bytes( const struct rocketnet_client_protoc
 // (a late reply to an earlier window included) is the connection's packet
 // size: the client builds its response once, carrying that size, and the
 // rest of the handshake is today's. A one-entry list sends no probe.
+// ROCKETNET_CLIENT_PROBE_WINDOW_SENDS is in rocketnet_client_protocol.h.
 
 static int rocketnet_client_probe_window_sends( const struct rocketnet_client_protocol_t * client )
 {
@@ -402,6 +408,8 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
 
 // proofs/tla/ClientConnection.tla Tick (TickRule with Erase TRUE): the deadline or the
 // timeout goes through rocketnet_client_set_state, which zeroes the keys.
+// proofs/tla/RNPathProbe.tla ClientTimeout: the silence timeout ends sending
+// connection response, probing or not, at -4.
 
 static void rocketnet_client_check_deadlines( struct rocketnet_client_protocol_t * client, double current_time )
 {
@@ -521,6 +529,20 @@ static bool rocketnet_client_send_due( const struct rocketnet_client_protocol_t 
     return current_time - client->last_send_time >= 1.0 / client->send_rate - ROCKETNET_SEND_INTERVAL_TOLERANCE_SECONDS;
 }
 
+// the early send counts only in the two states whose advance arms it
+// (proofs/tla/ClientConnection.tla ClientEarlySend; RNPathProbe.tla maySend)
+
+bool rocketnet_client_protocol_send_ready( const struct rocketnet_client_protocol_t * client, double current_time )
+{
+    rocketnet_assert( client );
+
+    const bool early_send = client->handshake_early_send &&
+                            ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST ||
+                              client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
+    return early_send || rocketnet_client_send_due( client, current_time );
+}
+
 // proofs/tla/ClientConnection.tla ClientSend and ClientEarlySend
 
 void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * client,
@@ -552,16 +574,14 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
     // Retries of the same state stay on the tick, and nothing is sent from
     // the receive path itself.
 
-    const bool early_send = client->handshake_early_send &&
-                            ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST ||
-                              client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+    const bool send_ready = rocketnet_client_protocol_send_ready( client, current_time );
     client->handshake_early_send = 0;
 
     // proofs/tla/RNEndpoint.tla WriteAck: sends a packet that carries only the owed acks.
     // An owed ack goes out on this update, outside the scheduled send rate.
     // Type 8 does not add debt, so the ack cannot ping-pong.
 
-    if ( !early_send && !rocketnet_client_send_due( client, current_time ) )
+    if ( !send_ready )
     {
         if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              client->ack.ack_debt >= ROCKETNET_ACK_DEBT_THRESHOLD )
@@ -623,9 +643,12 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
 
         case ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE:
         {
-            // proofs/tla/RNPathProbe.tla ClientSendProbe and ClientExpire:
-            // a probing client sends its candidate's probe, a window at a
-            // time, and fails -14 past its last candidate
+            // proofs/tla/RNPathProbe.tla ClientSendProbe, ClientExpireNext and
+            // ClientExpireFail: a probing client sends its candidate's probe
+            // at every send, whatever is in flight; the send after a window's
+            // last moves to the next candidate and sends its probe in the same
+            // call, and past the last candidate fails -14, which zeroes the
+            // attempt (ClientReset)
 
             if ( client->probing )
             {
@@ -655,7 +678,8 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
                 break;
             }
 
-            // the stored response, byte-identical every retransmission
+            // proofs/tla/RNPathProbe.tla ClientSendResponse: the stored
+            // response, byte-identical every retransmission, at every send
             memcpy( out_packet, client->stored_response, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
 
             *out_packet_bytes = ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES;
@@ -1441,6 +1465,7 @@ static int rocketnet_client_process_keep_alive( struct rocketnet_client_protocol
     rocketnet_spam( "client received keep alive" );
 
     // the first keep-alive is how the client learns it is connected, and which slot it holds; the validator already accepted its index
+    // (proofs/tla/RNPathProbe.tla ClientRecvKeepAlive)
 
     if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
     {
