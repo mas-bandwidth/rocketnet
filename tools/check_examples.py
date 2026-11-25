@@ -4,7 +4,8 @@
 Each examples/*.c may include only "rocketnet.h", "dev_keys.h" (the examples'
 protocol id and packet filter), "shutdown.h" (the command-line wait for
 shutdown), "thread.h" (the platform's threads, start and join, for the
-server examples' split-off half of the network update) and the C standard
+server examples' split-off half of the network update), "link_mtus.h" (the
+backend examples' --link-mtus flag) and the C standard
 headers below, and may name only rocketnet_
 identifiers that sdk/rocketnet.h declares. A rocketnet_client_connect call's
 status is kept in a variable, never compared where it is made, so a refused
@@ -27,6 +28,7 @@ ALLOWED_HEADERS = {
     "dev_keys.h",
     "shutdown.h",
     "thread.h",
+    "link_mtus.h",
     "stdio.h",
     "time.h",
     "stdlib.h",
@@ -86,7 +88,7 @@ def main(argv=None):
     root = args.root.resolve()
     examples = root / "examples"
     header = root / "sdk" / "rocketnet.h"
-    sources = sorted(examples.glob("*.c")) + sorted(examples.glob("thread.h"))
+    sources = sorted(examples.glob("*.c")) + sorted(examples.glob("thread.h")) + sorted(examples.glob("link_mtus.h"))
     if not sources:
         print(f"FAIL: 0 files match {examples}/*.c", file=sys.stderr)
         return 1

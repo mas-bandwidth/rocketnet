@@ -19,6 +19,11 @@
     three calls) is split off to run on another thread in parallel with the
     main thread, and joined at the start of the next frame.
 
+    --link-mtus <list> sets the link MTU list (examples/link_mtus.h); every
+    client must be given the same list. When a client connects the server
+    prints the packet size that client's connection chose and its largest
+    unreliable message.
+
     Run this server, then a backend, then example_backend_client. See
     examples/backend/README.md.
 */
@@ -29,6 +34,7 @@
 #include "dev_keys.h"
 #include "shutdown.h"
 #include "thread.h"
+#include "link_mtus.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -161,6 +167,14 @@ int main( int argc, char ** argv )
 {
     const char * port = getenv( "ROCKETNET_EXAMPLE_PORT" );
 
+    int link_mtus[ROCKETNET_MAX_LINK_MTUS];
+    int num_link_mtus = 0;
+    argc = rn_cli_take_link_mtus( argc, argv, link_mtus, &num_link_mtus );
+    if ( argc < 0 )
+    {
+        return 1;
+    }
+
     int game_threads = 1;
 
     for ( int i = 1; i + 1 < argc; i++ )
@@ -230,6 +244,11 @@ int main( int argc, char ** argv )
     config.max_clients = MAX_CLIENTS;
     config.transport = "portable";
     memcpy( config.packet_filter, packet_filter, sizeof( packet_filter ) );
+    if ( num_link_mtus > 0 )
+    {
+        memcpy( config.link_mtus, link_mtus, sizeof( int ) * (size_t) num_link_mtus );
+        config.num_link_mtus = num_link_mtus;
+    }
 #if ROCKETNET_DEV
     const uint8_t dev_backend_public_key[] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     memcpy( config.backend_public_key, dev_backend_public_key, sizeof( dev_backend_public_key ) );
@@ -316,6 +335,7 @@ int main( int argc, char ** argv )
     }
 
     int had_client = 0, echoed = 0, thread_failed = 0;
+    int reported[MAX_CLIENTS] = { 0 };
     const double start = rocketnet_time();
     double frame_end = start + FRAME_DT;
     for ( uint32_t frame_number = 0; rocketnet_time() - start < 60.0; frame_number++ )
@@ -372,6 +392,21 @@ int main( int argc, char ** argv )
 
         // 3. the world update, on the main thread: a game simulates here.
         // This server only notes whether its client has come and gone
+
+        // each client's packet size, chosen from the link MTU list by its own
+        // handshake, and its largest UNRELIABLE message, once per connection
+
+        for ( int client_index = 0; client_index < MAX_CLIENTS; client_index++ )
+        {
+            const int connected = rocketnet_server_client_connected( server, client_index );
+            if ( connected && !reported[client_index] )
+            {
+                printf( "backend_server: client %d packet_bytes=%d max_unreliable_message_bytes=%d\n", client_index,
+                        rocketnet_server_client_max_packet_bytes( server, client_index ),
+                        rocketnet_server_client_max_unreliable_message_bytes( server, client_index ) );
+            }
+            reported[client_index] = connected;
+        }
 
         if ( rocketnet_server_num_connected_clients( server ) > 0 )
         {

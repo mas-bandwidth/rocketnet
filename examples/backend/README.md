@@ -155,6 +155,73 @@ protect its process and environment. Key-generation mode clears its temporary
 private-key buffer after printing, and minting clears temporary session-key
 buffers. This does not erase the key output or token held by the caller.
 
+## Path MTU
+
+The link MTU list (`link_mtus` and `num_link_mtus` in the client and server
+configs) is the set of link sizes a connection may settle on, largest first.
+The default is the one entry 1500: no probe, and the same packets as a build
+without the list. A longer list makes the client probe after the challenge,
+trying each size in turn. The first size that crosses both ways becomes the
+connection's packet size for its whole life, at both ends. If no size crosses,
+the client ends in `ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED` (-14) instead of hanging.
+
+**Both sides must use the same list.** The server only answers the sizes its
+own list gives. Set the list in code, or with `ROCKETNET_CLIENT_LINK_MTUS` and
+`ROCKETNET_SERVER_LINK_MTUS`. The backend examples take
+`--link-mtus <list>` on both `example_backend_server` and
+`example_backend_client`.
+
+```sh
+./bin/example_backend_server --link-mtus 1500,1492
+./bin/example_backend_client --link-mtus 1500,1492 --token "$(curl -s http://127.0.0.1:8080/match/1)"
+```
+
+Once connected, each prints the packet size its connection chose and the
+largest unreliable message that fits in one packet:
+`rocketnet_client_max_packet_bytes` and
+`rocketnet_client_max_unreliable_message_bytes`, and on the server
+`rocketnet_server_client_max_packet_bytes` and
+`rocketnet_server_client_max_unreliable_message_bytes` for each client.
+
+A packet size is the link MTU less the IP and UDP headers: 28 bytes over IPv4
+and 48 over IPv6. It is never above the 1452-byte ceiling. Two entries that
+give one family the same size are one candidate, and that size is probed once.
+
+**PPPoE.** Many DSL and fibre home links run PPPoE. Its 8-byte header makes
+the link MTU 1492 (1500 less 8).
+
+- **IPv4:** a full packet is 1452 + 28 = 1480 bytes, which fits in 1492. On
+  IPv4, the lists 1500 and 1500, 1492 behave identically: one candidate,
+  1452, and no probe.
+- **IPv6:** a full packet is 1452 + 48 = 1500 bytes, which a 1492 PPPoE path
+  drops.
+
+For games with IPv6 players, use `{ 1500, 1492 }`. IPv4 connections are
+unchanged. An IPv6 connection behind PPPoE loses its 1452 probe and settles on
+1444.
+
+**VPNs and tunnels.** Players behind a VPN or tunnel can have much smaller
+links. For them, use the three-step list `{ 1492, 1200, 576 }`. It gives IPv4
+the sizes 1452, 1172 and 548. IPv6 skips entries below 1280, so it gets 1444
+alone. The 548 step needs a larger message window: with the default 1 MiB
+message, set `reliable_messages_in_flight` and `packets_in_flight` to 4096 at
+both ends, or create refuses the list (`LINK_MTUS_TOO_SMALL_FOR_MESSAGES`).
+
+**Join cost.** Each size that does not cross costs one probe window before the
+next is tried. A window is three round trips, at least 0.4 s and at most 1 s.
+The server holds a half-open connection up to 8 s longer while a list probes.
+The handshake time on a path with no added delay, in 10 ms steps:
+
+| List | Path carries | Packet size (IPv4) | Join |
+| --- | --- | --- | --- |
+| 1500 (default) | any | 1452 | 40 ms |
+| 1492, 1200, 576 | 1492 | 1452 | 50 ms |
+| 1492, 1200, 576 | 1200 | 1172 | 450 ms |
+| 1492, 1200, 576 | 576 | 548 | 850 ms |
+
+The 1452 step costs one probe round trip over the default. Each fallback adds
+a window. On a path with real delay, add the round trips.
+
 ## Configuration reference
 
 All backend settings are read from environment variables so no key or deployment

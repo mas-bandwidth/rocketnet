@@ -20,6 +20,13 @@ For each backend in examples/backend/:
    message and receives the echo. Server and client must both exit 0 with
    PASS as their last line.
 
+4. Path MTU. Step 3 runs twice: on the default link MTU list (no flag) and
+   with --link-mtus 1492,1200,576 given to both server and client. Both
+   ends must report the packet size the connection chose and its largest
+   unreliable message, the same at each end. Loopback carries every size, so
+   both runs choose the first candidate: 1452 bytes and a largest unreliable
+   message of 1411 (ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES).
+
 This is the functional tier: it uses sockets and the wall clock. The unit
 tests of the backends are `go test` in examples/backend/go and
 `dotnet run --project Tests` in examples/backend/csharp. Each backend is
@@ -55,6 +62,12 @@ CLIENT_ID = 1234567890123
 
 # the published development server public key (sdk/rocketnet_connect_token.cpp),
 # whose secret half backend_check_token opens the sealed block with
+# the three-step link MTU list, and what a path that carries its first entry
+# gives over IPv4: a 1492 link less 28 header bytes is above the 1452 ceiling
+THREE_STEP = "1492,1200,576"
+LOOPBACK_PACKET_BYTES = 1452
+LOOPBACK_MAX_UNRELIABLE_MESSAGE_BYTES = 1411
+
 DEV_SERVER_PUBLIC_KEY = bytes.fromhex("3d2490889d374c296fab1d5770cb71476a06f74ef2f2540cf2215f7614f4801c")
 
 
@@ -209,14 +222,27 @@ def register_server(url, values):
         return False
 
 
-def end_to_end(name, command, server_binary, client_binary, keys, production):
-    label = f"backend_{name}_end_to_end"
+def reported_sizes(output, prefix):
+    """The packet_bytes and max_unreliable_message_bytes an example printed after prefix, or None."""
+    for line in output.splitlines():
+        if line.startswith(prefix + "packet_bytes="):
+            fields = dict(field.split("=", 1) for field in line[len(prefix):].split())
+            try:
+                return int(fields["packet_bytes"]), int(fields["max_unreliable_message_bytes"])
+            except (KeyError, ValueError):
+                return None
+    return None
+
+
+def end_to_end(name, command, server_binary, client_binary, keys, production, link_mtus=None):
+    label = f"backend_{name}_end_to_end" + ("_link_mtus" if link_mtus else "")
+    link_args = ["--link-mtus", link_mtus] if link_mtus else []
     workdir = Path(tempfile.mkdtemp(prefix=f"rocketnet_backend_{name}_"))
     server = backend = None
     try:
         env = backend_environment({"ROCKETNET_SERVER_BACKEND_PUBLIC_KEY": keys["ROCKETNET_SERVER_BACKEND_PUBLIC_KEY"]})
         env["ROCKETNET_EXAMPLE_PORT"] = str(free_port(socket.SOCK_DGRAM))
-        server = subprocess.Popen([str(server_binary)], cwd=workdir, env=env,
+        server = subprocess.Popen([str(server_binary)] + link_args, cwd=workdir, env=env,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         values = wait_for(lambda: read_env_file(workdir / "backend.env"), server, READY_SECONDS)
         if not values:
@@ -241,7 +267,7 @@ def end_to_end(name, command, server_binary, client_binary, keys, production):
             out, _ = stop(backend)
             return fail(label, f"backend served no token\n{out}")
 
-        client = subprocess.run([str(client_binary), "--token", token], cwd=workdir, env=backend_environment({}), capture_output=True, text=True, timeout=execution_timeout(TIMEOUT_SECONDS))
+        client = subprocess.run([str(client_binary), "--token", token] + link_args, cwd=workdir, env=backend_environment({}), capture_output=True, text=True, timeout=execution_timeout(TIMEOUT_SECONDS))
         if client.returncode != 0 or last_line(client.stdout) != "PASS":
             return fail(label, f"client exited {client.returncode}\n{client.stdout}{client.stderr}")
         try:
@@ -250,13 +276,19 @@ def end_to_end(name, command, server_binary, client_binary, keys, production):
             return fail(label, "server did not exit after its client disconnected")
         if server.returncode != 0 or last_line(server_out) != "PASS":
             return fail(label, f"server exited {server.returncode}\n{server_out}")
+        expected = (LOOPBACK_PACKET_BYTES, LOOPBACK_MAX_UNRELIABLE_MESSAGE_BYTES)
+        for role, output, prefix in (("client", client.stdout, "backend_client: "), ("server", server_out, "backend_server: client 0 ")):
+            sizes = reported_sizes(output, prefix)
+            if sizes != expected:
+                return fail(label, f"{role} reported packet_bytes and max_unreliable_message_bytes {sizes}, expected {expected}")
         if production:
             for role, output in (("client", client.stdout), ("server", server_out)):
                 if f"backend_{role}: mode=production transport=portable" not in output.splitlines():
                     observed = [line for line in output.splitlines() if line.startswith(f"backend_{role}:")]
                     return fail(label, f"{role} did not confirm production portable mode: {observed}")
         print(f"backend_{name}: fresh_keys=true server_registered_http=true token_from_http=true "
-              f"production_required={str(production).lower()} portable_echo=true")
+              f"production_required={str(production).lower()} portable_echo=true "
+              f"link_mtus={link_mtus or 'default'} packet_bytes={expected[0]} max_unreliable_message_bytes={expected[1]}")
         return True
     finally:
         for process in (backend, server):
@@ -303,6 +335,9 @@ def main():
             if not end_to_end(name, command, binaries["example_backend_server"], binaries["example_backend_client"], keys, args.production):
                 return 1
             print(f"PASS backend_{name}_end_to_end")
+            if not end_to_end(name, command, binaries["example_backend_server"], binaries["example_backend_client"], keys, args.production, THREE_STEP):
+                return 1
+            print(f"PASS backend_{name}_end_to_end_link_mtus")
     finally:
         shutil.rmtree(outdir, ignore_errors=True)
     return 0
