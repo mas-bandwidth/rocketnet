@@ -167,9 +167,13 @@ the last good list. See [how the server decides when to disconnect a player](BAN
 The client posts a sign-in ticket to `/match`. The backend verifies the
 ticket, derives a stable `client_id` from the provider and user id, and
 selects a registered server. It checks the account's ban before assigning
-the seat and minting a token. The example selects a server at random.
-A game can select by match, region or capacity. The [backend integration
-guide](../examples/backend/README.md#connecting-a-real-game-backend) identifies
+the seat and minting a token. For player bans, use this keyed account id
+and the server's whitelist. That keeps a ban in effect when the player changes
+networks and leaves other subscribers behind the same carrier-grade NAT
+unaffected. See [why IP bans fail](BANS-AND-WHITELISTS.md#why-ip-bans-fail).
+
+The example selects a server at random. A game can select by match, region
+or capacity. The [backend integration guide](../examples/backend/README.md#connecting-a-real-game-backend) identifies
 the functions to replace.
 
 The minted 768-byte connect token (encoded as 1024 base64 characters, the

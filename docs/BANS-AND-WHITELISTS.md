@@ -1,14 +1,32 @@
 # Bans and whitelists
 
-Ban a player by their account. A player can change networks, and several
-players can share one public IP address. RocketNet has no IP bans and will
-not add them.
+RocketNet recommends banning the authenticated account by its user hash and
+enforcing the ban with each game server's whitelist. RocketNet has no IP
+bans and will not add them.
 
-The backend decides who may play. It puts the authenticated player's 64-bit
-`client_id` in a connect token and assigns that id to one game server. Each
-server fetches its whitelist from the backend and disconnects players whose
-ids are missing. A ban therefore affects both the player's next match and
-the session they already have open.
+## Why IP bans fail
+
+With carrier-grade NAT (CGNAT), an internet provider can put many
+unrelated subscribers behind one public IPv4 address. Two players in
+different homes can appear to the game server at the same address.
+Banning that address for one player's conduct also locks out the other.
+Meanwhile, the banned player can switch from home Wi-Fi to mobile data
+and return with a different address. An address ban can keep the wrong
+player out and let the same account back in.
+See [RFC 6269, section 13.1](https://www.rfc-editor.org/rfc/rfc6269.html#section-13.1).
+
+## How to enforce an account ban
+
+The backend verifies the player's sign-in ticket and derives a stable,
+keyed user hash from the provider name and user id. It puts that hash in
+the signed connect token as the 64-bit `client_id` and assigns the id to
+one game server's whitelist. The same account gets the same id after a
+network change. Other accounts sharing the address keep their own seats.
+
+When an operator bans the account, the backend refuses to issue it new
+tokens and omits its id from every whitelist it returns. A game server
+disconnects the player when it receives the updated list. This also covers
+a connection made with a token the backend issued before the ban.
 
 ## Run it
 
