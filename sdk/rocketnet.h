@@ -142,7 +142,9 @@
 #define ROCKETNET_MAX_LINK_MTUS                            8
 
 /// Maximum application payload bytes per packet, excluding RocketNet overhead.
-/// A multiple of eight.
+/// A multiple of eight. This is the value at ROCKETNET_MAX_PACKET_BYTES, the
+/// ceiling; a connection whose link MTU list gave it a smaller packet size
+/// carries less per packet.
 
 #define ROCKETNET_MAX_PACKET_PAYLOAD_BYTES                 1416
 
@@ -153,6 +155,9 @@
 /// UNRELIABLE becomes RELIABLE.
 /// UNRELIABLE_SEQUENCED becomes RELIABLE_SEQUENCED on its channel.
 /// UNRELIABLE_WITH_ACK_RECEIPT becomes RELIABLE_WITH_ACK_RECEIPT.
+/// This is the value at the ceiling packet size; one connection's own limit
+/// is rocketnet_client_max_unreliable_message_bytes or
+/// rocketnet_server_client_max_unreliable_message_bytes.
 
 #define ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES             1411
 
@@ -2513,7 +2518,10 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_connect_token( const s
 /// RELIABLE_ORDERED_WITH_ACK_RECEIPT; for RELIABLE_SEQUENCED 1399, or 1398 on
 /// a channel of 256 or more. Every one is at most
 /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES. Size a per-packet game message against
-/// the value for the mode and channel it is sent on.
+/// the value for the mode and channel it is sent on. These are the values at
+/// the ceiling packet size ROCKETNET_MAX_PACKET_BYTES; on a connection with a
+/// smaller packet size each is smaller by the same amount
+/// (rocketnet_client_max_unreliable_message_bytes).
 ///
 /// A pure function: it reads and changes no state, counts nothing and works
 /// before init. Thread: any thread.
@@ -2959,6 +2967,35 @@ ROCKETNET_EXPORT const char * rocketnet_client_state_name( enum rocketnet_client
 /// for a NULL client, which counts as API misuse.
 
 ROCKETNET_EXPORT int rocketnet_client_index( const struct rocketnet_client_t * client );
+
+/// Returns the connection's packet size: the most wire bytes any datagram of
+/// the connection carries, in either direction. The handshake chooses it from
+/// the link MTU list (link_mtus) and it is fixed for the connection's life:
+/// ROCKETNET_MAX_PACKET_BYTES (1452) on the default list.
+///
+/// Callable in every client state. Thread: not thread-safe; the caller owns
+/// the client one thread at a time.
+///
+/// @param client The client.
+/// @return The packet size in bytes while CONNECTED, or 0 in every other
+/// state and for a NULL client, which counts as API misuse.
+
+ROCKETNET_EXPORT int rocketnet_client_max_packet_bytes( struct rocketnet_client_t * client );
+
+/// Returns the largest UNRELIABLE message the connection sends in one packet,
+/// without promoting it to RELIABLE: ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES
+/// (1411) at the default packet size, less on a connection with a smaller one
+/// (rocketnet_client_max_packet_bytes). A larger UNRELIABLE message is still
+/// sent, as RELIABLE.
+///
+/// Callable in every client state. Thread: not thread-safe; the caller owns
+/// the client one thread at a time.
+///
+/// @param client The client.
+/// @return The limit in bytes while CONNECTED, or 0 in every other state and
+/// for a NULL client, which counts as API misuse.
+
+ROCKETNET_EXPORT int rocketnet_client_max_unreliable_message_bytes( struct rocketnet_client_t * client );
 
 /// Returns the selected transport name, or NULL when no transport is
 /// selected: while DISCONNECTED, and in a negative state that holds no
@@ -3629,6 +3666,38 @@ ROCKETNET_EXPORT int rocketnet_server_num_connected_clients( const struct rocket
 /// @return True if a client is connected in the slot.
 
 ROCKETNET_EXPORT bool rocketnet_server_client_connected( const struct rocketnet_server_t * server, int client_index );
+
+/// Returns the packet size of the slot's connection: the most wire bytes any
+/// datagram of the connection carries, in either direction. The handshake
+/// chooses it from the link MTU list (link_mtus) and it is fixed for the
+/// connection's life: ROCKETNET_MAX_PACKET_BYTES (1452) on the default list.
+///
+/// Callable running or stopped; 0 while stopped. Thread: not thread-safe; the
+/// caller owns the server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns 0.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error and counts as API misuse.
+/// @return The packet size in bytes, or 0 for a slot with no connected client.
+
+ROCKETNET_EXPORT int rocketnet_server_client_max_packet_bytes( struct rocketnet_server_t * server, int client_index );
+
+/// Returns the largest UNRELIABLE message the slot's connection sends in one
+/// packet, without promoting it to RELIABLE:
+/// ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES (1411) at the default packet size,
+/// less on a connection with a smaller one
+/// (rocketnet_server_client_max_packet_bytes). A larger UNRELIABLE message is
+/// still sent, as RELIABLE.
+///
+/// Callable running or stopped; 0 while stopped. Thread: not thread-safe; the
+/// caller owns the server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns 0.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error and counts as API misuse.
+/// @return The limit in bytes, or 0 for a slot with no connected client.
+
+ROCKETNET_EXPORT int rocketnet_server_client_max_unreliable_message_bytes( struct rocketnet_server_t * server, int client_index );
 
 /// Returns the client ID from the slot's connect token.
 /// Zero is also a valid ID. Check rocketnet_server_client_connected first.

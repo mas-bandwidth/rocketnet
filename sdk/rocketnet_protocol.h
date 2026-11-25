@@ -185,12 +185,14 @@ bool rocketnet_session_ack_eligible_on_open( uint8_t packet_type );
 bool rocketnet_session_elicits_ack( uint8_t packet_type );
 
 // The ack block a session packet carries ahead of other_bytes of type data:
-// as much of the block as fits the send budget beside them, at most the
-// block maximum. Returns the block's length (rocketnet_ack_block_build).
+// as much of the block as fits the connection's packet size packet_bytes
+// beside them (ROCKETNET_SEND_BUDGET, the ceiling, for a connection at the
+// default; sdk/rocketnet_link_mtu.h), at most the block maximum. Returns the
+// block's length (rocketnet_ack_block_build).
 
 struct rocketnet_replay_protection_t;
 
-int rocketnet_session_ack_block_build( uint8_t * output, int other_bytes, const struct rocketnet_replay_protection_t * accepted );
+int rocketnet_session_ack_block_build( uint8_t * output, int packet_bytes, int other_bytes, const struct rocketnet_replay_protection_t * accepted );
 
 // The cookie: address validation before any asymmetric work. The MAC is a
 // 16-byte keyed generichash over the exact input encoding from the standard:

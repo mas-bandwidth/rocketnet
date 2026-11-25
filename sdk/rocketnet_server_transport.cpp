@@ -5363,6 +5363,18 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         return NULL;
     }
 
+    // the connection's payload capacity C(P), from its packet size
+    // (sdk/rocketnet_link_mtu.h): the frame never carries more, so the
+    // sealed packet never exceeds P. ROCKETNET_MAX_PACKET_PAYLOAD_BYTES at
+    // the default packet size.
+
+    const int payload_capacity = rocketnet_link_mtu_payload_bytes( rocketnet_server_protocol_client_packet_bytes( &server_transport->protocol, client_index ) );
+    if ( request_bytes > payload_capacity )
+    {
+        rocketnet_spam( "server start packet refused. request above the connection's payload capacity" );
+        return NULL;
+    }
+
     uint8_t * frame = NULL;
 
     struct rocketnet_server_fill_line_t * line = rocketnet_server_fill_line( server_transport );
@@ -5419,7 +5431,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
 
     context->frame = frame;
     context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET;
-    context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    context->payload_capacity = payload_capacity;
     context->sequence = 0;
     context->client_index = client_index;
 
@@ -5872,7 +5884,7 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
     const int index = ( server_transport->disconnect_burst_head + server_transport->disconnect_burst_count ) % server_transport->disconnect_burst_capacity;
     struct rocketnet_server_disconnect_burst_t * burst = &server_transport->disconnect_bursts[index];
 
-    burst->plaintext_bytes = rocketnet_session_ack_block_build( burst->plaintext, 0, &mapping->accepted_session );
+    burst->plaintext_bytes = rocketnet_session_ack_block_build( burst->plaintext, rocketnet_server_protocol_mapping_packet_bytes( mapping ), 0, &mapping->accepted_session );
     burst->to = *client_address;
     // the whole burst's sequences are taken in one atomic add, so nothing
     // else sealed under this key can carry one of them
@@ -6498,6 +6510,28 @@ int rocketnet_server_transport_max_payload_bytes( struct rocketnet_server_transp
     }
     rocketnet_assert( server_transport );
     return ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+}
+
+int rocketnet_server_transport_client_max_payload_bytes( struct rocketnet_server_transport_t * server_transport, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+    {
+        return 0;
+    }
+    rocketnet_assert( server_transport );
+
+    const int packet_bytes = rocketnet_server_transport_client_packet_bytes( server_transport, client_index );
+    return packet_bytes > 0 ? rocketnet_link_mtu_payload_bytes( packet_bytes ) : 0;
+}
+
+int rocketnet_server_transport_client_packet_bytes( struct rocketnet_server_transport_t * server_transport, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+    {
+        return 0;
+    }
+    rocketnet_assert( server_transport );
+    return rocketnet_server_protocol_client_packet_bytes( &server_transport->protocol, client_index );
 }
 
 int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_t * server_transport, const int ** client_index, const uint64_t ** packet_ids )

@@ -8232,6 +8232,8 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_client_state",
     "rocketnet_client_state_name",
     "rocketnet_client_index",
+    "rocketnet_client_max_packet_bytes",
+    "rocketnet_client_max_unreliable_message_bytes",
     "rocketnet_client_transport_name",
     "rocketnet_client_start_message",
     "rocketnet_client_finish_message",
@@ -8264,6 +8266,8 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_server_max_clients",
     "rocketnet_server_num_connected_clients",
     "rocketnet_server_client_connected",
+    "rocketnet_server_client_max_packet_bytes",
+    "rocketnet_server_client_max_unreliable_message_bytes",
     "rocketnet_server_client_id",
     "rocketnet_server_client_connection_id",
     "rocketnet_server_client_user_data",
@@ -8301,6 +8305,8 @@ static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_client_disconnected",
     "rocketnet_client_state",
     "rocketnet_client_index",
+    "rocketnet_client_max_packet_bytes",
+    "rocketnet_client_max_unreliable_message_bytes",
     "rocketnet_client_transport_name",
     "rocketnet_client_start_message",
     "rocketnet_client_finish_message",
@@ -8332,6 +8338,8 @@ static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_server_max_clients",
     "rocketnet_server_num_connected_clients",
     "rocketnet_server_client_connected",
+    "rocketnet_server_client_max_packet_bytes",
+    "rocketnet_server_client_max_unreliable_message_bytes",
     "rocketnet_server_client_id",
     "rocketnet_server_client_connection_id",
     "rocketnet_server_client_user_data",
@@ -8425,6 +8433,7 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_client_transport_send_packet",
     "rocketnet_client_transport_receive_packet",
     "rocketnet_client_transport_max_payload_bytes",
+    "rocketnet_client_transport_packet_bytes",
     "rocketnet_client_transport_num_payloads",
     "rocketnet_client_transport_payload",
     "rocketnet_client_transport_payloads",
@@ -8476,6 +8485,8 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_server_transport_client_end_reason",
     "rocketnet_server_transport_counters",
     "rocketnet_server_transport_max_payload_bytes",
+    "rocketnet_server_transport_client_max_payload_bytes",
+    "rocketnet_server_transport_client_packet_bytes",
     "rocketnet_server_transport_stats",
     "rocketnet_server_transport_client_stats",
     "rocketnet_server_transport_acked_packets",
@@ -8500,6 +8511,8 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_message_client_destroy",
     "rocketnet_message_client_transport",
     "rocketnet_message_client_state",
+    "rocketnet_message_client_max_packet_bytes",
+    "rocketnet_message_client_max_unreliable_message_bytes",
     "rocketnet_message_client_update",
     "rocketnet_message_client_send_packets",
     "rocketnet_message_client_start",
@@ -8531,6 +8544,8 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_message_server_set_send_kbps",
     "rocketnet_message_server_disconnect_reason",
     "rocketnet_message_server_client_connected",
+    "rocketnet_message_server_client_max_packet_bytes",
+    "rocketnet_message_server_client_max_unreliable_message_bytes",
     "rocketnet_message_server_counters",
 };
 
@@ -8559,6 +8574,7 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_client_transport_send_packet",
     "rocketnet_client_transport_receive_packet",
     "rocketnet_client_transport_max_payload_bytes",
+    "rocketnet_client_transport_packet_bytes",
     "rocketnet_client_transport_num_payloads",
     "rocketnet_client_transport_payload",
     "rocketnet_client_transport_payloads",
@@ -8608,6 +8624,8 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_server_transport_client_end_reason",
     "rocketnet_server_transport_counters",
     "rocketnet_server_transport_max_payload_bytes",
+    "rocketnet_server_transport_client_max_payload_bytes",
+    "rocketnet_server_transport_client_packet_bytes",
     "rocketnet_server_transport_stats",
     "rocketnet_server_transport_client_stats",
     "rocketnet_server_transport_acked_packets",
@@ -8621,6 +8639,8 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_message_client_destroy",
     "rocketnet_message_client_transport",
     "rocketnet_message_client_state",
+    "rocketnet_message_client_max_packet_bytes",
+    "rocketnet_message_client_max_unreliable_message_bytes",
     "rocketnet_message_client_update",
     "rocketnet_message_client_send_packets",
     "rocketnet_message_client_start",
@@ -8651,6 +8671,8 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_message_server_set_send_kbps",
     "rocketnet_message_server_disconnect_reason",
     "rocketnet_message_server_client_connected",
+    "rocketnet_message_server_client_max_packet_bytes",
+    "rocketnet_message_server_client_max_unreliable_message_bytes",
     "rocketnet_message_server_counters",
 };
 
@@ -8756,6 +8778,8 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_client_disconnect( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_DISCONNECTED ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_index( NULL ) == -1 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_max_packet_bytes( NULL ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_max_unreliable_message_bytes( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_transport_name( NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_start_message( NULL, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_finish_message( NULL, 4 ) == 0 ) );
@@ -8805,6 +8829,8 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_max_clients( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_num_connected_clients( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_connected( NULL, 0 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_max_packet_bytes( NULL, 0 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_max_unreliable_message_bytes( NULL, 0 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_id( NULL, 0 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_connection_id( NULL, 0 ) == 0 ) );
     {
@@ -8965,6 +8991,10 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_packet_bytes( NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_client_transport_num_payloads( NULL ) == 0 );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
@@ -9099,6 +9129,14 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
 
     before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_server_transport_max_payload_bytes( NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_client_max_payload_bytes( NULL, 0 ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_client_packet_bytes( NULL, 0 ) == 0 );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
@@ -9329,6 +9367,8 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         rocketnet_message_client_destroy( NULL );
         rocketnet_check( rocketnet_message_client_transport( NULL ) == NULL );
         rocketnet_check( rocketnet_message_client_state( NULL ) == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+        rocketnet_check( rocketnet_message_client_max_packet_bytes( NULL ) == 0 );
+        rocketnet_check( rocketnet_message_client_max_unreliable_message_bytes( NULL ) == 0 );
         rocketnet_check( rocketnet_message_client_update( NULL, 0.0 ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( NULL );
         rocketnet_check( rocketnet_message_client_start( NULL, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) == NULL );
@@ -9342,7 +9382,7 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         rocketnet_check( rocketnet_message_client_set_send_kbps( NULL, 1000 ) == 0 );
         rocketnet_check( rocketnet_message_client_disconnect_reason( NULL ) == ROCKETNET_DISCONNECT_REASON_NONE );
         rocketnet_check( rocketnet_message_client_counters( NULL ) == NULL );
-        rocketnet_check( rocketnet_api_misuse_count() == before + 17 );
+        rocketnet_check( rocketnet_api_misuse_count() == before + 19 );
 
         before = rocketnet_api_misuse_count();
         rocketnet_check( rocketnet_message_server_create( NULL, NULL, NULL, NULL, NULL, 0, 0 ) == NULL );
@@ -9361,8 +9401,10 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         rocketnet_check( rocketnet_message_server_set_send_kbps( NULL, 0, 1000 ) == 0 );
         rocketnet_check( rocketnet_message_server_disconnect_reason( NULL, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
         rocketnet_check( rocketnet_message_server_client_connected( NULL, 0 ) == 0 );
+        rocketnet_check( rocketnet_message_server_client_max_packet_bytes( NULL, 0 ) == 0 );
+        rocketnet_check( rocketnet_message_server_client_max_unreliable_message_bytes( NULL, 0 ) == 0 );
         rocketnet_check( rocketnet_message_server_counters( NULL ) == NULL );
-        rocketnet_check( rocketnet_api_misuse_count() == before + 17 );
+        rocketnet_check( rocketnet_api_misuse_count() == before + 19 );
 
         // the sizing calls take NULL configs as the defaults: not a misuse
 

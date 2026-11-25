@@ -227,6 +227,12 @@ int rocketnet_server_protocol_end_reason( const struct rocketnet_server_protocol
 // holds no connection.
 int rocketnet_server_protocol_client_packet_bytes( const struct rocketnet_server_protocol_t * server, int client_index );
 
+// The same packet size read off the connection's mapping: what every session
+// packet sealed under it is held to (the ack block's truncation, the payload
+// capacity), ROCKETNET_MAX_PACKET_BYTES while the mapping has none recorded.
+struct rocketnet_encryption_mapping_t;
+int rocketnet_server_protocol_mapping_packet_bytes( const struct rocketnet_encryption_mapping_t * mapping );
+
 // The reported round-trip time of the connection in client_index, in seconds
 // (standard/TRANSPORT.md t15.5): the minimum retained first-ack sample, 0
 // while it has none, for a free slot, or for an index out of range. The

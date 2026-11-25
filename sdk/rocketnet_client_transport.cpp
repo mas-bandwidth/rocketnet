@@ -3742,6 +3742,18 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
         return NULL;
     }
 
+    // the connection's payload capacity C(P), from its packet size
+    // (sdk/rocketnet_link_mtu.h): the frame never carries more, so the
+    // sealed packet never exceeds P. ROCKETNET_MAX_PACKET_PAYLOAD_BYTES at
+    // the default packet size.
+
+    const int payload_capacity = rocketnet_link_mtu_payload_bytes( rocketnet_client_protocol_packet_bytes( &client_transport->protocol ) );
+    if ( request_bytes > payload_capacity )
+    {
+        rocketnet_spam( "client start packet refused. request above the connection's payload capacity" );
+        return NULL;
+    }
+
     // a real wire frame, written in place, sealed in place, zero copies, in
     // the ring send_fill names (RNClientIo Write). The slot is claimed before
     // the sequence is taken, so a start the full ring refuses spends no
@@ -3771,7 +3783,7 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
     uint8_t * frame = ring->data + slot * ROCKETNET_FRAME_STRIDE;
 
     context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET;
-    context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    context->payload_capacity = payload_capacity;
 
     rocketnet_assert( ( (uintptr_t) frame % 16 ) == 0 );
 
@@ -4089,7 +4101,29 @@ int rocketnet_client_transport_max_payload_bytes( rocketnet_client_transport_t *
     }
 
     rocketnet_assert( client_transport );
-    return ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    return rocketnet_link_mtu_payload_bytes( rocketnet_client_protocol_packet_bytes( &client_transport->protocol ) );
+}
+
+int rocketnet_client_transport_packet_bytes( rocketnet_client_transport_t * client_transport )
+{
+    if ( !rocketnet_api_null_guard( client_transport ) )
+    {
+        return 0;
+    }
+
+    rocketnet_assert( client_transport );
+
+    // decided once the challenge (or the probe reply) fixed it, the response
+    // carrying it: from sending connection response on, 0 before and after
+
+    const int state = client_transport->protocol.state;
+    if ( ( state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE && state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ) ||
+         client_transport->protocol.packet_bytes <= 0 )
+    {
+        return 0;
+    }
+
+    return client_transport->protocol.packet_bytes;
 }
 
 // the batch the copying cursor above walks, exposed whole: by count and

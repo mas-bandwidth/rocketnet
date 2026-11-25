@@ -1399,7 +1399,12 @@ int rocketnet_server_protocol_client_packet_bytes( const struct rocketnet_server
         return 0;
     }
 
-    const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
+    return rocketnet_server_protocol_mapping_packet_bytes( rocketnet_encryption_map_entry( server->encryption_map, mapping_index ) );
+}
+
+int rocketnet_server_protocol_mapping_packet_bytes( const struct rocketnet_encryption_mapping_t * mapping )
+{
+    rocketnet_assert( mapping );
     return mapping->packet_bytes > 0 ? mapping->packet_bytes : ROCKETNET_MAX_PACKET_BYTES;
 }
 
@@ -2263,11 +2268,12 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
     uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + 8];
     rocketnet_assert( type_data_bytes <= 8 );
 
-    // the block truncates to the budget's remaining room -- the capacity
-    // arithmetic is what keeps the packet inside the send budget, whatever
-    // the replay window's depth
+    // the block truncates to the room the connection's packet size leaves --
+    // the capacity arithmetic is what keeps the packet inside that size,
+    // whatever the replay window's depth
 
-    int block_bytes = rocketnet_session_ack_block_build( plaintext, type_data_bytes, &mapping->accepted_session );
+    const int packet_bytes = rocketnet_server_protocol_mapping_packet_bytes( mapping );
+    int block_bytes = rocketnet_session_ack_block_build( plaintext, packet_bytes, type_data_bytes, &mapping->accepted_session );
     if ( type_data_bytes > 0 )
     {
         memcpy( plaintext + block_bytes, type_data, (size_t) type_data_bytes );
@@ -2290,7 +2296,7 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
         return 0;
     }
 
-    rocketnet_assert( bytes <= ROCKETNET_SEND_BUDGET );
+    rocketnet_assert( bytes <= packet_bytes );
 
 
     // the sequence this packet actually carried, reported to the caller
@@ -2528,17 +2534,21 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
         return 0;
     }
 
-    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+    // the connection's payload capacity C(P) (sdk/rocketnet_link_mtu.h):
+    // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES at the default packet size
+
+    const int packet_bytes = rocketnet_server_protocol_mapping_packet_bytes( mapping );
+    if ( payload_bytes < 1 || payload_bytes > rocketnet_link_mtu_payload_bytes( packet_bytes ) )
     {
         return 0;
     }
 
-    // the application's bytes come first: the block truncates to the
-    // budget's remaining room, oldest entries dropped first. the 7-byte
+    // the application's bytes come first: the block truncates to the room
+    // the packet size leaves, oldest entries dropped first. the 7-byte
     // minimum always fits.
 
     uint8_t ack_block[ROCKETNET_ACK_BLOCK_MAX_BYTES];
-    int ack_block_bytes = rocketnet_session_ack_block_build( ack_block, payload_bytes, &mapping->accepted_session );
+    int ack_block_bytes = rocketnet_session_ack_block_build( ack_block, packet_bytes, payload_bytes, &mapping->accepted_session );
 
     int wire_bytes = rocketnet_write_sealed_payload_in_place( wire_start, server->packet_filter, sequence,
                                                               ack_block, ack_block_bytes,
@@ -2589,9 +2599,15 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
         return 0;
     }
 
+    const int packet_bytes = rocketnet_server_protocol_mapping_packet_bytes( mapping );
+    if ( payload_bytes > rocketnet_link_mtu_payload_bytes( packet_bytes ) )
+    {
+        return 0;
+    }
+
     uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 
-    int block_bytes = rocketnet_session_ack_block_build( plaintext, payload_bytes, &mapping->accepted_session );
+    int block_bytes = rocketnet_session_ack_block_build( plaintext, packet_bytes, payload_bytes, &mapping->accepted_session );
     memcpy( plaintext + block_bytes, payload_data, (size_t) payload_bytes );
 
     // proofs/tla/SessionSendSequence.tla ControlTake and ControlSeal: the

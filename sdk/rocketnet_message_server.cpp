@@ -366,6 +366,15 @@ static bool rn_message_link_stop_and_wait( const struct rn_message_link_t * link
 // object's allocation is refused; rocketnet_server_start and
 // rocketnet_client_connect cannot, since they pass a block their create
 // sized and checked, so the object create cannot fail after the transport.
+// the packet size of the connection in slot index, from the transport
+// (sdk/rocketnet_link_mtu.h): ROCKETNET_MAX_PACKET_BYTES when the link has no
+// query (the unit suite's fakes) or the slot holds no connection
+static int rn_message_link_packet_bytes( const struct rn_message_object_t * object, int index )
+{
+    const int packet_bytes = object->link.packet_bytes ? object->link.packet_bytes( object->link.transport, index ) : 0;
+    return packet_bytes > 0 ? packet_bytes : ROCKETNET_MAX_PACKET_BYTES;
+}
+
 static void rn_message_link_abort_create( const struct rn_message_link_t * link )
 {
     if ( !link || !link->destroy )
@@ -1222,6 +1231,28 @@ int rn_message_object_update_end( struct rn_message_object_t * object )
         rn_slots_observe( &object->slots, 0, 0 );
     }
 
+    // the client's connection was bound at create, before its handshake
+    // decided the packet size (sdk/rocketnet_link_mtu.h). The transport
+    // decides it before it sends its connection response, so before any
+    // payload of the connection can arrive; a size other than the one bound
+    // is bound here: the endpoint reset with it and its CONFIG, whose
+    // fragment_bytes is F(P), announced again. Nothing was sent or received
+    // on the binding (application sends before CONNECTED are dropped at
+    // start), so the reset loses nothing. At the ceiling nothing happens.
+
+    if ( !object->is_server && object->hot_connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED )
+    {
+        rn_message_connection_t * connection = &object->connections[0];
+        const int packet_bytes = object->link.packet_bytes ? object->link.packet_bytes( object->link.transport, 0 ) : 0;
+        if ( packet_bytes > 0 && packet_bytes != rn_endpoint_packet_bytes( connection ) )
+        {
+            rn_endpoint_set_packet_bytes( connection, packet_bytes );
+            rn_endpoint_reset( connection, time );
+            memset( connection->hot->views, 0, connection->region->delivery_entries );
+            rn_endpoint_announce_config( connection, time );     // RNEndpoint Reset: the client's connect (10.3), at its packet size
+        }
+    }
+
     // proofs/tla/RNSlots.tla Observe: reads each slot's connection after the transport update and resets a slot whose binding changed
 
     if ( object->is_server )
@@ -1255,6 +1286,10 @@ int rn_message_object_update_end( struct rn_message_object_t * object )
                 continue;
             }
 
+            // the connection's packet size, decided by its handshake, binds its
+            // payload capacity and block stride at this reset (rn_endpoint_reset)
+
+            rn_endpoint_set_packet_bytes( connection, rn_message_link_packet_bytes( object, i ) );
             rocketnet_server_connection_reset( object, i );
 
             connection->hot->state = RN_MESSAGE_CONNECTION_CONNECTED;
@@ -1550,8 +1585,12 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
             header = rocketnet_message_record_header_bytes( &sequenced_shape );
         }
 
+        // the connection's payload capacity C(P): an open build's frame is
+        // a whole packet of it (ROCKETNET_MAX_PACKET_PAYLOAD_BYTES at the ceiling)
+
         rn_message_packet_build_t * build = &connection->unreliable_build;
-        const int room = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1;
+        const int capacity = rn_endpoint_payload_capacity( connection );
+        const int room = capacity - 1;
         if ( eligible >= 0 && bytes <= room - header )
         {
             const bool receipt = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
@@ -1572,11 +1611,11 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
                 if ( frame_available && rn_endpoint_in_place_header( connection, channel, reliability, bytes, transport_max, object->time ) >= 0 &&
                      rn_endpoint_in_place_affordable( connection, header + bytes + 1, object->time ) )
                 {
-                    uint8_t * frame = object->link.start_packet( object->link.transport, index, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, &build->context );
-                    frame_refused = frame == NULL && object->link.max_payload_bytes && transport_max >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
-                    if ( frame && build->context.payload_capacity >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+                    uint8_t * frame = object->link.start_packet( object->link.transport, index, capacity, &build->context );
+                    frame_refused = frame == NULL && object->link.max_payload_bytes && transport_max >= capacity;
+                    if ( frame && build->context.payload_capacity >= capacity )
                     {
-                        rocketnet_message_writer_begin( &build->writer, frame + build->context.payload_index, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+                        rocketnet_message_writer_begin( &build->writer, frame + build->context.payload_index, capacity );
                     }
                     else if ( frame )
                     {
@@ -2644,6 +2683,24 @@ int rn_message_object_connected( const struct rn_message_object_t * object, int 
     return object->hot_connections[index].state == RN_MESSAGE_CONNECTION_CONNECTED ? 1 : 0;
 }
 
+int rn_message_object_packet_bytes( const struct rn_message_object_t * object, int index )
+{
+    if ( !rn_message_object_connected( object, index ) )
+    {
+        return 0;
+    }
+    return rn_endpoint_packet_bytes( &object->connections[index] );
+}
+
+int rn_message_object_max_unreliable_message_bytes( const struct rn_message_object_t * object, int index )
+{
+    if ( !rn_message_object_connected( object, index ) )
+    {
+        return 0;
+    }
+    return rn_endpoint_max_unreliable_message_bytes( &object->connections[index] );
+}
+
 // ---------------------------------------------------------------
 //                     the server transport's link
 // ---------------------------------------------------------------
@@ -2698,6 +2755,7 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->acked_connection = rn_server_link_acked_connection;
     link->acked_connection_ids = RN_LINK_FORWARD( rocketnet_server_transport_acked_connection_ids )::call;
     link->max_payload_bytes = RN_LINK_FORWARD( rocketnet_server_transport_max_payload_bytes )::call;
+    link->packet_bytes = RN_LINK_FORWARD( rocketnet_server_transport_client_packet_bytes )::call;
     link->start_packet = rn_server_link_start_packet;
     link->finish_packet = RN_LINK_FORWARD( rocketnet_server_transport_finish_packet )::call;
     link->abort_packet = RN_LINK_FORWARD( rocketnet_server_transport_abort_packet )::call;
@@ -3169,6 +3227,24 @@ int rocketnet_message_server_client_connected( struct rocketnet_message_server_t
         return 0;
     }
     return rn_message_object_connected( &server->object, client_index );
+}
+
+int rocketnet_message_server_client_max_packet_bytes( struct rocketnet_message_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return 0;
+    }
+    return rn_message_object_packet_bytes( &server->object, client_index );
+}
+
+int rocketnet_message_server_client_max_unreliable_message_bytes( struct rocketnet_message_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return 0;
+    }
+    return rn_message_object_max_unreliable_message_bytes( &server->object, client_index );
 }
 
 const struct rocketnet_counters_t * rocketnet_message_server_counters( struct rocketnet_message_server_t * server )

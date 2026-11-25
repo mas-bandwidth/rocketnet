@@ -109,6 +109,11 @@ struct rn_message_link_t
     // the configured payload limit, after transport defaults. A large
     // unreliable record is refused before enqueue if it cannot fit an arena.
     int ( *max_payload_bytes )( void * transport );
+    // the packet size of the connection in slot index (sdk/rocketnet_link_mtu.h),
+    // which binds its payload capacity and block stride: the client's once its
+    // handshake decided it, a server slot's while it holds a connection; 0
+    // otherwise. NULL (the unit suite's fakes): ROCKETNET_MAX_PACKET_BYTES.
+    int ( *packet_bytes )( void * transport, int index );
     // returns the started frame (context->frame), not the payload: the layer
     // writes at frame + context->payload_index. The public transport calls
     // return the payload; the forwarders turn that back into the frame.
@@ -464,6 +469,12 @@ int rn_message_object_receive_messages( struct rn_message_object_t * object, str
 bool rn_message_object_set_send_kbps( struct rn_message_object_t * object, int index, int32_t kbps );
 int rn_message_object_disconnect_reason( const struct rn_message_object_t * object, int index );
 int rn_message_object_connected( const struct rn_message_object_t * object, int index );
+
+// the packet size bound to the connection in slot index and the largest
+// UNRELIABLE message it sends unpromoted (rn_endpoint_packet_bytes,
+// rn_endpoint_max_unreliable_message_bytes); 0 for a slot not connected
+int rn_message_object_packet_bytes( const struct rn_message_object_t * object, int index );
+int rn_message_object_max_unreliable_message_bytes( const struct rn_message_object_t * object, int index );
 
 // R5: ends a connection with `reason`. The transport disconnects it now; its
 // region is reset at the start of the next update, before the slot can be

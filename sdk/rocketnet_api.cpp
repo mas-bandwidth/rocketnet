@@ -2021,6 +2021,37 @@ int rocketnet_client_index( const struct rocketnet_client_t * client )
     return index;
 }
 
+int rocketnet_client_max_packet_bytes( struct rocketnet_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+    {
+        return 0;
+    }
+    if ( !client->connection )
+    {
+        return 0;
+    }
+
+    // the connection's packet size (sdk/rocketnet_link_mtu.h), bound in the
+    // message layer from the handshake's choice; 0 before CONNECTED
+
+    return rocketnet_message_client_max_packet_bytes( client->connection );
+}
+
+int rocketnet_client_max_unreliable_message_bytes( struct rocketnet_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+    {
+        return 0;
+    }
+    if ( !client->connection )
+    {
+        return 0;
+    }
+
+    return rocketnet_message_client_max_unreliable_message_bytes( client->connection );
+}
+
 const char * rocketnet_client_transport_name( const struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
@@ -3721,6 +3752,41 @@ bool rocketnet_server_client_connected( const struct rocketnet_server_t * server
     }
 
     return rocketnet_message_server_client_connected( rn_server( server ), slot ) != 0;
+}
+
+int rocketnet_server_client_max_packet_bytes( struct rocketnet_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return 0;
+    }
+
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+    {
+        return 0;
+    }
+
+    // the slot's packet size (sdk/rocketnet_link_mtu.h), bound in the message
+    // layer from the handshake's choice when the slot connected
+
+    return rocketnet_message_server_client_max_packet_bytes( rn_server( server ), slot );
+}
+
+int rocketnet_server_client_max_unreliable_message_bytes( struct rocketnet_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return 0;
+    }
+
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+    {
+        return 0;
+    }
+
+    return rocketnet_message_server_client_max_unreliable_message_bytes( rn_server( server ), slot );
 }
 
 uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, int client_index )
