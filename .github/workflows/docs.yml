@@ -50,11 +50,11 @@ jobs:
       - name: Build HTML reference documentation
         run: make docs
 
-      # only the two libraries the gates link (check_agents_md.sh); the
-      # configure line is make build's (Makefile), ci.yml builds the rest
+      # The guides use the production library for the lifecycle check and the
+      # development library for the token-based exchange.
       - name: Build the library
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF
           cmake --build build --target rocketnet rocketnet_dev --parallel 8
 
       # Documentation links and executable examples are checked on every

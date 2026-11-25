@@ -222,8 +222,8 @@ cleanup:
 This smaller program works with the production or development library. It
 creates two stopped endpoints sharing a loopback hub and destroys them. It
 does **not** start a server, connect a client, or exchange a message. Use it to
-check basic linking and object creation, not to verify networking. Its title
-packet filter also permits create in a production build; no token is minted.
+check that the linked library matches the header version and that object
+creation succeeds. The program supplies a title packet filter for production.
 
 <!-- check_readme:example:begin -->
 ```c
@@ -231,6 +231,10 @@ packet filter also permits create in a production build; no token is minted.
 
 int main( void )
 {
+    if ( rocketnet_version() != ROCKETNET_VERSION )
+    {
+        return 1;
+    }
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         return 1;
@@ -305,5 +309,7 @@ libraries under `build/`, run:
 sh tools/docs/check_agents_md.sh all
 ```
 
-The checker compiles and runs both marked programs. The walkthrough's excerpts
-are checked separately by `python3 tools/docs/check_getting_started.py`.
+The checker compiles and runs both marked programs. To exercise the lifecycle
+check in both development and production, use the [documented build flags](README.md#maintaining-these-documents).
+The walkthrough's excerpts are checked separately by
+`python3 tools/docs/check_getting_started.py`.

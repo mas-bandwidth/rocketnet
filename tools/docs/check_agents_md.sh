@@ -89,8 +89,8 @@ run_example() {
     DOC="$1"
     MARKER="$2"
     STEM="$3"
-    LIBNAME="${4:-rocketnet}"
-    DEFINES="${5:-}"
+    LIBNAME="$4"
+    DEV_MODE="$5"
     BUILD_DIR="$ROOT/build"
     LIB="$BUILD_DIR/lib${LIBNAME}.a"
     if [ ! -f "$LIB" ]; then
@@ -118,7 +118,7 @@ run_example() {
         LIBS="-lstdc++ -lpthread -lm"
     fi
 
-    ${CC:-cc} -Wall -Werror $DEFINES -I"$ROOT/sdk" "$SRC" "$LIB" $LIBS -o "$BIN"
+    ${CC:-cc} -Wall -Werror "-DROCKETNET_DEV=$DEV_MODE" -I"$ROOT/sdk" "$SRC" "$LIB" $LIBS -o "$BIN"
     "$BIN"
     rm -f "$SRC" "$BIN"
     trap - EXIT INT TERM
@@ -131,13 +131,15 @@ case "$MODE" in
         run_guide_identifiers
         ;;
     example)
-        run_example "$EXAMPLES_MD" check_agents_md agents_md rocketnet_dev -DROCKETNET_DEV=1
+        run_example "$EXAMPLES_MD" check_agents_md agents_md rocketnet_dev 1
         ;;
     all)
         run_identifiers
         run_guide_identifiers
-        run_example "$EXAMPLES_MD" check_agents_md agents_md rocketnet_dev -DROCKETNET_DEV=1
-        run_example "$EXAMPLES_MD" check_readme readme
+        run_example "$EXAMPLES_MD" check_agents_md agents_md rocketnet_dev 1
+        run_example "$EXAMPLES_MD" check_readme readme_dev rocketnet_dev 1
+        configured_dev_mode="$(cat "$ROOT/build/docs-rocketnet-dev-mode")"
+        run_example "$EXAMPLES_MD" check_readme readme rocketnet "$configured_dev_mode"
         ;;
     *)
         usage
