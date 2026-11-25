@@ -30,10 +30,11 @@ the signed connect token as the 64-bit `client_id` and assigns the id to
 one game server's whitelist. The same account gets the same id after a
 network change. Other accounts sharing the address keep their own seats.
 
-When an operator bans the account, the backend refuses to issue it new
-tokens and omits its id from every whitelist it returns. A game server
-disconnects the player when it receives the updated list. This also covers
-a connection made with a token the backend issued before the ban.
+At a minimum, the backend checks the account before issuing a connect
+token and refuses the request if it knows the account is banned. This
+check covers only that request. A player who already holds a valid token,
+including one another player shared, can present it directly to the game
+server without asking the backend for another one.
 
 ### Why your game implements the whitelist
 
@@ -61,8 +62,9 @@ those calls with a whitelist fetched from either of the
 
 ### Running multiple backend instances
 
-Suppose instance A records Alice's ban, but the game server's next
-whitelist request goes to instance B. If B still has Alice listed, the
+Each backend instance can act only on the bans and seat assignments it
+has learned about. Suppose instance A records Alice's ban, but the game
+server's next whitelist request goes to instance B. If B still lists Alice, the
 server keeps her connected. If her next match request also reaches B,
 it may issue her another token.
 
@@ -152,11 +154,14 @@ refuses reuse of the same token from another address while it retains
 the original address binding. See the [handshake rules](../standard/TRANSPORT.md#t12)
 and [binding lifetime](../standard/TRANSPORT.md#t17).
 
-Enforcement follows the account in the token. If Alice is banned while
-Bob plays with her token, her id disappears from the server's next
-whitelist and Bob is disconnected. If Alice is matched to a different
-server, her id moves to that server's whitelist and the previous server
-disconnects whoever held her seat.
+The authenticated backend-to-server channel lets the game revoke Alice's
+seat even after she has shared her token. If Alice is banned while Bob
+plays, the game server disconnects him when it receives a whitelist that
+omits her id. If her seat moves, the previous server enforces that change
+the same way. Without that channel, the server has only the authorization
+recorded at issuance. Even with a current whitelist, the server can tell
+whether Alice's account may play, but it cannot tell whether Alice or Bob
+is holding her token.
 
 ## The example game server
 
