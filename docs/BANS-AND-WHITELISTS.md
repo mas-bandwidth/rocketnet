@@ -24,17 +24,21 @@ address. A ban on Alice's account would apply on either network.
 
 ## How to enforce an account ban
 
-The backend verifies the player's sign-in ticket and derives a stable,
-keyed user hash from the provider name and user id. It puts that hash in
-the signed connect token as the 64-bit `client_id` and assigns the id to
-one game server's whitelist. The same account gets the same id after a
-network change. Other accounts sharing the address keep their own seats.
+**May this account occupy a seat on this server right now?** The game
+server asks the same question whether the player presents the original
+connect token or a copy. An account in good standing can hold one seat.
+A banned account can hold none. Copying or reusing a token grants no
+additional seat, because every copy carries the same account id.
 
-At a minimum, the backend checks the account before issuing a connect
-token and refuses the request if it knows the account is banned. This
-check covers only that request. A player who already holds a valid token,
-including one another player shared, can present it directly to the game
-server without asking the backend for another one.
+The backend verifies the player's sign-in ticket, derives a stable keyed
+user hash from the provider name and user id, and puts that hash in the
+signed token as the 64-bit `client_id`. It checks for a known ban before
+issuing the token and assigns the id to one server's whitelist. The id
+stays the same across network changes.
+
+An already-issued token goes directly to the game server. The backend
+gets no new match request when someone presents a copy. The server needs
+the current whitelist to enforce a ban or a seat change in that case.
 
 ### Why your game implements the whitelist
 
