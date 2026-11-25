@@ -34,7 +34,13 @@ account supplies fresh tokens on demand to more friends across more servers.
 
 ## Why IP bans fail
 
-RocketNet has no IP bans and will not add them.
+RocketNet has no IP bans and will not add them. An address reported by
+client code is just a claim a modified client can change. The backend
+can observe the source address of the HTTP connection that requests a
+token. The game server's transport separately observes the source address
+of incoming UDP packets. A player can change either observed address by
+changing networks or using a VPN. The public SDK exposes the connected
+account's `client_id` for moderation. It has no per-client IP address getter.
 
 On a mobile network that uses carrier-grade NAT (CGNAT), two strangers
 playing on separate phones with separate subscriptions can reach the game
