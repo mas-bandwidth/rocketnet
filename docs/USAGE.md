@@ -310,6 +310,14 @@ one-packet limit of every mode (the one-record limits of
 [standard/MESSAGES.md, m2.1](../standard/MESSAGES.md#m2.1)); it is a pure function,
 so size a per-packet game message against it, or against
 `ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES` at compile time for UNRELIABLE.
+The 1,411 bytes and the one-packet limits are the values at the ceiling
+packet size of 1,452 bytes, the default. A connection whose `link_mtus` list
+settles on a smaller packet size has a smaller limit:
+`rocketnet_client_max_packet_bytes` and
+`rocketnet_client_max_unreliable_message_bytes` (on the server,
+`rocketnet_server_client_max_packet_bytes` and
+`rocketnet_server_client_max_unreliable_message_bytes`) return that
+connection's values once it is connected.
 
 The channel is the ordering channel. RELIABLE_ORDERED,
 RELIABLE_ORDERED_WITH_ACK_RECEIPT and the two SEQUENCED types are ordered or

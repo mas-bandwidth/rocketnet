@@ -295,6 +295,11 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
 
     endpoint->region->fragment_bytes = (uint32_t) rocketnet_link_mtu_block_stride( endpoint->packet_bytes );
 
+    // a fragment and its largest record header fit one payload: the block
+    // writers place a whole fragment in the room C(P) leaves
+
+    rocketnet_assert( (int) endpoint->region->fragment_bytes + ROCKETNET_LINK_MTU_STRIDE_OVERHEAD_BYTES <= rn_endpoint_payload_capacity( endpoint ) );
+
     // R6 (standard/MESSAGES.md m9.4): a config value of 0 or lower disables this
     // connection's budget. The endpoint then holds no bucket and passes no
     // budget to its builders, whose NULL budget path never drops or waits.

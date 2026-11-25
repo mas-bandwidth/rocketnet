@@ -1608,6 +1608,8 @@ The wire size of each type is the sum of its fields. The handshake types have a 
 
 A session packet MUST NOT exceed the receive ceiling, and a sender MUST NOT emit one larger than the maximum packet size. The payload capacity and the receive payload maximum are rows of [t3 Constants and registries](#t3).
 
+The packet budget is per connection. A connection uses one packet size P for its whole life, at most the maximum packet size; an implementation that chooses P from a list of link MTUs MUST NOT emit a session packet larger than that connection's P, and its payload capacity is C(P) = floor((P − 33) / 8) × 8 bytes, the ack block cut to fit the same P. The rows `maximum packet size` and `payload capacity` of [t3 Constants and registries](#t3) are the ceiling's values, P = 1452 and C = 1416, which a connection with no link MTU list uses, byte for byte. A receiver still accepts a session packet up to the receive ceiling.
+
 Every handshake type fits 548 bytes, the UDP payload of a 576-byte IPv4 MTU (576 less a 20-byte IPv4 header and an 8-byte UDP header), the smallest datagram every IPv4 host accepts, so a client on any IPv4 path can connect. The connection request is the largest of them.
 
 <a id="t8.12"></a>

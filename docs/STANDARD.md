@@ -64,13 +64,13 @@ that the receiver has received or delivered anything.
 | --- | --- |
 | Packet sequence / message number | RN-1 sequences identify sealed packets. RN-2 numbers identify reliable records. A resend keeps the record's number and uses a fresh packet sequence. |
 | Replay acceptance / acknowledgement | Opening a packet can mark security replay state before message processing succeeds. An ACK waits for the required acceptance conditions; storage exhaustion can withhold it. |
-| Wire capacity / send policy | SINGLE can encode 1415 data bytes. The sender's plain-unreliable promotion threshold is 1411 bytes; a larger application message is promoted even though SINGLE has more encoding capacity. |
+| Wire capacity / send policy | SINGLE can encode 1415 data bytes. The sender's plain-unreliable promotion threshold is 1411 bytes; a larger application message is promoted even though SINGLE has more encoding capacity. Both are the ceiling's values (packet size 1452); a connection of smaller packet size P has both lower by 1416 − C(P) ([m2.2](../standard/MESSAGES.md#m2.2)). |
 | Fragment index / fragment count | RN-2 indexes start at zero. The wire field `fragments` stores count minus one. For three fragments, the encoded value is 2 and valid indexes are 0, 1 and 2. |
 | Fragment ring offset / block base | A fragment's `ring` field already identifies that fragment's position, in 16-byte units. It is not the block base. |
 | Resend delay / reliable timeout | The former schedules another attempt; the latter, only when set nonzero (0, the default, turns it off), ends a connection whose oldest reliable number stays unacknowledged that long. Convert `_ms` configuration values to seconds before using them with time inputs. |
 
 For example, a three-fragment block placed at byte zero has ring fields
-0, 72 and 144 with the current 1152-byte stride. Fragment 1 is copied to
+0, 72 and 144 with the 1152-byte stride of the ceiling's packet size. Fragment 1 is copied to
 byte 1152, not byte 2304. The existing
 [block vectors](../standard/MESSAGES.md#m8) include a complete example.
 

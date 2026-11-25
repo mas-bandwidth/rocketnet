@@ -228,6 +228,18 @@ static void test_link_mtu_packet_size_548_pair()
     check( rocketnet_server_client_max_unreliable_message_bytes( pair.server, 0 ) == C - 5 );
     check( rocketnet_link_mtu_block_stride( P ) == 480 );
 
+    // the transports name the same P and C(P), and refuse a packet request
+    // above C(P) before taking a slot or a sequence
+    struct rocketnet_client_transport_t * client_transport = rocketnet_message_client_transport( rocketnet_client_message_client( pair.client ) );
+    struct rocketnet_server_transport_t * server_transport = rocketnet_message_server_transport( rocketnet_server_message_server( pair.server ) );
+    check( rocketnet_client_transport_packet_bytes( client_transport ) == P );
+    check( rocketnet_client_transport_max_payload_bytes( client_transport ) == C );
+    check( rocketnet_server_transport_client_packet_bytes( server_transport, 0 ) == P );
+    check( rocketnet_server_transport_client_max_payload_bytes( server_transport, 0 ) == C );
+    struct rocketnet_packet_context_t context;
+    check( rocketnet_client_transport_start_packet( client_transport, C + 1, &context ) == NULL );
+    check( rocketnet_server_transport_start_packet( server_transport, 0, C + 1, &context ) == NULL );
+
     // from here no endpoint hands the link a datagram above P: the seam
     // zeroes the largest seen and still drops anything larger, so an
     // oversized datagram would also stall the transfers below
@@ -249,6 +261,24 @@ static void test_link_mtu_packet_size_548_pair()
     check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == before );
     check( packet_size_client_to_server( pair, ROCKETNET_RELIABILITY_UNRELIABLE, limit + 1, 6 ) );
     check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == before + 1 );
+
+    // the same at the server, whose transport payload maximum is the ceiling
+    // for any client: its record limit is the connection's
+    const int server_limit = rocketnet_server_client_max_unreliable_message_bytes( pair.server, 0 );
+    const rocketnet_counters_t * server_counters = rocketnet_message_server_counters( rocketnet_server_message_server( pair.server ) );
+    const uint64_t server_before = rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE );
+    check( packet_size_server_to_client( pair, ROCKETNET_RELIABILITY_UNRELIABLE, server_limit, 10 ) );
+    check( rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == server_before );
+    check( packet_size_server_to_client( pair, ROCKETNET_RELIABILITY_UNRELIABLE, server_limit + 1, 11 ) );
+    check( rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == server_before + 1 );
+
+    // and for UNRELIABLE_SEQUENCED on a channel below 256, whose one-record
+    // limit is 11 below C(P) (1405 at the ceiling)
+    const uint64_t sequenced_before = rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED );
+    check( packet_size_server_to_client( pair, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, C - 11, 12 ) );
+    check( rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED ) == sequenced_before );
+    check( packet_size_server_to_client( pair, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, C - 10, 13 ) );
+    check( rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED ) == sequenced_before + 1 );
 
     // the largest datagram handed the link since connect is P at most, and
     // the transfers above filled packets up to it

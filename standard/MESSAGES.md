@@ -377,6 +377,8 @@ A sender MUST refuse a message above the configured maximum message size. For UN
 <a id="m2.2"></a>
 ### m2.2. Constants
 
+The sizes in this table are the values at the ceiling, a connection whose packet size P is the maximum packet size of RN-1 (1452 bytes). A connection with a smaller P ([RN-1 t8.11 Packet sizes](TRANSPORT.md#t8.11)) has payload capacity C(P) = floor((P − 33) / 8) × 8, which replaces the row `maximum payload size`; its SINGLE message limit and every one-record limit below are lower by 1416 − C(P), so its UNRELIABLE record limit is C(P) − 5; and its block stride is F(P), 1152 when C(P) is at least 1173 and floor((C(P) − 21) / 16) × 16 otherwise (480 at P = 548). Both ends of a connection use the same P, and so the same F(P).
+
 | Name | Value | Units | Meaning |
 |---|---|---|---|
 | form byte SINGLE | `0x00` | | the form byte of a SINGLE payload |
@@ -1913,7 +1915,7 @@ The constants this section names are:
 |---|---|---|---|
 | message code count | `5` | codes | wire codes 0 to 4 are defined |
 | wide channel threshold | `256` | channels | the lowest channel a WIDE record carries |
-| message fragment bytes | `1152` | bytes | the block stride F |
+| message fragment bytes | `1152` | bytes | the block stride F at the ceiling; F(P) on a connection of packet size P ([m2.2](#m2.2)) |
 | message number modulus | `16777216` | numbers | 2^24, the number, sequencing and ordering space |
 | config body bytes | `28` | bytes | the CONFIG control body |
 | payload capacity | `1416` | bytes | the largest payload a sender emits in one packet |
@@ -2693,8 +2695,8 @@ delivered whole. Each fragment is one record ([m3 Record format](#m3)).
    message larger than one packet's records can carry under its reliable twin
    as a block where that twin needs one
    ([m2 Payload forms and sender size rules](#m2)).
-2. **Split.** The block stride F is the row `block stride` of
-   [m2 Payload forms and sender size rules](#m2). A block of L bytes MUST have
+2. **Split.** The block stride F is the connection's F(P), the row `block stride` of
+   [m2 Payload forms and sender size rules](#m2) at the ceiling. A block of L bytes MUST have
    k = ceil(L / F) fragments, with k at least 2. Fragments 0 to k − 2 MUST
    carry exactly F bytes each; fragment k − 1 MUST carry from 1 to F bytes.
 3. **Numbering.** A sender MUST assign the block's fragments consecutive
@@ -3452,7 +3454,7 @@ reliable number. The payload is 35 bytes:
 | reliable_messages_in_flight | 14 | 4 | u32 | the reliable window W | the sender's configured window |
 | receive_message_buffer_bytes | 18 | 4 | u32 | the receive ring B | the sender's configured ring size |
 | max_message_bytes | 22 | 4 | u32 | the largest message | the sender's configured maximum |
-| fragment_bytes | 26 | 4 | u32 | the block stride F | the fragment bytes row of [m5 Message numbering and the reliable window](#m5) |
+| fragment_bytes | 26 | 4 | u32 | the block stride F, the connection's F(P) | the fragment bytes row of [m5 Message numbering and the reliable window](#m5) |
 | reserved tail | 30 | 4 | zero[4] | reserved | `0` |
 | form | 34 | 1 | u8 | the payload form | `1` |
 
