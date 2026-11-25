@@ -147,12 +147,17 @@ with `rocketnet_server_client_id`. See the [token format](STANDARD.md).
 
 Alice and Bob buy one copy of the game. The purchase is on Alice's
 account and entitles that account to one online seat. Alice gives Bob her
-unused connect token, and he connects. While Bob is still playing, Alice
-can sign in again and request a fresh token. If her account is in good
-standing and the match succeeds, the backend issues one. Bob and Alice
-now have two different tokens carrying the same `client_id`. Neither
-player has to reuse the other's token, so detecting a copied token alone
-cannot enforce the one-seat rule.
+unused connect token, and he connects. While Bob is playing, Alice can
+request another token for herself. The same problem applies to a group of
+friends running unauthorized copies of the game: requests from Alice's
+account could automatically supply a fresh token whenever a friend wants
+to play. The backend can accept each match request while her account is in
+good standing. Every friend could use a different, valid token exactly
+once. A check for token reuse would see no duplicates.
+
+Every token issued for Alice's account carries the same `client_id`.
+Whether two people or ten receive tokens, the backend assigns that id to
+one server at a time.
 
 - **On the same server:** Bob already occupies Alice's seat. The server
   sees her `client_id` in both connections and refuses Alice's fresh
