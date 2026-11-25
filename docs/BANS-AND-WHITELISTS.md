@@ -9,13 +9,14 @@ a token, and its game servers check tokens only when a player connects.
 | What happens | What the game server sees |
 | --- | --- |
 | Alice gives Bob her token for server A. Bob joins. | A sees a valid token for Alice's account. Nobody else on A has that id, so Bob starts playing. |
+| Alice gets a fresh token for A and tries to join Bob. | A finds Alice's `client_id` already connected. It silently ignores her request. Bob keeps playing. |
 | While Bob plays, Alice gets a fresh token for server B and joins. | B also sees a valid token for Alice's account. Nobody else on B has that id, so Alice starts playing too. |
 | An operator bans Alice's account. | The backend refuses her next token. A and B receive no update, so both friends keep playing. |
 
-One purchase is now supporting two simultaneous players. Both tokens are
-genuine, each was used just once, and neither server has a duplicate
-connection in its own slots. The same failure applies if the account
-supplies fresh tokens on demand to more friends across more servers.
+One purchase is now supporting two simultaneous players. Each successful
+handshake used its own genuine token. A checked its own slots correctly,
+but B has no record of the connection on A. The same failure applies if the
+account supplies fresh tokens on demand to more friends across more servers.
 
 ## Why IP bans fail
 
@@ -166,9 +167,10 @@ Bob and Alice both present Alice's `client_id`. Which check can detect
 the second session depends on where they connect.
 
 - **On the same server:** Bob already occupies Alice's seat. The server
-  sees her `client_id` in both connections and refuses Alice's fresh
-  token. The transport also refuses reuse of a token from another address
-  while it retains the original address binding. See the
+  reads the same `client_id` from Alice's fresh token, silently ignores
+  the duplicate connection request, and leaves Bob connected. The transport
+  also refuses reuse of a token from another address while it retains the
+  original address binding. See the
   [handshake rules](../standard/TRANSPORT.md#t12) and
   [binding lifetime](../standard/TRANSPORT.md#t17).
 - **On different servers:** Suppose Bob is playing on server A and Alice
