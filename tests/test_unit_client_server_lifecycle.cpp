@@ -1859,7 +1859,7 @@ REGISTER_UNIT_TEST( test_server_client_user_data_from_connect_until_release );
 // wildcard from that family's loopback address on the client's bound port, so
 // the server sees 127.0.0.1:port or [::1]:port. It writes "NONE" and returns
 // false for a free slot, after a disconnect and while stopped (not misuse),
-// and for a bad index or a NULL server (misuse); a NULL buffer writes nothing;
+// and for a bad index (misuse; the NULL cases are in test_public_api_null);
 // a buffer too small for the address reads an empty string.
 
 static uint16_t lifecycle_client_bound_port( rocketnet_client_t * client )
@@ -1936,8 +1936,9 @@ static void test_server_client_address_ipv4_is_the_client_source()
     check( address[0] == 'x' );
     check( rocketnet_api_misuse_count() == misuse );
 
-    // a bad index or a NULL argument is misuse: false, and "NONE" when there
-    // is a buffer to write it to
+    // a bad index is misuse: false and "NONE" (a NULL server or buffer is
+    // misuse too, and asserts in a debug build: test_public_api_null runs
+    // those under its assert hook)
     memset( address, 'x', sizeof( address ) );
     check( !rocketnet_server_client_address( world.server, 2, address, sizeof( address ) ) );
     check( lifecycle_address_is( address, "NONE" ) );
@@ -1946,12 +1947,6 @@ static void test_server_client_address_ipv4_is_the_client_source()
     check( !rocketnet_server_client_address( world.server, -1, address, sizeof( address ) ) );
     check( lifecycle_address_is( address, "NONE" ) );
     check( rocketnet_api_misuse_count() == misuse + 2 );
-    memset( address, 'x', sizeof( address ) );
-    check( !rocketnet_server_client_address( NULL, slot, address, sizeof( address ) ) );
-    check( lifecycle_address_is( address, "NONE" ) );
-    check( rocketnet_api_misuse_count() == misuse + 3 );
-    check( !rocketnet_server_client_address( world.server, slot, NULL, sizeof( address ) ) );
-    check( rocketnet_api_misuse_count() == misuse + 4 );
 
     // disconnected by the server: false and "NONE" at once; the other client
     // still reads its own address
@@ -1972,7 +1967,7 @@ static void test_server_client_address_ipv4_is_the_client_source()
     memset( address, 'x', sizeof( address ) );
     check( !rocketnet_server_client_address( world.server, slots[1], address, sizeof( address ) ) );
     check( lifecycle_address_is( address, "NONE" ) );
-    check( rocketnet_api_misuse_count() == misuse + 4 );
+    check( rocketnet_api_misuse_count() == misuse + 2 );
 
     lifecycle_world_destroy( &world );
 }
@@ -3576,7 +3571,7 @@ static void test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rule
     check( rocketnet_server_set_send_kbps( server, 2, 1000 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     check( rocketnet_server_set_send_kbps( server, INT_MIN, 0 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     check( rocketnet_server_set_send_kbps( server, INT_MAX, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    check( rocketnet_api_misuse_count() == misuse + 4 );
+    check( rocketnet_api_misuse_count() == misuse + 2 );
     misuse = rocketnet_api_misuse_count();
 
     // disconnected valid slots accept 0, finite, and UNLIMITED as no-ops without altering config defaults
