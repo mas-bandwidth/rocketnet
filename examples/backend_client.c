@@ -3,16 +3,23 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Backend client: connects with a connect token a backend minted. The
-    backends in examples/backend/ (Go and C#) answer GET /match/<client id>
-    with the token as base64; this program takes that string as its argument,
-    so it needs no HTTP code of its own:
+    backends in examples/backend/ (Go and C#) answer POST /match, whose body
+    is the ticket the player's auth provider signed, with the token as
+    base64; this program takes that string as its argument, so it needs no
+    HTTP code of its own:
 
-        example_backend_client --token "$(curl -s http://127.0.0.1:8080/match/1)"
+        ticket="$(curl -s -X POST http://127.0.0.1:8080/mock/ticket/alice)"
+        example_backend_client --token "$(curl -s --data "$ticket" http://127.0.0.1:8080/match)"
 
     The token names the server and carries the session keys, so the client
     needs nothing else: it connects over real UDP, sends one reliable-ordered
     message, receives the echo, prints its state changes, disconnects, and
     prints the state that says how the connection ended.
+
+    With --stay it does not disconnect after the echo: it stays connected
+    until the server disconnects it (a ban, or another session of the same
+    user taking its place on the backend's whitelist), and passes only if
+    that happens within --seconds (default 10).
 
     Run example_backend_server, then a backend, then this program. See
     examples/backend/README.md.
@@ -22,19 +29,51 @@
 #include "dev_keys.h"
 #include "shutdown.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void state_changed( void * context, enum rocketnet_client_state_t previous, enum rocketnet_client_state_t current )
 {
     (void) context;
     printf( "client state: %s -> %s\n", rocketnet_client_state_name( previous ), rocketnet_client_state_name( current ) );
+    fflush( stdout );
 }
 
 int main( int argc, char ** argv )
 {
-    if ( argc != 3 || strcmp( argv[1], "--token" ) != 0 )
+    const char * token = NULL;
+    int stay = 0;
+    double seconds = 10.0;
+    for ( int i = 1; i < argc; i++ )
     {
-        printf( "usage: example_backend_client --token <base64 connect token from the backend>\n" );
+        if ( strcmp( argv[i], "--token" ) == 0 && i + 1 < argc )
+        {
+            token = argv[++i];
+        }
+        else if ( strcmp( argv[i], "--stay" ) == 0 )
+        {
+            stay = 1;
+        }
+        else if ( strcmp( argv[i], "--seconds" ) == 0 && i + 1 < argc )
+        {
+            char * end = NULL;
+            seconds = strtod( argv[++i], &end );
+            if ( *end != '\0' || !( seconds > 0.0 && seconds <= 600.0 ) )
+            {
+                token = NULL;
+                break;
+            }
+        }
+        else
+        {
+            token = NULL;
+            break;
+        }
+    }
+
+    if ( !token )
+    {
+        printf( "usage: example_backend_client --token <base64 connect token from the backend> [--stay] [--seconds <1 .. 600>]\n" );
         return 1;
     }
 
@@ -85,7 +124,7 @@ int main( int argc, char ** argv )
     // connect checks the token first: a string that does not parse, or one
     // already expired, is refused here
 
-    const enum rocketnet_status_t status = rocketnet_client_connect( client, argv[2] );
+    const enum rocketnet_status_t status = rocketnet_client_connect( client, token );
     if ( status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: connect refused: %s\n", rocketnet_status_name( status ) );
@@ -107,7 +146,7 @@ int main( int argc, char ** argv )
 
     int sent = 0, received = 0;
     const double start = rocketnet_time();
-    while ( !received && rocketnet_client_state( client ) >= 0 && rocketnet_time() - start < 10.0 )
+    while ( ( stay || !received ) && rocketnet_client_state( client ) >= 0 && rocketnet_time() - start < seconds )
     {
         rocketnet_client_update( client, 1000.0 + rocketnet_time() - start );
 
@@ -117,6 +156,7 @@ int main( int argc, char ** argv )
             for ( int i = 0; i < batch->num_messages; i++, received++ )
             {
                 printf( "client received: %.*s\n", batch->bytes[i], (const char *) batch->data[i] );
+                fflush( stdout );
             }
         }
 
@@ -141,6 +181,15 @@ int main( int argc, char ** argv )
         rocketnet_sleep( 0.001 );
     }
 
+    // with --stay, the server ended it: SERVER_DISCONNECTED
+
+    const enum rocketnet_client_state_t ended = rocketnet_client_state( client );
+    const int kicked = ended == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED;
+    if ( stay )
+    {
+        printf( "client stayed %.3f seconds, state %s\n", rocketnet_time() - start, rocketnet_client_state_name( ended ) );
+    }
+
     // the state says how a connection ended: DISCONNECTED after our own disconnect
 
     rocketnet_client_disconnect( client );
@@ -152,6 +201,12 @@ int main( int argc, char ** argv )
     {
         printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
         return 1;
+    }
+
+    if ( stay )
+    {
+        printf( received && kicked ? "PASS\n" : ( received ? "FAIL: the server did not disconnect the client\n" : "FAIL: the echo did not arrive\n" ) );
+        return received && kicked ? 0 : 1;
     }
 
     printf( received ? "PASS\n" : "FAIL: the echo did not arrive\n" );

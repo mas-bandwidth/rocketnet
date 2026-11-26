@@ -165,8 +165,8 @@ static class Tests
     // the published development server keypair (sdk/rocketnet_connect_token.cpp),
     // standing in for a server's own
 
-    static readonly byte[] DevServerPublicKey = Convert.FromHexString( "3d2490889d374c296fab1d5770cb71476a06f74ef2f2540cf2215f7614f4801c" );
-    static readonly byte[] DevServerSecretKey = Convert.FromHexString( "6ffb8f7337ec377697f568de3118d83959560b25928d22707ba2297589d08b97" );
+    internal static readonly byte[] DevServerPublicKey = Convert.FromHexString( "3d2490889d374c296fab1d5770cb71476a06f74ef2f2540cf2215f7614f4801c" );
+    internal static readonly byte[] DevServerSecretKey = Convert.FromHexString( "6ffb8f7337ec377697f568de3118d83959560b25928d22707ba2297589d08b97" );
 
     static Func<string, string?> Environment( Dictionary<string, string> values ) => name => values.TryGetValue( name, out string? value ) ? value : null;
 
@@ -362,6 +362,11 @@ static class Tests
             ( nameof( test_failed_mint_wipes_the_keys ), test_failed_mint_wipes_the_keys ),
             ( nameof( test_config_refused ), test_config_refused ),
             ( nameof( test_listen_address ), test_listen_address ),
+            ( nameof( UsersTests.test_mock_ticket ), UsersTests.test_mock_ticket ),
+            ( nameof( UsersTests.test_user_hash ), UsersTests.test_user_hash ),
+            ( nameof( UsersTests.test_cross_backend_vectors ), UsersTests.test_cross_backend_vectors ),
+            ( nameof( UsersTests.test_whitelist ), UsersTests.test_whitelist ),
+            ( nameof( UsersTests.test_match_routes ), UsersTests.test_match_routes ),
         };
         foreach ( ( string name, Action test ) in tests )
         {
@@ -371,6 +376,11 @@ static class Tests
                 test();
             }
             catch ( TestFailure e )
+            {
+                Console.WriteLine( $"FAIL: {e.Message}" );
+                return 1;
+            }
+            catch ( UsersTests.TestFailure e )
             {
                 Console.WriteLine( $"FAIL: {e.Message}" );
                 return 1;
