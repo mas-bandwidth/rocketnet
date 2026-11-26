@@ -117,7 +117,8 @@ static int retry_walk( uint64_t seed, int steps, const char * out )
         if ( w.started )
         {
             const int kind = random.below( 8 );
-            d = kind < 2 ? 0 : kind < 6 ? 1 + random.below( 2 ) : random.below( RETRY_WALK_MAX_RUN + 1 );
+            d = kind < 2 ? 0 : kind < 6 ? 1 + random.below( 2 )
+                                        : random.below( RETRY_WALK_MAX_RUN + 1 );
         }
         const int64_t now = (int64_t) w.retry_time + d;
         rocketnet_link_mtu_retry_next( &w.retry, &w.retry_time, (double) now );
