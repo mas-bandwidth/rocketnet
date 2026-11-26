@@ -665,6 +665,41 @@ child's output or status: the allocator-trap witness
 (`tests/functional/rocketnet_functional_tests.cpp`) do, with their exit and
 abort assertions unchanged. A new forking case must do the same.
 
+## The rest of the macOS run matrix
+
+`.github/workflows/nightly-matrix-macos.yml` runs, nightly and on dispatch,
+every macOS cell of `tools/verification_matrix.tsv` that no other workflow
+runs (Apple clang, `ROCKETNET_NIGHTLY_NO_TIMEOUT=1`):
+
+- **suites-macos**, one job per cell: the functional suite under each pin pair
+  of ci.yml's `TRANSPORT_MATRIX_MACOS` (and auto/auto) not run elsewhere, in
+  Debug, Debug asan+ubsan, Debug tsan (`-O1`, case windows scaled by 30) and
+  Release; the Release cells also run `functional_production` under the same
+  pins from a `ROCKETNET_DEV=OFF` tree. MinSizeRel, RelWithDebInfo and the
+  Release builds with `ROCKETNET_HISTORY_PACKETS=32768`,
+  `ROCKETNET_MAX_CLIENTS=512` and `32768`, `ROCKETNET_HARDEN=OFF` and
+  `ROCKETNET_USE_SYSTEM_SODIUM=ON` (the host's libsodium, through pkg-config)
+  each run the unit suite and the unpinned functional suite. Every whole
+  functional run goes through `tools/run_functional.sh`, its leg in
+  `tests/functional/expected_skips.txt` (`macos-dev-loopback`,
+  `macos-prod-portable-msgx`, ...).
+- **binaries-macos**: `test_wide` (`ROCKETNET_MAX_CHANNELS=512`),
+  `test_platform_primitives`, `test_internal_c`, and
+  `connect_token_vectors`, whose output must equal
+  `standard/vectors/connect_token_v2.json` byte for byte.
+- **package-macos**: a library-only build with `ROCKETNET_BUILD_SHARED=OFF` or
+  `ROCKETNET_BUILD_DEV_LIBRARIES=OFF`, installed, relocated and consumed by
+  `tools/check_package.py --embedded`.
+
+One cell by hand, Release with both pins loopback:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target test functional test_transport_control test_msgx --parallel 4
+ROCKETNET_SERVER_TRANSPORT=loopback ROCKETNET_CLIENT_TRANSPORT=loopback \
+  bash tools/run_functional.sh dev-loopback ./bin/functional
+```
+
 ## Fuzzing
 
 The fuzz corpora replay on macOS without libFuzzer, as CI does on its macOS
