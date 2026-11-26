@@ -3,5 +3,3 @@ MCReplayWindowMid.cfg	5020	335.6	hetzner1	69206063	3145729
 MCClientConnectionLCrash.cfg	17400	1092.7	aws-mut-3	15077085	2453765
 MCRNClientIoDecrypt.cfg	7570	484.4	aws-mut-3	5818744	2145767
 MCServerSessionTwoClients.cfg	2210	134.8	aws-mut-4	4244278	411808
-MCRNPathProbeFull.cfg	240	115.5	space	2322494	366825
-MCRNPathProbeLateFull.cfg	280	136.6	space	69842238	7416104

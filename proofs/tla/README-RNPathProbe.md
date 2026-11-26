@@ -36,22 +36,30 @@ TraceRNPathProbe.tla, which still bind the v1 handshake probe).
   packet, of kind `"large"` every packet above the control size (the large probe
   and its reply) while the small partners cross; each drops what is in flight
   when it starts and what is sent while it lasts, both ways. At most `MaxBursts`
-  bursts, every burst ends (fairness), and all of them lie inside one loss window
-  of at most `BurstSpacings` strike spacings from the first burst's start
-  (`span`).
+  bursts, and every burst ends (fairness). The loss assumption: loss of large
+  packets alone never covers K consecutive pairs whose small probes came back.
+  `pairInBurst` marks that a burst met the outstanding pair (it was on when the
+  pair was sent, or started while the pair was out); `burstStrikes` counts the
+  strikes in the current row taken on such pairs, and goes to zero with the
+  strikes (a small-lost pair, a rule-out). A burst may meet a pair that can
+  still strike (a large burst, or one of every packet once the small reply is
+  in) only while `burstStrikes < K - 1` (`BurstMayMeet`): a pair is not sent
+  into a large burst past that, and such a burst does not start over an
+  outstanding pair. A pair sent into a burst of every packet loses its small
+  probe and cannot strike, and needs no bound.
 - **Pairs and strikes.** The first pair goes at connect; then one per pair
   interval (`Tick`; FIRST, 0.25 s or twice the handshake round trip, doubling
-  after every pair that resolves without success up to MAX, 1 s, back to FIRST at
-  a rule-out). The interval's length is abstracted: it is always shorter than the
-  strike spacing (5 s). A pair is the small probe and the large at `Cur`, one new
-  pair number (`pairNo` is its parity). When the next pair is due, the
-  outstanding pair resolves (`ClientResolvePair`): small seen and large not is a
-  strike, counted only when the pair was sent a spacing after the pair of the
-  last counted strike (`pairSpaced`, fixed at send from `spaced`; `Spaced` marks
-  a spacing passing); small not seen is no evidence. K counted strikes rule a
-  candidate above P out (`ClientRuleOut`; the next starts fresh), and at P0 itself
-  end the connection -14 (`ClientFail`). So K counted strikes span at least
-  K - 1 spacings, and probing has no time limit while strikes go uncounted.
+  after a pair whose small probe was lost, up to MAX, 1 s, back to FIRST at a
+  rule-out; the interval is not tracked). A pair is the small probe and the large
+  at `Cur`, one new pair number (`pairNo` is its parity). When the next pair is
+  due, the outstanding pair resolves (`ClientResolvePair`): small seen and large
+  not is a strike, and every strike counts; small not seen is evidence of loss,
+  not of size, and sets the candidate's strikes to zero; large seen (only under
+  `"probeaftermax"`, as a large reply ends the walk where it arrives) leaves
+  them. K strikes in a row rule a candidate above P out (`ClientRuleOut`; the
+  next starts fresh), and at P0 itself end the connection -14 (`ClientFail`). So
+  a path that carries a smaller candidate settles in K pair intervals for each
+  size above it, with no wait between strikes.
 - **Large replies.** A large reply that opens is taken only while probing and
   only at the walk's current candidate, from any pair so far
   (`ClientRecvLarge`): above P it raises P at once and sets the confirm; at P
@@ -99,9 +107,8 @@ confirm may be resent whenever none is in flight).
 | P never decreases, on either end | `PNeverDecreases` (action) | `MCRNPathProbeBrokenLower.cfg` |
 | every P above P0 is a size the path carries both ways | `RaisedWithinPath` | (the raise witnesses below reach it too) |
 | the server is never ahead of the client | `ServerNeverAhead` | |
-| loss alone never rules out a size the path carries (Timed, `BurstSpacings <= K - 2`) | `NoWrongRuleOut` | `MCRNPathProbeBrokenUnspacedStrike.cfg` |
+| loss alone never rules out a size the path carries (Timed, under the loss assumption) | `NoWrongRuleOut` | `MCRNPathProbeBrokenNoReset.cfg`; `MCRNPathProbeBrokenUnboundedBurst.cfg` drops the assumption |
 | a strike counts only for a pair whose small reply came back | `StrikeNeedsSmall` (action) | `MCRNPathProbeBrokenStrikeOnLoss.cfg` |
-| a strike counts only on a spaced pair | `StrikeNeedsSpacing` (action) | (`MCRNPathProbeBrokenUnspacedStrike.cfg`) |
 | the server raises only on a confirm carrying the size | `ServerRaisesOnConfirm` (action) | `MCRNPathProbeBrokenRaiseOnProbe.cfg` |
 | the client raises only on an authenticated large reply of the size | `ClientRaisesOnAuthLarge` (action) | `MCRNPathProbeBrokenForgedRaise.cfg` |
 | -14 only when P0 itself collected K strikes | `FailOnlyAtP0` | |
@@ -123,19 +130,16 @@ raises P is explored.
 ## Instances
 
 `MCRNPathProbe.tla` extends the module. Unless the case says otherwise: client
-and server lists `{3, 2, 1}`, `K` = 2, one burst (`MaxBursts` = 1) in a window of
-no spacing (`BurstSpacings` = 0), `AttackBudget` = 1, `Forger` = FALSE, `Timed` =
-TRUE.
+and server lists `{3, 2, 1}`, `K` = 2, one burst (`MaxBursts` = 1),
+`AttackBudget` = 1, `Forger` = FALSE, `Timed` = TRUE.
 
 | Case | Notes |
 | --- | --- |
-| `MCRNPathProbe.cfg` | capacities `{0, 1, 3}` up and `{1, 3}` down, every invariant and property under `FairSpec`; reduced from `MCRNPathProbeFull.cfg` only for the 110 s case budget |
-| `MCRNPathProbeFull.cfg` | the same at every capacity `0 .. 3` each way: nightly timeout debt (`NIGHTLY-DEBT.tsv`) |
+| `MCRNPathProbe.cfg` | every capacity `0 .. 3` each way, every invariant and property under `FairSpec` |
 | `MCRNPathProbeServerList.cfg` | server list `{3, 1}`: the client's middle size is never answered and is ruled out; the same checks at the same capacities |
 | `MCRNPathProbeOneEntry.cfg` | client set `{2}`, server list `{2, 1}`: no probing |
-| `MCRNPathProbeLate.cfg` | `Timed` = FALSE, capacities `{1, 3}`, no attacker, safety (`Spec`); reduced from `MCRNPathProbeLateFull.cfg` only for the 110 s case budget |
-| `MCRNPathProbeLateFull.cfg` | the same with one attacker send: nightly timeout debt (`NIGHTLY-DEBT.tsv`) |
-| `MCRNPathProbeSpacing.cfg` | client and server `{2, 1}`, `K` = 3, two bursts in a window of one spacing, capacities `{1, 2}`, no attacker: `NoWrongRuleOut` at a second spacing (safety) |
+| `MCRNPathProbeLate.cfg` | `Timed` = FALSE, capacities `{1, 3}`, one attacker send, safety (`Spec`) |
+| `MCRNPathProbeLossRow.cfg` | client and server `{2, 1}`, `K` = 2, three bursts of either kind, capacities `{1, 2}`, no attacker: `NoWrongRuleOut` across a row broken by a lost small probe (safety); `MCRNPathProbeBrokenNoReset.cfg` is its instance at capacity 2 each way with the reset removed |
 | `MCRNPathProbeForged.cfg` | `Forger` = TRUE and no other attacker, capacities `{1, 3}`: `ForgedNeverStarves` and `Converges` |
 | `MCRNPathProbeReachLateReply.cfg` | `Timed` = FALSE, capacity 3 each way, `K` = 2, no loss: must violate `NoLateRaise` |
 | each `MCRNPathProbeBroken*.cfg` | must violate the one property it names; its header says its instance |
@@ -152,9 +156,18 @@ against the code once the v2 code is in.
   2.
 - **StrikeOnLoss** (`StrikeNeedsSmall`): a burst of every packet; the pair sent
   inside it loses both probes, and the broken client counts a strike.
-- **UnspacedStrike** (`NoWrongRuleOut`): a burst of large packets only, inside a
-  window of no spacing, over two pairs at 2 on a path that carries 2: both
-  small replies come back, both large are lost, the broken client counts both,
+- **NoReset** (read on space, 2026-11-26; `NoWrongRuleOut`, `MaxBursts` = 3, `K` = 2, a path that carries
+  2): the first pair at 2 has its small reply in when a burst of every packet
+  starts and drops its large probe: a strike, the row at 1. The next pair is
+  sent inside that burst and loses its small probe; the broken client keeps the
+  strike (the code sets it to zero). The burst ends, the next pair's small
+  reply comes back and a burst of large packets only drops its large: a second
+  strike, the row at 1 again, and 2 is ruled out. TLC's shortest trace uses two
+  bursts (every packet, then large only); large, every packet, large is the same
+  mechanism one burst longer.
+- **UnboundedBurst** (`NoWrongRuleOut`, not the code): with the loss assumption
+  dropped, one burst of large packets only meets two pairs at 2 on a path that
+  carries 2: both small replies come back, both large are lost, two strikes,
   and 2 is ruled out.
 - **RaiseOnProbe** (`ServerRaisesOnConfirm`): the server answers the first large
   probe at 2 and raises its P to 2 with no confirm.
@@ -184,35 +197,34 @@ against the code once the v2 code is in.
 
 The records in `RUNS.tsv` are measured on space with the pinned tlacheck
 (`tlacheck run --group rnpathprobe`, which refuses to run on macOS), one case
-per bounded run, two workers, 2026-11-25. `MCRNPathProbeFull.cfg` and
-`MCRNPathProbeLateFull.cfg` are over the 110 s record cap, so their records
-are the bounded FAIL/124 and their completed counts are in `NIGHTLY-DEBT.tsv`,
-from one run each with no record cap (`--manual`, space, 2 workers).
+per bounded run, two workers, 2026-11-26. With the strike spacing gone the
+state space is smaller, and the full capacity sweep and the untimed case with an
+attacker send fit the 110 s case budget: they are the per-PR cases
+`MCRNPathProbe.cfg` and `MCRNPathProbeLate.cfg`, and no case of the group is
+timeout debt.
 
 | Case | Result | Generated | Distinct | Seconds |
 | --- | --- | --- | --- | --- |
-| `MCRNPathProbe.cfg` | pass | 744,712 | 119,777 | 38.5 |
-| `MCRNPathProbeFull.cfg` | pass (nightly debt; bounded record FAIL/124) | 2,322,494 | 366,825 | 115.5 |
-| `MCRNPathProbeServerList.cfg` | pass | 717,382 | 115,813 | 38.1 |
-| `MCRNPathProbeOneEntry.cfg` | pass | 2,457 | 432 | 1.0 |
-| `MCRNPathProbeLate.cfg` | pass | 2,605,454 | 335,422 | 6.8 |
-| `MCRNPathProbeLateFull.cfg` | pass (nightly debt; bounded record FAIL/124) | 69,842,238 | 7,416,104 | 136.6 |
-| `MCRNPathProbeSpacing.cfg` | pass | 84,044 | 16,325 | 1.5 |
-| `MCRNPathProbeForged.cfg` | pass | 240,596 | 37,408 | 10.1 |
-| `MCRNPathProbeReachLateReply.cfg` | `NoLateRaise` | 325 | 104 | 0.8 |
-| `MCRNPathProbeBrokenLower.cfg` | `PNeverDecreases` | 8,289 | 1,919 | 0.9 |
+| `MCRNPathProbe.cfg` | pass | 826,611 | 135,482 | 41.5 |
+| `MCRNPathProbeServerList.cfg` | pass | 748,937 | 126,980 | 36.2 |
+| `MCRNPathProbeOneEntry.cfg` | pass | 2,457 | 432 | 1.1 |
+| `MCRNPathProbeLate.cfg` | pass | 18,818,594 | 2,079,348 | 36.6 |
+| `MCRNPathProbeLossRow.cfg` | pass | 29,601 | 5,625 | 1.1 |
+| `MCRNPathProbeForged.cfg` | pass | 91,758 | 14,552 | 4.8 |
+| `MCRNPathProbeReachLateReply.cfg` | `NoLateRaise` | 324 | 103 | 0.8 |
+| `MCRNPathProbeBrokenLower.cfg` | `PNeverDecreases` | 8,164 | 1,886 | 1.0 |
 | `MCRNPathProbeBrokenStrikeOnLoss.cfg` | `StrikeNeedsSmall` | 103 | 42 | 0.8 |
-| `MCRNPathProbeBrokenUnspacedStrike.cfg` | `NoWrongRuleOut` | 1,671 | 341 | 0.8 |
+| `MCRNPathProbeBrokenNoReset.cfg` | `NoWrongRuleOut` | 9,003 | 1,644 | 1.0 |
+| `MCRNPathProbeBrokenUnboundedBurst.cfg` | `NoWrongRuleOut` | 1,622 | 311 | 0.9 |
 | `MCRNPathProbeBrokenRaiseOnProbe.cfg` | `ServerRaisesOnConfirm` | 7 | 4 | 0.8 |
 | `MCRNPathProbeBrokenForgedRaise.cfg` | `ClientRaisesOnAuthLarge` | 66 | 26 | 0.8 |
 | `MCRNPathProbeBrokenProbeAfterMax.cfg` | `NoProbeAfterDone` | 192 | 56 | 0.8 |
 | `MCRNPathProbeBrokenUnproven.cfg` | `ReplyOnlyConnected` | 37 | 28 | 0.7 |
 | `MCRNPathProbeBrokenLarger.cfg` | `ReplyNoLarger` | 7 | 4 | 0.8 |
 | `MCRNPathProbeBrokenOffList.cfg` | `ReplyOwnList` | 7 | 4 | 0.8 |
-| `MCRNPathProbeBrokenNoAllowance.cfg` | `OneReplyPerUpdate` | 378 | 129 | 0.9 |
-| `MCRNPathProbeBrokenSkipLast.cfg` | `FailsWhenP0NotCarried` | 16,497 | 3,615 | 1.8 |
-| `MCRNPathProbeBrokenForgedStarves.cfg` | `ForgedNeverStarves` | 66,249 | 10,056 | 3.5 |
-
+| `MCRNPathProbeBrokenNoAllowance.cfg` | `OneReplyPerUpdate` | 378 | 129 | 0.8 |
+| `MCRNPathProbeBrokenSkipLast.cfg` | `FailsWhenP0NotCarried` | 6,824 | 1,565 | 1.5 |
+| `MCRNPathProbeBrokenForgedStarves.cfg` | `ForgedNeverStarves` | 31,737 | 5,016 | 2.2 |
 
 ## Trace binding
 
