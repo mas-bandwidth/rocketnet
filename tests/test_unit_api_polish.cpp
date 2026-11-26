@@ -661,6 +661,11 @@ REGISTER_UNIT_TEST( test_api_polish_negative_first_update_time_is_misuse );
 static double g_polish_big_index_now = 1000.0;
 static double api_polish_big_index_clock( void * ) { return g_polish_big_index_now; }
 
+static int api_polish_big_index_server_slots()
+{
+    return ROCKETNET_MAX_CLIENTS + 1000 <= ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT ? ROCKETNET_MAX_CLIENTS + 1000 : ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT;
+}
+
 static void test_api_polish_client_index_at_build_max_clients()
 {
     rocketnet_quiet( true );
@@ -672,7 +677,7 @@ static void test_api_polish_client_index_at_build_max_clients()
     // step 17), the most any server can be built with; in a build at that
     // ceiling the held slots leave the last one free
 
-    const int server_max_clients = ROCKETNET_MAX_CLIENTS + 1000 <= ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT ? ROCKETNET_MAX_CLIENTS + 1000 : ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT;
+    const int server_max_clients = api_polish_big_index_server_slots();
     const int held_slots = ROCKETNET_MAX_CLIENTS < server_max_clients ? ROCKETNET_MAX_CLIENTS : server_max_clients - 1;
 
     struct rocketnet_counters_t server_counters;
@@ -810,6 +815,24 @@ static void test_api_polish_client_index_at_build_max_clients()
     rocketnet_quiet( false );
 }
 REGISTER_UNIT_TEST( test_api_polish_client_index_at_build_max_clients );
+
+// The server's ack and slot tables grow with its slots, which follow this
+// build's ROCKETNET_MAX_CLIENTS: the case peaks at 94 MiB at the default build's
+// 2000 slots, under the suite-wide bound, and at 1459 MiB at a
+// MAX_CLIENTS=32768 build's 32768 slots, over it (Linux, 2026-11-26). A build above the default maximum bounds the
+// case by its plan instead: the ack and slot tables planned for its slots
+// (rocketnet_server_acks_allocation_bytes, rocketnet_client_slots_allocation_bytes)
+// plus a stated 64 MiB for the client, the small server tables and the
+// process. The default build keeps the suite-wide bound.
+#if ROCKETNET_MAX_CLIENTS > 1000
+static long api_polish_big_index_rss_bound_mb()
+{
+    const int slots = api_polish_big_index_server_slots();
+    return suite_rss_bound_mb( rocketnet_server_acks_allocation_bytes( slots ) + rocketnet_client_slots_allocation_bytes( slots ), 64 );
+}
+
+SUITE_CASE_RSS_BOUND( test_api_polish_client_index_at_build_max_clients, api_polish_big_index_rss_bound_mb );
+#endif // #if ROCKETNET_MAX_CLIENTS > 1000
 
 // --- server abort_message acts on the pending start: with none, a no-op ---------
 
