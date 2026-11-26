@@ -193,24 +193,24 @@ from one run each with no record cap (`--manual`, space, 2 workers).
 | --- | --- | --- | --- | --- |
 | `MCRNPathProbe.cfg` | pass | 744,712 | 119,777 | 38.5 |
 | `MCRNPathProbeFull.cfg` | pass (nightly debt; bounded record FAIL/124) | 2,322,494 | 366,825 | 115.5 |
-| `MCRNPathProbeServerList.cfg` | pass | 717,382 | 115,813 | 37.0 |
-| `MCRNPathProbeOneEntry.cfg` | pass | 2,457 | 432 | 1.1 |
-| `MCRNPathProbeLate.cfg` | pass | 2,605,454 | 335,422 | 7.1 |
+| `MCRNPathProbeServerList.cfg` | pass | 717,382 | 115,813 | 38.1 |
+| `MCRNPathProbeOneEntry.cfg` | pass | 2,457 | 432 | 1.0 |
+| `MCRNPathProbeLate.cfg` | pass | 2,605,454 | 335,422 | 6.8 |
 | `MCRNPathProbeLateFull.cfg` | pass (nightly debt; bounded record FAIL/124) | 69,842,238 | 7,416,104 | 136.6 |
-| `MCRNPathProbeSpacing.cfg` | pass | 84,044 | 16,325 | 1.6 |
+| `MCRNPathProbeSpacing.cfg` | pass | 84,044 | 16,325 | 1.5 |
 | `MCRNPathProbeForged.cfg` | pass | 240,596 | 37,408 | 10.1 |
 | `MCRNPathProbeReachLateReply.cfg` | `NoLateRaise` | 325 | 104 | 0.8 |
-| `MCRNPathProbeBrokenLower.cfg` | `PNeverDecreases` | 8,289 | 1,919 | 1.0 |
+| `MCRNPathProbeBrokenLower.cfg` | `PNeverDecreases` | 8,289 | 1,919 | 0.9 |
 | `MCRNPathProbeBrokenStrikeOnLoss.cfg` | `StrikeNeedsSmall` | 103 | 42 | 0.8 |
 | `MCRNPathProbeBrokenUnspacedStrike.cfg` | `NoWrongRuleOut` | 1,671 | 341 | 0.8 |
-| `MCRNPathProbeBrokenRaiseOnProbe.cfg` | `ServerRaisesOnConfirm` | 7 | 4 | 0.9 |
+| `MCRNPathProbeBrokenRaiseOnProbe.cfg` | `ServerRaisesOnConfirm` | 7 | 4 | 0.8 |
 | `MCRNPathProbeBrokenForgedRaise.cfg` | `ClientRaisesOnAuthLarge` | 66 | 26 | 0.8 |
 | `MCRNPathProbeBrokenProbeAfterMax.cfg` | `NoProbeAfterDone` | 192 | 56 | 0.8 |
-| `MCRNPathProbeBrokenUnproven.cfg` | `ReplyOnlyConnected` | 37 | 28 | 0.8 |
+| `MCRNPathProbeBrokenUnproven.cfg` | `ReplyOnlyConnected` | 37 | 28 | 0.7 |
 | `MCRNPathProbeBrokenLarger.cfg` | `ReplyNoLarger` | 7 | 4 | 0.8 |
 | `MCRNPathProbeBrokenOffList.cfg` | `ReplyOwnList` | 7 | 4 | 0.8 |
 | `MCRNPathProbeBrokenNoAllowance.cfg` | `OneReplyPerUpdate` | 378 | 129 | 0.9 |
-| `MCRNPathProbeBrokenSkipLast.cfg` | `FailsWhenP0NotCarried` | 16,497 | 3,615 | 1.9 |
+| `MCRNPathProbeBrokenSkipLast.cfg` | `FailsWhenP0NotCarried` | 16,497 | 3,615 | 1.8 |
 | `MCRNPathProbeBrokenForgedStarves.cfg` | `ForgedNeverStarves` | 66,249 | 10,056 | 3.5 |
 
 
