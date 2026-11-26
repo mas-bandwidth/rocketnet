@@ -13,11 +13,16 @@
 # Release builds with zero warnings, the legacy-libbpf provider on 22.04 and
 # not elsewhere, ./bin/test, ./bin/test_xdp_compat on 22.04, ./bin/functional
 # (real sockets on the guest kernel: portable, gso, io_uring as the kernel
-# grants them) and tools/check_package.py. The script prints one
-# LTS-VM-PASS or LTS-VM-FAIL line; the step's exit is the script's.
+# grants them), tools/check_package.py, the functional suite again with
+# gso/portable pinned (and io_uring/portable where the build has io_uring:
+# not 22.04), and the xdp/portable cell's cases as root on a veth pair
+# against the release's own AF_XDP provider (legacy libbpf 0.5, libxdp 1.4,
+# libxdp 1.6). The script prints one LTS-VM-PASS or LTS-VM-FAIL line; the
+# step's exit is the script's.
 #
-# What it does not cover: an attached XDP data plane (the guest's virtio NIC
-# is not the deployment NIC), and performance. A red night is a finding.
+# What it does not cover: XDP on the deployment NIC (the xdp cases attach to
+# a veth pair, not the guest's virtio NIC), and performance. A red night is
+# a finding.
 #
 # Images: each release's cloud image is cached on the runner host under
 # ~/.cache/rocketnet-nightly/cloud-images, keyed by its SHA256. Every run

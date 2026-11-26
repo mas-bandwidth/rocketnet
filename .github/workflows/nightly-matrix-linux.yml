@@ -1,0 +1,777 @@
+# THE LINUX RUN-MATRIX CELLS NO OTHER WORKFLOW RUNS.
+#
+# tools/verification_matrix.tsv names every required verification cell and
+# the workflow job that runs it (tools/check_run_matrix.py). The Linux cells
+# below were owed since 2026-11-19: declared, run nowhere. Each job here runs
+# a family of them, one matrix row per cell, so a red row names its cell:
+#
+#   functional-cells   the whole functional suite (functional, or
+#                      functional_production for the prod build) with one
+#                      server and one client transport pinned by env, on the
+#                      Release, Debug, TSan (Debug), UBSan (Release) and
+#                      production (ROCKETNET_DEV=OFF) builds. The pairs are
+#                      ci.yml's TRANSPORT_MATRIX_LINUX socket pairs, which
+#                      per commit run four cases each; here each pair runs
+#                      every case. Each run goes through
+#                      tools/run_functional.sh <variant>, so its skips are
+#                      held to tests/functional/expected_skips.txt (one leg
+#                      per server/client pair).
+#   xdp-sanitized      the xdp/portable cell under TSan and UBSan: the xdp
+#                      server needs root and a veth pair, so its cases run as
+#                      root inside a virtme-ng guest of the runner's own
+#                      kernel (scripts/transport-cells-repeat --cell
+#                      xdp/portable, the same cases and pass rule as ci.yml's
+#                      xdp cell), on the sanitized build.
+#   build-variants     the unit suite and/or the functional suite on one
+#                      non-default build: MinSizeRel, RelWithDebInfo, each
+#                      documented bound (HISTORY_PACKETS, MAX_CLIENTS,
+#                      MAX_CHANNELS), each CMake option at its other value,
+#                      an external transport source, a non-default XDP memory
+#                      cap, the production library in Debug, AddressSanitizer
+#                      Release, UBSan Release unpinned.
+#   consumers          ROCKETNET_BUILD_SHARED=OFF and
+#                      ROCKETNET_BUILD_DEV_LIBRARIES=OFF: the build, then
+#                      tools/check_package.py's install, relocation and
+#                      consumers (embedded too) of what that build ships.
+#   singles            one Release build, then each binary no suite runs:
+#                      test_internal_c, test_platform_primitives, the
+#                      connect-token vectors regenerated against the committed
+#                      file, the five cost benchmarks, the XDP packet
+#                      blaster's contract test.
+#   root               the functional suite as root inside a virtme-ng guest:
+#                      unpinned (the automatic order's first rung is xdp as
+#                      root) and io_uring/portable (root's memlock limit).
+#   send-drop          tests/load with the server's veth constrained (a short,
+#                      rate-limited transmit queue on the server end), per
+#                      socket server transport, inside a virtme-ng guest as
+#                      root: the run
+#                      must pass and its server-namespace SndbufErrors term
+#                      must be nonzero, so the server half of counters_agree
+#                      is exercised (docs/LOAD.md).
+#
+# A red night is a gate that would be red on the commit: nightly-watch.yml
+# prints its commit range and bisect line.
+
+name: nightly-matrix-linux
+
+on:
+  schedule:
+    - cron: "10 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+jobs:
+
+  functional-cells:
+    name: functional ${{ matrix.cell.build }} ${{ matrix.cell.server }}~${{ matrix.cell.client }}
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        # build: release, debug, tsan (Debug), ubsan (Release), prod (Release,
+        # ROCKETNET_DEV=OFF). client auto leaves ROCKETNET_CLIENT_TRANSPORT
+        # unset, as ci.yml's matrix does. variant: the run_functional.sh leg.
+        cell:
+          - { build: release, server: gso, client: gso, variant: dev-gso-gso }
+          - { build: release, server: gso, client: portable, variant: dev-gso-portable }
+          - { build: release, server: io_uring, client: portable, variant: dev-iouring-portable }
+          - { build: release, server: loopback, client: loopback, variant: dev-loopback-loopback }
+          - { build: release, server: portable, client: auto, variant: dev-portable-auto }
+          - { build: release, server: portable, client: gso, variant: dev-portable-gso }
+          - { build: debug, server: gso, client: gso, variant: dev-gso-gso }
+          - { build: debug, server: gso, client: portable, variant: dev-gso-portable }
+          - { build: debug, server: io_uring, client: portable, variant: dev-iouring-portable }
+          - { build: debug, server: loopback, client: loopback, variant: dev-loopback-loopback }
+          - { build: debug, server: portable, client: auto, variant: dev-portable-auto }
+          - { build: debug, server: portable, client: gso, variant: dev-portable-gso }
+          - { build: debug, server: portable, client: portable, variant: dev-portable }
+          - { build: tsan, server: gso, client: gso, variant: dev-sanitized-gso-gso }
+          - { build: tsan, server: gso, client: portable, variant: dev-sanitized-gso-portable }
+          - { build: tsan, server: io_uring, client: portable, variant: dev-sanitized-iouring-portable }
+          - { build: tsan, server: loopback, client: loopback, variant: dev-sanitized-loopback-loopback }
+          - { build: tsan, server: portable, client: auto, variant: dev-sanitized-portable-auto }
+          - { build: tsan, server: portable, client: gso, variant: dev-sanitized-portable-gso }
+          - { build: tsan, server: portable, client: portable, variant: dev-sanitized-portable-portable }
+          - { build: ubsan, server: auto, client: auto, variant: dev }
+          - { build: ubsan, server: gso, client: gso, variant: dev-gso-gso }
+          - { build: ubsan, server: gso, client: portable, variant: dev-gso-portable }
+          - { build: ubsan, server: io_uring, client: portable, variant: dev-iouring-portable }
+          - { build: ubsan, server: loopback, client: loopback, variant: dev-loopback-loopback }
+          - { build: ubsan, server: portable, client: auto, variant: dev-portable-auto }
+          - { build: ubsan, server: portable, client: gso, variant: dev-portable-gso }
+          - { build: ubsan, server: portable, client: portable, variant: dev-portable }
+          - { build: prod, server: gso, client: gso, variant: prod-gso-gso }
+          - { build: prod, server: gso, client: portable, variant: prod-gso-portable }
+          - { build: prod, server: io_uring, client: portable, variant: prod-iouring-portable }
+          - { build: prod, server: loopback, client: loopback, variant: prod-loopback-loopback }
+          - { build: prod, server: portable, client: auto, variant: prod-portable-auto }
+          - { build: prod, server: portable, client: gso, variant: prod-portable-gso }
+    concurrency:
+      group: nightly-matrix-linux-cells-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.cell.build }}-${{ matrix.cell.server }}-${{ matrix.cell.client }}
+      cancel-in-progress: true
+    env:
+      BUILD: ${{ matrix.cell.build }}
+      SERVER: ${{ matrix.cell.server }}
+      CLIENT: ${{ matrix.cell.client }}
+      VARIANT: ${{ matrix.cell.variant }}
+    steps:
+
+      # the leg for the run's own ref checks out the run's head commit, so a
+      # green leg is evidence about that exact commit
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
+      - uses: ./.github/actions/ccache
+
+      - name: Check the fleet's build dependencies are present
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config setarch; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      # tsan at -O1, as nightly.yml's tsan-threaded leg (tools/check_tsan_flags.py)
+      - name: Configure and build the suite
+        run: |
+          set -euo pipefail
+          case "$BUILD" in
+            release) args=(-DCMAKE_BUILD_TYPE=Release); targets=(test functional) ;;
+            debug) args=(-DCMAKE_BUILD_TYPE=Debug); targets=(test functional) ;;
+            tsan) args=(-DCMAKE_BUILD_TYPE=Debug
+                        "-DCMAKE_C_FLAGS=-fsanitize=thread -fno-omit-frame-pointer -O1"
+                        "-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer -O1"
+                        "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread"); targets=(test functional) ;;
+            ubsan) args=(-DCMAKE_BUILD_TYPE=Release
+                         "-DCMAKE_C_FLAGS=-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+                         "-DCMAKE_CXX_FLAGS=-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"); targets=(test functional) ;;
+            prod) args=(-DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF); targets=(functional_production) ;;
+            *) echo "no build $BUILD"; exit 1 ;;
+          esac
+          cmake -S . -B build "${args[@]}"
+          cmake --build build --target "${targets[@]}" --parallel 8
+
+      - name: Whole functional suite with the cell's transports pinned (tools/run_functional.sh)
+        env:
+          ROCKETNET_TEST_KEEP_GOING: "1"
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: |
+          set -euo pipefail
+          if [ "$SERVER" != auto ]; then export ROCKETNET_SERVER_TRANSPORT="$SERVER"; fi
+          if [ "$CLIENT" != auto ]; then export ROCKETNET_CLIENT_TRANSPORT="$CLIENT"; fi
+          # the suite binary by name: bin/<name>, functional_production on the prod build
+          name=functional
+          if [ "$BUILD" = prod ]; then name=functional_production; fi
+          suite=("./bin/$name")
+          case "$BUILD" in
+            prod) ;;
+            # setarch -R for gcc 13's tsan runtime, scaled as nightly.yml's tsan leg
+            tsan) suite=(setarch "$(uname -m)" -R "./bin/$name"); export ROCKETNET_TEST_CASE_TIME_SCALE=4 ;;
+            # the nightly tier's cases where no sanitizer stretches them
+            *) export ROCKETNET_TEST_NIGHTLY=1 ;;
+          esac
+          echo "cell $BUILD server=${ROCKETNET_SERVER_TRANSPORT:-auto} client=${ROCKETNET_CLIENT_TRANSPORT:-auto} leg linux-$VARIANT"
+          case "$VARIANT" in
+            dev) bash tools/run_functional.sh dev "${suite[@]}" ;;
+            dev-portable) bash tools/run_functional.sh dev-portable "${suite[@]}" ;;
+            dev-gso-gso) bash tools/run_functional.sh dev-gso-gso "${suite[@]}" ;;
+            dev-gso-portable) bash tools/run_functional.sh dev-gso-portable "${suite[@]}" ;;
+            dev-iouring-portable) bash tools/run_functional.sh dev-iouring-portable "${suite[@]}" ;;
+            dev-loopback-loopback) bash tools/run_functional.sh dev-loopback-loopback "${suite[@]}" ;;
+            dev-portable-auto) bash tools/run_functional.sh dev-portable-auto "${suite[@]}" ;;
+            dev-portable-gso) bash tools/run_functional.sh dev-portable-gso "${suite[@]}" ;;
+            dev-sanitized-gso-gso) bash tools/run_functional.sh dev-sanitized-gso-gso "${suite[@]}" ;;
+            dev-sanitized-gso-portable) bash tools/run_functional.sh dev-sanitized-gso-portable "${suite[@]}" ;;
+            dev-sanitized-iouring-portable) bash tools/run_functional.sh dev-sanitized-iouring-portable "${suite[@]}" ;;
+            dev-sanitized-loopback-loopback) bash tools/run_functional.sh dev-sanitized-loopback-loopback "${suite[@]}" ;;
+            dev-sanitized-portable-auto) bash tools/run_functional.sh dev-sanitized-portable-auto "${suite[@]}" ;;
+            dev-sanitized-portable-gso) bash tools/run_functional.sh dev-sanitized-portable-gso "${suite[@]}" ;;
+            dev-sanitized-portable-portable) bash tools/run_functional.sh dev-sanitized-portable-portable "${suite[@]}" ;;
+            prod-gso-gso) bash tools/run_functional.sh prod-gso-gso "${suite[@]}" ;;
+            prod-gso-portable) bash tools/run_functional.sh prod-gso-portable "${suite[@]}" ;;
+            prod-iouring-portable) bash tools/run_functional.sh prod-iouring-portable "${suite[@]}" ;;
+            prod-loopback-loopback) bash tools/run_functional.sh prod-loopback-loopback "${suite[@]}" ;;
+            prod-portable-auto) bash tools/run_functional.sh prod-portable-auto "${suite[@]}" ;;
+            prod-portable-gso) bash tools/run_functional.sh prod-portable-gso "${suite[@]}" ;;
+            *) echo "no leg for variant $VARIANT (tests/functional/expected_skips.txt)"; exit 1 ;;
+          esac
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
+  xdp-sanitized:
+    name: functional ${{ matrix.build }} xdp~portable (virtme-ng guest)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        build: [tsan, ubsan]
+    concurrency:
+      group: nightly-matrix-linux-xdp-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.build }}
+      cancel-in-progress: true
+    env:
+      BUILD: ${{ matrix.build }}
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
+      - uses: ./.github/actions/ccache
+
+      # scripts/vm-tier-missing prints what this runner lacks of the VM tier
+      # (vng, qemu, a writable /dev/kvm, the guest kernel); empty is present
+      - name: The VM tier is present (scripts/vm-tier-missing)
+        run: |
+          set -euo pipefail
+          missing=$(scripts/vm-tier-missing)
+          if [ -n "$missing" ]; then
+            echo "VM-TIER-MISSING on $RUNNER_NAME: $missing"
+            exit 1
+          fi
+          echo "VM tier present on $RUNNER_NAME"
+
+      - name: Configure and build the sanitized suite
+        run: |
+          set -euo pipefail
+          case "$BUILD" in
+            tsan) args=(-DCMAKE_BUILD_TYPE=Debug
+                        "-DCMAKE_C_FLAGS=-fsanitize=thread -fno-omit-frame-pointer -O1"
+                        "-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer -O1"
+                        "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread") ;;
+            ubsan) args=(-DCMAKE_BUILD_TYPE=Release
+                         "-DCMAKE_C_FLAGS=-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
+                         "-DCMAKE_CXX_FLAGS=-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer") ;;
+            *) echo "no build $BUILD"; exit 1 ;;
+          esac
+          cmake -S . -B build "${args[@]}"
+          cmake --build build --target test functional --parallel 8
+
+      # The guest runs the binary transport-cells-repeat is given; for tsan
+      # that is a wrapper under the work directory (the guest sees it through
+      # --rwdir) that runs the suite with ASLR off, as every tsan leg does.
+      - name: The xdp/portable cell's cases on the sanitized build, as root in the guest (functional, xdp server, portable client)
+        env:
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+          ROCKETNET_TEST_CASE_TIME_SCALE: "4"
+        run: |
+          set -euo pipefail
+          name=functional
+          suite="$PWD/bin/$name"
+          if [ "$BUILD" = tsan ]; then
+            suite=$PWD/build/functional-no-aslr
+            printf '#!/bin/sh\nexec setarch "$(uname -m)" -R %s/bin/%s "$@"\n' "$PWD" "$name" > "$suite"
+            chmod +x "$suite"
+          fi
+          scripts/transport-cells-repeat --runs 1 --cell xdp/portable --functional "$suite" --out "build/xdp-$BUILD"
+
+      - name: Keep the logs of a failing run
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: nightly-matrix-linux-xdp-${{ matrix.build }}-${{ github.run_attempt }}
+          path: build/xdp-${{ matrix.build }}
+          if-no-files-found: ignore
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
+  build-variants:
+    name: ${{ matrix.variant.name }}
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        # name: the row (job name); unit: run the unit suite; functional: the
+        # run_functional.sh variant of the whole functional suite, none for no run
+        variant:
+          - { name: "MinSizeRel unit and functional", unit: true, functional: dev }
+          - { name: "RelWithDebInfo unit and functional", unit: true, functional: dev }
+          - { name: "HISTORY_PACKETS=32768 unit and functional", unit: true, functional: dev }
+          - { name: "MAX_CLIENTS=32768 unit and functional", unit: true, functional: dev }
+          - { name: "MAX_CLIENTS=512 unit and functional", unit: true, functional: dev }
+          - { name: "MAX_CHANNELS=1 unit", unit: true, functional: none }
+          - { name: "MAX_CHANNELS=512 unit", unit: true, functional: none }
+          - { name: "MAX_CHANNELS=65536 unit", unit: true, functional: none }
+          - { name: "ROCKETNET_HARDEN=OFF unit and functional", unit: true, functional: dev }
+          - { name: "ROCKETNET_IO_URING=OFF unit and functional", unit: true, functional: dev-nouring }
+          - { name: "ROCKETNET_XDP=OFF unit and functional", unit: true, functional: dev-noxdp }
+          - { name: "ROCKETNET_USE_SYSTEM_SODIUM=ON functional", unit: false, functional: dev }
+          - { name: "ROCKETNET_TRANSPORT_SOURCES=external unit", unit: true, functional: none }
+          - { name: "ROCKETNET_XDP_MEMORY_MIB=1024 unit", unit: true, functional: none }
+          - { name: "Debug production functional", unit: false, functional: prod }
+          - { name: "Release ASan functional", unit: false, functional: dev-sanitized }
+    concurrency:
+      group: nightly-matrix-linux-variants-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.variant.name }}
+      cancel-in-progress: true
+    env:
+      VARIANT_NAME: ${{ matrix.variant.name }}
+      RUN_UNIT: ${{ matrix.variant.unit }}
+      FUNCTIONAL: ${{ matrix.variant.functional }}
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
+      - uses: ./.github/actions/ccache
+
+      - name: Check the fleet's build dependencies are present
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      # MAX_CHANNELS is a compile-time value of sdk/rocketnet.h (1..65536), not
+      # a CMake cache value: it goes on every compile line of the build
+      - name: Configure and build the variant
+        run: |
+          set -euo pipefail
+          src=$PWD
+          case "$VARIANT_NAME" in
+            "MinSizeRel "*) args=(-DCMAKE_BUILD_TYPE=MinSizeRel) ;;
+            "RelWithDebInfo "*) args=(-DCMAKE_BUILD_TYPE=RelWithDebInfo) ;;
+            "HISTORY_PACKETS=32768 "*) args=(-DCMAKE_BUILD_TYPE=Release -DROCKETNET_HISTORY_PACKETS=32768) ;;
+            "MAX_CLIENTS=32768 "*) args=(-DCMAKE_BUILD_TYPE=Release -DROCKETNET_MAX_CLIENTS=32768) ;;
+            "MAX_CLIENTS=512 "*) args=(-DCMAKE_BUILD_TYPE=Release -DROCKETNET_MAX_CLIENTS=512) ;;
+            "MAX_CHANNELS="*)
+              channels=${VARIANT_NAME#MAX_CHANNELS=}
+              channels=${channels%% *}
+              args=(-DCMAKE_BUILD_TYPE=Release "-DCMAKE_C_FLAGS=-DROCKETNET_MAX_CHANNELS=$channels" "-DCMAKE_CXX_FLAGS=-DROCKETNET_MAX_CHANNELS=$channels") ;;
+            "ROCKETNET_HARDEN=OFF "*) args=(-DCMAKE_BUILD_TYPE=Release -DROCKETNET_HARDEN=OFF) ;;
+            "ROCKETNET_IO_URING=OFF "*) args=(-DCMAKE_BUILD_TYPE=Release -DROCKETNET_IO_URING=OFF) ;;
+            "ROCKETNET_XDP=OFF "*) args=(-DCMAKE_BUILD_TYPE=Release -DROCKETNET_XDP=OFF) ;;
+            "ROCKETNET_USE_SYSTEM_SODIUM=ON "*) args=(-DCMAKE_BUILD_TYPE=Release -DROCKETNET_USE_SYSTEM_SODIUM=ON) ;;
+            # the external backend tools/check_driver_extension.py builds, here
+            # compiled into the tree's own libraries under the unit suite
+            "ROCKETNET_TRANSPORT_SOURCES=external "*) args=(-DCMAKE_BUILD_TYPE=Release
+                "-DROCKETNET_TRANSPORT_REGISTRY_HEADER=$src/tests/driver_extension/registry.inc"
+                "-DROCKETNET_TRANSPORT_SOURCES=$src/tests/driver_extension/backend.cpp") ;;
+            "ROCKETNET_XDP_MEMORY_MIB=1024 "*) args=(-DCMAKE_BUILD_TYPE=Release -DROCKETNET_XDP_MEMORY_MIB=1024) ;;
+            "Debug production "*) args=(-DCMAKE_BUILD_TYPE=Debug -DROCKETNET_DEV=OFF) ;;
+            "Release ASan "*) args=(-DCMAKE_BUILD_TYPE=Release -DROCKETNET_SANITIZE_ADDRESS=ON) ;;
+            *) echo "no build for $VARIANT_NAME"; exit 1 ;;
+          esac
+          targets=()
+          if [ "$RUN_UNIT" = true ]; then targets+=(test); fi
+          case "$FUNCTIONAL" in
+            none) ;;
+            prod) targets+=(functional_production) ;;
+            *) targets+=(test functional) ;;
+          esac
+          cmake -S . -B build "${args[@]}"
+          cmake --build build --target "${targets[@]}" --parallel 8
+
+      - name: Unit suite (test)
+        if: matrix.variant.unit
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_KEEP_GOING: "1"
+        run: ./bin/test
+
+      - name: Whole functional suite (tools/run_functional.sh)
+        if: ${{ !cancelled() && matrix.variant.functional != 'none' }}
+        env:
+          ROCKETNET_TEST_KEEP_GOING: "1"
+          UBSAN_OPTIONS: print_stacktrace=1
+        run: |
+          set -euo pipefail
+          name=functional
+          if [ "$FUNCTIONAL" = prod ]; then name=functional_production; fi
+          suite=("./bin/$name")
+          case "$FUNCTIONAL" in
+            prod) ;;
+            # ASan stretches the cases: scaled as nightly-leaks.yml's leg
+            dev-sanitized) export ROCKETNET_TEST_CASE_TIME_SCALE=2 ;;
+            *) export ROCKETNET_TEST_NIGHTLY=1 ;;
+          esac
+          case "$FUNCTIONAL" in
+            dev) bash tools/run_functional.sh dev "${suite[@]}" ;;
+            dev-nouring) bash tools/run_functional.sh dev-nouring "${suite[@]}" ;;
+            dev-noxdp) bash tools/run_functional.sh dev-noxdp "${suite[@]}" ;;
+            dev-sanitized) bash tools/run_functional.sh dev-sanitized "${suite[@]}" ;;
+            prod) bash tools/run_functional.sh prod "${suite[@]}" ;;
+            *) echo "no leg for variant $FUNCTIONAL (tests/functional/expected_skips.txt)"; exit 1 ;;
+          esac
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
+  consumers:
+    name: ${{ matrix.option }}=OFF build and consumers
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        option: [ROCKETNET_BUILD_SHARED, ROCKETNET_BUILD_DEV_LIBRARIES]
+    concurrency:
+      group: nightly-matrix-linux-consumers-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.option }}
+      cancel-in-progress: true
+    env:
+      OPTION: ${{ matrix.option }}
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
+      - uses: ./.github/actions/ccache
+
+      # The tests need the shared and development libraries (CMakeLists.txt
+      # FATAL_ERROR), so this build is the libraries alone: what a customer
+      # building with the option gets.
+      - name: Build with the option off
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release "-D$OPTION=OFF" -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF
+          cmake --build build --parallel 8
+
+      - name: Install and relocate the SDK; run its consumers, embedded too (tools/check_package.py)
+        run: python3 tools/check_package.py build --config Release --embedded
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
+  singles:
+    name: binaries no suite runs (Release)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-matrix-linux-singles-${{ github.event_name }}-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
+      - uses: ./.github/actions/ccache
+
+      - name: Build (Release)
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel 8 --target test_internal_c test_platform_primitives connect_token_vectors \
+            ack_block_build_cost handshake_cost request_lookup_cost server_receive_cost server_update_ack_cost
+
+      - name: Internal API callable from C (test_internal_c)
+        run: ./bin/test_internal_c
+
+      - name: Platform primitives (test_platform_primitives, DEV=ON)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          ./bin/test_platform_primitives | tee platform-primitives.log
+          grep -q "^platform primitives OK: DEV=1," platform-primitives.log
+
+      # the one writer of standard/vectors/connect_token_v2.json: a fresh
+      # generation must equal the committed file byte for byte
+      - name: Connect-token vectors regenerated equal the committed standard (connect_token_vectors)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          ./bin/connect_token_vectors "$RUNNER_TEMP/connect_token_v2.json"
+          cmp standard/vectors/connect_token_v2.json "$RUNNER_TEMP/connect_token_v2.json"
+          echo "connect_token_vectors: regenerated vectors equal standard/vectors/connect_token_v2.json"
+
+      # measurements, not gates: each must run to its end and exit 0
+      - name: Cost benchmarks (ack_block_build_cost, handshake_cost, request_lookup_cost, server_receive_cost, server_update_ack_cost)
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          for bench in ack_block_build_cost handshake_cost request_lookup_cost server_receive_cost server_update_ack_cost; do
+            echo "== $bench"
+            "./bin/$bench"
+          done
+
+      - name: XDP packet blaster contract test (xdp_packet_blaster)
+        if: ${{ !cancelled() }}
+        run: cmake --build build --target test_xdp_packet_blaster
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
+  # The functional suite under MemorySanitizer, portable/portable pinned:
+  # tools/run_msan.sh with RUN_MSAN_SUITE=functional (its header says why that
+  # build leaves XDP and io_uring out). The same verdict as msan.yml's unit
+  # gate: a finding not in tools/msan_known.txt, a fatal MSan error or a
+  # failed case is red.
+  msan-functional:
+    name: functional msan portable~portable
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-matrix-linux-msan-${{ github.event_name }}-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
+
+      - name: The functional suite under MSan, portable server and client (tools/run_msan.sh)
+        env:
+          RUN_MSAN_SUITE: functional
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: bash tools/run_msan.sh
+
+  # The functional suite as root, inside a virtme-ng guest of the runner's own
+  # kernel (the host is never touched): unpinned, where root's automatic
+  # transport order starts at xdp and the xdp veth cases run, and with
+  # io_uring/portable pinned, where root's memlock limit sizes the ring
+  # (docs/LINUX.md section 8). 24 GiB, as the LTS guests: the suite's largest
+  # planned block is about 17.4 GiB. The guest boots under
+  # scripts/vm-boot-guard (a guest with no started marker in 120 s is booted
+  # again, three attempts); nothing bounds the suite.
+  root:
+    name: functional as root ${{ matrix.cell.server }}~${{ matrix.cell.client }} (virtme-ng guest)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        cell:
+          - { server: auto, client: auto, variant: dev-root }
+          - { server: io_uring, client: portable, variant: dev-root-iouring-portable }
+    concurrency:
+      group: nightly-matrix-linux-root-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.cell.server }}-${{ matrix.cell.client }}
+      cancel-in-progress: true
+    env:
+      SERVER: ${{ matrix.cell.server }}
+      CLIENT: ${{ matrix.cell.client }}
+      VARIANT: ${{ matrix.cell.variant }}
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
+      - uses: ./.github/actions/ccache
+
+      - name: The VM tier is present (scripts/vm-tier-missing)
+        run: |
+          set -euo pipefail
+          missing=$(scripts/vm-tier-missing)
+          if [ -n "$missing" ]; then
+            echo "VM-TIER-MISSING on $RUNNER_NAME: $missing"
+            exit 1
+          fi
+
+      - name: Build (Release)
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target test functional --parallel 8
+
+      - name: Whole functional suite as root in the guest (tools/run_functional.sh)
+        run: |
+          set -euo pipefail
+          guest=$PWD/build/root-guest
+          rm -rf "$guest"
+          mkdir -p "$guest"
+          pins=""
+          if [ "$SERVER" != auto ]; then pins="ROCKETNET_SERVER_TRANSPORT=$SERVER ROCKETNET_CLIENT_TRANSPORT=$CLIENT"; fi
+          # the guest's commands go in a script file, never on vng's command
+          # line (the guest kernel's command line is cut at 2048 bytes)
+          {
+            printf ': > %q\n' "$guest/started"
+            printf 'cd %q\n' "$PWD"
+            printf 'sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT=1 ROCKETNET_TEST_NIGHTLY=1 ROCKETNET_TEST_KEEP_GOING=1 %s ' "$pins"
+            case "$VARIANT" in
+              dev-root) printf 'bash tools/run_functional.sh dev-root --log %q ./bin/functional' "$guest/functional.log" ;;
+              dev-root-iouring-portable) printf 'bash tools/run_functional.sh dev-root-iouring-portable --log %q ./bin/functional' "$guest/functional.log" ;;
+              *) echo "no leg for variant $VARIANT (tests/functional/expected_skips.txt)"; exit 1 ;;
+            esac
+            printf ' > %q 2>&1\n' "$guest/suite.out"
+            printf 'echo $? > %q\n' "$guest/exit"
+          } > "$guest/run.sh"
+          vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+          scripts/vm-boot-guard --marker "$guest/started" -- \
+            vng --run "$vm_kernel" --memory 24G --cpus 8 --rwdir "$PWD" -- \
+            sh build/root-guest/run.sh > "$guest/vm.log" 2>&1 || echo "vng exit=$?" >> "$guest/vm.log"
+          # grep exits 1 on no match (fine) and 2 on an unreadable log (red)
+          grep '^VM-BOOT-GUARD' "$guest/vm.log" || [ $? -eq 1 ]
+          if [ ! -f "$guest/exit" ]; then
+            tail -n 60 "$guest/vm.log"
+            echo "ROOT-SUITE the guest wrote no exit status (the suite did not finish)"
+            exit 1
+          fi
+          cat "$guest/suite.out"
+          status=$(cat "$guest/exit")
+          echo "ROOT-SUITE leg linux-$VARIANT exit=$status"
+          exit "$status"
+
+      - name: Keep the logs of a failing run
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: nightly-matrix-linux-root-${{ matrix.cell.server }}-${{ github.run_attempt }}
+          path: build/root-guest
+          if-no-files-found: ignore
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
+  # THE SERVER-SIDE SEND-DROP TERM OF tests/load's counters_agree (docs/LOAD.md):
+  # the server's namespace SndbufErrors had never been nonzero in any run, so
+  # the server half of the s2c packet equation was never exercised. Here the
+  # server's end of a veth pair has a short, rate-limited transmit queue (tbf
+  # 400 Mbit/s, 64 KB burst, a 16 KB queue) and the 1000 clients sit in their
+  # own namespace at the far end, so each update's burst of server sends
+  # overflows that queue; the receive backlog is raised so the only loss is
+  # that queue's. Measured on a 16-core bench (2026-11-26, 20 s runs): the gso
+  # server passed with server_ns_udp_sndbuf_errors=1074 and nothing left in
+  # flight. The run must pass every load
+  # criterion and print a nonzero server_ns_udp_sndbuf_errors term. Root,
+  # namespaces and tc run inside a virtme-ng guest of the runner's own kernel.
+  send-drop:
+    name: load send-drop term ${{ matrix.transport }} (constrained server veth, virtme-ng guest)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        transport: [portable, gso, io_uring]
+    concurrency:
+      group: nightly-matrix-linux-send-drop-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.transport }}
+      cancel-in-progress: true
+    env:
+      TRANSPORT: ${{ matrix.transport }}
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
+      - uses: ./.github/actions/ccache
+
+      - name: The VM tier is present (scripts/vm-tier-missing)
+        run: |
+          set -euo pipefail
+          missing=$(scripts/vm-tier-missing)
+          if [ -n "$missing" ]; then
+            echo "VM-TIER-MISSING on $RUNNER_NAME: $missing"
+            exit 1
+          fi
+
+      - name: Build the load harness (Release)
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target load --parallel 8
+
+      - name: tests/load with the server's veth queue constrained; server_ns_udp_sndbuf_errors must be nonzero
+        run: |
+          set -euo pipefail
+          guest=$PWD/build/send-drop
+          rm -rf "$guest"
+          mkdir -p "$guest"
+          {
+            printf ': > %q\n' "$guest/started"
+            printf 'cd %q\n' "$PWD"
+            cat <<'GUEST'
+          set -e
+          sysctl -qw net.core.netdev_max_backlog=1000000
+          ip netns add rnsd
+          ip link add rnsd0 type veth peer name rnsd1
+          ip link set rnsd1 netns rnsd
+          ip addr add 10.77.6.1/24 dev rnsd0
+          ip -n rnsd addr add 10.77.6.2/24 dev rnsd1
+          tc qdisc replace dev rnsd0 root tbf rate 400mbit burst 64kb limit 16kb
+          ip link set rnsd0 up
+          ip -n rnsd link set lo up
+          ip -n rnsd link set rnsd1 up
+          set +e
+          GUEST
+            printf 'env ROCKETNET_SERVER_TRANSPORT=%s ROCKETNET_CLIENT_TRANSPORT=portable LOAD_SERVER_ADDRESS=10.77.6.1:40511 LOAD_CLIENT_NETNS=/var/run/netns/rnsd ./bin/load 1000 60 > %q 2> %q\n' "$TRANSPORT" "$guest/load.out" "$guest/load.err"
+            printf 'echo $? > %q\n' "$guest/exit"
+            printf 'tc -s qdisc show dev rnsd0 > %q\n' "$guest/qdisc.txt"
+          } > "$guest/run.sh"
+          vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+          scripts/vm-boot-guard --marker "$guest/started" -- \
+            vng --run "$vm_kernel" --memory 24G --cpus 4 --rwdir "$PWD" -- \
+            sudo sh build/send-drop/run.sh > "$guest/vm.log" 2>&1 || echo "vng exit=$?" >> "$guest/vm.log"
+          grep '^VM-BOOT-GUARD' "$guest/vm.log" || [ $? -eq 1 ]
+          if [ ! -f "$guest/exit" ]; then
+            tail -n 60 "$guest/vm.log"
+            echo "SEND-DROP $TRANSPORT: the guest wrote no exit status"
+            exit 1
+          fi
+          cat "$guest/qdisc.txt"
+          # grep exits 1 on no match (said below by name) and 2 on an unreadable log (red)
+          grep '^load: counters_agree' "$guest/load.err" || [ $? -eq 1 ]
+          line=$(grep '^load: connected' "$guest/load.out" | tail -n 1) || [ $? -eq 1 ]
+          printf '%s\n' ${line:-no_load_summary_line} | grep -E '^(verdict|failed_criterion|server_transport_io|connect_within_10s|no_unexpected_disconnect|reliable_delivery|unreliable_integrity|counters_agree|no_load_summary_line)' || [ $? -eq 1 ]
+          drops=$(sed -nE 's/.*s2c packets .* server_ns_udp_sndbuf_errors=([0-9]+) .*/\1/p' "$guest/load.err" | tail -n 1)
+          status=$(cat "$guest/exit")
+          echo "SEND-DROP $TRANSPORT load_exit=$status server_ns_udp_sndbuf_errors=${drops:-missing}"
+          failed=0
+          if [ "$status" != 0 ]; then
+            echo "SEND-DROP $TRANSPORT: load failed (exit $status); its summary and counters_agree terms are above"
+            tail -n 20 "$guest/load.err"
+            failed=1
+          fi
+          if [ -z "$drops" ] || [ "$drops" = 0 ]; then
+            echo "SEND-DROP $TRANSPORT: server_ns_udp_sndbuf_errors is ${drops:-missing}: the constrained queue dropped nothing the server's term counts, so the term is still unexercised"
+            failed=1
+          fi
+          exit "$failed"
+
+      - name: Keep the logs of a failing run
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: nightly-matrix-linux-send-drop-${{ matrix.transport }}-${{ github.run_attempt }}
+          path: build/send-drop
+          if-no-files-found: ignore
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats

@@ -38,7 +38,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LIST = os.environ.get("ROCKETNET_EXPECTED_SKIPS") or os.path.join(ROOT, "tests", "functional", "expected_skips.txt")
 
 OS_NAMES = {"Linux": "linux", "Darwin": "macos", "Windows": "windows"}
-PINS = ("auto", "portable", "gso", "io_uring", "xdp", "msgx", "iocp", "rio")
+PINS = ("auto", "portable", "gso", "io_uring", "xdp", "loopback", "msgx", "iocp", "rio")
 
 SKIPPED = re.compile(r"^SKIPPED (\S+): (\S+)\s*$")
 SKIPPED_LOOSE = re.compile(r"SKIPPED\b")
