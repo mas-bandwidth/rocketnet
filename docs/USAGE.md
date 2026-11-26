@@ -636,8 +636,8 @@ client's connect token, `rocketnet_server_num_connected_clients` counts them
 client still in the handshake as it is, and keeps the server running. The user data is
 readable from connect until the slot is released; release wipes it, and a slot
 without a connected client reads zeros and returns false.
-`rocketnet_server_client_address` writes the address and port a connected
-client's packets come from, as the server sees them ("a.b.c.d:port" or
+`rocketnet_server_client_address` writes the address and port the connected
+client sends from, as the server sees them ("a.b.c.d:port" or
 "[v6]:port"), into a buffer of `ROCKETNET_MAX_ADDRESS_STRING_BYTES`. With
 that buffer it returns true exactly when `rocketnet_server_client_connected`
 does. Failure is handled as the server's own address calls handle it: false

@@ -3583,8 +3583,8 @@ ROCKETNET_EXPORT uint64_t rocketnet_server_client_connection_id( const struct ro
 
 ROCKETNET_EXPORT bool rocketnet_server_client_user_data( const struct rocketnet_server_t * server, int client_index, uint8_t * user_data );
 
-/// Writes the address and port a connected client's packets come from, as
-/// the server sees them: "a.b.c.d:port" for IPv4, "[v6]:port" for IPv6. The
+/// Writes the address and port the connected client sends from, as the
+/// server sees them: "a.b.c.d:port" for IPv4, "[v6]:port" for IPv6. The
 /// port is the client's source port, so two clients behind one address read
 /// different strings.
 /// Returns true if the slot holds a connected client and the address fits.

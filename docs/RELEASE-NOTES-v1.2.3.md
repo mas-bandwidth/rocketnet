@@ -6,8 +6,8 @@ counters), and v1.2.3 endpoints interoperate with every v1.x endpoint. The
 public API gains one call; the ABI only grows.
 
 - Public API: `rocketnet_server_client_address( server, client_index,
-  address, address_bytes )` writes the address and port a connected client's
-  packets come from, as the server sees them, as "a.b.c.d:port" or
+  address, address_bytes )` writes the address and port the connected client
+  sends from, as the server sees them, as "a.b.c.d:port" or
   "[v6]:port". With a buffer of `ROCKETNET_MAX_ADDRESS_STRING_BYTES` it returns
   true exactly when `rocketnet_server_client_connected` does; a free slot, a
   stopped server, a bad index, a NULL server or a buffer too small for the

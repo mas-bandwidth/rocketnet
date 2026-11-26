@@ -500,7 +500,7 @@ int main( int argc, char ** argv )
                 if ( connection_id )
                 {
                     sessions++;
-                    // the address the client's packets come from: for logs
+                    // the address the client sends from: for logs
                     // and support only, never for bans (bans go by client id
                     // and the whitelist, docs/BANS-AND-WHITELISTS.md)
                     char client_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
