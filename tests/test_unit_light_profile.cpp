@@ -232,9 +232,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The path probe's re-try: the ruled-out flag, the wait flag, the re-try
 // count and the next re-try's time in the client protocol: 64 more to the
 // client: actual=15195410 (hetzner1, gcc, Debug, DEV ON), measured; the
-// other platforms derived from the Linux reading.
+// other platforms derived from the Linux reading. On Windows the client
+// measured no change, not 64 more, as on macOS: the growth is taken by the
+// client transport's padding to its 64-byte alignment: actual=15399212 (CI,
+// windows Release unit, MSVC).
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1576723295 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350700 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350636 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
