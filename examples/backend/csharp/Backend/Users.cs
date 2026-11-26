@@ -94,11 +94,26 @@ namespace RocketNet.Backend
             return Convert.ToBase64String( ticket );
         }
 
+        // true when text holds only the standard base64 alphabet and '=': no
+        // whitespace of any kind, which decoders differ on, so both backends
+        // refuse the same tickets
+        static bool Base64Alphabet( string text )
+        {
+            foreach ( char c in text )
+            {
+                if ( !( c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '+' || c == '/' || c == '=' ) )
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         // checks a ticket at now (unix seconds) and returns its user id;
         // throws TicketException
         public string Verify( string text, ulong now )
         {
-            if ( text.Length > MaxTicketTextBytes )
+            if ( text.Length > MaxTicketTextBytes || !Base64Alphabet( text ) )
             {
                 throw new TicketException( "the ticket is not valid" );
             }

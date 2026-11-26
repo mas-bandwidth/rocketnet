@@ -13,8 +13,10 @@
 //
 // The HTTP client is the smallest that does the job: HTTP/1.1 over plain
 // TCP (POSIX sockets or Winsock), one request per connection, literal IP
-// addresses only, Content-Length bodies only, and a bounded wait for every
-// step. A game uses its own HTTP client, with TLS and its backend's
+// addresses only, Content-Length bodies only, and one deadline for the
+// whole request (connect, send and receive): a backend that answers slowly,
+// or trickles its answer, fails the fetch once RN_CLI_HTTP_TIMEOUT_MS has
+// gone by, and the last good list is kept. A game uses its own HTTP client, with TLS and its backend's
 // authentication. Nothing here is part of rocketnet, and rocketnet calls
 // none of it: the game loop in backend_server.c reads the list and
 // disconnects the clients that are not on it.
@@ -37,6 +39,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 #endif // #ifdef _WIN32
 #include <stdint.h>
@@ -48,7 +51,8 @@
 #define RN_CLI_HTTP_HEADER_BYTES        4096                                    // the most of a response that is not its body
 #define RN_CLI_HTTP_RESPONSE_BYTES      ( RN_CLI_HTTP_HEADER_BYTES + RN_CLI_WHITELIST_MAX_ENTRIES * 8 )
 #define RN_CLI_HTTP_REQUEST_BYTES       2048
-#define RN_CLI_HTTP_TIMEOUT_MS          2000                                    // connect, each send and each receive
+#define RN_CLI_HTTP_TIMEOUT_MS          2000                                    // the whole request: connect, send and receive; the fetch period
+#define RN_CLI_HTTP_POLL_STEP_MS        100                                     // the longest one wait on the socket, inside the deadline
 #define RN_CLI_HTTP_ERROR_BYTES         256
 
 // ---------------------------------------------------------------------------
@@ -149,28 +153,62 @@ static inline void rn_cli_http_close( rn_cli_socket_t s )
 #endif // #ifdef _WIN32
 }
 
-// waits up to RN_CLI_HTTP_TIMEOUT_MS for s to be readable (or writable);
-// returns 1 when it is
-static inline int rn_cli_http_wait( rn_cli_socket_t s, int for_write )
+// a monotonic clock in milliseconds, for the request's deadline
+static inline int64_t rn_cli_http_now_ms( void )
 {
 #ifdef _WIN32
-    WSAPOLLFD poll_fd;
-    poll_fd.fd = s;
-    poll_fd.events = for_write ? POLLWRNORM : POLLRDNORM;
-    poll_fd.revents = 0;
-    return WSAPoll( &poll_fd, 1, RN_CLI_HTTP_TIMEOUT_MS ) == 1;
+    return (int64_t) GetTickCount64();
 #else // #ifdef _WIN32
-    struct pollfd poll_fd;
-    poll_fd.fd = s;
-    poll_fd.events = for_write ? POLLOUT : POLLIN;
-    poll_fd.revents = 0;
-    return poll( &poll_fd, 1, RN_CLI_HTTP_TIMEOUT_MS ) == 1;
+    struct timespec now;
+    clock_gettime( CLOCK_MONOTONIC, &now );
+    return (int64_t) now.tv_sec * 1000 + now.tv_nsec / 1000000;
 #endif // #ifdef _WIN32
 }
 
-// connects to a literal "a.b.c.d:port" or "[ipv6]:port" within the timeout,
+// waits until deadline_ms (rn_cli_http_now_ms) at the latest for s to be
+// readable (or writable), in polls of at most RN_CLI_HTTP_POLL_STEP_MS;
+// returns 1 when it is, 0 once the deadline has passed or the poll fails
+static inline int rn_cli_http_wait( rn_cli_socket_t s, int for_write, int64_t deadline_ms )
+{
+    for ( ;; )
+    {
+        const int64_t remaining = deadline_ms - rn_cli_http_now_ms();
+        if ( remaining <= 0 )
+        {
+            return 0;
+        }
+        const int wait_ms = (int) ( remaining < RN_CLI_HTTP_POLL_STEP_MS ? remaining : RN_CLI_HTTP_POLL_STEP_MS );
+#ifdef _WIN32
+        WSAPOLLFD poll_fd;
+        poll_fd.fd = s;
+        poll_fd.events = for_write ? POLLWRNORM : POLLRDNORM;
+        poll_fd.revents = 0;
+        const int result = WSAPoll( &poll_fd, 1, wait_ms );
+        if ( result < 0 )
+        {
+            return 0;
+        }
+#else // #ifdef _WIN32
+        struct pollfd poll_fd;
+        poll_fd.fd = s;
+        poll_fd.events = for_write ? POLLOUT : POLLIN;
+        poll_fd.revents = 0;
+        const int result = poll( &poll_fd, 1, wait_ms );
+        if ( result < 0 && errno != EINTR )
+        {
+            return 0;
+        }
+#endif // #ifdef _WIN32
+        if ( result == 1 )
+        {
+            return 1;
+        }
+    }
+}
+
+// connects to a literal "a.b.c.d:port" or "[ipv6]:port" by deadline_ms,
 // and leaves the socket non-blocking
-static inline rn_cli_socket_t rn_cli_http_connect( const char * address, char * error, size_t error_bytes )
+static inline rn_cli_socket_t rn_cli_http_connect( const char * address, int64_t deadline_ms, char * error, size_t error_bytes )
 {
     char host[64];
     const char * colon = strrchr( address, ':' );
@@ -227,10 +265,10 @@ static inline rn_cli_socket_t rn_cli_http_connect( const char * address, char * 
         int socket_error = 0;
 #ifdef _WIN32
         int length = (int) sizeof( socket_error );
-        const int connected = in_progress && rn_cli_http_wait( s, 1 ) && getsockopt( s, SOL_SOCKET, SO_ERROR, (char *) &socket_error, &length ) == 0 && socket_error == 0;
+        const int connected = in_progress && rn_cli_http_wait( s, 1, deadline_ms ) && getsockopt( s, SOL_SOCKET, SO_ERROR, (char *) &socket_error, &length ) == 0 && socket_error == 0;
 #else // #ifdef _WIN32
         socklen_t length = (socklen_t) sizeof( socket_error );
-        const int connected = in_progress && rn_cli_http_wait( s, 1 ) && getsockopt( s, SOL_SOCKET, SO_ERROR, &socket_error, &length ) == 0 && socket_error == 0;
+        const int connected = in_progress && rn_cli_http_wait( s, 1, deadline_ms ) && getsockopt( s, SOL_SOCKET, SO_ERROR, &socket_error, &length ) == 0 && socket_error == 0;
 #endif // #ifdef _WIN32
         if ( !connected )
         {
@@ -312,10 +350,12 @@ static inline int rn_cli_http_length_matches( const char * headers, const char *
 // One request. The response is read into response (response_bytes long,
 // preallocated) and *body points into it at the body of *body_bytes.
 // Returns the HTTP status, or 0 for any failure, with the cause in error.
+// The whole request, connect to close, gets RN_CLI_HTTP_TIMEOUT_MS.
 static inline int rn_cli_http_request( const char * address, const char * method, const char * path, const char * content_type,
                                        const char * body, int body_bytes, char * response, int response_bytes,
                                        const char ** response_body, int * response_body_bytes, char * error, size_t error_bytes )
 {
+    const int64_t deadline_ms = rn_cli_http_now_ms() + RN_CLI_HTTP_TIMEOUT_MS;
     *response_body = NULL;
     *response_body_bytes = 0;
 
@@ -335,7 +375,7 @@ static inline int rn_cli_http_request( const char * address, const char * method
     }
     const int request_bytes = header_bytes + body_bytes;
 
-    rn_cli_socket_t s = rn_cli_http_connect( address, error, error_bytes );
+    rn_cli_socket_t s = rn_cli_http_connect( address, deadline_ms, error, error_bytes );
     if ( s == RN_CLI_NO_SOCKET )
     {
         return 0;
@@ -343,7 +383,7 @@ static inline int rn_cli_http_request( const char * address, const char * method
 
     for ( int sent = 0; sent < request_bytes; )
     {
-        if ( !rn_cli_http_wait( s, 1 ) )
+        if ( !rn_cli_http_wait( s, 1, deadline_ms ) )
         {
             rn_cli_http_close( s );
             snprintf( error, error_bytes, "%s %s: timed out sending", method, path );
@@ -374,7 +414,7 @@ static inline int rn_cli_http_request( const char * address, const char * method
             snprintf( error, error_bytes, "%s %s: the response is over %d bytes", method, path, response_bytes );
             return 0;
         }
-        if ( !rn_cli_http_wait( s, 0 ) )
+        if ( !rn_cli_http_wait( s, 0, deadline_ms ) )
         {
             rn_cli_http_close( s );
             snprintf( error, error_bytes, "%s %s: timed out receiving", method, path );
