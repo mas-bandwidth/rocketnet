@@ -500,7 +500,12 @@ int main( int argc, char ** argv )
                 if ( connection_id )
                 {
                     sessions++;
-                    printf( "server client %.16llx connected in slot %d\n", (unsigned long long) slot->client_id, i );
+                    // the address the client's packets come from: for logs
+                    // and support only, never for bans (bans go by client id
+                    // and the whitelist, docs/BANS-AND-WHITELISTS.md)
+                    char client_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+                    rocketnet_server_client_address( server, i, client_address, sizeof( client_address ) );
+                    printf( "server client %.16llx connected in slot %d from %s\n", (unsigned long long) slot->client_id, i, client_address );
                 }
                 fflush( stdout );
             }
