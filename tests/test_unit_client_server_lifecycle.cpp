@@ -3571,7 +3571,7 @@ static void test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rule
     check( rocketnet_server_set_send_kbps( server, 2, 1000 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     check( rocketnet_server_set_send_kbps( server, INT_MIN, 0 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     check( rocketnet_server_set_send_kbps( server, INT_MAX, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    check( rocketnet_api_misuse_count() == misuse + 2 );
+    check( rocketnet_api_misuse_count() == misuse + 4 );
     misuse = rocketnet_api_misuse_count();
 
     // disconnected valid slots accept 0, finite, and UNLIMITED as no-ops without altering config defaults
