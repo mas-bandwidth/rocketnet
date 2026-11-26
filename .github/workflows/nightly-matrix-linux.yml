@@ -176,7 +176,6 @@ jobs:
 
       - name: Whole functional suite with the cell's transports pinned (tools/run_functional.sh)
         env:
-          ROCKETNET_TEST_KEEP_GOING: "1"
           TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: |
@@ -188,11 +187,12 @@ jobs:
           if [ "$BUILD" = prod ]; then name=functional_production; fi
           suite=("./bin/$name")
           case "$BUILD" in
-            prod) ;;
-            # setarch -R for gcc 13's tsan runtime, scaled as nightly.yml's tsan leg
+            # setarch -R for gcc 13's tsan runtime, scaled as nightly.yml's
+            # tsan leg, which runs neither the nightly tier nor keep-going
             tsan) suite=(setarch "$(uname -m)" -R "./bin/$name"); export ROCKETNET_TEST_CASE_TIME_SCALE=4 ;;
-            # the nightly tier's cases where no sanitizer stretches them
-            *) export ROCKETNET_TEST_NIGHTLY=1 ;;
+            # the nightly tier's cases where no sanitizer stretches them;
+            # keep-going is allowed only with the nightly tier (tests/suite_runner.h)
+            *) export ROCKETNET_TEST_NIGHTLY=1 ROCKETNET_TEST_KEEP_GOING=1 ;;
           esac
           echo "cell $BUILD server=${ROCKETNET_SERVER_TRANSPORT:-auto} client=${ROCKETNET_CLIENT_TRANSPORT:-auto} leg linux-$VARIANT"
           case "$VARIANT" in
@@ -411,7 +411,6 @@ jobs:
       - name: Whole functional suite (tools/run_functional.sh)
         if: ${{ !cancelled() && matrix.variant.functional != 'none' }}
         env:
-          ROCKETNET_TEST_KEEP_GOING: "1"
           UBSAN_OPTIONS: print_stacktrace=1
         run: |
           set -euo pipefail
@@ -419,10 +418,10 @@ jobs:
           if [ "$FUNCTIONAL" = prod ]; then name=functional_production; fi
           suite=("./bin/$name")
           case "$FUNCTIONAL" in
-            prod) ;;
             # ASan stretches the cases: scaled as nightly-leaks.yml's leg
             dev-sanitized) export ROCKETNET_TEST_CASE_TIME_SCALE=2 ;;
-            *) export ROCKETNET_TEST_NIGHTLY=1 ;;
+            # keep-going is allowed only with the nightly tier (tests/suite_runner.h)
+            *) export ROCKETNET_TEST_NIGHTLY=1 ROCKETNET_TEST_KEEP_GOING=1 ;;
           esac
           case "$FUNCTIONAL" in
             dev) bash tools/run_functional.sh dev "${suite[@]}" ;;
@@ -633,9 +632,11 @@ jobs:
             printf ' > %q 2>&1\n' "$guest/suite.out"
             printf 'echo $? > %q\n' "$guest/exit"
           } > "$guest/run.sh"
+          # the xdp server's pre-flight refuses a kernel without the provisioned
+          # command line (B1); the guest gets the one ci.yml's xdp guests boot with
           vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
           scripts/vm-boot-guard --marker "$guest/started" -- \
-            vng --run "$vm_kernel" --memory 24G --cpus 8 --rwdir "$PWD" -- \
+            vng --run "$vm_kernel" --memory 24G --cpus 8 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
             sh build/root-guest/run.sh > "$guest/vm.log" 2>&1 || echo "vng exit=$?" >> "$guest/vm.log"
           # grep exits 1 on no match (fine) and 2 on an unreadable log (red)
           grep '^VM-BOOT-GUARD' "$guest/vm.log" || [ $? -eq 1 ]

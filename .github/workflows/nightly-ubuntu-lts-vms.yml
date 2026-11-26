@@ -282,6 +282,42 @@ jobs:
           # The guest gets the socket buffer ceiling the fleet hosts grant.
           "$WORK/g" 'sudo sysctl -w net.core.rmem_max=4194304 net.core.wmem_max=4194304'
 
+      # The xdp server's pre-flight refuses a kernel booted without
+      # irqaffinity=, isolcpus= and nohz_full= (B1, scripts/rocketnet-provision),
+      # so the guest script's xdp cases need them: the guest boots once more
+      # with the line ci.yml's xdp guests use, and its /proc/cmdline is read
+      # back. The reboot is bounded as the first boot is.
+      - name: The guest kernel command line the XDP cases need (grub, one reboot)
+        run: |
+          set -euo pipefail
+          "$WORK/g" 'printf "GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT irqaffinity=0 isolcpus=1 nohz_full=1\"\n" | sudo tee /etc/default/grub.d/99-rocketnet-xdp.cfg && sudo update-grub'
+          before=$("$WORK/g" 'cat /proc/sys/kernel/random/boot_id')
+          "$WORK/g" 'sudo systemd-run --on-active=2 systemctl reboot'
+          boot_deadline=300
+          boot_start=$SECONDS
+          ok=0
+          while [ $((SECONDS - boot_start)) -lt "$boot_deadline" ]; do
+            sleep 5
+            if now=$("$WORK/g" 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null) && [ "$now" != "$before" ]; then
+              ok=1
+              echo "ssh up after the reboot, $((SECONDS - boot_start)) s"
+              break
+            fi
+          done
+          if [ "$ok" != 1 ]; then
+            echo "GUEST-DID-NOT-REBOOT no ssh on a new boot after ${boot_deadline} s"
+            tail -n 60 "$WORK/serial.log"
+            exit 1
+          fi
+          cmdline=$("$WORK/g" 'cat /proc/cmdline')
+          echo "guest kernel command line: $cmdline"
+          case " $cmdline " in
+            *" irqaffinity=0 "*" isolcpus=1 "*" nohz_full=1 "*) ;;
+            *) echo "GUEST-CMDLINE the reboot did not take the XDP line"; exit 1 ;;
+          esac
+          # the sysctl the install step set does not survive the reboot
+          "$WORK/g" 'sudo sysctl -w net.core.rmem_max=4194304 net.core.wmem_max=4194304'
+
       - name: Builds, suites and package check on the guest kernel
         run: |
           set -euo pipefail
