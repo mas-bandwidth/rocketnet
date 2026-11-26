@@ -65,14 +65,16 @@ static void test_iocp_memory_plan_counts_workers_and_send_threads()
     config.bind_ipv4_address[0] = '\0';
 
     // 1000 clients is 16 lanes: the 2 send threads; one send thread asked is one.
-    // A build whose ROCKETNET_MAX_CLIENTS is under 1000 (512: 8 lanes) refuses
-    // the 1000-client plan, and the send thread counts are read at its maximum
+    // A build whose ROCKETNET_MAX_CLIENTS is under 1000 (512: 8 lanes, the
+    // lanes sized at most for the build's maximum) refuses the 1000-client
+    // plan, and the send thread counts are read at its maximum
     config.num_iocp_completion_workers = 1;
     config.max_clients = 1000;
-    rocketnet_unit_check( rocketnet_server_iocp_send_lanes( 1000 ) == 16 );
 #if ROCKETNET_MAX_CLIENTS < 1000
     rocketnet_unit_check( !rocketnet_builtin_server_memory_plan( &config, "iocp", plan ) );
     config.max_clients = ROCKETNET_MAX_CLIENTS;
+#else
+    rocketnet_unit_check( rocketnet_server_iocp_send_lanes( 1000 ) == 16 );
 #endif // #if ROCKETNET_MAX_CLIENTS < 1000
     rocketnet_unit_check( rocketnet_server_iocp_send_lanes( config.max_clients ) >= 8 );
     rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "iocp", plan ) );
