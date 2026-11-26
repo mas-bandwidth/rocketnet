@@ -10,9 +10,9 @@ public API gains one call; the ABI only grows.
   packets come from, as the server sees them, as "a.b.c.d:port" or
   "[v6]:port". With a buffer of `ROCKETNET_MAX_ADDRESS_STRING_BYTES` it returns
   true exactly when `rocketnet_server_client_connected` does; a free slot, a
-  stopped server, a bad index or a NULL server returns false and writes "NONE"
-  (a NULL buffer writes nothing), and a buffer too small for the address
-  returns false with an empty string. The address is for diagnostics, support
+  stopped server, a bad index, a NULL server or a buffer too small for the
+  address returns false and writes an empty string, as
+  `rocketnet_server_ipv4_address` does (a NULL buffer writes nothing). The address is for diagnostics, support
   and logging; to look a client up, use its index or
   `rocketnet_server_client_id`. Do not ban by it: ban the account's user
   hash (`rocketnet_server_client_id`) and enforce the ban with per-server

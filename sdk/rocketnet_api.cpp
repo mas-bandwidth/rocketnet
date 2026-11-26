@@ -3753,16 +3753,12 @@ bool rocketnet_server_client_user_data( const struct rocketnet_server_t * server
     return rocketnet_server_transport_client_user_data( rn_server_transport( server ), slot, user_data );
 }
 
-// failure writes "NONE" where it fits, else an empty string, so a caller
-// never reads part of an address; a zero-sized buffer is left untouched
+// as rn_server_family_address: every failure leaves an empty string, so a
+// caller never reads part of an address; a zero-sized buffer is untouched
 
-static void rn_server_client_address_none( char * address, size_t address_bytes )
+static void rn_server_client_address_clear( char * address, size_t address_bytes )
 {
-    if ( address_bytes >= sizeof( "NONE" ) )
-    {
-        memcpy( address, "NONE", sizeof( "NONE" ) );
-    }
-    else if ( address_bytes > 0 )
+    if ( address_bytes > 0 )
     {
         address[0] = '\0';
     }
@@ -3780,7 +3776,7 @@ bool rocketnet_server_client_address( const struct rocketnet_server_t * server, 
         return false;
     }
 
-    rn_server_client_address_none( address, address_bytes );
+    rn_server_client_address_clear( address, address_bytes );
 
     if ( !rocketnet_api_null_guard( server ) )
     {
@@ -3804,7 +3800,8 @@ bool rocketnet_server_client_address( const struct rocketnet_server_t * server, 
         return false;
     }
 
-    // a formatting failure writes "NONE" into buffer: that is no address
+    // a formatting failure writes "NONE" into the local buffer: that is no
+    // address, and the caller's buffer keeps its empty string
 
     char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     rocketnet_address_to_string( &connected, buffer );
@@ -3816,13 +3813,9 @@ bool rocketnet_server_client_address( const struct rocketnet_server_t * server, 
     const size_t length = strlen( buffer );
     if ( length + 1 > address_bytes )
     {
-        // as rn_server_family_address: a short buffer reads an empty string
+        // as rn_server_family_address: the buffer keeps its empty string
 
         rocketnet_error( "client address refused: the buffer is %d bytes, the address needs %d", (int) address_bytes, (int) ( length + 1 ) );
-        if ( address_bytes > 0 )
-        {
-            address[0] = '\0';
-        }
         return false;
     }
 

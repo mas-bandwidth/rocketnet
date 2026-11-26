@@ -640,9 +640,8 @@ without a connected client reads zeros and returns false.
 client's packets come from, as the server sees them ("a.b.c.d:port" or
 "[v6]:port"), into a buffer of `ROCKETNET_MAX_ADDRESS_STRING_BYTES`. With
 that buffer it returns true exactly when `rocketnet_server_client_connected`
-does; otherwise it writes "NONE" and returns false. A buffer too small for the
-address is handled as the server's own address calls handle it: false and an
-empty string. The address is for diagnostics, support and logging; to look a
+does. Failure is handled as the server's own address calls handle it: false
+and an empty string. The address is for diagnostics, support and logging; to look a
 client up or key per-client state, use the client index or
 `rocketnet_server_client_id`. Do not ban by it: players change address easily
 and many share one, so ban the account's user hash

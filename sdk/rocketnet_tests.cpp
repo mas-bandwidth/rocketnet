@@ -8821,7 +8821,7 @@ void rocketnet_test_public_api_null()
         char client_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
         memset( client_address, 'x', sizeof( client_address ) );
         RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_client_address( NULL, 0, client_address, sizeof( client_address ) ) ) );
-        rocketnet_check( strcmp( client_address, "NONE" ) == 0 );
+        rocketnet_check( client_address[0] == '\0' );
         RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_client_address( NULL, 0, NULL, sizeof( client_address ) ) ) );
     }
     RN_TEST_ONE_MISUSE( rocketnet_server_disconnect_client( NULL, 0 ) );

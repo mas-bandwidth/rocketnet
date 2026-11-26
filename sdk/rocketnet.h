@@ -3605,25 +3605,22 @@ ROCKETNET_EXPORT bool rocketnet_server_client_user_data( const struct rocketnet_
 /// exactly when rocketnet_server_client_connected does: from the moment the
 /// slot connects until it is released (a disconnect, a timeout, or the server
 /// stopping). A slot without a connected client, and any slot while stopped,
-/// returns false and writes "NONE"; that is not misuse.
+/// returns false; that is not misuse.
 ///
-/// A buffer too small for the address is handled as
-/// rocketnet_server_ipv4_address handles it: false, an empty string, and an
-/// error logged. Every other failure writes "NONE", never part of an address,
-/// where the buffer holds it, and an empty string where it does not. (The
-/// server's own address calls write an empty string on every failure; this
-/// call writes "NONE" so a log line that prints it without checking the
-/// return reads plainly.) A zero-sized buffer is left untouched.
+/// Failure is handled as rocketnet_server_ipv4_address handles it: every
+/// failure writes an empty string if address_bytes is positive, never part
+/// of an address. A buffer too small for the address logs an error. A
+/// zero-sized buffer is left untouched.
 ///
 /// Callable running or stopped. Thread: not thread-safe; the caller owns the
 /// server one thread at a time. It is a main thread call: between
 /// rocketnet_server_update_receive and rocketnet_server_update_finish, and
 /// while game threads send, it must not run.
 ///
-/// @param server The server. NULL counts as API misuse, writes "NONE" and
-/// returns false.
+/// @param server The server. NULL counts as API misuse, writes an empty
+/// string and returns false.
 /// @param client_index The slot, 0 to max_clients - 1. Any other index logs
-/// an error, counts as API misuse, writes "NONE" and returns false.
+/// an error, counts as API misuse, writes an empty string and returns false.
 /// @param address The output buffer. NULL counts as API misuse, writes
 /// nothing and returns false.
 /// @param address_bytes The size of address in bytes.
