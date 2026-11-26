@@ -3598,7 +3598,8 @@ ROCKETNET_EXPORT bool rocketnet_server_client_user_data( const struct rocketnet_
 /// carrier-grade NAT, so an IP ban misses the player it is for and locks out
 /// strangers. Ban the authenticated account by its user hash, the slot's
 /// rocketnet_server_client_id, and enforce it with per-server whitelists:
-/// see docs/BANS-AND-WHITELISTS.md.
+/// see the bans and whitelists guide, BANS-AND-WHITELISTS.md ("Why IP bans
+/// fail" and "How to enforce an account ban").
 ///
 /// With a buffer of ROCKETNET_MAX_ADDRESS_STRING_BYTES it returns true
 /// exactly when rocketnet_server_client_connected does: from the moment the

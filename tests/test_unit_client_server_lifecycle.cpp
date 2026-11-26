@@ -1998,7 +1998,7 @@ static void test_server_client_address_ipv6_is_the_client_source()
     snprintf( server_address, sizeof( server_address ), "[::1]:%u", (unsigned) rocketnet_server_port( world.server ) );
     const char * addresses[] = { server_address };
     check( rn_test_server_token_string( world.identity.backend_secret, world.server, LIFECYCLE_PROTOCOL, addresses, 1, 0xADD6, 1000, 1ULL << 40, 300, NULL,
-                                       token ) == ROCKETNET_STATUS_OK );
+                                        token ) == ROCKETNET_STATUS_OK );
     check( rn_test_client_connect_after_completion( world.clients[0], token ) == ROCKETNET_STATUS_OK );
     for ( int i = 0; i < 400 && rocketnet_client_state( world.clients[0] ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
     {
