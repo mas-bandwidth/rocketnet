@@ -805,6 +805,26 @@ static inline void rocketnet_create_status( int * status, int value )
     }
 }
 
+// The Windows errors a create reads as out of memory or commit, by value so
+// every build can name them (sdk/rocketnet_platform.cpp holds the values to
+// the Windows headers): ERROR_NOT_ENOUGH_MEMORY (8, also WSA_NOT_ENOUGH_MEMORY),
+// ERROR_OUTOFMEMORY (14), ERROR_NO_SYSTEM_RESOURCES (1450),
+// ERROR_COMMITMENT_LIMIT (1455) and WSAENOBUFS (10055). The error's name, or
+// NULL for any other error.
+const char * rocketnet_windows_out_of_memory_error_name( unsigned long error );
+
+// A create's failed call, named on the error path only. When error is one of
+// the out-of-memory errors above, OUT_OF_MEMORY is written through status and
+// one error line names who failed, the call and the error:
+// "<who>: <call> failed with Windows error <n> (<name>), out of memory".
+// Any other error writes and logs nothing (the caller reports its own
+// refusal). True when it was out of memory.
+bool rocketnet_create_failed_call( int * status, const char * who, const char * call, unsigned long error );
+
+// A create's refused allocation: OUT_OF_MEMORY through status and one error
+// line, "<who>: could not allocate <bytes> bytes for <what>"
+void rocketnet_create_failed_allocation( int * status, const char * who, const char * what, uint64_t bytes );
+
 #if ROCKETNET_DEV
 // the server config staging seam (sdk/rocketnet_server_transport.cpp): each
 // stack copy of a server config is wiped on every exit of the function that
