@@ -29,6 +29,11 @@
 #                      an external transport source, a non-default XDP memory
 #                      cap, the production library in Debug, AddressSanitizer
 #                      Release, UBSan Release unpinned.
+#   system-sodium      ROCKETNET_USE_SYSTEM_SODIUM=ON: the functional suite
+#                      against ci.yml's pinned libsodium (built from source;
+#                      the distribution's is below the version floor).
+#   msan-functional    the functional suite under MSan, portable/portable
+#                      (tools/run_msan.sh, RUN_MSAN_SUITE=functional).
 #   consumers          ROCKETNET_BUILD_SHARED=OFF and
 #                      ROCKETNET_BUILD_DEV_LIBRARIES=OFF: the build, then
 #                      tools/check_package.py's install, relocation and
@@ -324,7 +329,6 @@ jobs:
           - { name: "ROCKETNET_HARDEN=OFF unit and functional", unit: true, functional: dev }
           - { name: "ROCKETNET_IO_URING=OFF unit and functional", unit: true, functional: dev-nouring }
           - { name: "ROCKETNET_XDP=OFF unit and functional", unit: true, functional: dev-noxdp }
-          - { name: "ROCKETNET_USE_SYSTEM_SODIUM=ON functional", unit: false, functional: dev }
           - { name: "ROCKETNET_TRANSPORT_SOURCES=external unit", unit: true, functional: none }
           - { name: "ROCKETNET_XDP_MEMORY_MIB=1024 unit", unit: true, functional: none }
           - { name: "Debug production functional", unit: false, functional: prod }
@@ -380,7 +384,6 @@ jobs:
             "ROCKETNET_HARDEN=OFF "*) args=(-DCMAKE_BUILD_TYPE=Release -DROCKETNET_HARDEN=OFF) ;;
             "ROCKETNET_IO_URING=OFF "*) args=(-DCMAKE_BUILD_TYPE=Release -DROCKETNET_IO_URING=OFF) ;;
             "ROCKETNET_XDP=OFF "*) args=(-DCMAKE_BUILD_TYPE=Release -DROCKETNET_XDP=OFF) ;;
-            "ROCKETNET_USE_SYSTEM_SODIUM=ON "*) args=(-DCMAKE_BUILD_TYPE=Release -DROCKETNET_USE_SYSTEM_SODIUM=ON) ;;
             # the external backend tools/check_driver_extension.py builds, here
             # compiled into the tree's own libraries under the unit suite
             "ROCKETNET_TRANSPORT_SOURCES=external "*) args=(-DCMAKE_BUILD_TYPE=Release
@@ -431,6 +434,93 @@ jobs:
             prod) bash tools/run_functional.sh prod "${suite[@]}" ;;
             *) echo "no leg for variant $FUNCTIONAL (tests/functional/expected_skips.txt)"; exit 1 ;;
           esac
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
+  # The functional suite against an external libsodium. The fleet's
+  # distribution libsodium (1.0.18 on Ubuntu 24.04) is older than the floor
+  # cmake/RocketNetDependencies.cmake requires, so the library is ci.yml's
+  # sodium-pinned one: 1.0.20 built from its content-verified release into a
+  # prefix cached per host, and pkg-config held to that prefix.
+  system-sodium:
+    name: ROCKETNET_USE_SYSTEM_SODIUM=ON functional
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-matrix-linux-sodium-${{ github.event_name }}-${{ matrix.ref }}
+      cancel-in-progress: true
+    env:
+      SODIUM_VERSION: "1.0.20"
+      SODIUM_SHA256: "ebb65ef6ca439333c2bb41a0c1990587288da07f6c7fd07cb3a18cc18d30ce19"
+      SODIUM_PREFIX: ${{ github.workspace }}/sodium-pin
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref == github.ref_name && github.sha || matrix.ref }}
+      - uses: ./.github/actions/ccache
+
+      - name: Read the host the prefix is built for
+        id: host
+        run: |
+          set -euo pipefail
+          . /etc/os-release
+          libc="$(getconf GNU_LIBC_VERSION | tr ' ' '-')"
+          host="${ID}-${VERSION_ID}-$(uname -m)-${libc}"
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          echo "pinned libsodium prefix for host $host on $RUNNER_NAME"
+
+      - name: Restore the pinned sodium prefix
+        id: sodium-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: ${{ env.SODIUM_PREFIX }}
+          key: sodium-pin-${{ env.SODIUM_VERSION }}-${{ runner.os }}-${{ steps.host.outputs.host }}
+
+      - name: Build the pinned libsodium from source (content-verified)
+        if: steps.sodium-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          url="https://github.com/jedisct1/libsodium/releases/download/${SODIUM_VERSION}-RELEASE/libsodium-${SODIUM_VERSION}.tar.gz"
+          curl -fsSL -o sodium.tar.gz "$url"
+          echo "${SODIUM_SHA256}  sodium.tar.gz" | sha256sum -c -
+          mkdir sodium-src
+          tar xzf sodium.tar.gz -C sodium-src --strip-components=1
+          cd sodium-src
+          ./configure --prefix="${SODIUM_PREFIX}" --disable-dependency-tracking
+          make -j"$(nproc)"
+          make install
+
+      # pkg-config, held to the prefix, must report exactly the pin, or every
+      # check below would pass against the wrong library
+      - name: Prove pkg-config resolves the pin
+        env:
+          PKG_CONFIG_LIBDIR: ${{ env.SODIUM_PREFIX }}/lib/pkgconfig
+        run: |
+          set -euo pipefail
+          resolved="$(pkg-config --modversion libsodium)"
+          echo "pkg-config resolves libsodium ${resolved} (pin is ${SODIUM_VERSION})"
+          [ "$resolved" = "$SODIUM_VERSION" ]
+
+      - name: Configure against the pinned sodium and build the suite
+        env:
+          PKG_CONFIG_LIBDIR: ${{ env.SODIUM_PREFIX }}/lib/pkgconfig
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_USE_SYSTEM_SODIUM=ON
+          cmake --build build --target test functional --parallel 8
+
+      - name: Whole functional suite against the pinned sodium (tools/run_functional.sh)
+        env:
+          LD_LIBRARY_PATH: ${{ env.SODIUM_PREFIX }}/lib
+          ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_KEEP_GOING: "1"
+        run: bash tools/run_functional.sh dev ./bin/functional
 
       - if: always()
         uses: ./.github/actions/ccache-stats
