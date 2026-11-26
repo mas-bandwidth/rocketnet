@@ -321,12 +321,14 @@ static std::atomic<int> live_allocations{ 0 };
 static std::atomic<int64_t> live_bytes{ 0 };
 static std::atomic<int> allocations{ 0 };
 static int fail_allocation = -1;
+static std::atomic<size_t> failed_allocation_bytes{ 0 };
 
 static void * allocate( void *, size_t bytes )
 {
     const int index = allocations.fetch_add( 1 );
     if ( index == fail_allocation )
     {
+        failed_allocation_bytes.store( bytes );
         return NULL;
     }
 
@@ -436,8 +438,8 @@ static void test_create_cleanup()
     DWORD handle_baseline;
     CHECK( GetProcessHandleCount( GetCurrentProcess(), &handle_baseline ) );
 
-    // every refused allocation is named with its size; the transport's own
-    // storage is one of them
+    // every refused allocation is named with the size the allocator was asked
+    // for; the transport's own storage is one of them
     bool named_the_transport = false;
     for ( int i = 0; i < count; ++i )
     {
@@ -448,11 +450,13 @@ static void test_create_cleanup()
             create_log_scope scope;
             transport = rocketnet_server_iocp_create( NULL, &bind, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
             fail_allocation = -1;
-            CHECK( create_log_has( ": could not allocate " ) );
+            char named[96];
+            snprintf( named, sizeof( named ), ": could not allocate %llu bytes for ", (unsigned long long) failed_allocation_bytes.load() );
+            CHECK( create_log_has( named ) );
             std::lock_guard<std::mutex> lock( create_log_mutex );
             char line[128];
-            snprintf( line, sizeof( line ), "iocp transport create: could not allocate %llu bytes for the transport",
-                      (unsigned long long) sizeof( rocketnet_server_iocp_t ) );
+            snprintf( line, sizeof( line ), "iocp transport create: could not allocate %llu bytes for the transport\n",
+                      (unsigned long long) failed_allocation_bytes.load() );
             named_the_transport = named_the_transport || create_log.find( line ) != std::string::npos;
         }
         CHECK( !transport );
