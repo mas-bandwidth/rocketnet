@@ -9,15 +9,25 @@ A minor release with a new protocol version, `0x065014D9`: the connect token
 and the connection request change size, the connection response carries a
 packet size, and packet type 9 is the new connection probe
 ([TRANSPORT.md t6 Connect token](../standard/TRANSPORT.md#t6),
+[t8.1 Connection request](../standard/TRANSPORT.md#t8.1),
 [t8.4 Connection response](../standard/TRANSPORT.md#t8.4),
 [t8.13 Connection probe](../standard/TRANSPORT.md#t8.13),
 [t11.4 Path probe](../standard/TRANSPORT.md#t11.4)).
 
 Compatibility: v1.3.0 endpoints do not interoperate with v1.2.x or earlier
 endpoints, in either direction, and a v1.2.x connect token does not open on
-v1.3.0. Clients, game servers and backends must be upgraded together. The
-public API and the ABI only grow, and the counter contract grows from 292 to
-315 counters, appended at the end.
+v1.3.0. Clients, game servers and backends must be upgraded together.
+
+The ABI changes too, so everything that includes `rocketnet.h` must be
+rebuilt against v1.3.0: `rocketnet_connect_token_config_t` shrinks from 408
+to 216 bytes, its `user_data` from 256 to 64 bytes, and `expire_seconds`,
+`timeout_seconds` and `unix_timestamp` move from offsets 392, 396 and 400 to
+200, 204 and 208; `ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES` goes from 256 to
+64 and `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES` from 1025 to 769; and
+`rocketnet_client_config_t` grows from 128 to 168 bytes and
+`rocketnet_server_config_t` from 256 to 288, with `link_mtus` and
+`num_link_mtus` at the end. The rest of the public API only grows, and the
+counter contract grows from 292 to 315 counters, appended at the end.
 
 ## Link MTU fallback
 
@@ -139,7 +149,13 @@ and the backend. A v1.2.x endpoint cannot connect to a v1.3.0 one.
   with at most 64 bytes of user data. Data that does not fit moves to the
   backend's own records, and the token carries a key to it. A backend built
   on the example also moves its match request to `POST /match`.
-- Games: no source change is needed. The default `link_mtus` list, `{ 1500 }`,
+- Rebuild everything that includes `rocketnet.h` against the v1.3.0 header:
+  a binary built against v1.2.x headers reads the connect token config and
+  the client and server configs at the wrong offsets. Code that writes more
+  than 64 bytes of user data, or relies on the old values of
+  `ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES` or
+  `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES`, needs a source change.
+- Games: otherwise no source change is needed. The default `link_mtus` list, `{ 1500 }`,
   behaves as v1.2.2 did. To use link MTU fallback, set the same list on the
   client and the server, and raise `reliable_messages_in_flight` if create
   returns `ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES`.
