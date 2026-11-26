@@ -96,6 +96,30 @@ do                                                                              
     rn_native_server_transport_stop_and_destroy( server );                                                               \
 } while(0)
 
+// A client's disconnect over UDP is best effort: its burst of
+// ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS copies (sdk/rocketnet_client_protocol.h)
+// can all be lost on a loaded host. What the protocol guarantees is that the
+// server frees the slot once it has heard nothing for the connection's timeout
+// (sdk/rocketnet_server_protocol.cpp, the silence end in the update's sweep): the
+// token's timeout_seconds, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS for a test
+// token (sdk/rocketnet_connect_token.h), capped by the server's
+// max_timeout_seconds. A wait for an empty slot after a client disconnect is
+// bounded by that timeout plus a margin for the update cadence, never by less:
+// the delivered disconnect ends the wait at once, a lost one by the timeout.
+
+#define ROCKETNET_FUNCTIONAL_UPDATE_MARGIN_SECONDS 1.0
+
+static double rocketnet_functional_slot_free_seconds( const struct rocketnet_server_transport_config_t * config )
+{
+    int timeout_seconds = ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS;
+    if ( config->max_timeout_seconds > 0 && timeout_seconds > config->max_timeout_seconds )
+    {
+        timeout_seconds = config->max_timeout_seconds;
+    }
+
+    return (double) timeout_seconds + ROCKETNET_FUNCTIONAL_UPDATE_MARGIN_SECONDS;
+}
+
 void rocketnet_test_server_refuses_keyless_config()
 {
     // the no-default-keys gate: a config with no keys is refused, never
@@ -313,6 +337,13 @@ void rocketnet_test_transport_reconnect_churn()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
+
+    // the slot is freed by the delivered disconnect at once, or by the server's
+    // timeout when every copy of it was lost (rocketnet_functional_slot_free_seconds):
+    // a short cap keeps that worst case to a few seconds a cycle instead of
+    // the test token's ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS
+
+    server_config.max_timeout_seconds = 3;
     rocketnet_test_loopback_hub_clients( server_config.max_clients );
     server_config.loopback_hub = rocketnet_test_loopback_hub();
 
@@ -357,8 +388,13 @@ void rocketnet_test_transport_reconnect_churn()
 
         rocketnet_client_transport_disconnect( client );
 
+        // the guarantee, not a loosened limit: the slot is free within the
+        // server's timeout plus the update margin (rocketnet_functional_slot_free_seconds);
+        // a delivered disconnect ends the loop at once
+
+        const double slot_free_seconds = rocketnet_functional_slot_free_seconds( &server_config );
         start = rocketnet_platform_time();
-        while ( rocketnet_platform_time() - start < 3.0 && rocketnet_server_transport_num_connected_clients( server ) != 0 )
+        while ( rocketnet_platform_time() - start < slot_free_seconds && rocketnet_server_transport_num_connected_clients( server ) != 0 )
         {
             // the client keeps updating while the server waits: a disconnect burst whose
             // hand-off found the other send ring busy is deferred and goes out on
@@ -1984,11 +2020,14 @@ void rocketnet_test_transport_udp_loopback()
     rocketnet_check( server_received == 10 );
     rocketnet_check( client_received == 10 );
 
-    // the deliberate disconnect crosses the wire and the server empties
+    // the deliberate disconnect crosses the wire and the server empties: at
+    // once when it is delivered, and within the server's timeout plus the
+    // update margin when every copy is lost (rocketnet_functional_slot_free_seconds)
 
     rocketnet_client_transport_disconnect( client );
+    const double slot_free_seconds = rocketnet_functional_slot_free_seconds( &server_config );
     start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 2.0 )
+    while ( rocketnet_platform_time() - start < slot_free_seconds )
     {
         // the client keeps updating while the server waits: a disconnect burst whose
         // hand-off found the other send ring busy is deferred and goes out on
