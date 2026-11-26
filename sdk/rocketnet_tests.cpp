@@ -15463,6 +15463,18 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
             config.max_clients = c.max_clients;
 
             struct rocketnet_host_memory_estimate_t estimate;
+
+            // a row above the build's ROCKETNET_MAX_CLIENTS (the 1000 row in a
+            // MAX_CLIENTS=512 build) is no plan: the estimate refuses it and
+            // reports zero, as for any max_clients past the build's bound
+
+            if ( c.max_clients > ROCKETNET_MAX_CLIENTS )
+            {
+                rocketnet_check( !rocketnet_server_transport_host_memory_estimate( &config, "msgx", &estimate ) );
+                rocketnet_check( estimate.total_bytes == 0 );
+                continue;
+            }
+
             rocketnet_check( rocketnet_server_transport_host_memory_estimate( &config, "msgx", &estimate ) );
 
             rocketnet_check( estimate.sockets == 1 + c.max_clients );
