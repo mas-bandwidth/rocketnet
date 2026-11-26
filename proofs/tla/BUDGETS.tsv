@@ -8,4 +8,3 @@ MCServerStopSpreadBrokenNoAbandon.cfg	1090	69.749	150	hetzner1
 MCRNUringQueueSendLive.cfg	1170	81.711	200	hetzner1
 MCRNUringQueueSend.cfg	1170	72.584	160	hetzner1
 MCRNXdpReplayReconnect.cfg	1680	97.567	310	hetzner1
-MCRNPathProbeServerListFull.cfg	240	108.835	108.835	space

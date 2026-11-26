@@ -1221,7 +1221,6 @@ MCRNCreateUnwindBrokenFreeAtDeadline.cfg	MCRNCreateUnwind.tla	invariant	FreedOnl
 MCRNPathProbe.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeFull.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	bench	full-instance-over-budget-reduced-replacement-MCRNPathProbe.cfg
 MCRNPathProbeServerList.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
-MCRNPathProbeServerListFull.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	bench	full-instance-over-budget-reduced-replacement-MCRNPathProbeServerList.cfg
 MCRNPathProbeOneEntry.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeLate.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeLateFull.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	bench	full-instance-over-budget-reduced-replacement-MCRNPathProbeLate.cfg

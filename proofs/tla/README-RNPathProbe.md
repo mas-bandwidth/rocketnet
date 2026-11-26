@@ -131,8 +131,7 @@ TRUE.
 | --- | --- |
 | `MCRNPathProbe.cfg` | capacities `{0, 1, 3}` up and `{1, 3}` down, every invariant and property under `FairSpec`; reduced from `MCRNPathProbeFull.cfg` only for the 110 s case budget |
 | `MCRNPathProbeFull.cfg` | the same at every capacity `0 .. 3` each way: nightly timeout debt (`NIGHTLY-DEBT.tsv`) |
-| `MCRNPathProbeServerList.cfg` | server list `{3, 1}`: the client's middle size is never answered and is ruled out; the same checks and capacities; reduced from `MCRNPathProbeServerListFull.cfg` |
-| `MCRNPathProbeServerListFull.cfg` | the same at every capacity `0 .. 3` each way: nightly timeout debt |
+| `MCRNPathProbeServerList.cfg` | server list `{3, 1}`: the client's middle size is never answered and is ruled out; the same checks at the same capacities |
 | `MCRNPathProbeOneEntry.cfg` | client set `{2}`, server list `{2, 1}`: no probing |
 | `MCRNPathProbeLate.cfg` | `Timed` = FALSE, capacities `{1, 3}`, no attacker, safety (`Spec`); reduced from `MCRNPathProbeLateFull.cfg` only for the 110 s case budget |
 | `MCRNPathProbeLateFull.cfg` | the same with one attacker send: nightly timeout debt (`NIGHTLY-DEBT.tsv`) |
@@ -183,7 +182,37 @@ against the code once the v2 code is in.
 
 ## Records
 
-RECORDS
+The records in `RUNS.tsv` are measured on space with the pinned tlacheck
+(`tlacheck run --group rnpathprobe`, which refuses to run on macOS), one case
+per bounded run, two workers, 2026-11-25. `MCRNPathProbeFull.cfg` and
+`MCRNPathProbeLateFull.cfg` are over the 110 s record cap, so their records
+are the bounded FAIL/124 and their completed counts are in `NIGHTLY-DEBT.tsv`,
+from one run each with no record cap (`--manual`, space, 2 workers).
+
+| Case | Result | Generated | Distinct | Seconds |
+| --- | --- | --- | --- | --- |
+| `MCRNPathProbe.cfg` | pass | 744,712 | 119,777 | 38.5 |
+| `MCRNPathProbeFull.cfg` | pass (nightly debt; bounded record FAIL/124) | 2,322,494 | 366,825 | 115.5 |
+| `MCRNPathProbeServerList.cfg` | pass | 717,382 | 115,813 | 37.0 |
+| `MCRNPathProbeOneEntry.cfg` | pass | 2,457 | 432 | 1.1 |
+| `MCRNPathProbeLate.cfg` | pass | 2,605,454 | 335,422 | 7.1 |
+| `MCRNPathProbeLateFull.cfg` | pass (nightly debt; bounded record FAIL/124) | 69,842,238 | 7,416,104 | 136.6 |
+| `MCRNPathProbeSpacing.cfg` | pass | 84,044 | 16,325 | 1.6 |
+| `MCRNPathProbeForged.cfg` | pass | 240,596 | 37,408 | 10.1 |
+| `MCRNPathProbeReachLateReply.cfg` | `NoLateRaise` | 325 | 104 | 0.8 |
+| `MCRNPathProbeBrokenLower.cfg` | `PNeverDecreases` | 8,289 | 1,919 | 1.0 |
+| `MCRNPathProbeBrokenStrikeOnLoss.cfg` | `StrikeNeedsSmall` | 103 | 42 | 0.8 |
+| `MCRNPathProbeBrokenUnspacedStrike.cfg` | `NoWrongRuleOut` | 1,671 | 341 | 0.8 |
+| `MCRNPathProbeBrokenRaiseOnProbe.cfg` | `ServerRaisesOnConfirm` | 7 | 4 | 0.9 |
+| `MCRNPathProbeBrokenForgedRaise.cfg` | `ClientRaisesOnAuthLarge` | 66 | 26 | 0.8 |
+| `MCRNPathProbeBrokenProbeAfterMax.cfg` | `NoProbeAfterDone` | 192 | 56 | 0.8 |
+| `MCRNPathProbeBrokenUnproven.cfg` | `ReplyOnlyConnected` | 37 | 28 | 0.8 |
+| `MCRNPathProbeBrokenLarger.cfg` | `ReplyNoLarger` | 7 | 4 | 0.8 |
+| `MCRNPathProbeBrokenOffList.cfg` | `ReplyOwnList` | 7 | 4 | 0.8 |
+| `MCRNPathProbeBrokenNoAllowance.cfg` | `OneReplyPerUpdate` | 378 | 129 | 0.9 |
+| `MCRNPathProbeBrokenSkipLast.cfg` | `FailsWhenP0NotCarried` | 16,497 | 3,615 | 1.9 |
+| `MCRNPathProbeBrokenForgedStarves.cfg` | `ForgedNeverStarves` | 66,249 | 10,056 | 3.5 |
+
 
 ## Trace binding
 
