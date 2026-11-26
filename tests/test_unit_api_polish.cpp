@@ -34,6 +34,7 @@
 #include <type_traits>
 #include "loopback_hub.h"
 #include "fake_client_driver.h"
+#include "suite_runner.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_address.h"
 #include "rocketnet_client_io.h"
