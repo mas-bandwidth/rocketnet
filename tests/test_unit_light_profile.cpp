@@ -229,8 +229,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // entries a client (8 bytes each) and the counters: 16064 more to the server
 // at 1000 clients: actual=15195346 and 2146872178 (space, gcc, Debug, DEV
 // ON), measured; the other platforms derived from the Linux reading.
+// The path probe's re-try: the ruled-out flag, the wait flag, the re-try
+// count and the next re-try's time in the client protocol: 64 more to the
+// client: actual=15195410 (hetzner1, gcc, Debug, DEV ON), measured; the
+// other platforms derived from the Linux reading.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1576723295 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350636 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350700 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -372,8 +376,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // ON), measured; the other platforms derived from the Linux reading. On
 // macOS the server measured 16128 more, not 16064: actual=1664789499 (CI,
 // macos Debug unit, Apple clang, DEV=ON).
+// The path probe's re-try: the ruled-out flag, the wait flag, the re-try
+// count and the next re-try's time in the client protocol: 64 more to the
+// client: actual=15195410 (hetzner1, gcc, Debug, DEV ON), measured; the
+// other platforms derived from the Linux reading.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1663740923 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13998154 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13998218 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -569,7 +577,11 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // entries a client (8 bytes each) and the counters: 16064 more to the server
 // at 1000 clients: actual=15195346 and 2146872178 (space, gcc, Debug, DEV
 // ON), measured; the other platforms derived from the Linux reading.
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146770 )
+// The path probe's re-try: the ruled-out flag, the wait flag, the re-try
+// count and the next re-try's time in the client protocol: 64 more to the
+// client: actual=15195410 (hetzner1, gcc, Debug, DEV ON), measured; the
+// other platforms derived from the Linux reading.
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146834 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

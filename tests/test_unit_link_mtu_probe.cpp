@@ -20,8 +20,9 @@
 // delay, and loss by a seeded generator. The times to the largest size at
 // 0%, 10%, 50% for the first 10 s and 100% for the first 10 s, strikes in a
 // row at the fast pace and their reset on a lost small probe, the times on
-// a 1200 link and a 576 path, the -14 of a P0 the path does not carry, and
-// the end of probing for good.
+// a 1200 link and a 576 path, the -14 of a P0 the path does not carry, the
+// re-try of a ruled-out size on its schedule, and the end of probing for
+// good at the largest size.
 //
 // No socket, no thread, no clock: both ends are driven through their protocol
 // calls with the time passed in, from the published test values. Set
@@ -819,6 +820,16 @@ struct path_t
     // the times, from connect, at which each end first reached the target
     double client_reached;
     double server_reached;
+
+    // the re-tries: the times, from connect, of each rule-out and of each
+    // re-try's start (the update whose wait ended), and the probe bytes
+    // each way, every probe, confirm and reply offered to the path
+    double ruled_at[64];
+    int num_ruled;
+    double retry_at[64];
+    int num_retries;
+    uint64_t probe_bytes_up;
+    uint64_t probe_bytes_down;
 };
 
 static uint32_t path_next_random( path_t * path )
@@ -844,6 +855,10 @@ static bool path_lost( path_t * path, int bytes )
 
 static void path_send( path_t * path, std::vector<path_packet_t> & flight, int capacity, const uint8_t * bytes, int count )
 {
+    if ( count > 0 && bytes[0] == ROCKETNET_CONNECTION_PROBE_PACKET )
+    {
+        ( &flight == &path->up ? path->probe_bytes_up : path->probe_bytes_down ) += (uint64_t) count;
+    }
     if ( count <= 0 || count > capacity || path_lost( path, count ) )
     {
         return;
@@ -900,6 +915,10 @@ static void path_setup( path_t * path, const int * client_mtus, int num_client_m
     path->num_sizes = 0;
     path->client_reached = -1.0;
     path->server_reached = -1.0;
+    path->num_ruled = 0;
+    path->num_retries = 0;
+    path->probe_bytes_up = 0;
+    path->probe_bytes_down = 0;
     path->connect_time = -1.0;
     path->client_index = -1;
     memset( &path->server_counters, 0, sizeof( path->server_counters ) );
@@ -1014,7 +1033,17 @@ static void path_step( path_t * path, int target )
         uint8_t large[ROCKETNET_RECEIVE_CEILING];
         int small_bytes = 0;
         int large_bytes = 0;
+        const bool was_waiting = path->client.probe_waiting != 0;
+        const uint64_t ruled_before = path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT];
         rocketnet_client_protocol_probe_update( &path->client, path->now, small_probe, &small_bytes, large, &large_bytes );
+        if ( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT] != ruled_before && path->num_ruled < 64 )
+        {
+            path->ruled_at[path->num_ruled++] = path->now - path->connect_time;
+        }
+        if ( was_waiting && !path->client.probe_waiting && path->num_retries < 64 )
+        {
+            path->retry_at[path->num_retries++] = path->now - path->connect_time;
+        }
         // a small probe alone is the confirm; a pair is a small probe and a
         // large one
         path_client_send( path, small_probe, small_bytes, large_bytes == 0 );
@@ -1189,42 +1218,51 @@ REGISTER_UNIT_TEST( test_link_mtu_ten_percent_loss_reaches_max_in_seconds );
 // back to zero, so a carried size is ruled out only by STRIKES pairs in a
 // row whose small probes came back while their large ones were lost, 1.6%
 // a step at 50% (sdk/rocketnet_link_mtu.h). These seeds are fixed, and one,
-// seed 31, meets that run at 1452 and ends at 1172; every other ends at 1452
-// at both ends, within about two seconds of the loss ending (planted: a pair
-// with no large reply is a strike whether its small probe came back or not,
-// and many seeds rule a size out).
+// seed 31, meets that run at 1452: its re-try, 10 s after the rule-out and
+// after the loss has ended, raises it, so every seed ends at 1452 at both
+// ends, seed 31 within 13 s of connect (12.16 s measured) and every other
+// within 11.5 s (10.86 s measured at worst, 3.58 s on average) (planted: a pair with no large reply is a
+// strike whether its small probe came back or not, and many seeds rule a
+// size out; and, apart, a ruled-out size is never re-tried, and seed 31
+// ends at 1172).
 
 static void test_link_mtu_heavy_loss_first_ten_seconds_still_ends_at_max()
 {
     path_t * path = new path_t();
     double worst = 0.0;
     double mean = 0.0;
+    double seed31 = -1.0;
+    double worst_other = 0.0;
     for ( int seed = 1; seed <= 50; seed++ )
     {
         path_setup( path, probe_three_step, 3, probe_three_step, 3, (uint64_t) seed );
         path->loss_percent = 50;
         path->loss_seconds = 10.0;
         path_run( path, 30.0, 1452 );
-        if ( seed == 31 )
-        {
-            check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT] == 1 );
-            check( rocketnet_client_protocol_packet_bytes( &path->client ) == 1172 );
-            check( path_server_packet_bytes( path ) == 1172 );
-            path_teardown( path );
-            continue;
-        }
         check( rocketnet_client_protocol_packet_bytes( &path->client ) == 1452 );
         check( path_server_packet_bytes( path ) == 1452 );
-        check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT] == 0 );
+        check( path->client_reached >= 0.0 && path->server_reached >= 0.0 );
+        check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT] == ( seed == 31 ? 1u : 0u ) );
         const double both = path->client_reached > path->server_reached ? path->client_reached : path->server_reached;
+        if ( seed == 31 )
+        {
+            seed31 = both;
+            check( both <= 13.0 );
+        }
+        else
+        {
+            check( both <= 11.5 );
+            worst_other = both > worst_other ? both : worst_other;
+        }
         worst = both > worst ? both : worst;
-        mean += both / 49.0;
+        mean += both / 50.0;
         path_teardown( path );
     }
-    check( worst <= 12.0 );
+    check( worst <= 13.0 );
     if ( path_print_times() )
     {
-        printf( "link mtu probe, 50%% loss for the first 10 s: both ends at 1452 after %.3f s on average, %.3f s at worst of the 49 seeds that reach it\n", mean, worst );
+        printf( "link mtu probe, 50%% loss for the first 10 s: both ends at 1452 after %.3f s on average, %.3f s at worst of 50 seeds; seed 31, re-tried, after %.3f s; the other 49 by %.3f s\n",
+                mean, worst, seed31, worst_other );
     }
     delete path;
 }
@@ -1324,7 +1362,7 @@ static void test_link_mtu_strikes_in_a_row_and_reset_on_small_loss()
         probe_resolve_pair( client, path->now, 1 );
         check( client->probe_strikes == i + 1 );
         check( client->probe_interval == first );
-        check( rocketnet_client_protocol_probe_rule_out( client ) == 0 );
+        check( rocketnet_client_protocol_probe_rule_out( client, path->now ) == 0 );
     }
 
     probe_resolve_pair( client, path->now, 0 );
@@ -1335,14 +1373,15 @@ static void test_link_mtu_strikes_in_a_row_and_reset_on_small_loss()
     {
         probe_resolve_pair( client, path->now, 1 );
         check( client->probe_interval == 2.0 * first );
-        check( rocketnet_client_protocol_probe_rule_out( client ) == 0 );
+        check( rocketnet_client_protocol_probe_rule_out( client, path->now ) == 0 );
     }
     check( client->probe_index == 1 );
     check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_STRIKE] == 2 * ( ROCKETNET_LINK_MTU_PROBE_STRIKES - 1 ) );
 
     probe_resolve_pair( client, path->now, 1 );
-    check( rocketnet_client_protocol_probe_rule_out( client ) == 1 );
+    check( rocketnet_client_protocol_probe_rule_out( client, path->now ) == 1 );
     check( client->probing && client->probe_index == 2 && client->probe_strikes == 0 && client->probe_interval == first );
+    check( client->probe_ruled && !client->probe_waiting && client->probe_retries == 0 && client->probe_retry_time == path->now );
     check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT] == 1 );
 
     path_teardown( path );
@@ -1354,12 +1393,13 @@ REGISTER_UNIT_TEST( test_link_mtu_strikes_in_a_row_and_reset_on_small_loss );
 // A 1200 link (1172-byte datagrams both ways) at a 50 ms round trip: 1172
 // is answered at once, so the client is at 1172 in one round trip and the
 // server in one and a half; 1452 then collects four strikes at the first
-// interval and is ruled out within a second of connect, and the walk stops;
-// probing has ended for good: in a minute more nothing is sent (planted: a
-// rule-out does not stop the walk, and probes keep going out; and, apart, a
-// strike doubles the interval, and the walk ends only after 1.5 s).
+// interval and is ruled out within a second of connect, and the walk waits
+// for its re-try, 10 s after the rule-out: until then nothing is sent
+// (planted: a rule-out does not stop the walk, and probes keep going out;
+// and, apart, a strike doubles the interval, and the rule-out comes only
+// after 1.5 s).
 
-static void test_link_mtu_rules_out_what_the_path_does_not_carry_then_stops()
+static void test_link_mtu_rules_out_what_the_path_does_not_carry_then_waits()
 {
     path_t * path = new path_t();
     path_setup( path, probe_three_step, 3, probe_three_step, 3, 1 );
@@ -1367,10 +1407,10 @@ static void test_link_mtu_rules_out_what_the_path_does_not_carry_then_stops()
     path->cap_down = 1172;
 
     double ended = -1.0;
-    for ( int i = 0; i < 2500; i++ )
+    for ( int i = 0; i < 250 && ended < 0.0; i++ )
     {
         path_step( path, 1172 );
-        if ( ended < 0.0 && !path->client.probing )
+        if ( path->client.probe_waiting )
         {
             ended = path->now - path->connect_time;
         }
@@ -1380,37 +1420,39 @@ static void test_link_mtu_rules_out_what_the_path_does_not_carry_then_stops()
     check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT] == 1 );
     check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_STRIKE] == ROCKETNET_LINK_MTU_PROBE_STRIKES );
     check( rocketnet_client_protocol_packet_bytes( &path->client ) == 1172 );
-    check( path_server_packet_bytes( path ) == 1172 );
     check( path->client_reached >= 0.0 && path->client_reached <= round_trip + 2 * PATH_STEP_SECONDS );
-    check( path->server_reached >= 0.0 && path->server_reached <= 1.5 * round_trip + 3 * PATH_STEP_SECONDS );
     check( ended >= ROCKETNET_LINK_MTU_PROBE_STRIKES * ROCKETNET_LINK_MTU_PROBE_FIRST_INTERVAL_SECONDS && ended <= 1.0 );
-    check( !path->client.probing );
-    check( path->client.confirm_bytes == 0 );
+    check( path->client.probing && path->client.probe_waiting && path->client.probe_ruled );
+    check( path->client.probe_candidates[path->client.probe_index] == 1452 );
 
+    // the confirm's echo is in already, and nothing is sent before the re-try
+    check( path_server_packet_bytes( path ) == 1172 );
+    check( path->server_reached >= 0.0 && path->server_reached <= 1.5 * round_trip + 3 * PATH_STEP_SECONDS );
+    check( path->client.confirm_bytes == 0 );
     const uint64_t sent = path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT];
-    const uint64_t received = path->server_counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_RECEIVED];
-    path_run( path, 60.0, 1172 );
+    path_run( path, 9.5, 1172 );
     check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT] == sent );
-    check( path->server_counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_RECEIVED] == received );
+    check( path->client.probe_waiting );
 
     if ( path_print_times() )
     {
-        printf( "link mtu probe, a 1200 link: both ends at 1172 after %.3f s, 1452 ruled out and the walk ended after %.3f s\n", path->server_reached, ended );
+        printf( "link mtu probe, a 1200 link: both ends at 1172 after %.3f s, 1452 ruled out and the walk waiting after %.3f s\n", path->server_reached, ended );
     }
 
     path_teardown( path );
     delete path;
 }
 
-REGISTER_UNIT_TEST( test_link_mtu_rules_out_what_the_path_does_not_carry_then_stops );
+REGISTER_UNIT_TEST( test_link_mtu_rules_out_what_the_path_does_not_carry_then_waits );
 
 // A 576 path (548-byte datagrams both ways) at a 50 ms round trip: 1172, the
 // first step up, is ruled out in STRIKES pairs at the first interval, and
-// the large reply at 548, the connection's own size, checked last, ends the
-// walk within a second of connect; 1452 is never sent, both ends stay at
-// 548 and no probe follows (planted: a rule-out does not stop the walk, and
-// 1452 is probed; and, apart, a strike doubles the interval, and the walk
-// ends only after 1.5 s).
+// the large reply at 548, the connection's own size, checked last, sends the
+// walk to wait for 1172's re-try within a second of connect; 1452 is never
+// sent, both ends stay at 548 and no probe follows before the re-try
+// (planted: a rule-out does not stop the walk, and 1452 is probed; and,
+// apart, a strike doubles the interval, and the wait starts only after
+// 1.5 s).
 
 static void test_link_mtu_576_path_ends_the_walk_at_548_within_a_second()
 {
@@ -1423,12 +1465,13 @@ static void test_link_mtu_576_path_ends_the_walk_at_548_within_a_second()
     for ( int i = 0; i < 1000 && ended < 0.0; i++ )
     {
         path_step( path, 548 );
-        if ( !path->client.probing )
+        if ( path->client.probe_waiting )
         {
             ended = path->now - path->connect_time;
         }
     }
     check( ended > 0.0 && ended <= 1.0 );
+    check( path->client.probe_candidates[path->client.probe_index] == 1172 );
     check( path->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT] == 1 );
     check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_FAILED] == 0 );
@@ -1437,12 +1480,13 @@ static void test_link_mtu_576_path_ends_the_walk_at_548_within_a_second()
     check( path_server_packet_bytes( path ) == 548 );
 
     const uint64_t sent = path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT];
-    path_run( path, 10.0, 548 );
+    path_run( path, 9.0, 548 );
     check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT] == sent );
+    check( path->client.probe_waiting );
 
     if ( path_print_times() )
     {
-        printf( "link mtu probe, a 576 path: 1172 ruled out and the walk ended at 548 after %.3f s, 1452 never sent\n", ended );
+        printf( "link mtu probe, a 576 path: 1172 ruled out and the walk waiting at 548 after %.3f s, 1452 never sent\n", ended );
     }
 
     path_teardown( path );
@@ -1482,22 +1526,25 @@ REGISTER_UNIT_TEST( test_link_mtu_walks_up_one_step_at_a_time );
 // A size above a ruled-out size is never probed: the client on { 1500, 1400,
 // 1280, 576 } and a server whose list leaves out 1400, so the server does
 // not answer a probe at 1372; the client raises to 1252, rules 1372 out in
-// STRIKES pairs, and stops there: in half a minute no large probe above
-// 1372 is sent, though the path carries 1452 (planted: a rule-out does not
-// stop the walk, and the client probes 1452 and raises to it).
+// STRIKES pairs, and waits there, re-trying 1372 on its schedule: in ten
+// minutes no large probe above 1372 is sent, though the path carries 1452
+// (planted: a rule-out does not stop the walk, and the client probes 1452
+// and raises to it).
 
 static void test_link_mtu_never_probes_above_a_ruled_out_size()
 {
     const int server_three[3] = { 1500, 1280, 576 };
     path_t * path = new path_t();
     path_setup( path, probe_four_step, 4, server_three, 3, 1 );
-    path_run( path, 30.0, 1252 );
+    path_run( path, 600.0, 1252 );
 
-    check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT] == 1 );
+    // ruled out first, then at each of the re-tries at 10, 20, 30, 50, 90,
+    // 170 and 330 s
+    check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT] == 8 );
     check( path->largest_sent == 1372 );
     check( rocketnet_client_protocol_packet_bytes( &path->client ) == 1252 );
     check( path_server_packet_bytes( path ) == 1252 );
-    check( !path->client.probing );
+    check( path->client.probing && path->client.probe_waiting );
 
     path_teardown( path );
     delete path;
@@ -1506,9 +1553,11 @@ static void test_link_mtu_never_probes_above_a_ruled_out_size()
 REGISTER_UNIT_TEST( test_link_mtu_never_probes_above_a_ruled_out_size );
 
 // Once the size is the largest candidate, probing ends for good: on a clean
-// path, after the two raises and the confirms' echoes, a minute more sends
-// no probe and no confirm (planted: the walk is not ended by the raise to
-// the largest candidate, and a pair goes out every second).
+// path, after the two raises and the confirms' echoes, an hour more sends
+// no probe and no confirm, past every time of a re-try schedule (planted:
+// the walk is not ended by the raise to the largest candidate, and a pair
+// goes out every second; and, apart, the raise to the largest candidate
+// waits for a re-try, and a pair goes out 10 s later).
 
 static void test_link_mtu_no_probe_after_the_largest_size()
 {
@@ -1521,14 +1570,229 @@ static void test_link_mtu_no_probe_after_the_largest_size()
 
     // a pair and a confirm for each step, nothing more
     check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT] == 6 );
-    path_run( path, 60.0, 1452 );
+    path_run( path, 3600.0, 1452 );
     check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT] == 6 );
+    check( !path->client.probing && !path->client.probe_waiting );
 
     path_teardown( path );
     delete path;
 }
 
 REGISTER_UNIT_TEST( test_link_mtu_no_probe_after_the_largest_size );
+
+// ---------------------------------------------------------------------------
+// the re-try of a ruled-out size (sdk/rocketnet_link_mtu.h;
+// proofs/tla/RNPathProbe.tla ClientRetry; proofs/tla/RNPathProbeRetryLayout.tla)
+
+// the re-try times of a size's schedule, in seconds from its first rule-out
+static const double probe_retry_offsets[] = { 10, 20, 30, 50, 90, 170, 330, 630, 930, 1230 };
+#define PROBE_RETRY_OFFSETS ( (int) ( sizeof( probe_retry_offsets ) / sizeof( probe_retry_offsets[0] ) ) )
+
+// The schedule's arithmetic, exactly: re-tries at 10, 20 and 30 s from the
+// rule-out, then gaps of 20, 40, 80 and 160 s (50, 90, 170 and 330 s), then
+// 300 s each, the cap, with the count stopping at RETRY_SATURATE, for a
+// hundred thousand re-tries more; slots that passed while a re-try ran are
+// skipped, one at a time below the cap and all at once at it (planted: the
+// first gaps are two, and the third re-try is at 40 s; and, apart, the gap
+// is not capped, and the eighth re-try is at 650 s).
+
+static void test_link_mtu_retry_schedule_is_exact()
+{
+    check( rocketnet_link_mtu_retry_gap_seconds( 1 ) == 10.0 );
+    check( rocketnet_link_mtu_retry_gap_seconds( 2 ) == 10.0 );
+    check( rocketnet_link_mtu_retry_gap_seconds( 3 ) == 10.0 );
+    check( rocketnet_link_mtu_retry_gap_seconds( 4 ) == 20.0 );
+    check( rocketnet_link_mtu_retry_gap_seconds( 5 ) == 40.0 );
+    check( rocketnet_link_mtu_retry_gap_seconds( 6 ) == 80.0 );
+    check( rocketnet_link_mtu_retry_gap_seconds( 7 ) == 160.0 );
+    check( rocketnet_link_mtu_retry_gap_seconds( ROCKETNET_LINK_MTU_RETRY_SATURATE ) == ROCKETNET_LINK_MTU_RETRY_MAX_SECONDS );
+    check( rocketnet_link_mtu_retry_gap_seconds( ROCKETNET_LINK_MTU_RETRY_SATURATE - 1 ) < ROCKETNET_LINK_MTU_RETRY_MAX_SECONDS );
+
+    // each re-try ruled out again at once: the next is the schedule's next
+    const double ruled = 1000.0;
+    int retry = 0;
+    double retry_time = ruled;
+    double now = ruled;
+    for ( int i = 0; i < PROBE_RETRY_OFFSETS; i++ )
+    {
+        now = rocketnet_link_mtu_retry_next( &retry, &retry_time, now );
+        check( now == ruled + probe_retry_offsets[i] );
+        check( retry == ( i + 1 < ROCKETNET_LINK_MTU_RETRY_SATURATE ? i + 1 : ROCKETNET_LINK_MTU_RETRY_SATURATE ) );
+    }
+    for ( int i = 0; i < 100000; i++ )
+    {
+        const double before = now;
+        now = rocketnet_link_mtu_retry_next( &retry, &retry_time, now );
+        check( now == before + ROCKETNET_LINK_MTU_RETRY_MAX_SECONDS );
+    }
+    check( retry == ROCKETNET_LINK_MTU_RETRY_SATURATE );
+
+    // a re-try that ran past the next slots: they are skipped
+    retry = 0;
+    retry_time = ruled;
+    check( rocketnet_link_mtu_retry_next( &retry, &retry_time, ruled + 35.0 ) == ruled + 50.0 );
+    check( retry == 4 );
+    check( rocketnet_link_mtu_retry_next( &retry, &retry_time, ruled + 50.0 ) == ruled + 90.0 );
+    check( rocketnet_link_mtu_retry_next( &retry, &retry_time, ruled + 1000.0 ) == ruled + 1230.0 );
+    check( retry == ROCKETNET_LINK_MTU_RETRY_SATURATE );
+    check( rocketnet_link_mtu_retry_next( &retry, &retry_time, ruled + 1230.0 + 300.0 * 1000000.0 + 1.0 ) == ruled + 1230.0 + 300.0 * 1000001.0 );
+}
+
+REGISTER_UNIT_TEST( test_link_mtu_retry_schedule_is_exact );
+
+// A 1200 link at a 50 ms round trip, for 1000 s: 1452, which the path does
+// not carry, is ruled out within a second, then re-tried on its schedule,
+// each re-try starting in the first update at or after its time (10, 20,
+// 30, 50, 90, 170, 330, 630 and 930 s from the rule-out) and ruled out
+// again; the connection never goes above 1172, and at the cap, from 330 s,
+// the probe costs one re-try of STRIKES pairs every 300 s (planted: the gap
+// is not capped, and the eighth re-try is at 650 s; and, apart, a re-try
+// ruled out again starts the schedule over, and the fourth is at 40 s; and,
+// apart, a re-try takes its size without an answer, and the client is at
+// 1452 on a path that does not carry it).
+
+static void test_link_mtu_carried_size_never_exceeded_and_retried_at_the_cap()
+{
+    path_t * path = new path_t();
+    path_setup( path, probe_three_step, 3, probe_three_step, 3, 1 );
+    path->cap_up = 1172;
+    path->cap_down = 1172;
+
+    path_run( path, 400.0, 1172 );
+    const uint64_t up_at_cap = path->probe_bytes_up;
+    const uint64_t down_at_cap = path->probe_bytes_down;
+    path_run( path, 600.0, 1172 );
+
+    check( path->num_ruled >= 1 && path->ruled_at[0] <= 1.0 );
+    check( path->num_retries == 9 );
+    for ( int i = 0; i < path->num_retries && i < PROBE_RETRY_OFFSETS; i++ )
+    {
+        const double late = path->retry_at[i] - ( path->ruled_at[0] + probe_retry_offsets[i] );
+        check( late >= -1e-6 && late <= PATH_STEP_SECONDS + 1e-6 );
+    }
+    // each re-try ruled out again, STRIKES pairs at the first interval (the
+    // larger of twice the round trip estimate and FIRST_INTERVAL), each sent
+    // in the first step at or after it is due
+    double interval = 2.0 * path->client.rtt_estimate;
+    if ( interval < ROCKETNET_LINK_MTU_PROBE_FIRST_INTERVAL_SECONDS )
+    {
+        interval = ROCKETNET_LINK_MTU_PROBE_FIRST_INTERVAL_SECONDS;
+    }
+    check( interval < 0.2 );
+    check( path->num_ruled == 1 + path->num_retries );
+    for ( int i = 0; i < path->num_retries; i++ )
+    {
+        const double took = path->ruled_at[i + 1] - path->retry_at[i];
+        if ( path_print_times() )
+        {
+            printf( "link mtu probe, re-try %d at %.2f s ruled out again after %.3f s (interval %.3f s)\n", i + 1, path->retry_at[i], took, interval );
+        }
+        check( took > 0.0 && took <= ROCKETNET_LINK_MTU_PROBE_STRIKES * ( interval + PATH_STEP_SECONDS ) + 1e-6 );
+    }
+    check( path->num_sizes == 2 && path->sizes[0] == 548 && path->sizes[1] == 1172 );
+    check( rocketnet_client_protocol_packet_bytes( &path->client ) == 1172 );
+    check( path_server_packet_bytes( path ) == 1172 );
+    check( path->largest_sent == 1452 );
+    check( path->client.probing && path->client.probe_waiting );
+
+    // at the cap: the re-tries at 630 and 930 s, two in the last ten minutes
+    const double minutes = 600.0 / 60.0;
+    const uint64_t up = path->probe_bytes_up - up_at_cap;
+    const uint64_t down = path->probe_bytes_down - down_at_cap;
+    check( up == 2u * ROCKETNET_LINK_MTU_PROBE_STRIKES * ( ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES + 1452u ) );
+    check( down == 2u * ROCKETNET_LINK_MTU_PROBE_STRIKES * ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES );
+
+    if ( path_print_times() )
+    {
+        printf( "link mtu probe, a 1200 link at the re-try cap: %.0f probe bytes a minute up, %.0f down; one re-try every %.0f s\n",
+                (double) up / minutes, (double) down / minutes, path->retry_at[8] - path->retry_at[7] );
+    }
+
+    path_teardown( path );
+    delete path;
+}
+
+REGISTER_UNIT_TEST( test_link_mtu_carried_size_never_exceeded_and_retried_at_the_cap );
+
+// A re-try that gets through climbs on: on { 1500, 1400, 1280, 576 } and a
+// 1500 path that loses every packet above 1300 bytes for the first 2 s, the
+// client raises to 1252, rules 1372 out, waits, re-tries it 10 s after the
+// rule-out, when the loss has ended, raises to 1372 and goes on to 1452 at
+// once; at the largest size the walk ends, and in 1000 s more no probe is
+// sent (planted: a ruled-out size is never re-tried, and the client stays
+// at 1252; and, apart, the walk does not go on after a re-try's raise, and
+// it stays at 1372).
+
+static void test_link_mtu_retry_that_gets_through_climbs_on()
+{
+    path_t * path = new path_t();
+    path_setup( path, probe_four_step, 4, probe_four_step, 4, 1 );
+    path->large_bytes = 1300;
+    path->large_loss_seconds = 2.0;
+    path_run( path, 15.0, 1452 );
+
+    check( path->num_ruled == 1 && path->ruled_at[0] <= 1.0 );
+    check( path->num_retries == 1 );
+    check( path->retry_at[0] - path->ruled_at[0] >= 10.0 - 1e-6 && path->retry_at[0] - path->ruled_at[0] <= 10.0 + PATH_STEP_SECONDS + 1e-6 );
+    check( path->num_sizes == 4 );
+    check( path->sizes[0] == 548 && path->sizes[1] == 1252 && path->sizes[2] == 1372 && path->sizes[3] == 1452 );
+    check( rocketnet_client_protocol_packet_bytes( &path->client ) == 1452 );
+    check( path_server_packet_bytes( path ) == 1452 );
+    // two round trips, one a step, and the confirm's half, as on a clean path
+    const double round_trip = 2.0 * path->delay;
+    check( path->client_reached >= path->retry_at[0] && path->client_reached <= path->retry_at[0] + 2.0 * round_trip + 4 * PATH_STEP_SECONDS );
+    check( path->server_reached <= path->retry_at[0] + 2.5 * round_trip + 5 * PATH_STEP_SECONDS );
+    check( !path->client.probing && !path->client.probe_waiting );
+
+    const uint64_t sent = path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT];
+    path_run( path, 1000.0, 1452 );
+    check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT] == sent );
+
+    path_teardown( path );
+    delete path;
+}
+
+REGISTER_UNIT_TEST( test_link_mtu_retry_that_gets_through_climbs_on );
+
+// The schedule starts afresh for the next size: on { 1500, 1400, 1280, 576 }
+// and a 1400 link (1372-byte datagrams) that loses every packet above 1300
+// bytes for the first 2 s, 1372 is ruled out, re-tried 10 s later and
+// raised to; 1452, which the path does not carry, is then ruled out, and
+// its re-tries are 10 and 20 s after its own rule-out, not on 1372's
+// schedule (planted: a raise keeps the ruled-out size's schedule, and 1452's
+// first re-try comes at 1372's second, 20 s after 1372's rule-out).
+
+static void test_link_mtu_retry_schedule_starts_afresh_for_the_next_size()
+{
+    path_t * path = new path_t();
+    path_setup( path, probe_four_step, 4, probe_four_step, 4, 1 );
+    path->cap_up = 1372;
+    path->cap_down = 1372;
+    path->large_bytes = 1300;
+    path->large_loss_seconds = 2.0;
+    path_run( path, 40.0, 1372 );
+
+    check( path->num_sizes == 3 && path->sizes[1] == 1252 && path->sizes[2] == 1372 );
+    check( path->num_ruled >= 2 && path->num_retries >= 3 );
+    // 1372: ruled out, re-tried once, raised to
+    check( path->retry_at[0] - path->ruled_at[0] >= 10.0 - 1e-6 && path->retry_at[0] - path->ruled_at[0] <= 10.0 + PATH_STEP_SECONDS + 1e-6 );
+    check( path->client_reached >= path->retry_at[0] );
+    // 1452: ruled out after the raise, its own schedule
+    check( path->ruled_at[1] > path->client_reached );
+    for ( int i = 1; i < 3; i++ )
+    {
+        const double late = path->retry_at[i] - ( path->ruled_at[1] + probe_retry_offsets[i - 1] );
+        check( late >= -1e-6 && late <= PATH_STEP_SECONDS + 1e-6 );
+    }
+    check( rocketnet_client_protocol_packet_bytes( &path->client ) == 1372 );
+    check( path_server_packet_bytes( path ) == 1372 );
+    check( path->client.probe_candidates[path->client.probe_index] == 1452 );
+
+    path_teardown( path );
+    delete path;
+}
+
+REGISTER_UNIT_TEST( test_link_mtu_retry_schedule_starts_afresh_for_the_next_size );
 
 // The server raises only on the confirm: with every confirm lost, the client
 // sends at 1452 and the server stays at 548, the client resending its confirm

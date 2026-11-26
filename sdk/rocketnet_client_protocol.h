@@ -120,6 +120,10 @@ typedef void ( *rocketnet_client_retire_keys_t )( void * context );
     X( probe_next_time, double probe_next_time ) \
     X( probe_interval, double probe_interval ) \
     X( probing, int probing ) \
+    X( probe_ruled, int probe_ruled ) \
+    X( probe_waiting, int probe_waiting ) \
+    X( probe_retries, int probe_retries ) \
+    X( probe_retry_time, double probe_retry_time ) \
     X( confirm_bytes, int confirm_bytes ) \
     X( confirm_next_time, double confirm_next_time ) \
     X( packet_bytes, int packet_bytes )
@@ -153,21 +157,27 @@ void rocketnet_client_protocol_probe_update( struct rocketnet_client_protocol_t 
                                              uint8_t * out_large,
                                              int * out_large_bytes );
 
-// The three steps of a due pair inside rocketnet_client_protocol_probe_update,
+// The four steps of a due pair inside rocketnet_client_protocol_probe_update,
 // in its order, each a model action of proofs/tla/RNPathProbe.tla, so the
 // trace check (tests/tla_trace_path_probe.cpp) reads the state after each.
 // rocketnet_client_protocol_probe_resolve: the outstanding pair resolves
 // (ClientResolvePair), returning 1 when it did, 0 when no pair was out.
 // rocketnet_client_protocol_probe_rule_out: the candidate's counted strikes
-// rule it out (ClientRuleOut, returning 1), which stops the walk, or moves it
-// to P0 itself when the first step up is ruled out at P0; at P0 itself they
-// end the connection in mtu probe failed (ClientFail, returning -1); 0
-// otherwise.
+// rule it out (ClientRuleOut, returning 1): the walk waits to re-try it at
+// the next time of its schedule (sdk/rocketnet_link_mtu.h), or, at its first
+// rule-out, when it is the first step up and the connection is at P0, moves
+// to P0 itself first; at P0 itself they end the connection in mtu probe
+// failed (ClientFail, returning -1); 0 otherwise.
+// rocketnet_client_protocol_probe_retry: the wait is over and the walk
+// probes the ruled-out size again, its strikes at zero and its pace the
+// first interval (ClientRetry), returning 1; 0 when it was not waiting.
 // rocketnet_client_protocol_probe_send_pair: the next pair (ClientSendPair).
 // None is called but by rocketnet_client_protocol_probe_update and the trace
-// walk, and only while connected, probing and the pair is due.
+// walk, and only while connected, probing and the pair (or the re-try) is
+// due.
 int rocketnet_client_protocol_probe_resolve( struct rocketnet_client_protocol_t * client );
-int rocketnet_client_protocol_probe_rule_out( struct rocketnet_client_protocol_t * client );
+int rocketnet_client_protocol_probe_rule_out( struct rocketnet_client_protocol_t * client, double current_time );
+int rocketnet_client_protocol_probe_retry( struct rocketnet_client_protocol_t * client );
 void rocketnet_client_protocol_probe_send_pair( struct rocketnet_client_protocol_t * client,
                                                 double current_time,
                                                 uint8_t * out_small,

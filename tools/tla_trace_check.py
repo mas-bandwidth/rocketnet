@@ -318,8 +318,17 @@ LAYERS = {
             "badLarger": "the history of ReplyNoLarger, computed by the model",
             "badOffList": "the history of ReplyOwnList, computed by the model",
             "badTwice": "the history of OneReplyPerUpdate, computed by the model",
+            "badStale": "the history of ReuseStartsFresh, computed by the model",
         },
-        "reach": ["RaisedBelowMax", "ServerRaised"],
+        "reach": ["RaisedBelowMax", "ServerRaised", "Waiting", "Retrying", "Reused"],
+    },
+    "path-probe-retry": {
+        "modules": ["RNPathProbeRetryLayout.tla", "TraceRNPathProbeRetryLayout.tla"],
+        "untraced": {
+            "Done": "the model's exploration bound: past Horizon nothing more; the walk stays below it",
+        },
+        "reach": ["AtCap"],
+        "header_only": True,
     },
 }
 
@@ -353,7 +362,7 @@ SHARDS = [
     ["msgx:4", "msgxsendruns", "gather"],
     ["xdp-reply-macs:1", "example", "queue-worker"],
     ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring", "fillphase"],
-    ["xdp-reply-macs:4", "xdp-gateway-refresh", "path-probe"],
+    ["xdp-reply-macs:4", "xdp-gateway-refresh", "path-probe", "path-probe-retry"],
     ["ackapply", "bank", "receive", "receive-handoff-xdp", "msgxreceivefill", "client-receive-handoff"],
     ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks", "receive-handoff"],
     ["msgx:reach"],

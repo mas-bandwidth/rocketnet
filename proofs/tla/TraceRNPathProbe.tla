@@ -49,11 +49,13 @@ VarsRec == [capUp |-> capUp, capDown |-> capDown, cP |-> cP, sP |-> sP, phase |-
            ruled |-> ruled, strikes |-> strikes, out |-> out, pairNo |-> pairNo, pairS |-> pairS,
            pairInBurst |-> pairInBurst, smallSeen |-> smallSeen, largeSeen |-> largeSeen, due |-> due,
            confirmS |-> confirmS, ansSmall |-> ansSmall, ansLarge |-> ansLarge,
-           burst |-> burst, bursts |-> bursts, burstStrikes |-> burstStrikes, attacks |-> attacks, up |-> up, down |-> down]
+           burst |-> burst, bursts |-> bursts, burstStrikes |-> burstStrikes, attacks |-> attacks, up |-> up, down |-> down,
+           reuses |-> reuses]
 
 \* the actions each operation of the code can be
 OpActs == [client_resolve |-> {"ClientResolvePair"},
            client_rule_out |-> {"ClientRuleOut", "ClientFail"},
+           client_retry |-> {"ClientRetry"},
            client_send |-> {"ClientSendPair"},
            client_confirm |-> {"ClientSendConfirm"},
            client_recv |-> {"ClientRecvSmall", "ClientRecvLarge", "ClientRecvForged", "ClientRecvConfirmEcho"},
@@ -64,6 +66,7 @@ OpActs == [client_resolve |-> {"ClientResolvePair"},
            replay |-> {"Replay"},
            attack |-> {"AttackProbe"},
            attack_reply |-> {"AttackReply"},
+           reuse |-> {"Reuse"},
            done |-> {"Done"}]
 
 \* the action a record names, with the record's arguments; a name this CASE
@@ -71,6 +74,7 @@ OpActs == [client_resolve |-> {"ClientResolvePair"},
 Act(a, x) == CASE a = "ClientResolvePair" -> ClientResolvePair
                [] a = "ClientRuleOut" -> ClientRuleOut
                [] a = "ClientFail" -> ClientFail
+               [] a = "ClientRetry" -> ClientRetry
                [] a = "ClientSendPair" -> ClientSendPair
                [] a = "ClientSendConfirm" -> ClientSendConfirm
                [] a = "ClientRecvSmall" -> ClientRecvSmall(x[1])
@@ -86,6 +90,7 @@ Act(a, x) == CASE a = "ClientResolvePair" -> ClientResolvePair
                [] a = "Replay" -> Replay(x[1])
                [] a = "AttackProbe" -> AttackProbe(x[1])
                [] a = "AttackReply" -> AttackReply(x[1])
+               [] a = "Reuse" -> Reuse(x[1], x[2])
                [] a = "Done" -> Done
 
 TraceInit ==
@@ -123,8 +128,12 @@ TraceSpec == TraceInit /\ [][TraceStep \/ TraceReject \/ TraceDone]_<<vars, ti, 
 TraceConsistent == ~rejected
 
 \* the row's reach predicates: a candidate ruled out and the walk raised to
-\* the next one below the largest, and the server raised by a confirm
+\* the next one below the largest, the server raised by a confirm, the walk
+\* waiting for a re-try, a re-try under way, and the slot reused
 RaisedBelowMax == cP > P0 /\ cP < MaxC
 ServerRaised == sP > P0
+Waiting == phase = "waiting"
+Retrying == phase = "probing" /\ ruled # {}
+Reused == reuses > 0
 
 =============================================================================

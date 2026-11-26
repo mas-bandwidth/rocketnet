@@ -4133,6 +4133,12 @@ int rocketnet_client_transport_max_payload_bytes( rocketnet_client_transport_t *
     return rocketnet_link_mtu_payload_bytes( rocketnet_client_protocol_packet_bytes( &client_transport->protocol ) );
 }
 
+const struct rocketnet_client_protocol_t * rocketnet_client_transport_protocol_for_test( const struct rocketnet_client_transport_t * client_transport )
+{
+    rocketnet_assert( client_transport );
+    return &client_transport->protocol;
+}
+
 int rocketnet_client_transport_link_mtu( rocketnet_client_transport_t * client_transport, int packet_bytes )
 {
     if ( !rocketnet_api_null_guard( client_transport ) )

@@ -208,7 +208,7 @@ static void test_connection_reset_inventory_covers_every_field()
         }
     }
 
-    check( reset_fields == 50 );
+    check( reset_fields == 54 );
     check( keep_fields == 10 );
 
     reset_walk_passes( rocketnet_reset_inventory_matches( "rocketnet_encryption_mapping_t",

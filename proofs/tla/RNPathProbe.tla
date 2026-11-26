@@ -7,8 +7,10 @@
 (* up a ladder: the next candidate above P, smallest first, with pairs of *)
 (* probes; an authenticated large reply raises P, confirms the raise to   *)
 (* the server and goes on to the next size up; K strikes rule the size    *)
-(* out and stop the walk (sizes above it are never tried); when the first *)
-(* step is ruled out, P0 itself is checked, and K strikes there are -14;  *)
+(* out and the walk waits, then re-tries the same size, for as long as    *)
+(* the connection lasts (sizes above it are never tried before it is      *)
+(* raised to); when the first step is ruled out for the first time, P0    *)
+(* itself is checked first, and K strikes there are -14;                  *)
 (* the server answers probes from a connected mapping and raises its P    *)
 (* only on a confirm (sdk/rocketnet_client_protocol.cpp,                   *)
 (* sdk/rocketnet_server_protocol.cpp; standard/TRANSPORT.md t11 and t12).  *)
@@ -29,14 +31,18 @@
 (* first step was ruled out).                                              *)
 (*                                                                         *)
 (* The path.  A capacity each way, chosen at Init from CapsUp and CapsDown *)
-(* and fixed for the behaviour: a packet larger than its direction's      *)
-(* capacity is dropped when sent, always.  Loss is bursts (LossBurst): a  *)
-(* burst of kind "all" drops every packet, of kind "large" every packet   *)
+(* and fixed for the connection (a reused slot's connection has its own,  *)
+(* from ReuseCapsUp and ReuseCapsDown): a packet larger than its          *)
+(* direction's capacity is dropped when sent, always.  Loss is bursts     *)
+(* (LossBurst): a burst of kind "all" drops every packet, of kind         *)
+(* "large" every packet                                                    *)
 (* above the control size (the large probe and its reply), in flight      *)
 (* when it starts and sent while it lasts, both ways; at most MaxBursts   *)
-(* bursts, and every burst ends.  The loss assumption: loss of large      *)
-(* packets alone never covers K consecutive pairs whose small probes came *)
-(* back.  burstStrikes counts the strikes since the candidate's strikes   *)
+(* bursts, and every burst ends.  The loss assumption (LossBound TRUE):   *)
+(* loss of large packets alone never covers K consecutive pairs whose     *)
+(* small probes came back.  LossBound FALSE drops it: heavy random loss,  *)
+(* which rules out a size the path carries now and then, and the re-try   *)
+(* is what then reaches it.  burstStrikes counts the strikes since the candidate's strikes   *)
 (* last went to zero taken on a pair a burst met (pairInBurst); a burst   *)
 (* may meet a pair that can still strike only while burstStrikes < K - 1, *)
 (* so loss alone never makes K strikes in a row.  A pair whose small      *)
@@ -46,17 +52,22 @@
 (* Carried(S) is S on ServerList and S within both capacities.            *)
 (* An on-path attacker may replay a client packet in flight (a second     *)
 (* copy, n = 1), send packets from X or F, or a forged large reply,       *)
-(* at most AttackBudget times in all; with Forger, F sends without limit.  *)
+(* at most AttackBudget times in all, of the kinds in AttackKinds (with   *)
+(* a budget of one, a case per kind covers every behaviour of all three); *)
+(* with Forger, F sends without limit.                                    *)
 (*                                                                         *)
-(* Time.  Tick is one pair interval (FIRST, 0.25 s or twice the handshake *)
+(* Time.  Tick is one pair interval (FIRST, 0.1 s or twice the handshake  *)
 (* round trip, doubled after a pair whose small probe was lost, up to     *)
-(* MAX, 1 s; back to FIRST at a rule-out): the next pair is due, and the  *)
-(* server runs an update, which renews the mapping's two answer           *)
-(* allowances; ServerUpdate is a further server update inside it.  Every  *)
-(* pair whose small came back and whose large did not is a strike, and    *)
-(* every strike counts: K in a row rule a candidate out and end the walk, *)
-(* so the walk takes one pair interval per size the path carries and K   *)
-(* at the first it does not.  A raise makes the next pair due at once.   *)
+(* MAX, 1 s; back to FIRST at a rule-out and a re-try), or the wait of a  *)
+(* ruled-out size for its re-try (10 s, then doubling to 300 s: the       *)
+(* arithmetic is RNPathProbeRetryLayout.tla's, not tracked here): the     *)
+(* next pair (or the re-try) is due, and the server runs an update, which *)
+(* renews the mapping's two answer allowances; ServerUpdate is a further  *)
+(* server update inside it.  Every pair whose small came back and whose   *)
+(* large did not is a strike, and every strike counts: K in a row rule a  *)
+(* candidate out and the walk waits, so the walk takes one pair interval  *)
+(* per size the path carries and K at the first it does not.  A raise     *)
+(* makes the next pair due at once.                                       *)
 (* The confirm is resent whenever none is in flight (its                  *)
 (* 1 s interval is not modelled).  Timed TRUE: the interval covers a      *)
 (* round trip, so a Tick waits until nothing of the                       *)
@@ -65,6 +76,8 @@
 (* (late), until the pair after next reuses the pair number's parity,     *)
 (* when what is left of it is dropped (the code's u32 pair number keeps   *)
 (* them distinct; a packet two intervals late is taken as lost here).     *)
+(* Timed TRUE also takes a re-try's wait to cover the confirm's exchange  *)
+(* (ClientRetry).                                                          *)
 (*                                                                         *)
 (*   ClientSendPair          the small probe and the large at Cur, one new *)
 (*                           pair number; not while a large burst is on   *)
@@ -83,9 +96,12 @@
 (*                           small not seen, evidence of loss: the          *)
 (*                           candidate's strikes go back to zero            *)
 (*   ClientRuleOut           K strikes in a row at a candidate above P rule *)
-(*                           it out and end the walk; at the first step    *)
-(*                           (P still P0) the walk goes on to P0's check   *)
+(*                           it out and the walk waits for its re-try; at  *)
+(*                           its first rule-out at the first step (P still *)
+(*                           P0) the walk goes on to P0's check first      *)
 (*   ClientFail              K strikes in a row at P0 itself: -14           *)
+(*   ClientRetry             the wait is over: the ruled-out size is probed *)
+(*                           again, its strikes at zero, its pair due now   *)
 (*   ClientSendConfirm       the confirm of the raised P, at each probe     *)
 (*                           update until its echo                         *)
 (*   ClientRecvConfirmEcho(r) an echo carrying the confirmed size or larger *)
@@ -103,8 +119,21 @@
 (*   Tick, ServerUpdate      the clocks                                     *)
 (*   LossBurst(k), Replay, AttackProbe, AttackReply   the environment       *)
 (*   Done                    the terminal stutter                           *)
+(*   Reuse(cu, cd)           the connection ends and the slot is given to *)
+(*                           a new one, at most MaxReuses times: the      *)
+(*                           same client object connecting again, or a    *)
+(*                           new client in the same server slot, over a   *)
+(*                           path of capacities cu and cd; both ends start *)
+(*                           as at Init, at P0 with nothing ruled out, no *)
+(*                           strikes, no confirm, no wait, the walk's     *)
+(*                           first pair due; what was in flight was      *)
+(*                           sealed under the old keys and is dropped    *)
+(*                           (ReuseStartsFresh)                           *)
 (*                                                                         *)
 (* Broken selects a reversed witness:                                      *)
+(*   "reusekeep"    the server slot keeps its P across a reuse, so a new *)
+(*                  connection starts above P0 (ReuseStartsFresh, and    *)
+(*                  RaisedWithinPath on a smaller path);                 *)
 (*   "lower"        the client takes any large reply of a candidate, in   *)
 (*                  any phase: a late reply below P lowers it             *)
 (*                  (PNeverDecreases; untimed);                            *)
@@ -137,6 +166,9 @@
 (*   "skiplast"     the walk ends without probing P0 itself, so a client  *)
 (*                  whose path does not carry P0 never fails -14           *)
 (*                  (FailsWhenP0NotCarried);                               *)
+(*   "noretry"      a rule-out ends the walk for good, as before the       *)
+(*                  re-try: under heavy loss a carried size ruled out is   *)
+(*                  never reached (RetryReaches);                          *)
 (*   "aboveruled"   a rule-out does not stop the walk: it goes on to the  *)
 (*                  sizes above the one ruled out (NeverAboveRuled);       *)
 (*   "skipstep"     the walk skips a step: its candidate is the largest   *)
@@ -155,8 +187,13 @@ CONSTANTS
     K,              \* strikes that rule a candidate out (ROCKETNET_LINK_MTU_PROBE_STRIKES)
     MaxBursts,      \* the most loss bursts in a behaviour
     AttackBudget,   \* the most attacker sends (replays, packets from X or F, forged replies)
+    AttackKinds,    \* the attacker sends a case explores: "replay", "probe" (from X or F), "reply" (forged)
     Forger,         \* TRUE: packets from F without limit
     Timed,          \* TRUE: the pair interval covers a round trip
+    LossBound,      \* TRUE: the loss assumption; FALSE: heavy loss may rule out a carried size
+    MaxReuses,      \* the most times the connection ends and its slot is reused
+    ReuseCapsUp,    \* the path capacities client -> server a connection in a reused slot may have
+    ReuseCapsDown,  \* the path capacities server -> client a connection in a reused slot may have
     Broken          \* "none", or the reversed witness
 
 Max(S) == CHOOSE m \in S : \A x \in S : x <= m
@@ -174,11 +211,15 @@ ASSUME /\ ClientSet \subseteq Nat \ {0} /\ ClientSet # {}
        /\ CapsUp \subseteq Nat /\ CapsUp # {}
        /\ CapsDown \subseteq Nat /\ CapsDown # {}
        /\ K \in Nat \ {0} /\ MaxBursts \in Nat /\ AttackBudget \in Nat
-       /\ Forger \in BOOLEAN /\ Timed \in BOOLEAN
+       /\ AttackKinds \subseteq {"replay", "probe", "reply"}
+       /\ Forger \in BOOLEAN /\ Timed \in BOOLEAN /\ LossBound \in BOOLEAN
+       /\ MaxReuses \in Nat
+       /\ ReuseCapsUp \subseteq Nat /\ ReuseCapsDown \subseteq Nat
        /\ Broken \in {"none", "lower", "strikeonloss", "raiseonprobe",
                       "forgedraise", "probeaftermax", "unproven", "larger",
                       "offlist", "noallowance", "skiplast", "forgedspends",
-                      "noreset", "unboundedburst", "aboveruled", "skipstep"}
+                      "noreset", "unboundedburst", "aboveruled", "skipstep",
+                      "noretry", "reusekeep"}
 
 \* every size a packet can carry here; 0 is the 34-byte control size
 Sizes == ClientSet \cup ServerList
@@ -200,8 +241,9 @@ VARIABLES
     capDown,        \* the path's capacity server -> client (environment)
     cP,             \* the client's P: its packet_bytes
     sP,             \* the server slot's P
-    phase,          \* the client: "probing", "done" (the walk has ended), "failed" (-14)
-    ruled,          \* the candidates ruled out
+    phase,          \* the client: "probing" (a step or its re-try), "check" (P0's own check),
+                    \* "waiting" (for a re-try), "done" (the walk has ended), "failed" (-14)
+    ruled,          \* the candidates ruled out and not since raised to
     strikes,        \* strikes against the walk's current candidate
     out,            \* a pair is outstanding (sent, not yet resolved)
     pairNo,         \* the outstanding pair's number (its parity)
@@ -222,12 +264,14 @@ VARIABLES
     badUnproven,    \* ghost: a probe answered for a mapping that is not connected
     badLarger,      \* ghost: a reply larger than the probe it answers
     badOffList,     \* ghost: a large reply of a size not on the server's list
-    badTwice        \* ghost: a second answer of one kind to one mapping in one update
+    badTwice,       \* ghost: a second answer of one kind to one mapping in one update
+    reuses,         \* reuses of the slot so far (environment)
+    badStale        \* ghost: a reuse left a probe variable of the old connection
 
 vars == << capUp, capDown, cP, sP, phase, ruled, strikes, out, pairNo, pairS,
            smallSeen, largeSeen, due, confirmS, ansSmall, ansLarge, burst, bursts, burstStrikes, pairInBurst,
            attacks, up, down, badUnproven, badLarger, badOffList,
-           badTwice >>
+           badTwice, reuses, badStale >>
 
 \* the small probe, the confirm and its echo are 34 bytes: size 0 here
 Wire(p) == IF p.k \in {"small", "confirm", "echo"} THEN 0 ELSE p.s
@@ -242,18 +286,19 @@ Carried(s) == s \in ServerList /\ s <= capUp /\ s <= capDown
 
 \* the loss assumption: loss alone never covers K consecutive pairs whose
 \* small probes came back, so a burst may meet a pair that can still strike
-\* only while the row it has made is under K - 1; "unboundedburst" drops it
-BurstMayMeet == burstStrikes < K - 1 \/ Broken = "unboundedburst"
+\* only while the row it has made is under K - 1; "unboundedburst" and
+\* LossBound FALSE drop it
+BurstMayMeet == burstStrikes < K - 1 \/ Broken = "unboundedburst" \/ ~LossBound
 
 \* the walk, a ladder: the next candidate above P, smallest first. A
-\* rule-out ends the walk, so once a size is ruled out nothing above it is
-\* tried; when the first step was ruled out (P still P0) the walk's last
+\* ruled-out size stays the walk's candidate, re-tried after a wait, so
+\* nothing above it is tried before it is raised to; in P0's own check the
 \* candidate is P0 itself, P. "aboveruled" goes on past a rule-out to the
 \* sizes above it; "skipstep" takes the largest above P, not the next.
-Above == {c \in ClientSet : c > cP /\ c \notin ruled}
-Cur == IF Above # {} /\ (ruled = {} \/ Broken = "aboveruled")
-       THEN IF Broken = "skipstep" THEN Max(Above) ELSE Min(Above)
-       ELSE cP
+Above == {c \in ClientSet : c > cP}
+Ladder == IF Broken = "aboveruled" THEN Above \ ruled ELSE Above
+Cur == IF phase = "check" \/ Ladder = {} THEN cP
+       ELSE IF Broken = "skipstep" THEN Max(Ladder) ELSE Min(Ladder)
 
 \* a probe packet or reply of the client's pairs (not an attacker's)
 PairPkt(p) == p.k \in {"small", "large"} /\ p.src \in {"C", "S"}
@@ -289,6 +334,8 @@ Init ==
     /\ badLarger = FALSE
     /\ badOffList = FALSE
     /\ badTwice = FALSE
+    /\ reuses = 0
+    /\ badStale = FALSE
 
 -----------------------------------------------------------------------------
 (* The client *)
@@ -305,7 +352,7 @@ Init ==
 \* earlier large probe spends the large allowance its own needs. Untimed,
 \* both can happen: a strike without loss (NoWrongRuleOut is not claimed).
 ClientSendPair ==
-    /\ phase = "probing" \/ (Broken = "probeaftermax" /\ phase = "done")
+    /\ phase \in {"probing", "check"} \/ (Broken = "probeaftermax" /\ phase = "done")
     /\ due
     /\ ~out
     /\ strikes < K
@@ -323,7 +370,7 @@ ClientSendPair ==
     /\ due' = FALSE
     /\ UNCHANGED << capUp, capDown, cP, sP, phase, ruled, strikes, smallSeen,
                     largeSeen, confirmS, ansSmall, ansLarge, burst, bursts, burstStrikes, attacks >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 ClientRecvSmall(r) ==
     /\ r \in down
@@ -334,23 +381,27 @@ ClientRecvSmall(r) ==
     /\ UNCHANGED << capUp, capDown, cP, sP, phase, ruled, strikes, out, pairNo,
                     pairS, largeSeen, due, confirmS, ansSmall, ansLarge, burst, bursts, burstStrikes, pairInBurst,
                     attacks, up >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
-\* A large reply taken: only while probing and only at the walk's current
-\* candidate, from any pair so far (rocketnet_client_process_probe). Above
-\* P it raises P at once and sets the confirm, which goes at the next probe
-\* update (ClientSendConfirm), and the walk goes on to the next size up:
-\* no pair outstanding, the strikes and the loss assumption's row at zero,
-\* the next pair due at once; at the largest candidate the walk ends
-\* ("probeaftermax" does not end it). At P itself (the P0 check, the first
-\* step ruled out) it raises nothing and the walk ends at P0.
-\* "lower" takes any large reply of a candidate, in any phase.
+\* A large reply taken: only while probing (or in P0's check), not while
+\* the walk waits, and only at the walk's current candidate, from any pair
+\* so far (rocketnet_client_process_probe). Above P it raises P at once
+\* and sets the confirm, which goes at the next probe update
+\* (ClientSendConfirm), the size is no longer ruled out, and the walk goes
+\* on to the next size up: no pair outstanding, the strikes and the loss
+\* assumption's row at zero, the next pair due at once; at the largest
+\* candidate the walk ends ("probeaftermax" does not end it). At P itself
+\* (P0's check, the first step ruled out) it raises nothing and the walk
+\* waits for the first step's re-try, which is not due yet ("noretry": the
+\* walk ends at P0). "lower" takes any large reply of a candidate, in any
+\* phase.
 Takes(r) == IF Broken = "lower" THEN r.s \in ClientSet
-            ELSE phase = "probing" /\ r.s = Cur
+            ELSE phase \in {"probing", "check"} /\ r.s = Cur
 
 Take(r) ==
     /\ cP' = r.s
     /\ confirmS' = IF r.s > cP THEN r.s ELSE confirmS
+    /\ ruled' = ruled \ {r.s}
     /\ out' = FALSE
     /\ smallSeen' = FALSE
     /\ largeSeen' = FALSE
@@ -359,6 +410,11 @@ Take(r) ==
             /\ strikes' = 0
             /\ burstStrikes' = 0
             /\ due' = TRUE
+       ELSE IF r.s = cP /\ phase = "check" /\ Broken # "noretry"
+       THEN /\ phase' = "waiting"
+            /\ strikes' = 0
+            /\ burstStrikes' = 0
+            /\ due' = FALSE
        ELSE /\ phase' = "done"
             /\ UNCHANGED << strikes, burstStrikes, due >>
 
@@ -371,12 +427,12 @@ ClientRecvLarge(r) ==
     /\ down' = down \ {r}
     /\ IF Takes(r)
        THEN Take(r)
-       ELSE UNCHANGED << cP, confirmS, phase, out, smallSeen, largeSeen,
+       ELSE UNCHANGED << cP, confirmS, ruled, phase, out, smallSeen, largeSeen,
                          strikes, burstStrikes, due >>
-    /\ UNCHANGED << capUp, capDown, sP, ruled, pairNo, pairS,
+    /\ UNCHANGED << capUp, capDown, sP, pairNo, pairS,
                     ansSmall, ansLarge, burst, bursts, pairInBurst,
                     attacks, up >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 \* a forged reply fails the open and is ignored; "forgedraise" takes it
 \* as an authenticated one above P
@@ -387,16 +443,16 @@ ClientRecvForged(r) ==
     /\ down' = down \ {r}
     /\ IF Broken = "forgedraise" /\ r.s \in ClientSet /\ r.s > cP
        THEN Take(r)
-       ELSE UNCHANGED << cP, confirmS, phase, out, smallSeen, largeSeen,
+       ELSE UNCHANGED << cP, confirmS, ruled, phase, out, smallSeen, largeSeen,
                          strikes, burstStrikes, due >>
-    /\ UNCHANGED << capUp, capDown, sP, ruled, pairNo, pairS,
+    /\ UNCHANGED << capUp, capDown, sP, pairNo, pairS,
                     ansSmall, ansLarge, burst, bursts, pairInBurst,
                     attacks, up >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 \* a strike: small seen and large not, at the walk's candidate
 Strike ==
-    /\ phase = "probing" /\ ~largeSeen /\ pairS = Cur
+    /\ phase \in {"probing", "check"} /\ ~largeSeen /\ pairS = Cur
     /\ smallSeen \/ Broken = "strikeonloss"
 
 \* when the next pair is due: large seen, success (taken at arrival, where
@@ -421,13 +477,16 @@ ClientResolvePair ==
        ELSE UNCHANGED << strikes, burstStrikes >>
     /\ UNCHANGED << capUp, capDown, cP, sP, phase, ruled, pairNo, pairS, due,
                     confirmS, ansSmall, ansLarge, burst, bursts, pairInBurst, attacks, up, down >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
-\* K strikes at a candidate above P rule it out and end the walk: sizes
-\* above it are never tried. At the first step (P still P0, no raise) the
-\* walk goes on to P0's own check, fresh (no strikes, a new row).
-\* "skiplast" ends the walk without P0's own check; "aboveruled" goes on
-\* to the sizes above the one ruled out.
+\* K strikes at a candidate above P rule it out, and the walk waits for its
+\* re-try (the next time of the size's schedule, not yet due): sizes above
+\* it are never tried before it is raised to. At the size's first rule-out
+\* at the first step (P still P0, no raise, the size not ruled out before)
+\* the walk goes on to P0's own check first, fresh (no strikes, a new row,
+\* the pair due now). A re-try ruled out again waits for the next.
+\* "skiplast" waits without P0's own check; "aboveruled" goes on to the
+\* sizes above the one ruled out; "noretry" ends the walk for good.
 ClientRuleOut ==
     /\ phase = "probing"
     /\ strikes = K
@@ -435,25 +494,48 @@ ClientRuleOut ==
     /\ ruled' = ruled \cup {Cur}
     /\ strikes' = 0
     /\ burstStrikes' = 0
-    /\ phase' = IF \/ cP = P0 /\ Broken # "skiplast"
-                   \/ Broken = "aboveruled" /\ Above \ {Cur} # {}
-                THEN "probing" ELSE "done"
+    /\ IF \/ cP = P0 /\ Cur \notin ruled /\ Broken # "skiplast"
+          \/ Broken = "aboveruled" /\ Ladder \ {Cur} # {}
+       THEN /\ phase' = IF Broken = "aboveruled" /\ Ladder \ {Cur} # {}
+                        THEN "probing" ELSE "check"
+            /\ UNCHANGED due
+       ELSE /\ phase' = IF Broken = "noretry" THEN "done" ELSE "waiting"
+            /\ due' = FALSE
     /\ UNCHANGED << capUp, capDown, cP, sP, out, pairNo, pairS, smallSeen,
-                    largeSeen, due, confirmS, ansSmall, ansLarge, burst, bursts, pairInBurst,
+                    largeSeen, confirmS, ansSmall, ansLarge, burst, bursts, pairInBurst,
                     attacks, up, down >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
-\* K strikes at P0 itself (the walk's candidate is P): the path does not
-\* carry P0, -14
+\* K strikes at P0 itself (P0's check): the path does not carry P0, -14
 ClientFail ==
-    /\ phase = "probing"
+    /\ phase = "check"
     /\ strikes = K
-    /\ Cur = cP
     /\ phase' = "failed"
     /\ UNCHANGED << capUp, capDown, cP, sP, ruled, strikes, out, pairNo, pairS,
                     smallSeen, largeSeen, due, confirmS, ansSmall, ansLarge,
                     burst, bursts, burstStrikes, pairInBurst, attacks, up, down >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
+
+\* the wait is over (its time is due): the walk probes its ruled-out
+\* candidate again as a fresh step, its strikes at zero, its first pair due
+\* now (rocketnet_client_protocol_probe_retry); the size stays ruled out
+\* until a large reply raises P to it. When Timed, the wait (10 s at least,
+\* ROCKETNET_LINK_MTU_RETRY_FIRST_SECONDS) covers the confirm's exchange (a
+\* confirm a second, ROCKETNET_LINK_MTU_CONFIRM_INTERVAL_SECONDS, with no
+\* probe to spend the server's allowance first): the re-try starts after the
+\* echo of a raise before it.  Without it the model's one allowance a pair
+\* interval lets each re-try's small probe beat the confirm for ever.
+ClientRetry ==
+    /\ phase = "waiting"
+    /\ due
+    /\ ~out
+    /\ Timed => confirmS = 0
+    /\ phase' = "probing"
+    /\ strikes' = 0
+    /\ UNCHANGED << capUp, capDown, cP, sP, ruled, out, pairNo, pairS,
+                    smallSeen, largeSeen, due, confirmS, ansSmall, ansLarge,
+                    burst, bursts, burstStrikes, pairInBurst, attacks, up, down >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 \* the confirm goes at the next probe update after the raise and is resent
 \* until its echo, whether or not the path loses it or a copy is in flight;
@@ -466,7 +548,7 @@ ClientSendConfirm ==
     /\ UNCHANGED << capUp, capDown, cP, sP, phase, ruled, strikes, out, pairNo,
                     pairS, smallSeen, largeSeen, due, confirmS, ansSmall,
                     ansLarge, burst, bursts, burstStrikes, pairInBurst, attacks, down >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 ClientRecvConfirmEcho(r) ==
     /\ r \in down
@@ -477,7 +559,7 @@ ClientRecvConfirmEcho(r) ==
     /\ UNCHANGED << capUp, capDown, cP, sP, phase, ruled, strikes, out, pairNo,
                     pairS, smallSeen, largeSeen, due, ansSmall, ansLarge, burst, bursts, burstStrikes, pairInBurst,
                     attacks, up >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 \* a payload at the client's P: it crosses when P is within the path up,
 \* which RaisedWithinPath states for every P above P0; no property waits
@@ -488,7 +570,7 @@ ClientSendData ==
                     pairS, pairInBurst, smallSeen, largeSeen, due,
                     confirmS, ansSmall, ansLarge, burst, bursts, burstStrikes, attacks,
                     up, down >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 -----------------------------------------------------------------------------
 (* The server *)
@@ -537,7 +619,7 @@ ServerRecvProbe(p) ==
                          badOffList, badTwice >>
     /\ UNCHANGED << capUp, capDown, cP, phase, ruled, strikes, out, pairNo,
                     pairS, smallSeen, largeSeen, due, confirmS, burst, bursts, burstStrikes, pairInBurst,
-                    attacks >>
+                    attacks, reuses, badStale >>
 
 \* any packet from F, at the client's address: it reaches the open and
 \* fails, and spends nothing, so the genuine probe of the update is still
@@ -553,7 +635,7 @@ ServerRecvForged(p) ==
     /\ UNCHANGED << capUp, capDown, cP, sP, phase, ruled, strikes, out, pairNo,
                     pairS, smallSeen, largeSeen, due, confirmS, burst, bursts, burstStrikes, pairInBurst,
                     attacks, down >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 \* a confirm from C: the small allowance; a size on the server's list above
 \* the slot's P raises it (the server sends at it from then on), and any
@@ -574,7 +656,7 @@ ServerRecvConfirm(p) ==
     /\ UNCHANGED << capUp, capDown, cP, phase, ruled, strikes, out, pairNo,
                     pairS, smallSeen, largeSeen, due, confirmS, ansLarge, burst, bursts, burstStrikes, pairInBurst,
                     attacks >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, reuses, badStale >>
 
 \* a payload at the slot's P, down: as ClientSendData
 ServerSendData ==
@@ -582,7 +664,7 @@ ServerSendData ==
                     pairS, pairInBurst, smallSeen, largeSeen, due,
                     confirmS, ansSmall, ansLarge, burst, bursts, burstStrikes, attacks,
                     up, down >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 -----------------------------------------------------------------------------
 (* Time and the environment *)
@@ -599,7 +681,7 @@ Tick ==
     /\ UNCHANGED << capUp, capDown, cP, sP, phase, ruled, strikes, out, pairNo,
                     pairS, smallSeen, largeSeen, confirmS, burst, bursts, burstStrikes, pairInBurst,
                     attacks, up, down >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 ServerUpdate ==
     /\ ansSmall \/ ansLarge
@@ -608,7 +690,7 @@ ServerUpdate ==
     /\ UNCHANGED << capUp, capDown, cP, sP, phase, ruled, strikes, out, pairNo,
                     pairS, smallSeen, largeSeen, due, confirmS, burst, bursts, burstStrikes, pairInBurst,
                     attacks, up, down >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 \* a loss burst starts (everything in flight is dropped, both ways) or ends.
 \* A burst of kind "all" drops every packet, "large" every packet above the
@@ -632,10 +714,11 @@ LossBurst(k) ==
     /\ UNCHANGED << capUp, capDown, cP, sP, phase, ruled, strikes, out, pairNo,
                     pairS, smallSeen, largeSeen, due,
                     confirmS, ansSmall, ansLarge, burstStrikes, attacks >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 \* an on-path copy of a client packet in flight, the client's address its source
 Replay(p) ==
+    /\ "replay" \in AttackKinds
     /\ attacks < AttackBudget
     /\ p \in up
     /\ p.src = "C" /\ p.n = 0 /\ p.k \in {"small", "large", "confirm"}
@@ -645,7 +728,7 @@ Replay(p) ==
     /\ UNCHANGED << capUp, capDown, cP, sP, phase, ruled, strikes, out, pairNo,
                     pairS, smallSeen, largeSeen, due, confirmS, ansSmall,
                     ansLarge, burst, bursts, burstStrikes, pairInBurst, down >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 \* a packet from X (a probe under X's own half-open mapping) or from F (any
 \* kind, at the client's address, failing the open); with Forger, F's are
@@ -657,7 +740,7 @@ AttackPackets ==
     \cup {Pkt("confirm", "F", s, 0, 0) : s \in Sizes}
 
 AttackProbe(p) ==
-    /\ \/ attacks < AttackBudget
+    /\ \/ "probe" \in AttackKinds /\ attacks < AttackBudget
        \/ Forger /\ p.src = "F" /\ ~\E q \in up : q.src = "F"
     /\ up' = up \cup {p}
     /\ up' # up
@@ -665,10 +748,11 @@ AttackProbe(p) ==
     /\ UNCHANGED << capUp, capDown, cP, sP, phase, ruled, strikes, out, pairNo,
                     pairS, smallSeen, largeSeen, due, confirmS, ansSmall,
                     ansLarge, burst, bursts, burstStrikes, pairInBurst, down >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 \* a forged large reply at any size, sent to the client
 AttackReply(s) ==
+    /\ "reply" \in AttackKinds
     /\ attacks < AttackBudget
     /\ down' = down \cup {Pkt("large", "F", s, 0, 0)}
     /\ down' # down
@@ -676,7 +760,7 @@ AttackReply(s) ==
     /\ UNCHANGED << capUp, capDown, cP, sP, phase, ruled, strikes, out, pairNo,
                     pairS, smallSeen, largeSeen, due, confirmS, ansSmall,
                     ansLarge, burst, bursts, burstStrikes, pairInBurst, up >>
-    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
+    /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice, reuses, badStale >>
 
 \* the walk has ended (or -14) and nothing is left to do
 Done ==
@@ -684,7 +768,55 @@ Done ==
     /\ UNCHANGED << capUp, capDown, cP, sP, phase, ruled, strikes, out, pairNo,
                     pairS, smallSeen, largeSeen, due, confirmS, ansSmall,
                     ansLarge, burst, bursts, burstStrikes, pairInBurst, attacks, up, down, badUnproven,
-                    badLarger, badOffList, badTwice >>
+                    badLarger, badOffList, badTwice, reuses, badStale >>
+
+\* a connection's probe state as it starts (Init): both ends at P0, nothing
+\* ruled out, no strikes, no pair out, no confirm, no answer spent, the
+\* walk's first pair due
+FreshProbe ==
+    /\ cP = P0 /\ sP = P0
+    /\ phase = IF Probing THEN "probing" ELSE "done"
+    /\ ruled = {} /\ strikes = 0 /\ out = FALSE /\ pairNo = 0 /\ pairS = P0
+    /\ smallSeen = FALSE /\ largeSeen = FALSE /\ due = TRUE /\ confirmS = 0
+    /\ ansSmall = FALSE /\ ansLarge = FALSE /\ pairInBurst = FALSE /\ burstStrikes = 0
+
+\* the connection ends, in any state, and its slot is given to a new one:
+\* the same client object connecting again or a new client, over a path of
+\* capacities cu and cd (rocketnet_client_connection_reset at the
+\* disconnect and again at the connect, rocketnet_server_connection_reset
+\* when the slot is freed, and the handshake, which sets both ends' P to
+\* P0), the new path from ReuseCapsUp and ReuseCapsDown (kept apart
+\* from CapsUp and CapsDown so that a trace's Init has the one path its
+\* first connection had). The packets in flight were sealed under the old connection's keys
+\* and are dropped. Outside a burst, so the new connection's first pair is
+\* not met by one it did not start in; the budgets of bursts and attacks
+\* are the behaviour's. "reusekeep" keeps the server slot's P.
+Reuse(cu, cd) ==
+    /\ reuses < MaxReuses
+    /\ burst = "off"
+    /\ capUp' = cu
+    /\ capDown' = cd
+    /\ cP' = P0
+    /\ sP' = IF Broken = "reusekeep" THEN sP ELSE P0
+    /\ phase' = IF Probing THEN "probing" ELSE "done"
+    /\ ruled' = {}
+    /\ strikes' = 0
+    /\ out' = FALSE
+    /\ pairNo' = 0
+    /\ pairS' = P0
+    /\ pairInBurst' = FALSE
+    /\ smallSeen' = FALSE
+    /\ largeSeen' = FALSE
+    /\ due' = TRUE
+    /\ confirmS' = 0
+    /\ ansSmall' = FALSE
+    /\ ansLarge' = FALSE
+    /\ burstStrikes' = 0
+    /\ up' = {}
+    /\ down' = {}
+    /\ reuses' = reuses + 1
+    /\ badStale' = ~FreshProbe'
+    /\ UNCHANGED << burst, bursts, attacks, badUnproven, badLarger, badOffList, badTwice >>
 
 Next ==
     \/ ClientSendPair
@@ -694,6 +826,7 @@ Next ==
     \/ ClientResolvePair
     \/ ClientRuleOut
     \/ ClientFail
+    \/ ClientRetry
     \/ ClientSendConfirm
     \/ \E r \in down : ClientRecvConfirmEcho(r)
     \/ ClientSendData
@@ -707,6 +840,7 @@ Next ==
     \/ \E p \in up : Replay(p)
     \/ \E p \in AttackPackets : AttackProbe(p)
     \/ \E s \in Sizes : AttackReply(s)
+    \/ \E cu \in ReuseCapsUp, cd \in ReuseCapsDown : Reuse(cu, cd)
     \/ Done
 
 \* Every step of the two ends and every delivery is weakly fair; the clocks
@@ -717,6 +851,7 @@ Fairness ==
     /\ WF_vars(ClientResolvePair)
     /\ WF_vars(ClientRuleOut)
     /\ WF_vars(ClientFail)
+    /\ WF_vars(ClientRetry)
     /\ WF_vars(ClientSendConfirm)
     /\ WF_vars(Tick)
     /\ WF_vars(ServerUpdate)
@@ -736,9 +871,9 @@ FairSpec == Spec /\ Fairness
 (* Safety *)
 
 TypeOK ==
-    /\ capUp \in CapsUp /\ capDown \in CapsDown
+    /\ capUp \in CapsUp \cup ReuseCapsUp /\ capDown \in CapsDown \cup ReuseCapsDown
     /\ cP \in ClientSet /\ sP \in ServerList
-    /\ phase \in {"probing", "done", "failed"}
+    /\ phase \in {"probing", "check", "waiting", "done", "failed"}
     /\ ruled \subseteq ClientSet
     /\ strikes \in 0..K
     /\ out \in BOOLEAN /\ pairNo \in {0, 1} /\ pairS \in ClientSet
@@ -750,7 +885,8 @@ TypeOK ==
     /\ attacks \in 0..AttackBudget
     /\ up \subseteq UpPackets
     /\ down \subseteq DownPackets
-    /\ {badUnproven, badLarger, badOffList, badTwice} \subseteq BOOLEAN
+    /\ {badUnproven, badLarger, badOffList, badTwice, badStale} \subseteq BOOLEAN
+    /\ reuses \in 0..MaxReuses
 
 \* (1) P is never above what the path carries both ways: P0 is where both
 \* ends start, and every raise above it is a size that crossed both ways
@@ -771,8 +907,9 @@ NoWrongRuleOut == \A s \in ruled : ~Carried(s)
 \* (3) -14 only when P0 itself collected K strikes
 FailOnlyAtP0 == phase = "failed" => cP = P0 /\ strikes = K /\ ruled # {}
 
-\* the ladder stops at a rule-out: no pair, and no large probe of the
-\* client's in flight, at a size above one ruled out
+\* the ladder holds at a rule-out: no pair, and no large probe of the
+\* client's in flight, at a size above one ruled out (and not since raised
+\* to)
 NeverAboveRuled ==
     \A s \in ruled :
         /\ pairS <= s
@@ -786,15 +923,25 @@ ReplyNoLarger == ~badLarger
 ReplyOwnList == ~badOffList
 OneReplyPerUpdate == ~badTwice
 
-\* P is never a candidate ruled out: a large reply is taken only at the
-\* walk's current candidate, so a late reply of a candidate ruled out since
-\* is ignored
+\* (4b) a reused slot starts fresh: every probe variable of a connection
+\* that follows a reuse is its Init value, so nothing of the old
+\* connection's walk (its P, a rule-out, strikes, a wait, a confirm, an
+\* answer spent) reaches the new one
+ReuseStartsFresh == ~badStale
+
+\* P is never a candidate ruled out: a size is ruled out only above P, and
+\* a raise to it ends its rule-out
 NeverAtRuledOut == cP \notin ruled
+
+\* at most one size is ruled out at a time, the walk's candidate: the next
+\* size up from P
+RuledIsTheNextStep == \A s \in ruled : Above # {} /\ s = Min(Above)
 
 (* Action properties *)
 
-\* (5) P never decreases, on either side
-PNeverDecreases == [][cP' >= cP /\ sP' >= sP]_vars
+\* (5) P never decreases, on either side, within a connection (a reuse
+\* starts the next at P0); (9) and (10) are within a connection too
+PNeverDecreases == [][reuses' = reuses => cP' >= cP /\ sP' >= sP]_vars
 
 \* (6) a strike is counted only for a pair whose small reply came back
 StrikeNeedsSmall == [][strikes' = strikes + 1 => smallSeen]_vars
@@ -809,17 +956,19 @@ ClientRaisesOnAuthLarge ==
     [][cP' > cP => \E r \in down : r.k = "large" /\ r.src = "S" /\ r.s = cP'
                                    /\ r \notin down']_vars
 
-\* (9) probing ends for good: no pair once P is the largest candidate or the
-\* walk has ended (a new pair number is a pair sent)
+\* (9) probing ends for good at the largest candidate: no pair once P is the
+\* largest candidate or the walk has ended, and none while it waits for a
+\* re-try (a new pair number is a pair sent)
 NoProbeAfterDone ==
-    [][pairNo' # pairNo => phase = "probing" /\ cP < MaxC]_vars
+    [][reuses' = reuses /\ pairNo' # pairNo => phase \in {"probing", "check"} /\ cP < MaxC]_vars
 
 \* (10) the ladder skips no step: every pair is at the smallest candidate
 \* above P not ruled out, or at P itself for P0's check once the first
 \* step was ruled out
 NoSkippedStep ==
-    [][pairNo' # pairNo => \/ Above # {} /\ pairS' = Min(Above)
-                           \/ ruled # {} /\ pairS' = cP]_vars
+    [][reuses' = reuses /\ pairNo' # pairNo =>
+           \/ Above # {} /\ pairS' = Min(Above)
+           \/ ruled # {} /\ pairS' = cP]_vars
 
 \* Reachability, not a rule: when untimed, a large reply of an earlier pair
 \* (its parity not the last pair's) raises P. MCRNPathProbeReachLateReply.cfg
@@ -827,6 +976,11 @@ NoSkippedStep ==
 NoLateRaise ==
     [][~(cP' > cP /\ \E r \in down : r.k = "large" /\ r.src = "S"
                                     /\ r.pn # pairNo /\ r \notin down')]_vars
+
+\* Reachability, not a rule: a re-try gets through, raising P to a size that
+\* was ruled out. MCRNPathProbeReachRetryRaise.cfg must violate it, so the
+\* re-try's success is explored.
+NoRetryRaise == [][~(cP' > cP /\ cP' \in ruled)]_vars
 
 -----------------------------------------------------------------------------
 (* Liveness, under FairSpec with Timed *)
@@ -836,8 +990,22 @@ NoLateRaise ==
 \* carry, off the server's list or above a capacity, stops the walk there)
 Best == Max({s \in ClientSet : \A c \in ClientSet : (c > P0 /\ c <= s) => Carried(c)})
 
-\* the walk ends and both ends hold the same P from then on
-Converges == <>[](phase # "probing" /\ cP = sP)
+\* both ends hold the same P from some point on (the walk may go on
+\* re-trying a size the path does not carry, at no change to P)
+Converges == <>[](cP = sP)
+
+\* a wait for a re-try always ends in the re-try
+WaitEnds == phase = "waiting" ~> phase = "probing"
+
+\* a size the path carries that was ruled out (heavy loss, LossBound FALSE)
+\* is reached once the loss ends: past P0's check, which a re-try never
+\* repeats, P comes to it ("noretry" ends the walk at the rule-out). ruled
+\* holds one size at most, the next step up (RuledIsTheNextStep), and only a
+\* raise to that size takes it out of ruled (ClientRecvLarge), so ruled
+\* empty again is P at the size: one leads-to, not one for each size, which
+\* TLC checks as one branch of the liveness check instead of three
+RetryReaches ==
+    (\E s \in ruled : Carried(s)) /\ phase \notin {"check", "failed"} ~> ruled = {}
 
 \* both ends reach the top of the ladder the path carries
 ReachesBest == Carried(P0) => <>[](cP = Best /\ sP = Best)

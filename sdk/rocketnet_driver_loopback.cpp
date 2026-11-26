@@ -209,27 +209,54 @@ void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, ui
 
 static int loopback_test_link_max_bytes = 0;
 static int loopback_test_largest_sent = 0;
+static int loopback_test_largest_carried = 0;
+static int loopback_test_dropped_above = 0;
+static int loopback_test_largest_server_sent = 0;
 
 void rocketnet_loopback_test_link_max_bytes( int max_bytes )
 {
     loopback_test_link_max_bytes = max_bytes > 0 ? max_bytes : 0;
     loopback_test_largest_sent = 0;
+    loopback_test_largest_carried = 0;
+    loopback_test_dropped_above = 0;
+    loopback_test_largest_server_sent = 0;
 }
 
 int rocketnet_loopback_test_largest_sent() { return loopback_test_largest_sent; }
 
-static bool loopback_test_link_carries( int bytes )
+int rocketnet_loopback_test_largest_carried() { return loopback_test_largest_carried; }
+
+int rocketnet_loopback_test_dropped_above() { return loopback_test_dropped_above; }
+
+int rocketnet_loopback_test_largest_server_sent() { return loopback_test_largest_server_sent; }
+
+// server: the datagram is a server endpoint's (its batch send), not a client's
+static bool loopback_test_link_carries( int bytes, bool server )
 {
+    if ( server && bytes > loopback_test_largest_server_sent )
+    {
+        loopback_test_largest_server_sent = bytes;
+    }
     if ( bytes > loopback_test_largest_sent )
     {
         loopback_test_largest_sent = bytes;
     }
-    return loopback_test_link_max_bytes == 0 || bytes <= loopback_test_link_max_bytes;
+    if ( loopback_test_link_max_bytes == 0 || bytes <= loopback_test_link_max_bytes )
+    {
+        if ( bytes > loopback_test_largest_carried )
+        {
+            loopback_test_largest_carried = bytes;
+        }
+        return true;
+    }
+    loopback_test_dropped_above++;
+    return false;
 }
 #else
-static bool loopback_test_link_carries( int bytes )
+static bool loopback_test_link_carries( int bytes, bool server )
 {
     (void) bytes;
+    (void) server;
     return true;
 }
 #endif // #if ROCKETNET_DEV
@@ -913,7 +940,7 @@ static void loopback_send( void * transport, const rocketnet_address_t * to, con
 
     rocketnet_platform_mutex_acquire( &hub->mutex );
 
-    if ( !loopback_test_link_carries( bytes ) )
+    if ( !loopback_test_link_carries( bytes, false ) )
     {
         rocketnet_platform_mutex_release( &hub->mutex );     // lost on the path, as a datagram above a link MTU is
         return;
@@ -982,7 +1009,7 @@ static void loopback_server_send_batch_impl( void * transport, const rocketnet_p
             continue;
         }
 
-        if ( !loopback_test_link_carries( packet.packet_bytes ) )
+        if ( !loopback_test_link_carries( packet.packet_bytes, true ) )
         {
             continue;                   // lost on the path, as a datagram above a link MTU is
         }

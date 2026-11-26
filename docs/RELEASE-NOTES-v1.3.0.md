@@ -30,11 +30,14 @@ grows from 292 to 315 counters, appended at the end.
   lost too sets the strikes back to zero, so loss alone, which takes the
   small probe as well, never does. The client raises on the server's authenticated reply and
   confirms; the server raises only on the confirm. The packet size never
-  falls, and probing stops for good once it is the largest size or the next
-  size up is ruled out; the sizes above a ruled-out size are never tried. On
-  a clean path the three-step list is at full size two round trips after
-  connect, and on a 1200 link at 1172 in one round trip, probing ending in
-  about half a second; on a 576 path 1452 is never sent. A path that does not carry even the smallest
+  falls, and probing stops for good once it is the largest size. A size
+  ruled out is tried again later, 10, 20 and 30 s after the rule-out, then
+  at gaps doubling to 300 s and every 300 s after, so a size heavy loss
+  ruled out is taken once the loss ends; the sizes above a ruled-out size
+  are never tried before the connection is at it. On a clean path the
+  three-step list is at full size two round trips after connect, and on a
+  1200 link at 1172 in one round trip, probing waiting in about half a
+  second; on a 576 path 1452 is never sent. A path that does not carry even the smallest
   size ends the connection in the new client state
   `ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED` (-14).
   standard/TRANSPORT.md t2.3, t8.4, t8.13, t11.4 and t12 rules 15 and 16;

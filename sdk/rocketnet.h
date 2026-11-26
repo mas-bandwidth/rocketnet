@@ -1750,10 +1750,14 @@ struct rocketnet_client_config_t
     /// { 1492, 1200, 576 }, starts the connection at the list's smallest
     /// size, so it joins as fast as the default, then the client probes the
     /// larger sizes one step at a time, smallest first, and the connection's
-    /// packet size rises with each size the path carries both ways, stopping
-    /// at the first size it does not carry; it never falls
-    /// (rocketnet_client_max_packet_bytes; rocketnet_client_state
-    /// MTU_PROBE_FAILED when even the smallest is not carried). An entry's packet size is the
+    /// packet size rises with each size the path carries both ways. At the
+    /// first size it does not carry the probe waits, then tries that size
+    /// again 10, 20 and 30 s later, then at gaps doubling to 300 s and every
+    /// 300 s after, so a size ruled out by heavy loss is taken once the loss
+    /// ends; sizes above it are never tried before the connection is at it.
+    /// The packet size never falls (rocketnet_client_max_packet_bytes;
+    /// rocketnet_client_state MTU_PROBE_FAILED when even the smallest is not
+    /// carried). An entry's packet size is the
     /// MTU less 28 bytes over IPv4 or 48 over IPv6, at most
     /// ROCKETNET_MAX_PACKET_BYTES; an IPv6 connection skips the entries below
     /// 1280. The variable is a comma list with no spaces, "1492,1200,576";

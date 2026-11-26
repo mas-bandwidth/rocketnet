@@ -34,10 +34,13 @@
 //   client_rule_out  rocketnet_client_protocol_probe_rule_out, called when
 //                    the pair is due, none is out and the candidate has its
 //                    strikes: ClientRuleOut (1) or ClientFail (-1)
+//   client_retry     rocketnet_client_protocol_probe_retry, called when the
+//                    walk waits for a re-try and its time is due:
+//                    ClientRetry (1)
 //   client_send      rocketnet_client_protocol_probe_send_pair, called when
-//                    the pair is due, none is out and the candidate has
-//                    fewer strikes: ClientSendPair
-//                    (rocketnet_client_protocol_probe_update calls the three
+//                    the pair is due, none is out, the walk does not wait
+//                    and the candidate has fewer strikes: ClientSendPair
+//                    (rocketnet_client_protocol_probe_update calls the four
 //                    in this order, in one call; the walk calls them one a
 //                    step, which the model allows, as the code does)
 //   client_confirm   rocketnet_client_protocol_probe_update when its confirm
@@ -57,9 +60,18 @@
 //   burst, replay, attack, attack_reply, done   the walk's path and
 //                    attacker: LossBurst(k), Replay(p), AttackProbe(p),
 //                    AttackReply(s), Done
+//   reuse            the connection ends and the same client object
+//                    connects again into the same server slot, over a
+//                    path of new capacities (scenario 3, once, outside
+//                    a burst): rocketnet_client_protocol_disconnect,
+//                    rocketnet_server_protocol_disconnect_client (the
+//                    slot's rocketnet_server_connection_reset) and a new
+//                    token's handshake to connected at one instant;
+//                    what was in flight is dropped: Reuse(cu, cd)
 //
 // The clock is not a model variable: the walk moves it only in tick, which
-// crosses the one instant the model sees, the pair's due time (due), and
+// crosses the one instant the model sees, the pair's due time (due) or,
+// while the walk waits, the re-try's (probe_next_time holds either), and
 // silently when it does not cross it (to a confirm's next send). A tick
 // goes PP_TICK_LATE past the due time.
 //
@@ -67,8 +79,9 @@
 // attacker's (the client's from the copy taken at its -14 once it has
 // failed, failed_client below): cP from rocketnet_client_protocol_packet_bytes, sP from the
 // client's mapping (rocketnet_server_protocol_mapping_packet_bytes), phase
-// from the client's state and probing flag, ruled the candidates before
-// probe_index (below), strikes probe_strikes, out probe_pair_out, pairNo the parity
+// from the client's state, its probing and probe_waiting flags and whether
+// probe_index is P0 itself (P0's check), ruled the size probe_ruled marks
+// (below), strikes probe_strikes, out probe_pair_out, pairNo the parity
 // of probe_pair, pairS the size of the large probe the client last wrote
 // (P0 before it wrote one), smallSeen and largeSeen probe_pair_small and
 // probe_pair_large, due the clock against probe_next_time, confirmS
@@ -78,8 +91,10 @@
 // walk's: pairInBurst and burstStrikes follow the model's loss assumption
 // (a burst meets a pair sent in it or out when it starts; the strikes of
 // the current row taken on pairs a burst met), and the walk starts a burst,
-// or sends a pair into a burst of large packets, only while that allows. A
-// packet in
+// or sends a pair into a burst of large packets, only while that allows,
+// but in the scenario of heavy loss (LossBound = FALSE), where a burst of
+// large packets may rule out a size the path carries, for the re-try to
+// reach it. A packet in
 // flight is the model's record: its kind, its source, its size (0 for the
 // 34-byte small probe, confirm and echo, and the confirm's or echo's size
 // field otherwise kept in s), the parity of its pair number and whether it
@@ -249,9 +264,14 @@ struct pp_walk_t
     int burst_strikes;
     int attacks;
     int pair_bytes;
+    // the scenario of heavy loss: the loss assumption off (LossBound FALSE)
+    bool heavy;
     std::vector<pp_packet_t> up;
     std::vector<pp_packet_t> down;
     uint64_t forged_sequence;
+    // the model's reuses, and the client id of the next token
+    int reuses;
+    uint64_t client_id;
 };
 
 static const char * pp_burst_name( int burst )
@@ -308,7 +328,15 @@ static const char * pp_phase( const pp_walk_t * walk )
     {
         return "other";
     }
-    return walk->client.probing ? "probing" : "done";
+    if ( !walk->client.probing )
+    {
+        return "done";
+    }
+    if ( walk->client.probe_waiting )
+    {
+        return "waiting";
+    }
+    return walk->client.probe_index == walk->client.num_probe_candidates - 1 ? "check" : "probing";
 }
 
 // the client the model variables are read from (failed_client, above)
@@ -325,26 +353,22 @@ static bool pp_due( const pp_walk_t * walk )
 // the model's BurstMayMeet: a burst may still meet a pair that can strike
 static bool pp_burst_may_meet( const pp_walk_t * walk )
 {
-    return walk->burst_strikes < ROCKETNET_LINK_MTU_PROBE_STRIKES - 1;
+    return walk->burst_strikes < ROCKETNET_LINK_MTU_PROBE_STRIKES - 1 || walk->heavy;
 }
 
 static tla_record_t pp_state( pp_walk_t * walk )
 {
     struct rocketnet_encryption_mapping_t * mapping = pp_mapping( walk );
     const struct rocketnet_client_protocol_t * client = pp_client( walk );
-    // ruled: the walk goes up one step at a time and stops at a rule-out,
-    // so at most one size is ruled out: the first step up once the walk
-    // moved to P0 itself, or the size probe_index still names once the
-    // walk stopped below it
+    // ruled: the walk goes up one step at a time and holds at a rule-out
+    // until it raises to the size, so at most one size is ruled out, the
+    // one probe_ruled marks: the first step up while the walk checks P0
+    // itself, else the size probe_index names
     std::vector<int> ruled;
     const int last = client->num_probe_candidates - 1;
-    if ( client->probe_index == last )
+    if ( client->probing && client->probe_ruled )
     {
-        ruled.push_back( client->probe_candidates[last - 1] );
-    }
-    else if ( !client->probing && rocketnet_client_protocol_packet_bytes( client ) < client->probe_candidates[client->probe_index] )
-    {
-        ruled.push_back( client->probe_candidates[client->probe_index] );
+        ruled.push_back( client->probe_candidates[client->probe_index == last ? last - 1 : client->probe_index] );
     }
     tla_record_t state;
     state.add( "capUp", tla_int( walk->cap_up ) );
@@ -370,8 +394,11 @@ static tla_record_t pp_state( pp_walk_t * walk )
     state.add( "attacks", tla_int( walk->attacks ) );
     state.add( "up", pp_set( walk->up ) );
     state.add( "down", pp_set( walk->down ) );
+    state.add( "reuses", tla_int( walk->reuses ) );
     return state;
 }
+
+static bool pp_handshake( pp_walk_t * walk );
 
 // the server and the client, the handshake run to connected at one instant
 static bool pp_setup( pp_walk_t * walk, const int * client_mtus, int num_client_mtus, const int * server_mtus, int num_server_mtus )
@@ -415,6 +442,23 @@ static bool pp_setup( pp_walk_t * walk, const int * client_mtus, int num_client_
     walk->now = PP_START_TIME;
     rocketnet_server_protocol_update( server, walk->now );
 
+    struct rocketnet_client_protocol_t * client = &walk->client;
+    rocketnet_client_protocol_init( client, &walk->client_counters );
+    client->send_rate = PP_SEND_RATE;
+    for ( int i = 0; i < num_client_mtus; i++ )
+    {
+        client->link_mtus[i] = client_mtus[i];
+    }
+    client->num_link_mtus = num_client_mtus;
+    walk->client_id = ROCKETNET_TEST_CLIENT_ID;
+    return pp_handshake( walk );
+}
+
+// a new token for walk->client_id, and the handshake run to connected at
+// walk->now, at one instant: the first connection and each reuse's
+static bool pp_handshake( pp_walk_t * walk )
+{
+    struct rocketnet_server_protocol_t * server = &walk->server;
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
@@ -428,7 +472,7 @@ static bool pp_setup( pp_walk_t * walk, const int * client_mtus, int num_client_
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
     struct rocketnet_connect_token_private_t private_fields;
     memset( &private_fields, 0, sizeof( private_fields ) );
-    private_fields.client_id = ROCKETNET_TEST_CLIENT_ID;
+    private_fields.client_id = walk->client_id++;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
     memcpy( private_fields.client_to_server_key, rocketnet_test_token_c2s_key, 32 );
@@ -440,13 +484,6 @@ static bool pp_setup( pp_walk_t * walk, const int * client_mtus, int num_client_
     }
 
     struct rocketnet_client_protocol_t * client = &walk->client;
-    rocketnet_client_protocol_init( client, &walk->client_counters );
-    client->send_rate = PP_SEND_RATE;
-    for ( int i = 0; i < num_client_mtus; i++ )
-    {
-        client->link_mtus[i] = client_mtus[i];
-    }
-    client->num_link_mtus = num_client_mtus;
     if ( !rocketnet_client_protocol_connect( client, token_data, walk->now, ROCKETNET_TEST_CREATE_TS ) )
     {
         return false;
@@ -526,7 +563,12 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
     //     ruled out, then P0 itself, and the client fails -14
     //   3 any capacities of the candidates and a server list without 1400,
     //     with the attacker and bursts throughout
+    // Scenario 0 runs under heavy loss (LossBound = FALSE): its bursts of
+    // large packets may rule out a size the path carries, which the re-try
+    // then reaches; 1 re-tries 1452, which its path never carries, on its
+    // schedule.
     const int scenario = (int) ( seed % 4 );
+    walk->heavy = scenario == 0;
     const int * client_mtus = scenario == 2 ? pp_mtus_two : pp_mtus_four;
     const int num_client_mtus = scenario == 2 ? 2 : 4;
     const int * server_mtus = scenario == 3 ? pp_mtus_short : client_mtus;
@@ -589,6 +631,12 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
     // the noise each scenario carries: the rule-out and failing walks need
     // their strikes in a row inside the walk, so they carry little
     const bool noisy = scenario == 0 || scenario == 3;
+    // the first connection's path, the model's CapsUp and CapsDown, so the
+    // trace's Init has one state; the reuse's path, ReuseCapsUp and ReuseCapsDown
+    const std::vector<int> caps_up( 1, walk->cap_up );
+    const std::vector<int> caps_down( 1, walk->cap_down );
+    std::vector<int> reuse_caps_up;
+    std::vector<int> reuse_caps_down;
     walk->forged_sequence = 1;
 
     records.push_back( tla_step( "init", "init", "<<>>", pp_state( walk ) ) );
@@ -602,7 +650,8 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
     for ( int step = 0; step < steps && !failed; step++ )
     {
         const std::string phase = pp_phase( walk );
-        const bool probing = phase == "probing";
+        // the walk's own phases: a step or a re-try, P0's check, the wait
+        const bool probing = phase == "probing" || phase == "check" || phase == "waiting";
         const bool terminal = phase == "done" || phase == "failed";
         const bool due = pp_due( walk );
         // the walk goes on after a raise, so a confirm can be out while
@@ -620,7 +669,8 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
         // the loss assumption: a pair goes into a burst of large packets,
         // and a burst starts on a pair that is out and can still strike,
         // only while a burst may meet another strike
-        const bool sends_next = !walk->client.probe_pair_out && walk->client.probe_strikes < ROCKETNET_LINK_MTU_PROBE_STRIKES;
+        const bool sends_next = !walk->client.probe_pair_out && walk->client.probe_strikes < ROCKETNET_LINK_MTU_PROBE_STRIKES &&
+                                !walk->client.probe_waiting;
         const bool pair_allowed = !( sends_next && walk->burst == 2 ) || pp_burst_may_meet( walk );
         const bool pair_out = walk->client.probe_pair_out != 0;
         const bool burst_all_allowed = !( pair_out && walk->client.probe_pair_small ) || pp_burst_may_meet( walk );
@@ -655,6 +705,7 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
             OP_ATTACK_REPLY,
             OP_SILENT,
             OP_DONE,
+            OP_REUSE,
             OP_COUNT
         };
         int weights[OP_COUNT] = { 0 };
@@ -676,6 +727,9 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
                                                     : !clock_event || walk->client.confirm_next_time < next_time;
         weights[OP_SILENT] = confirming && !confirm_due && silent_crosses_nothing ? 3 : 0;
         weights[OP_DONE] = terminal ? 1 : 0;
+        // the slot reused once, in scenario 3, in the walk's second half
+        // (the first climbs), outside a burst as the model's Reuse
+        weights[OP_REUSE] = scenario == 3 && walk->reuses == 0 && step >= steps / 2 && walk->burst == 0 && phase != "failed" ? 2 : 0;
         int total = 0;
         for ( int i = 0; i < OP_COUNT; i++ )
         {
@@ -701,7 +755,8 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
             {
                 // the step the code's probe update takes next: resolve the
                 // pair that is out, else rule out a candidate with its
-                // strikes, else send the next pair
+                // strikes, else end a wait for a re-try, else send the
+                // next pair
                 if ( walk->client.probe_pair_out )
                 {
                     const int strikes_before = walk->client.probe_strikes;
@@ -725,12 +780,20 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
                     // the client as it stands before a -14 resets it
                     // (failed_client, above)
                     memcpy( &walk->failed_client, &walk->client, sizeof( walk->client ) );
-                    const int ruled = rocketnet_client_protocol_probe_rule_out( &walk->client );
+                    const int ruled = rocketnet_client_protocol_probe_rule_out( &walk->client, walk->now );
                     const char * act = ruled == 1 ? "ClientRuleOut" : ( ruled == -1 ? "ClientFail" : "NotARuleOut" );
                     report.act( act );
                     walk->has_failed_client = ruled == -1;
                     walk->burst_strikes = ruled == 1 ? 0 : walk->burst_strikes;
                     records.push_back( tla_step( "client_rule_out", act, "<<>>", pp_state( walk ) ) );
+                    break;
+                }
+                if ( walk->client.probe_waiting )
+                {
+                    const int retried = rocketnet_client_protocol_probe_retry( &walk->client );
+                    const char * act = retried == 1 ? "ClientRetry" : "NotARetry";
+                    report.act( act );
+                    records.push_back( tla_step( "client_retry", act, "<<>>", pp_state( walk ) ) );
                     break;
                 }
                 int small_bytes = 0;
@@ -785,6 +848,47 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
                 rocketnet_server_protocol_update( &walk->server, walk->now );
                 report.act( "Tick" );
                 records.push_back( tla_step( "tick", "Tick", "<<>>", pp_state( walk ) ) );
+                break;
+            }
+
+            case OP_REUSE:
+            {
+                // the client disconnects, the server frees the slot, and the
+                // same client object connects again with a new token into the
+                // same slot, over a path of new capacities from the client's
+                // candidates; the redundant disconnect packets are not sent
+                // (sealed under the old keys, the new connection drops them)
+                static uint8_t disconnect_packets[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
+                int count = 0;
+                int bytes = 0;
+                const int client_index = walk->client.client_index;
+                rocketnet_client_protocol_disconnect( &walk->client, disconnect_packets, &count, &bytes );
+                rocketnet_server_protocol_disconnect_client( &walk->server, client_index, disconnect_packets, &count, &bytes );
+                // the server's update releases the slot freed in it, as the
+                // server's next update does (the update a slot is freed in
+                // holds it), so the handshake below takes the same slot
+                rocketnet_server_protocol_update( &walk->server, walk->now );
+                walk->cap_up = client_set[(size_t) random.below( (int) client_set.size() )];
+                walk->cap_down = client_set[(size_t) random.below( (int) client_set.size() )];
+                reuse_caps_up.push_back( walk->cap_up );
+                reuse_caps_down.push_back( walk->cap_down );
+                walk->up.clear();
+                walk->down.clear();
+                walk->pair_in_burst = false;
+                walk->burst_strikes = 0;
+                walk->pair_bytes = smallest;
+                walk->reuses++;
+                if ( !pp_handshake( walk ) || walk->client.client_index != client_index )
+                {
+                    fprintf( stderr, "tla_trace path-probe: the reuse's handshake did not reach connected in slot %d (state %d, slot %d, probing %d, rtt %f)\n", client_index,
+                             walk->client.state, walk->client.client_index, walk->client.probing, walk->client.rtt_estimate );
+                    failed = true;
+                    break;
+                }
+                report.act( "Reuse" );
+                records.push_back( tla_step( "reuse", "Reuse",
+                                             tla_sequence( std::vector<std::string>{ tla_int( walk->cap_up ), tla_int( walk->cap_down ) } ),
+                                             pp_state( walk ) ) );
                 break;
             }
 
@@ -980,15 +1084,20 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
         }
     }
 
-    // the capacities the walk chose are the only ones the model starts from;
+    // the capacities the walk chose, for the first connection and the reuse's,
+    // are the only ones the model starts or reuses from;
     // the burst window and the attack budget are past anything the walk spends
     std::string constants;
     char line[256];
     snprintf( line, sizeof( line ),
-              "    CapsUp = {%d}\n    CapsDown = {%d}\n    K = %d\n    MaxBursts = %d\n    AttackBudget = %d\n"
-              "    Forger = FALSE\n    Timed = FALSE\n    Broken = \"none\"\n",
-              walk->cap_up, walk->cap_down, ROCKETNET_LINK_MTU_PROBE_STRIKES, PP_MAX_BURSTS, steps );
+              "    K = %d\n    MaxBursts = %d\n    AttackBudget = %d\n    AttackKinds = {\"replay\", \"probe\", \"reply\"}\n"
+              "    Forger = FALSE\n    Timed = FALSE\n    LossBound = %s\n    MaxReuses = %d\n    Broken = \"none\"\n",
+              ROCKETNET_LINK_MTU_PROBE_STRIKES, PP_MAX_BURSTS, steps, walk->heavy ? "FALSE" : "TRUE", walk->reuses );
     constants += line;
+    constants += "    CapsUp = " + pp_int_set( caps_up ) + "\n";
+    constants += "    CapsDown = " + pp_int_set( caps_down ) + "\n";
+    constants += "    ReuseCapsUp = " + pp_int_set( reuse_caps_up ) + "\n";
+    constants += "    ReuseCapsDown = " + pp_int_set( reuse_caps_down ) + "\n";
     constants += "    ClientSet = " + pp_int_set( client_set ) + "\n";
     constants += "    ServerList = " + pp_int_set( server_list ) + "\n";
 

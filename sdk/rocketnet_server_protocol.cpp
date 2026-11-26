@@ -1254,9 +1254,11 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     mapping->control->client_index = client_index;
     mapping->control->established = 1;
 
-    // proofs/tla/RNPathProbe.tla Init: the slot starts at the packet size its
-    // response carried, P0, the size the client joined at; only the client's
-    // confirm raises it later (ServerRecvConfirm), and it never falls
+    // proofs/tla/RNPathProbe.tla Init and Reuse: the slot starts at the packet
+    // size its response carried, P0, the size the client joined at, whatever
+    // the slot held before (a freed slot's mapping is gone and this one is
+    // new); only the client's confirm raises it later (ServerRecvConfirm),
+    // and it never falls within the connection
 
     mapping->packet_bytes = packet_bytes;
 

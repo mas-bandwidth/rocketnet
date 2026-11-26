@@ -19,8 +19,9 @@
 // client's path probe raises it one step at a time, smallest first, while
 // each next size up is proven carried both ways (proofs/tla/RNPathProbe.tla).
 // The size only ever rises, at both ends, and the probe ends for good once the
-// size is the largest candidate or the next size up is ruled out; the sizes
-// above a ruled-out size are never tried.
+// size is the largest candidate; a ruled-out size is tried again later, on
+// the re-try schedule below, and the sizes above it are never tried before
+// it is raised to.
 //
 // Everything here is plain arithmetic on the list, shared by the client, the
 // server and the tests, so the two ends can never derive different sizes.
@@ -168,33 +169,114 @@ static inline int rocketnet_link_mtu_first_packet_bytes( const int * link_mtus, 
 // one pair a second at most under loss, so the first pair after a loss
 // clears goes out within a second. While the small probes are lost nothing
 // counts and the probe keeps going: it has no time limit, and ends only at
-// the largest candidate or when the next size up is ruled out (or with the
-// connection).
+// the largest candidate (or with the connection); a ruled-out size waits for
+// its re-try (below).
 //
 // A pair whose small probe came back and whose large one did not is
 // evidence about the size, not loss: a strike against the candidate, at the
-// same pace, and STRIKES strikes in a row rule it out and stop the walk
-// there. When the first step up is ruled out at P0, P0 itself is checked
+// same pace, and STRIKES strikes in a row rule it out and the walk waits
+// there to re-try it. When the first step up is ruled out at P0, P0 itself is checked
 // last: its STRIKES strikes end the connection. A pair whose small probe is
 // lost sets the candidate's strikes back to zero, so a size the path does
 // not carry is ruled out STRIKES pairs after its first, 0.4 s on a lossless
 // path with a round trip under 50 ms: a link of 1200 bytes is at 1172 in one
-// round trip and the walk ends there in about half a second. Under
+// round trip and the walk waits there in about half a second. Under
 // independent loss p each way a step's carried size is ruled out with
 // probability a^4 / (1 - r (1 + a + a^2 + a^3)), where r = 1 - (1 - p)^2 and
 // a = (1 - p)^2 r: 0.07% at p = 10%, 0.5% at 20%, 1.6% at 50%, and the walk
-// takes that chance once for each step it climbs. A burst that drops large packets only, while
+// takes that chance once for each step it climbs; the re-try (below) takes
+// the size back once the loss has ended. A burst that drops large packets only, while
 // the small ones come back, for STRIKES pairs in a row does rule a carried
 // size out. A large reply at the candidate from any earlier pair still
 // proves it carried, so a round trip longer than the interval costs
 // nothing. A pair costs at most 1452 + 34 bytes each way, ten a second at
-// most, and none once the walk ends. An unechoed confirm is resent every
-// CONFIRM_INTERVAL.
+// most, none while the walk waits and none once it ends. An unechoed confirm
+// is resent every CONFIRM_INTERVAL.
 
 #define ROCKETNET_LINK_MTU_PROBE_FIRST_INTERVAL_SECONDS 0.1
 #define ROCKETNET_LINK_MTU_PROBE_MAX_INTERVAL_SECONDS   1.0
 #define ROCKETNET_LINK_MTU_PROBE_STRIKES                4
 #define ROCKETNET_LINK_MTU_CONFIRM_INTERVAL_SECONDS     1.0
+
+// The re-try of a ruled-out size (proofs/tla/RNPathProbe.tla ClientRetry;
+// the arithmetic in proofs/tla/RNPathProbeRetryLayout.tla). A size ruled out
+// is not given up for good: under heavy random loss a carried size is ruled
+// out now and then (1.6% a step at 50%, above), so the walk waits and then
+// probes the same size again, with the same pairs, pace and STRIKES rule as
+// any step. The waits are measured from the size's first rule-out: a re-try
+// every RETRY_FIRST (10 s) for the first RETRY_FLAT re-tries (at 10, 20 and
+// 30 s), then the gap doubles each time, 20, 40, 80 and 160 s (at 50, 90,
+// 170 and 330 s), up to RETRY_MAX (300 s), every 300 s from then on for as
+// long as the connection lasts. A re-try that is ruled out again waits for
+// the next re-try of the schedule after it ended; a slot that passed while
+// it ran is not taken. A re-try that gets through raises the size as any
+// step does and the walk goes on up; the next size's schedule, should it be
+// ruled out, starts afresh at 10 s. P0's own check is made once, at the first
+// rule-out of the first step up; a re-try never checks it again, and no
+// re-try ends the connection. On a path that does not carry the next size
+// up, a re-try at the cap costs one pair at a time, STRIKES pairs at the
+// first interval, about every 300 s: the bytes of four pairs every five
+// minutes, about 1190 bytes a minute up and 27 down for 1452 against a
+// 1200 link. The waits count re-tries to RETRY_SATURATE, the first whose gap
+// is RETRY_MAX, and no further.
+
+#define ROCKETNET_LINK_MTU_RETRY_FIRST_SECONDS          10.0
+#define ROCKETNET_LINK_MTU_RETRY_FLAT_COUNT             3
+#define ROCKETNET_LINK_MTU_RETRY_MAX_SECONDS            300.0
+#define ROCKETNET_LINK_MTU_RETRY_SATURATE               8
+
+// the wait before re-try number retry (1 for the first) of a ruled-out
+// size, from the re-try before it (from the rule-out, for the first):
+// RETRY_FIRST for the first RETRY_FLAT, then twice the one before, never
+// above RETRY_MAX
+
+static inline double rocketnet_link_mtu_retry_gap_seconds( int retry )
+{
+    double gap = ROCKETNET_LINK_MTU_RETRY_FIRST_SECONDS;
+#if !defined( ROCKETNET_LINK_MTU_RETRY_PLANT )
+    for ( int i = ROCKETNET_LINK_MTU_RETRY_FLAT_COUNT; i < retry && gap < ROCKETNET_LINK_MTU_RETRY_MAX_SECONDS; i++ )
+#else  // #if !defined( ROCKETNET_LINK_MTU_RETRY_PLANT )
+    // the trace check's plant (tests/tla_trace_path_probe_retry.cpp): the
+    // gap doubles one re-try early, and the third re-try is at 40 s
+    for ( int i = ROCKETNET_LINK_MTU_RETRY_FLAT_COUNT - 1; i < retry && gap < ROCKETNET_LINK_MTU_RETRY_MAX_SECONDS; i++ )
+#endif // #if !defined( ROCKETNET_LINK_MTU_RETRY_PLANT )
+    {
+        gap *= 2.0;
+    }
+    return gap < ROCKETNET_LINK_MTU_RETRY_MAX_SECONDS ? gap : ROCKETNET_LINK_MTU_RETRY_MAX_SECONDS;
+}
+
+// The schedule's next re-try after current_time: *retry is the count of
+// re-tries scheduled so far (0 at the rule-out), saturating at
+// RETRY_SATURATE, and *retry_time the time of the last (the rule-out's time
+// at 0). Advances both, past every slot at or before current_time, and
+// returns the new *retry_time, always after current_time
+// (proofs/tla/RNPathProbeRetryLayout.tla Schedule, its Advance this loop and
+// its CodeGap rocketnet_link_mtu_retry_gap_seconds; the trace check's
+// path-probe-retry layer binds them).
+
+static inline double rocketnet_link_mtu_retry_next( int * retry, double * retry_time, double current_time )
+{
+    do
+    {
+        if ( *retry < ROCKETNET_LINK_MTU_RETRY_SATURATE )
+        {
+            ( *retry )++;
+        }
+        else if ( *retry_time + ROCKETNET_LINK_MTU_RETRY_MAX_SECONDS <= current_time )
+        {
+            // at the cap the gap is fixed: skip every passed slot at once
+            const double passed = (double) (int64_t) ( ( current_time - *retry_time ) / ROCKETNET_LINK_MTU_RETRY_MAX_SECONDS );
+            *retry_time += passed * ROCKETNET_LINK_MTU_RETRY_MAX_SECONDS;
+            if ( *retry_time > current_time )
+            {
+                break;
+            }
+        }
+        *retry_time += rocketnet_link_mtu_retry_gap_seconds( *retry );
+    } while ( *retry_time <= current_time );
+    return *retry_time;
+}
 
 // The probe's opened plaintext: an 8-byte header, then zero padding to the
 // wire size. kind 0 is a probe, whose size field is its own wire size and

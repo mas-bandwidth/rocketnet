@@ -121,6 +121,10 @@ int rocketnet_server_secret_spans_for_test( const void * object, size_t * offset
 int rocketnet_server_transport_secret_spans_for_test( const void * object, size_t * offsets, size_t * bytes, int max );
 int rocketnet_client_transport_secret_spans_for_test( const void * object, size_t * offsets, size_t * bytes, int max );
 
+// the client transport's protocol state, read only: the reuse tests compare a
+// reused connection's probe state with a fresh one's
+const struct rocketnet_client_protocol_t * rocketnet_client_transport_protocol_for_test( const struct rocketnet_client_transport_t * client_transport );
+
 // the wall-clock budget an early destroy polls a worker's exit for: 0 makes
 // one pass with no sleep (the keep path's tests), a negative value restores
 // the default

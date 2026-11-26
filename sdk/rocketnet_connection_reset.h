@@ -50,7 +50,8 @@ struct rn_message_object_t;
     X( RESET, probe_candidates ) X( RESET, num_probe_candidates ) X( RESET, probe_index ) \
     X( RESET, probe_strikes ) X( RESET, probe_pair ) X( RESET, probe_pair_small ) \
     X( RESET, probe_pair_large ) X( RESET, probe_pair_out ) X( RESET, probe_next_time ) X( RESET, probe_interval ) \
-    X( RESET, probing ) \
+    X( RESET, probing ) X( RESET, probe_ruled ) X( RESET, probe_waiting ) X( RESET, probe_retries ) \
+    X( RESET, probe_retry_time ) \
     X( RESET, confirm_bytes ) X( RESET, confirm_next_time ) X( RESET, packet_bytes )
 
 #define ROCKETNET_CLIENT_SLOTS_OWNER_FIELDS( X ) \

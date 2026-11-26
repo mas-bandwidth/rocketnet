@@ -259,8 +259,9 @@ connection starts at the smallest size the list gives, so it joins exactly as
 fast as the default, and once connected the client probes the larger sizes
 one step at a time, smallest first, raising the connection's packet size to
 each one that crosses both ways. The packet size only grows. Probing stops for
-good once the connection is at the largest size, or once the next size up has
-been ruled out: the sizes above it are never tried. If the path does not carry even the smallest size, the client ends in
+good once the connection is at the largest size. When the next size up is
+ruled out, the client waits and tries that same size again later, and never
+tries a size above it before the connection is at it. If the path does not carry even the smallest size, the client ends in
 `ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED` (-14) instead of hanging.
 
 **Both sides must use the same list.** The server only answers the sizes its
@@ -310,7 +311,8 @@ the link MTU 1492 (1500 less 8).
 
 For games with IPv6 players, use `{ 1500, 1492 }`. IPv4 connections are
 unchanged. An IPv6 connection starts at 1444; behind PPPoE its 1452 probe is
-ruled out and it stays at 1444, and on a full 1500 path it rises to 1452.
+ruled out and it stays at 1444, trying 1452 again now and then, and on a
+full 1500 path it rises to 1452.
 
 **VPNs and tunnels.** Players behind a VPN or tunnel can have much smaller
 links. For them, use the three-step list `{ 1492, 1200, 576 }`. It gives IPv4
@@ -324,14 +326,19 @@ the size being tried, sent together. The first pair goes out in the update the
 client connects in, and the next every 0.1 s (or twice the round trip, when
 that is longer). A large probe that is lost while its small partner comes back
 is a strike against that size: evidence about the size, not loss, so the pace
-holds, and four strikes in a row rule the size out and probing stops there.
+holds, and four strikes in a row rule the size out and probing waits there.
 A pair whose small probe is lost too is loss: it sets the
 strikes back to zero and doubles the wait, up to one pair a second. So loss
 alone never rules a size out, and there is no time limit while it lasts: the
 first pair after the loss clears goes out within about a second. A loss of
 large packets only, while the small ones come back, for four pairs in a row
 does rule a size out; under 50% loss each way that happens to a size the path
-carries 1.6% of the time. When the large reply arrives the client raises its
+carries 1.6% of the time. So a ruled-out size is tried again: 10, 20 and 30 s
+after it was ruled out, then 50, 90, 170 and 330 s, then every 300 s for as
+long as the connection lasts, each time with the same pairs and the same four
+strikes. A try that gets through raises the size and probing goes on up; the
+next size, if it is ruled out, starts its own tries at 10 s. A try that is
+ruled out again waits for the next time on the list. When the large reply arrives the client raises its
 size at once, confirms, and probes the next size up at once; the server raises
 when the confirm arrives. On the three-step list a 1500 path takes two steps:
 548, then 1172, then 1452.
@@ -345,21 +352,24 @@ both join in 40 ms on every path. The time from connect until both ends reach
 | --- | --- |
 | no loss | 0.16 s (the client at 0.13 s) |
 | 10% loss each way, 50 runs | 0.29 s mean, 1.26 s worst |
-| 50% loss each way for the first 10 s, 50 runs | 3.4 s mean, 10.9 s worst of the 49 that reach it; one rules 1452 out and stays at 1172 |
+| 50% loss each way for the first 10 s, 50 runs | 3.58 s mean, 12.16 s worst; all 50 reach it: one rules 1452 out under the loss and takes it on its first try again, 10 s later, and the other 49 are there by 10.86 s |
 | every packet lost for the first 10 s | 10.66 s, 0.66 s after the loss ends |
 
 On a path that carries 1200 but not 1492, both ends are at 1172 0.09 s after
-connect; 1452 is then ruled out and probing ends 0.48 s after connect. On a
-576 path, 1172 is ruled out, 548 answers, and probing ends 0.46 s after
-connect; 1452 is never sent. A path that does not carry 548 ends in -14 0.88 s
+connect; 1452 is then ruled out and probing waits 0.48 s after connect. On a
+576 path, 1172 is ruled out, 548 answers, and probing waits 0.46 s after
+connect; 1452 is never sent. From there the ruled-out size is tried again on
+the schedule above, and is ruled out again each time. A path that does not carry 548 ends in -14 0.88 s
 after connect.
 
 **Bandwidth.** A pair is at most 1452 + 34 bytes each way, and a confirm 34
 bytes. On a clean path the whole cost is one pair and one confirm for each
 step. While pairs
 go unanswered the client sends at most one pair a second, about 1.5 KB/s each
-way, until probing ends; while the small probes come back it sends up to ten
-pairs a second, four for the size ruled out. The default list sends none.
+way; while the small probes come back it sends up to ten pairs a second, four
+for the size ruled out. Waiting to try a size again costs nothing; each try
+again is four pairs. On a 1200 link once the tries are 300 s apart, that is
+about 1190 bytes a minute up and 27 down. The default list sends none.
 
 ## 5. Handle token and handshake refusals safely
 
