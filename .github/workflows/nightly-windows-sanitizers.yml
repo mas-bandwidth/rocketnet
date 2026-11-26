@@ -63,7 +63,12 @@ defaults:
 jobs:
   sanitizers-windows:
     name: windows ${{ matrix.leg }}
-    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    # The appverif leg of main runs on captain's admin runner (label
+    # rocketnet-appverif, a local administrator, so Application Verifier can
+    # write Image File Execution Options). That runner's job-started hook runs
+    # only this workflow at refs/heads/main, so any other ref keeps the
+    # NETWORK SERVICE runners (and APPVERIF-REFUSED).
+    runs-on: ${{ (matrix.leg == 'appverif' && matrix.ref == 'main') && fromJSON('["self-hosted", "Windows", "X64", "rocketnet-appverif"]') || fromJSON('["self-hosted", "Windows", "X64", "rocketnet-windows"]') }}
     # A ceiling, not a case bound: the msvc-asan leg took 34 minutes on
     # 2026-11-14 (run 43570225437; the unit suite with both 1000-client cases
     # of tests/test_unit_server_mass_disconnect.cpp 6 minutes). The suites
