@@ -11,6 +11,8 @@
 #include <mswsock.h>
 #include <malloc.h>
 #include <atomic>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 #include <set>
@@ -349,6 +351,54 @@ static void release( void *, void * p )
     }
 }
 
+// A create refused for want of memory names what failed in one error line:
+// the call and its Windows error, or the allocation and its size
+// (rocketnet_create_failed_call and rocketnet_create_failed_allocation in
+// sdk/rocketnet_internal.h). The scope captures the error lines a create logs.
+
+static std::mutex create_log_mutex;
+static std::string create_log;
+
+static void create_log_capture( void *, rocketnet_log_level_t, const char * message, size_t length )
+{
+    std::lock_guard<std::mutex> lock( create_log_mutex );
+    create_log.append( message, length );
+    create_log.push_back( '\n' );
+}
+
+struct create_log_scope
+{
+    rocketnet_log_level_t saved_level;
+
+    create_log_scope()
+        : saved_level( rocketnet_log_level_current() )
+    {
+        {
+            std::lock_guard<std::mutex> lock( create_log_mutex );
+            create_log.clear();
+        }
+        rocketnet_log_function( create_log_capture, NULL );
+        rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    }
+
+    ~create_log_scope()
+    {
+        rocketnet_log_level( saved_level );
+        rocketnet_log_function( NULL, NULL );
+    }
+};
+
+static bool create_log_has( const char * text )
+{
+    std::lock_guard<std::mutex> lock( create_log_mutex );
+    const bool found = create_log.find( text ) != std::string::npos;
+    if ( !found )
+    {
+        printf( "  the create log does not hold \"%s\"; it holds:\n%s", text, create_log.c_str() );
+    }
+    return found;
+}
+
 static rocketnet_address_t address( const char * text )
 {
     rocketnet_address_t result;
@@ -386,16 +436,29 @@ static void test_create_cleanup()
     DWORD handle_baseline;
     CHECK( GetProcessHandleCount( GetCurrentProcess(), &handle_baseline ) );
 
+    // every refused allocation is named with its size; the transport's own
+    // storage is one of them
+    bool named_the_transport = false;
     for ( int i = 0; i < count; ++i )
     {
         bind = address( "127.0.0.1:0" );
         allocations.store( 0 );
         fail_allocation = i;
-        transport = rocketnet_server_iocp_create( NULL, &bind, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
-        fail_allocation = -1;
+        {
+            create_log_scope scope;
+            transport = rocketnet_server_iocp_create( NULL, &bind, 2, ROCKETNET_DEFAULT_MAX_CLIENTS );
+            fail_allocation = -1;
+            CHECK( create_log_has( ": could not allocate " ) );
+            std::lock_guard<std::mutex> lock( create_log_mutex );
+            char line[128];
+            snprintf( line, sizeof( line ), "iocp transport create: could not allocate %llu bytes for the transport",
+                      (unsigned long long) sizeof( rocketnet_server_iocp_t ) );
+            named_the_transport = named_the_transport || create_log.find( line ) != std::string::npos;
+        }
         CHECK( !transport );
         CHECK( live_allocations.load() == baseline );
     }
+    CHECK( named_the_transport );
 
     for ( int repeat = 0; repeat < 3; ++repeat )
     {
@@ -3486,7 +3549,8 @@ static void test_rio_create_failure_drains_posted_receives()
     }
 
     // a bind refused for want of buffers (stage 8, WSAENOBUFS) reads
-    // OUT_OF_MEMORY, not TRANSPORT_BIND_REFUSED, in lane 0 and in lane 1
+    // OUT_OF_MEMORY, not TRANSPORT_BIND_REFUSED, in lane 0 and in lane 1, and
+    // the error line names the bind and the Windows error
     for ( int stage : { 8, 8 + 16 * 1 } )
     {
         rocketnet_address_t bind = address( "127.0.0.1:0" );
@@ -3494,7 +3558,11 @@ static void test_rio_create_failure_drains_posted_receives()
         options.lanes = 2;
         options.packet_filter = NULL;
         int status = ROCKETNET_STATUS_OK;
-        CHECK( !rocketnet_server_rio_create( NULL, &bind, ROCKETNET_DEFAULT_MAX_CLIENTS, stage, &status, &options ) );
+        {
+            create_log_scope scope;
+            CHECK( !rocketnet_server_rio_create( NULL, &bind, ROCKETNET_DEFAULT_MAX_CLIENTS, stage, &status, &options ) );
+            CHECK( create_log_has( "rio transport create: bind of a lane failed with Windows error 10055 (WSAENOBUFS), out of memory" ) );
+        }
         CHECK( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
         CHECK( bind.port == 0 );
         CHECK( live_allocations.load() == baseline );
@@ -3538,7 +3606,14 @@ static void test_windows_create_refused_for_commit_is_out_of_memory()
     {
         refused_thread_start_error = error;
         int status = ROCKETNET_STATUS_OK;
-        CHECK( rocketnet_platform_thread_create( NULL, never_runs, NULL, &status ) == NULL );
+        {
+            create_log_scope scope;
+            CHECK( rocketnet_platform_thread_create( NULL, never_runs, NULL, &status ) == NULL );
+            char line[128];
+            snprintf( line, sizeof( line ), "platform thread create: CreateThread failed with Windows error %d (%s), out of memory", error,
+                      rocketnet_windows_out_of_memory_error_name( (unsigned long) error ) );
+            CHECK( create_log_has( line ) );
+        }
         CHECK( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
         CHECK( live_allocations.load() == baseline );
     }
@@ -3547,7 +3622,12 @@ static void test_windows_create_refused_for_commit_is_out_of_memory()
     {
         refused_thread_start_error = error;
         int status = ROCKETNET_STATUS_OK;
-        CHECK( rocketnet_platform_thread_create( NULL, never_runs, NULL, &status ) == NULL );
+        {
+            create_log_scope scope;
+            CHECK( rocketnet_platform_thread_create( NULL, never_runs, NULL, &status ) == NULL );
+            std::lock_guard<std::mutex> lock( create_log_mutex );
+            CHECK( create_log.find( "out of memory" ) == std::string::npos );
+        }
         CHECK( status == ROCKETNET_STATUS_OK );
         CHECK( live_allocations.load() == baseline );
     }
@@ -3555,13 +3635,21 @@ static void test_windows_create_refused_for_commit_is_out_of_memory()
 
     rocketnet_address_t bind = address( "127.0.0.1:0" );
     int status = ROCKETNET_STATUS_OK;
-    CHECK( !rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, 0, &status ) );
+    {
+        create_log_scope scope;
+        CHECK( !rocketnet_server_iocp_create( NULL, &bind, 1, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, 0, &status ) );
+        CHECK( create_log_has( "platform thread create: CreateThread failed with Windows error 1455 (ERROR_COMMITMENT_LIMIT), out of memory" ) );
+    }
     CHECK( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
     CHECK( live_allocations.load() == baseline );
 
     bind = address( "127.0.0.1:0" );
     status = ROCKETNET_STATUS_OK;
-    CHECK( !rocketnet_server_rio_create( NULL, &bind, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status ) );
+    {
+        create_log_scope scope;
+        CHECK( !rocketnet_server_rio_create( NULL, &bind, ROCKETNET_DEFAULT_MAX_CLIENTS, 0, &status ) );
+        CHECK( create_log_has( "platform thread create: CreateThread failed with Windows error 1455 (ERROR_COMMITMENT_LIMIT), out of memory" ) );
+    }
     CHECK( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
     // the create got as far as binding an ephemeral port before the worker was
     // refused; the failed create hands the caller back the port 0 it asked for

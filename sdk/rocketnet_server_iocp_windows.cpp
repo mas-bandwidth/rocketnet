@@ -2171,7 +2171,7 @@ static bool rocketnet_iocp_exclusive_probe( const rocketnet_address_t * bind_add
     SOCKET probe = WSASocketW( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT );
     if ( probe == INVALID_SOCKET )
     {
-        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+        rocketnet_create_failed_call( status, "iocp transport create", "WSASocketW for the exclusive probe", (unsigned long) WSAGetLastError() );
         return false;
     }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -2179,16 +2179,27 @@ static bool rocketnet_iocp_exclusive_probe( const rocketnet_address_t * bind_add
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     BOOL enabled = TRUE;
     DWORD v6_only = FALSE;
-    bool bound = setsockopt( probe, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) != SOCKET_ERROR &&
-                 ( !ipv6 || setsockopt( probe, IPPROTO_IPV6, IPV6_V6ONLY, (const char *) &v6_only, sizeof( v6_only ) ) != SOCKET_ERROR ) &&
-                 bind( probe, (sockaddr *) &address, address_bytes ) != SOCKET_ERROR;
+    const char * probe_call = NULL;
+    if ( setsockopt( probe, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) == SOCKET_ERROR )
+    {
+        probe_call = "setsockopt SO_EXCLUSIVEADDRUSE on the exclusive probe";
+    }
+    else if ( ipv6 && setsockopt( probe, IPPROTO_IPV6, IPV6_V6ONLY, (const char *) &v6_only, sizeof( v6_only ) ) == SOCKET_ERROR )
+    {
+        probe_call = "setsockopt IPV6_V6ONLY on the exclusive probe";
+    }
+    else if ( bind( probe, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
+    {
+        probe_call = "bind of the exclusive probe";
+    }
+    const bool bound = probe_call == NULL;
     if ( !bound )
     {
         // as rio's probe: a refusal for want of memory reads OUT_OF_MEMORY,
         // any other refusal TRANSPORT_BIND_REFUSED
         const int error = WSAGetLastError();
         rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
-        rocketnet_platform_windows_create_status( status, (unsigned long) error );
+        rocketnet_create_failed_call( status, "iocp transport create", probe_call, (unsigned long) error );
         rocketnet_warn( "iocp transport refused: the exclusive probe could not bind port %d (Winsock %d): another socket holds it",
                         bind_address->port, error );
     }
@@ -2227,8 +2238,9 @@ static bool rocketnet_iocp_core_order( void * context, const char * who, rocketn
     DWORD bytes = 0;
     if ( GetLogicalProcessorInformationEx( RelationProcessorCore, NULL, &bytes ) || GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes == 0 )
     {
-        rocketnet_platform_windows_create_status( status, GetLastError() );
-        rocketnet_error( "iocp transport refused: the processors could not be listed for %s (Win32 %lu)", who, GetLastError() );
+        const DWORD error = GetLastError();
+        rocketnet_create_failed_call( status, "iocp transport create", "GetLogicalProcessorInformationEx (size)", error );
+        rocketnet_error( "iocp transport refused: the processors could not be listed for %s (Win32 %lu)", who, error );
         return false;
     }
     const DWORD logical = GetActiveProcessorCount( ALL_PROCESSOR_GROUPS );
@@ -2236,7 +2248,14 @@ static bool rocketnet_iocp_core_order( void * context, const char * who, rocketn
     rocketnet_iocp_core_t * order = (rocketnet_iocp_core_t *) rocketnet_malloc( context, sizeof( rocketnet_iocp_core_t ) * ( (size_t) logical + 1 ) );
     if ( !info || !order )
     {
-        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        if ( !info )
+        {
+            rocketnet_create_failed_allocation( status, "iocp transport create", "the processor information", (uint64_t) bytes );
+        }
+        else
+        {
+            rocketnet_create_failed_allocation( status, "iocp transport create", "the processor order", (uint64_t) sizeof( rocketnet_iocp_core_t ) * ( (uint64_t) logical + 1 ) );
+        }
         rocketnet_free( context, order );
         rocketnet_free( context, info );
         return false;
@@ -2311,8 +2330,9 @@ static bool rocketnet_iocp_core_order( void * context, const char * who, rocketn
     ok = ok && count > 0;
     if ( !ok )
     {
-        rocketnet_platform_windows_create_status( status, GetLastError() );
-        rocketnet_error( "iocp transport refused: the processors could not be listed for %s (Win32 %lu)", who, GetLastError() );
+        const DWORD error = GetLastError();
+        rocketnet_create_failed_call( status, "iocp transport create", "GetLogicalProcessorInformationEx", error );
+        rocketnet_error( "iocp transport refused: the processors could not be listed for %s (Win32 %lu)", who, error );
         rocketnet_free( context, order );
         rocketnet_free( context, info );
         return false;
@@ -2582,7 +2602,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
     void * storage = rocketnet_malloc( context, sizeof( rocketnet_server_iocp_t ) );
     if ( !storage )
     {
-        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_create_failed_allocation( status, "iocp transport create", "the transport", (uint64_t) sizeof( rocketnet_server_iocp_t ) );
         return NULL;
     }
     rocketnet_server_iocp_t * iocp = new ( storage ) rocketnet_server_iocp_t();
@@ -2628,7 +2648,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
         void * lane_storage = rocketnet_malloc( context, sizeof( rocketnet_iocp_lane_t ) );
         if ( !lane_storage )
         {
-            rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+            rocketnet_create_failed_allocation( status, "iocp transport create", "a send lane", (uint64_t) sizeof( rocketnet_iocp_lane_t ) );
             goto failed;
         }
         rocketnet_iocp_lane_t * lane = new ( lane_storage ) rocketnet_iocp_lane_t();
@@ -2643,7 +2663,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
     iocp->sized_storage = rocketnet_malloc( context, (size_t) layout.bytes );
     if ( !iocp->sized_storage )
     {
-        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_create_failed_allocation( status, "iocp transport create", "the client-scaled arrays", layout.bytes );
         goto failed;
     }
     {
@@ -2683,7 +2703,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
     iocp->workers = (rocketnet_iocp_worker_t *) rocketnet_malloc( context, sizeof( rocketnet_iocp_worker_t ) * (size_t) num_workers );
     if ( !iocp->workers )
     {
-        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_create_failed_allocation( status, "iocp transport create", "the completion workers", (uint64_t) sizeof( rocketnet_iocp_worker_t ) * (uint64_t) num_workers );
         goto failed;
     }
     for ( int i = 0; i < num_workers; ++i )
@@ -2707,7 +2727,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
     iocp->drop_tallies = (rocketnet_receive_drop_tally_t *) rocketnet_malloc( context, sizeof( rocketnet_receive_drop_tally_t ) * (size_t) num_workers );
     if ( !iocp->drop_tallies )
     {
-        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_create_failed_allocation( status, "iocp transport create", "the drop tallies", (uint64_t) sizeof( rocketnet_receive_drop_tally_t ) * (uint64_t) num_workers );
         goto failed;
     }
     for ( int i = 0; i < num_workers; ++i )
@@ -2718,7 +2738,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
     iocp->sends = (rocketnet_iocp_operation_t *) rocketnet_malloc( context, sizeof( rocketnet_iocp_operation_t ) * (size_t) iocp->num_sends );
     if ( !iocp->sends )
     {
-        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_create_failed_allocation( status, "iocp transport create", "the send operations", (uint64_t) sizeof( rocketnet_iocp_operation_t ) * (uint64_t) iocp->num_sends );
         goto failed;
     }
     for ( int i = 0; i < iocp->num_sends; ++i )
@@ -2743,7 +2763,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
     iocp->receives = (rocketnet_iocp_operation_t *) rocketnet_malloc( context, sizeof( rocketnet_iocp_operation_t ) * (size_t) num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER );
     if ( !iocp->receives )
     {
-        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_create_failed_allocation( status, "iocp transport create", "the receive operations", (uint64_t) sizeof( rocketnet_iocp_operation_t ) * (uint64_t) num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER );
         goto failed;
     }
     for ( int i = 0; i < num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER; ++i )
@@ -2850,7 +2870,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( socket == INVALID_SOCKET )
         {
-            rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+            rocketnet_create_failed_call( status, "iocp transport create", "WSASocketW for an endpoint", (unsigned long) WSAGetLastError() );
             goto failed;
         }
 #if ROCKETNET_DEV
@@ -2871,7 +2891,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
                 // never a bind refusal
                 const int error = WSAGetLastError();
                 rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
-                rocketnet_platform_windows_create_status( status, (unsigned long) error );
+                rocketnet_create_failed_call( status, "iocp transport create", "WSAIoctl SIO_CPU_AFFINITY", (unsigned long) error );
                 rocketnet_error( "iocp transport refused: SIO_CPU_AFFINITY to processor %d was refused (Winsock %d); workers share the port only through it",
                                  iocp->processors[e], error );
                 goto failed;
@@ -2923,8 +2943,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
         {
             // a refusal for want of memory reads OUT_OF_MEMORY, a bind the
             // address refuses TRANSPORT_BIND_REFUSED
-            rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
-            if ( rocketnet_platform_bind_refused( WSAGetLastError() ) )
+            const int bind_error = WSAGetLastError();
+            rocketnet_create_failed_call( status, "iocp transport create", "bind of an endpoint", (unsigned long) bind_error );
+            if ( rocketnet_platform_bind_refused( bind_error ) )
             {
                 rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
             }
@@ -2981,7 +3002,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
         iocp->ports[e] = CreateIoCompletionPort( (HANDLE) socket, NULL, 0, 1 );
         if ( !iocp->ports[e] )
         {
-            rocketnet_platform_windows_create_status( status, GetLastError() );
+            rocketnet_create_failed_call( status, "iocp transport create", "CreateIoCompletionPort", GetLastError() );
         }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( iocp->ports[e] )
@@ -3018,7 +3039,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
         iocp->uro_buffers = (uint8_t *) rocketnet_malloc( context, (size_t) num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER * ROCKETNET_IOCP_URO_BUFFER_BYTES );
         if ( !iocp->uro_buffers )
         {
-            rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+            rocketnet_create_failed_allocation( status, "iocp transport create", "the URO receive buffers", (uint64_t) num_workers * ROCKETNET_IOCP_RECEIVES_PER_WORKER * ROCKETNET_IOCP_URO_BUFFER_BYTES );
             goto failed;
         }
         iocp->features.fetch_or( ROCKETNET_IOCP_FEATURE_URO, std::memory_order_relaxed );
@@ -3039,8 +3060,9 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
         {
             if ( setsockopt( iocp->sockets[e], IPPROTO_UDP, UDP_RECV_MAX_COALESCED_SIZE, (const char *) &off, sizeof( off ) ) == SOCKET_ERROR )
             {
-                rocketnet_error( "iocp transport refused: UDP_RECV_MAX_COALESCED_SIZE could not be cleared on endpoint %d (Winsock %d)", e, WSAGetLastError() );
-                rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+                const int error = WSAGetLastError();
+                rocketnet_error( "iocp transport refused: UDP_RECV_MAX_COALESCED_SIZE could not be cleared on endpoint %d (Winsock %d)", e, error );
+                rocketnet_create_failed_call( status, "iocp transport create", "setsockopt UDP_RECV_MAX_COALESCED_SIZE", (unsigned long) error );
                 goto failed;
             }
         }
@@ -3111,7 +3133,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create_threads( void * context, 
         int post_error = 0;
         if ( !rocketnet_iocp_post_receive( iocp, &iocp->receives[i], &post_error ) )
         {
-            rocketnet_platform_windows_create_status( status, (unsigned long) post_error );
+            rocketnet_create_failed_call( status, "iocp transport create", iocp->receives[i].uro_data ? "WSARecvMsg posting a receive" : "WSARecvFrom posting a receive", (unsigned long) post_error );
             goto failed;
         }
 #if ROCKETNET_DEV
