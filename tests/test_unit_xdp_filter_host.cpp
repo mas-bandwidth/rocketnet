@@ -514,7 +514,7 @@ static void xdp_host_redirect_rows( int family, std::vector<xdp_host_row_t> & ro
     {
         uint8_t type;
         int bytes;
-    } inbound[] = { { 0, 710 }, { 3, 50 }, { 4, 41 }, { 5, 34 }, { 6, 33 }, { 8, 33 } };
+    } inbound[] = { { 0, 518 }, { 3, 50 }, { 4, 41 }, { 5, 34 }, { 6, 33 }, { 8, 33 } };
 
     for ( size_t i = 0; i < sizeof( inbound ) / sizeof( inbound[0] ); i++ )
     {
@@ -1720,9 +1720,10 @@ static void test_xdp_transport_host_invalid_type_drops()
             { 1, 34, "connection denied" },
             { 2, 66, "connection challenge" },
             { 7, 38, "connection cookie" },
-            { 9, 40, "reserved type 9" },
-            { 9, 1452, "reserved type 9 at the receive ceiling" },
-            { 10, 100, "reserved type 10" },
+            { 9, 33, "connection probe one byte below its floor" },
+            { 10, 40, "reserved type 10" },
+            { 10, 1452, "reserved type 10 at the receive ceiling" },
+            { 11, 100, "reserved type 11" },
             { 255, 100, "reserved type 255" },
             { 0, 709, "connection request one byte short" },
             { 0, 711, "connection request one byte long" },
@@ -1748,7 +1749,7 @@ static void test_xdp_transport_host_invalid_type_drops()
 // the exhaustive sweep: every type byte at every UDP payload size from 0 to
 // one past the receive ceiling, both families, against the size table of
 // STANDARD.md (Packet sizes; Reading packets: the server ignores denied,
-// challenge and cookie, and types 9 to 255 are reserved). The table is
+// challenge and cookie, and types 10 to 255 are reserved). The table is
 // written here, never taken from ROCKETNET_WIRE_SERVER_PACKET_VALID.
 
 static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
@@ -1762,12 +1763,13 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
         int max_bytes;
     };
     const inbound_t standard[] = {
-        { 0, 710, 710 },        // connection request
+        { 0, 518, 518 },        // connection request
         { 3, 50, 50 },          // connection response
         { 4, 41, ceiling },     // keep-alive
         { 5, 34, ceiling },     // payload
         { 6, 33, ceiling },     // disconnect
         { 8, 33, ceiling },     // ack
+        { 9, 34, ceiling },     // connection probe
     };
     const int standard_rows = (int) ( sizeof( standard ) / sizeof( standard[0] ) );
 
@@ -1779,10 +1781,10 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
 
     rocketnet_unit_check( floor == 33 );
 
-    // the first reserved type is 9, and the shared inbound rule accepts it
+    // the first reserved type is 10, and the shared inbound rule accepts it
     // at no size
 
-    rocketnet_unit_check( ROCKETNET_FIRST_RESERVED_PACKET_TYPE == 9 );
+    rocketnet_unit_check( ROCKETNET_FIRST_RESERVED_PACKET_TYPE == 10 );
     for ( int bytes = 0; bytes <= ceiling + 1; bytes++ )
     {
         rocketnet_unit_check( !ROCKETNET_WIRE_SERVER_PACKET_VALID( ROCKETNET_FIRST_RESERVED_PACKET_TYPE, bytes ) );
@@ -1877,10 +1879,10 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
     }
 
     // 2 families x 256 types x 1454 sizes, and the accepted set is exactly
-    // the table's: 2 x ( 1 + 1 + 1412 + 1419 + 1420 + 1420 )
+    // the table's: 2 x ( 1 + 1 + 1412 + 1419 + 1420 + 1420 + 1419 )
 
     rocketnet_unit_check( runs == 2L * 256 * ( ceiling + 2 ) );
-    rocketnet_unit_check( redirects == 2L * ( 1 + 1 + 1412 + 1419 + 1420 + 1420 ) );
+    rocketnet_unit_check( redirects == 2L * ( 1 + 1 + 1412 + 1419 + 1420 + 1420 + 1419 ) );
 }
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@
 
 // The status code surface: the enum and its names
 // (docs/ERRORS-AND-LOGGING.md 2.1). OK is 0. The failures run -1 down to
-// -35 with two holes, both pinned: -9 is unassigned, and -22 is reserved (no
+// -40 with two holes, both pinned: -9 is unassigned, and -22 is reserved (no
 // call returns it, and its name is "UNKNOWN"). The table here is the
 // numbering and spelling: a code that
 // moves, a name that changes and a name that is missing all fail. A value
@@ -66,16 +66,21 @@ static const struct
     { ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH, "LOOPBACK_HUB_MISMATCH" },
     { ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE, "LOOPBACK_HUB_IN_USE" },
     { ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED, "TRANSPORT_BIND_REFUSED" },
+    { ROCKETNET_STATUS_LINK_MTUS_EMPTY, "LINK_MTUS_EMPTY" },
+    { ROCKETNET_STATUS_LINK_MTUS_NOT_DESCENDING, "LINK_MTUS_NOT_DESCENDING" },
+    { ROCKETNET_STATUS_LINK_MTUS_TOO_LARGE, "LINK_MTUS_TOO_LARGE" },
+    { ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL, "LINK_MTUS_TOO_SMALL" },
+    { ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES, "LINK_MTUS_TOO_SMALL_FOR_MESSAGES" },
 };
 
 static void test_status_names_cover_every_code()
 {
     const int num_codes = (int) ( sizeof( status_expected ) / sizeof( status_expected[0] ) );
     check( ROCKETNET_STATUS_OK == 0 );
-    check( ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED == -35 );
-    check( num_codes == 35 );
+    check( ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES == -40 );
+    check( num_codes == 40 );
 
-    // the codes run 0 down to -35 with -9 unassigned
+    // the codes run 0 down to -40 with -9 unassigned
 
     for ( int i = 0; i < num_codes; i++ )
     {
@@ -99,7 +104,7 @@ REGISTER_UNIT_TEST( test_status_names_cover_every_code );
 static void test_status_name_out_of_range_is_unknown()
 {
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) 1 ), "UNKNOWN" ) == 0 );
-    check( strcmp( rocketnet_status_name( ( enum rocketnet_status_t ) - 36 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( ( enum rocketnet_status_t ) - 41 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( ( enum rocketnet_status_t ) - 9 ), "UNKNOWN" ) == 0 );    // the unassigned code
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MIN ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MAX ), "UNKNOWN" ) == 0 );

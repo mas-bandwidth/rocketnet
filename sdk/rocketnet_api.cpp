@@ -39,6 +39,7 @@
 // The transport's -10 (a small-order challenge in the handshake) reads back
 // as the public PROTOCOL_VIOLATION: proofs/tla/ClientSession.tla HandshakeViolation.
 static_assert( ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION == ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION, "client state" );
+static_assert( ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED == ROCKETNET_CLIENT_TRANSPORT_STATE_MTU_PROBE_FAILED, "client state" );
 static_assert( ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED, "client state" );
 static_assert( ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN == ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN, "client state" );
 static_assert( ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT, "client state" );
@@ -337,6 +338,8 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     transport->state_change_callback = config->state_change_callback;
     transport->loopback_hub = config->loopback_hub;
     transport->token_epoch_unix_seconds = config->token_epoch_unix_seconds;
+    memcpy( transport->link_mtus, config->link_mtus, sizeof( transport->link_mtus ) );
+    transport->num_link_mtus = config->num_link_mtus;
 
     // the step-driven client and its receive stamp clock are development
     // only: a production build refuses either one set (sdk/rocketnet.h)
@@ -466,6 +469,8 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     transport->handshakes_per_update = config->handshakes_per_update;
     transport->loopback_hub = config->loopback_hub;
     transport->token_epoch_unix_seconds = config->token_epoch_unix_seconds;
+    memcpy( transport->link_mtus, config->link_mtus, sizeof( transport->link_mtus ) );
+    transport->num_link_mtus = config->num_link_mtus;
     if ( read_env && !rn_dev_simulator_env( "server", transport ) )
     {
         if ( failure )
@@ -745,6 +750,8 @@ static void rn_client_default_config_current( struct rocketnet_client_config_t *
     config->transport = NULL;
     config->state_change_callback = transport.state_change_callback;
     config->token_epoch_unix_seconds = transport.token_epoch_unix_seconds;
+    memcpy( config->link_mtus, transport.link_mtus, sizeof( config->link_mtus ) );
+    config->num_link_mtus = transport.num_link_mtus;
     config->send_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS;
 
     struct rocketnet_message_config_t message;
@@ -790,6 +797,8 @@ static constexpr size_t rn_client_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, step_driven ),
     ROCKETNET_CLIENT_CONFIG_BYTES_3,
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, token_epoch_unix_seconds ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, num_link_mtus ),
+    ROCKETNET_CLIENT_CONFIG_BYTES_5,
 };
 static_assert( rn_client_config_field_ends[sizeof( rn_client_config_field_ends ) / sizeof( rn_client_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_client_config_t ), "client config field ends" );
 
@@ -838,6 +847,8 @@ static constexpr size_t rn_server_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, io_uring_reserve_cpu_0 ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, portable_reserve_cpu_0 ),
     ROCKETNET_SERVER_CONFIG_BYTES_8,
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, num_link_mtus ),
+    ROCKETNET_SERVER_CONFIG_BYTES_9,
 };
 static_assert( rn_server_config_field_ends[sizeof( rn_server_config_field_ends ) / sizeof( rn_server_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_server_config_t ), "server config field ends" );
 
@@ -1220,6 +1231,12 @@ static enum rocketnet_status_t rn_client_config_valid( const struct rocketnet_cl
         return ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
     }
 
+    const int link_mtus = rocketnet_config_link_mtus_status( "client", transport->link_mtus, transport->num_link_mtus );
+    if ( link_mtus != ROCKETNET_STATUS_OK )
+    {
+        return (enum rocketnet_status_t) link_mtus;
+    }
+
     int num_available = 0;
     const int * available = rocketnet_client_transport_io_availability( &num_available );
     struct rocketnet_transport_order_t transport_order;
@@ -1234,7 +1251,15 @@ static enum rocketnet_status_t rn_client_config_valid( const struct rocketnet_cl
         return hub;
     }
 
-    return rocketnet_message_validate_config( message ) != 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+    if ( rocketnet_message_validate_config( message ) == 0 )
+    {
+        return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+    }
+
+    // the message config's fragments at the list's smallest packet size, a
+    // check of the two together (the default list never refuses here)
+
+    return (enum rocketnet_status_t) rocketnet_config_link_mtus_message_status( "client", transport->link_mtus, transport->num_link_mtus, message );
 }
 
 static size_t rn_client_required_memory_current( const struct rocketnet_client_config_t * config )
@@ -1925,6 +1950,7 @@ const char * rocketnet_client_state_name( enum rocketnet_client_state_t state )
 
     switch ( value )
     {
+        case ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED:              return "MTU_PROBE_FAILED";
         case ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED:          return "MESSAGE_NOT_RECEIVED";
         case ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED:      return "MESSAGE_MEMORY_EXHAUSTED";
         case ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH:               return "CONFIG_MISMATCH";
@@ -1993,6 +2019,54 @@ int rocketnet_client_index( const struct rocketnet_client_t * client )
     rocketnet_assert( index >= 0 );
 
     return index;
+}
+
+int rocketnet_client_max_packet_bytes( struct rocketnet_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+    {
+        return 0;
+    }
+    if ( !client->connection )
+    {
+        return 0;
+    }
+
+    // the connection's packet size (sdk/rocketnet_link_mtu.h), bound in the
+    // message layer from the handshake's choice; 0 before CONNECTED
+
+    return rocketnet_message_client_max_packet_bytes( client->connection );
+}
+
+int rocketnet_client_link_mtu( struct rocketnet_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+    {
+        return 0;
+    }
+    if ( !client->connection )
+    {
+        return 0;
+    }
+
+    // the link MTU list entry of the connection's packet size, noted in the
+    // message layer beside it; 0 before CONNECTED
+
+    return rocketnet_message_client_link_mtu( client->connection );
+}
+
+int rocketnet_client_max_unreliable_message_bytes( struct rocketnet_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+    {
+        return 0;
+    }
+    if ( !client->connection )
+    {
+        return 0;
+    }
+
+    return rocketnet_message_client_max_unreliable_message_bytes( client->connection );
 }
 
 const char * rocketnet_client_transport_name( const struct rocketnet_client_t * client )
@@ -2515,6 +2589,8 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     config->handshakes_per_update = transport->handshakes_per_update;
     config->loopback_hub = transport->loopback_hub;
     config->token_epoch_unix_seconds = transport->token_epoch_unix_seconds;
+    memcpy( config->link_mtus, transport->link_mtus, sizeof( config->link_mtus ) );
+    config->num_link_mtus = transport->num_link_mtus;
     config->transport = NULL;
     config->per_client_send_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS;
 
@@ -2655,6 +2731,12 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
         return ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
     }
 
+    const int link_mtus = rocketnet_config_link_mtus_status( "server", transport->link_mtus, transport->num_link_mtus );
+    if ( link_mtus != ROCKETNET_STATUS_OK )
+    {
+        return (enum rocketnet_status_t) link_mtus;
+    }
+
     // the list is the resolved one (rn_server_split applied its override), the one start tries
 
     int num_available = 0;
@@ -2671,7 +2753,15 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
         return hub;
     }
 
-    return rocketnet_message_validate_config( message ) != 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+    if ( rocketnet_message_validate_config( message ) == 0 )
+    {
+        return ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+    }
+
+    // the message config's fragments at the list's smallest packet size, a
+    // check of the two together (the default list never refuses here)
+
+    return (enum rocketnet_status_t) rocketnet_config_link_mtus_message_status( "server", transport->link_mtus, transport->num_link_mtus, message );
 }
 
 static size_t rn_server_required_memory_current( const struct rocketnet_server_config_t * config )
@@ -3679,6 +3769,57 @@ bool rocketnet_server_client_connected( const struct rocketnet_server_t * server
     }
 
     return rocketnet_message_server_client_connected( rn_server( server ), slot ) != 0;
+}
+
+int rocketnet_server_client_max_packet_bytes( struct rocketnet_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return 0;
+    }
+
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+    {
+        return 0;
+    }
+
+    // the slot's packet size (sdk/rocketnet_link_mtu.h), bound in the message
+    // layer from the handshake's choice when the slot connected
+
+    return rocketnet_message_server_client_max_packet_bytes( rn_server( server ), slot );
+}
+
+int rocketnet_server_client_link_mtu( struct rocketnet_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return 0;
+    }
+
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+    {
+        return 0;
+    }
+
+    return rocketnet_message_server_client_link_mtu( rn_server( server ), slot );
+}
+
+int rocketnet_server_client_max_unreliable_message_bytes( struct rocketnet_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return 0;
+    }
+
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+    {
+        return 0;
+    }
+
+    return rocketnet_message_server_client_max_unreliable_message_bytes( rn_server( server ), slot );
 }
 
 uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, int client_index )

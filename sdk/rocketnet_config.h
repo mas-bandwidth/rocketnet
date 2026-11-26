@@ -26,15 +26,16 @@
 #define ROCKETNET_CONFIG_KIND_UINT64    1
 #define ROCKETNET_CONFIG_KIND_BYTES     2       // env encoding: base64, exactly the field's length
 #define ROCKETNET_CONFIG_KIND_STRING    3
+#define ROCKETNET_CONFIG_KIND_INT_LIST  4       // int entries[n] then int count; env encoding: decimal entries joined by commas
 
 struct rocketnet_config_field_t
 {
     const char * name;                          // the field name, exactly as declared in the table
     int kind;                                   // ROCKETNET_CONFIG_KIND_*
     int offset;                                 // byte offset of the field inside the config struct
-    int size;                                   // BYTES: exact length; STRING: capacity including the terminator; numerics: sizeof
-    int64_t min_value;                          // numeric fields only
-    int64_t max_value;                          // numeric fields only
+    int size;                                   // BYTES: exact length; STRING: capacity including the terminator; numerics: sizeof; INT_LIST: the entries and the count, in bytes
+    int64_t min_value;                          // numeric fields only; INT_LIST: the smallest entry
+    int64_t max_value;                          // numeric fields only; INT_LIST: the largest entry
     int flags;                                  // ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT, ROCKETNET_CONFIG_SECRET
 };
 
@@ -99,6 +100,30 @@ bool rocketnet_config_env_var_name_for( const char * transport_name, const char 
 // leading minus, or false.
 
 bool rocketnet_config_parse_int_value( const char * value, int * out );
+
+// the strict list parse an INT_LIST field's variable takes: one to
+// max_entries strict integers joined by single commas, no spaces and no empty
+// entry ("1492,1200,576"), or false. *num_out is the entry count.
+
+bool rocketnet_config_parse_int_list_value( const char * value, int * out, int max_entries, int * num_out );
+
+// the link MTU list's create-time checks (sdk/rocketnet_link_mtu.h), each
+// refusal one error line naming the endpoint and its own status:
+// ROCKETNET_STATUS_LINK_MTUS_EMPTY, _NOT_DESCENDING, _TOO_LARGE, _TOO_SMALL,
+// or ROCKETNET_STATUS_OK. The client and server transport creates and the
+// public creates run it on the resolved config.
+
+int rocketnet_config_link_mtus_status( const char * endpoint, const int * link_mtus, int num_link_mtus );
+
+// the public creates' check of a valid list against the message config:
+// ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES, with one error line, when
+// one max_message_bytes message needs more fragments than
+// reliable_messages_in_flight at the block stride of the list's smallest
+// packet size; otherwise ROCKETNET_STATUS_OK. On the default list the stride
+// is ROCKETNET_MESSAGE_FRAGMENT_BYTES, where the message config's own check
+// (rocketnet_message_validate_config) already holds, so it never refuses there.
+
+int rocketnet_config_link_mtus_message_status( const char * endpoint, const int * link_mtus, int num_link_mtus, const struct rocketnet_message_config_t * message );
 
 // strictly apply one per-endpoint uint64 env overlay -- the operator memory
 // budget reads ROCKETNET_<TRANSPORT>_<FIELD> with the table parser, so an

@@ -121,6 +121,10 @@ int rocketnet_server_secret_spans_for_test( const void * object, size_t * offset
 int rocketnet_server_transport_secret_spans_for_test( const void * object, size_t * offsets, size_t * bytes, int max );
 int rocketnet_client_transport_secret_spans_for_test( const void * object, size_t * offsets, size_t * bytes, int max );
 
+// the client transport's protocol state, read only: the reuse tests compare a
+// reused connection's probe state with a fresh one's
+const struct rocketnet_client_protocol_t * rocketnet_client_transport_protocol_for_test( const struct rocketnet_client_transport_t * client_transport );
+
 // the wall-clock budget an early destroy polls a worker's exit for: 0 makes
 // one pass with no sleep (the keep path's tests), a negative value restores
 // the default
@@ -500,10 +504,12 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_PATTERNS ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, simulated_duplicate_percent ) + sizeof( int ), sizeof( void * ) )
 /** @brief Size in bytes of the client transport config with the deterministic drop and reverse patterns, before the loopback hub. */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, simulated_reverse_window ) + sizeof( int ), sizeof( void * ) )
-/** @brief Current known client transport config size, in bytes: the loopback hub, appended. */
+/** @brief Size in bytes of client transport config revision 2: the loopback hub, appended. */
 #define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, loopback_hub ) + sizeof( void * ), sizeof( void * ) )
+/** @brief Current known client transport config size, in bytes: the link MTU list, appended. */
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_3 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_transport_config_t, num_link_mtus ) + sizeof( int ), sizeof( void * ) )
 /** @brief Known client transport config sizes, in bytes. */
-#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_PATTERNS, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2
+#define ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_PATTERNS, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_3
 
 // the server transport config table -- the single declaration everything
 // derives from, per the config system comment above. Each network thread
@@ -626,8 +632,10 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_7 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, num_msgx_transmit_workers ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Server transport config revision 8, in bytes: each Linux transport's cpu 0 reservation, appended. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_8 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, portable_reserve_cpu_0 ) + sizeof( int ), sizeof( uint64_t ) )
+/** @brief Server transport config revision 9, in bytes: the link MTU list, appended. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_9 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, num_link_mtus ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Known server transport config sizes, in bytes. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_7, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_8
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_5, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_6, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_7, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_8, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_9
 
 // the largest build-specific channel count: a WIDE record carries a u16 channel
 

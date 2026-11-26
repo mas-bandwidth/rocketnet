@@ -292,7 +292,7 @@ static void test_api_polish_lookups_say_unknown()
 {
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ), "FLOW_ID_RESERVED" ) == 0 );
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -36 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -41 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) 1 ), "UNKNOWN" ) == 0 );
 
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );
@@ -307,7 +307,8 @@ static void test_api_polish_lookups_say_unknown()
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION ), "PROTOCOL_VIOLATION" ) == 0 );
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH ), "CONFIG_MISMATCH" ) == 0 );
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED ), "MESSAGE_MEMORY_EXHAUSTED" ) == 0 );
-    check( strcmp( rocketnet_client_state_name( (rocketnet_client_state_t) -14 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED ), "MTU_PROBE_FAILED" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( (rocketnet_client_state_t) -15 ), "UNKNOWN" ) == 0 );
 
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ), "NONE" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT ), "RELIABLE_TIMED_OUT" ) == 0 );
@@ -354,7 +355,7 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
 
     // every status code from OK down to the last names itself; -9 and -22 are reserved
 
-    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED; status-- )
+    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES; status-- )
     {
         const char * name = rocketnet_status_name( (enum rocketnet_status_t) status );
         check( name != NULL );

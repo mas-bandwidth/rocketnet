@@ -1,5 +1,16 @@
 # Connect-token readers: ESBMC 8.5 results
 
+**A run at the current sizes is owed.** On 2026-11-25 the connect token's user
+data went from 256 to 64 bytes, so every bound below shrank: token 576 bytes,
+signed data 384, sealed block 240, private block 192. `proof.mk` now unwinds
+the field-copy paths 385, 241 and 65 and the private-block open 193. ESBMC has
+not been run at those bounds; the table below records the previous sizes and
+counts nothing for this tree. The run that discharges it:
+
+    make -C proofs/cbmc proofs-connect_token
+
+The results below are for the previous sizes.
+
 The nightly target includes the actual `sdk/rocketnet_connect_token.cpp` through
 `proof_connect_token.cpp`. The shared `../esbmc_shim.h` models the CBMC-style
 assume/assert/extent/nondeterministic-write calls. Libsodium calls are modeled

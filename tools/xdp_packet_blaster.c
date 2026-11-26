@@ -60,7 +60,7 @@
 #include <unistd.h>
 #endif
 
-#define RN_BLASTER_TOKEN_BYTES 768u
+#define RN_BLASTER_TOKEN_BYTES 576u
 #define RN_BLASTER_MAX_FILE_BYTES ( 2u * 1024u * 1024u )
 #define RN_BLASTER_UMEM_FRAMES 4096u
 #define RN_BLASTER_TX_RING_SIZE 2048u

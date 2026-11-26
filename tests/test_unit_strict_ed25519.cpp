@@ -26,7 +26,7 @@
 //
 // How the vectors were made (a generator over this repository's own
 // sodium/sodium.c, kept with the review record): the signed message is the
-// 576-byte buffer m[i] = i with m[0] replaced by a counter, the one free
+// 384-byte buffer m[i] = i with m[0] replaced by a counter, the one free
 // byte. B is the base point, T8 the order-8 point 26e8..05.
 //  - R of small order: the public key is the mixed-order point A = B + T8
 //    (canonical, not of small order, decodes). With S = k = SHA-512( R || A
@@ -71,20 +71,20 @@ struct strict_r_vector_t
 };
 
 static const strict_r_vector_t strict_r_vectors[] = {
-    { "identity (order 1), canonical", 13, 1, "0100000000000000000000000000000000000000000000000000000000000000d03ce72b6daec669fed899f24880cde0cc16638ba368b31c1d90fdf0fc8e680d" },
-    { "identity, x = 0 with the sign bit set", 0, 0, "0100000000000000000000000000000000000000000000000000000000000080088b4930834568213104d1c5ec4c975dc9217a668c0131431106dc4880c15c03" },
-    { "identity as y = p + 1, non-canonical", 0, 0, "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f79cbb651d502713d3cb88ef5fdda1aabb60fb883355d699e4e3e4f2bf61f310a" },
-    { "identity as y = p + 1 with the sign bit, non-canonical", 0, 0, "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff3e4633d2d7bee8e0ead753d0f370ffbcb5f75d0a55576de060dafc4888a3c105" },
-    { "y = -1 (order 2), canonical", 9, 1, "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7fc4bd1d83b7a9923fe026817ff1783068907ab89b42c4875f07f29cbd1bb83605" },
-    { "y = -1, x = 0 with the sign bit set", 0, 0, "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8c42820936a6a0d5b2035831b78ec3c365fb1452bdd7d57594dddb8866aff506" },
-    { "y = 0, x positive (order 4), canonical", 5, 1, "0000000000000000000000000000000000000000000000000000000000000000c6e7bb47d1a86ac484aca9f9dfa4faad88f4a5908fe6b4abe8ff4e3a0f93b809" },
-    { "y = 0, x negative (order 4), canonical", 10, 1, "00000000000000000000000000000000000000000000000000000000000000804a32f64c4af8514809e92ebfd4d84d4794450e32feaa7800ad7bb4b81b15f90b" },
-    { "y = 0 as y = p (order 4), non-canonical", 0, 0, "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f10233666302a1458746b3e2271a7a3d7bf65469a37f47de841e0cc502dfe4a0d" },
-    { "y = 0 as y = p with the sign bit (order 4), non-canonical", 0, 0, "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff8c71cda9a199f7502c1390f95e8d425c83dad531586e58218c1f270d95a2ce02" },
-    { "order 8, 26e8..05, canonical", 11, 1, "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05a7c03b373531b0d37bf7fcbe4eb97b93c9be54d9094a36e698c6353d95b62b0c" },
-    { "order 8, 26e8..85, canonical", 20, 1, "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85714e2da9141590fa2ca4e0e086ddace73db841c72c34d3212b49672db88f9500" },
-    { "order 8, c717..7a, canonical", 20, 1, "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a2d92d03bfc134e31b4d85e410571820dc277cdfb5062398cf4f74182c25f5501" },
-    { "order 8, c717..fa, canonical", 10, 1, "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fab3e68360b2ff0834698255c2fb078499be7a15a83bf32ba723738f44d782300b" },
+    { "identity (order 1), canonical", 8, 1, "0100000000000000000000000000000000000000000000000000000000000000585d8ee6ed508ccb3d031ad54c245b99841b301faddf0562024521207b2a7a0e" },
+    { "identity, x = 0 with the sign bit set", 0, 0, "010000000000000000000000000000000000000000000000000000000000008018c0ec95f963274deb9548744260676fea7dc94550ea165f7f0fe7a367b0cf0d" },
+    { "identity as y = p + 1, non-canonical", 0, 0, "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f958d28a4e7e165a7e5c87a1969447bfb811d580bddb8e8230502c7569d28900a" },
+    { "identity as y = p + 1 with the sign bit, non-canonical", 0, 0, "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff6ead314e95baa32f61ee3808bb3ede00e2815ad91841e01617e651f7fa964c01" },
+    { "y = -1 (order 2), canonical", 21, 1, "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7fcce30c63b0469b481dd4c0073e7c26b67672babdd9dd4e7761dafa918c103004" },
+    { "y = -1, x = 0 with the sign bit set", 0, 0, "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff85b6c5ba07fd34a8caeea77843fad88c9ec8946b0b4ba1314f572466aeafc50f" },
+    { "y = 0, x positive (order 4), canonical", 0, 1, "0000000000000000000000000000000000000000000000000000000000000000b68daca69b97f0b0acddc673ff50a6ac539d8f0392c9afbcc885c051351ca00c" },
+    { "y = 0, x negative (order 4), canonical", 25, 1, "0000000000000000000000000000000000000000000000000000000000000080027b643d1663af769f874f7d5e7a9fe50fc8daab3abd41f036af008d4c03eb05" },
+    { "y = 0 as y = p (order 4), non-canonical", 0, 0, "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7fcf10ed2cb412fd43bdae83317a003a8e4e57372fdc1734973badf2b717d9f90d" },
+    { "y = 0 as y = p with the sign bit (order 4), non-canonical", 0, 0, "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffb8bc52228126c301b529aa23544050e7549f2083a39325566b58f5acf4e82a07" },
+    { "order 8, 26e8..05, canonical", 13, 1, "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05b78778674ce40c11ab2bbb15831a2cac3a56058eb18cce77f38a561c7bc4ac02" },
+    { "order 8, 26e8..85, canonical", 32, 1, "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85d1585472a59da5bfea4039464e92daee8cb23a1f9b8b9341661b6c15998fd70d" },
+    { "order 8, c717..7a, canonical", 11, 1, "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037aad23e605628b14671fd5422beeeeabef206227aa4dbdd61c8cd58ce44c6d6f07" },
+    { "order 8, c717..fa, canonical", 52, 1, "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fadb4c5a5a2b040e38ea29db17eea67d72eb7c13eee5054726e9284153d0029e0b" },
 };
 
 struct strict_key_vector_t
@@ -104,15 +104,15 @@ static const strict_key_vector_t strict_key_vectors[] = {
     { "identity, x = 0 with the sign bit set", 0, "0100000000000000000000000000000000000000000000000000000000000080" },
     { "identity as y = p + 1, non-canonical", 0, "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f" },
     { "identity as y = p + 1 with the sign bit, non-canonical", 0, "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" },
-    { "y = -1 (order 2), canonical", 0, "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f" },
-    { "y = -1, x = 0 with the sign bit set", 2, "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" },
-    { "y = 0, x positive (order 4), canonical", 4, "0000000000000000000000000000000000000000000000000000000000000000" },
+    { "y = -1 (order 2), canonical", 2, "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f" },
+    { "y = -1, x = 0 with the sign bit set", 3, "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" },
+    { "y = 0, x positive (order 4), canonical", 3, "0000000000000000000000000000000000000000000000000000000000000000" },
     { "y = 0, x negative (order 4), canonical", 0, "0000000000000000000000000000000000000000000000000000000000000080" },
     { "y = 0 as y = p (order 4), non-canonical", 2, "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f" },
-    { "y = 0 as y = p with the sign bit (order 4), non-canonical", 0, "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" },
-    { "order 8, 26e8..05, canonical", 2, "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05" },
-    { "order 8, 26e8..85, canonical", 1, "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85" },
-    { "order 8, c717..7a, canonical", 13, "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a" },
+    { "y = 0 as y = p with the sign bit (order 4), non-canonical", 2, "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" },
+    { "order 8, 26e8..05, canonical", 22, "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05" },
+    { "order 8, 26e8..85, canonical", 5, "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85" },
+    { "order 8, c717..7a, canonical", 5, "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a" },
     { "order 8, c717..fa, canonical", 7, "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa" },
 };
 
@@ -147,16 +147,16 @@ static void test_strict_ed25519_small_order_r_refused()
     check( rn_standard_hex_decode( strict_mixed_key_hex, mixed_key, 32 ) == 32 );
 
     // controls: R = B and S = k + 1 under B (counter 0) and under A (counter
-    // 8, where [k]T8 is the identity)
+    // 13, where [k]T8 is the identity)
 
-    check( strict_verify( 0, "5866666666666666666666666666666666666666666666666666666666666666e05e4e1cf4a3d4feeed9e82265897af641882911d12d9bcacb2779112e96880a", strict_base_point ) == 1 );
-    check( strict_verify( 8, "5866666666666666666666666666666666666666666666666666666666666666210d9fd5092d2f7d2479fa389a2c5ff29db7d3569951eeeaa5ebdecff3ca9d07", mixed_key ) == 1 );
+    check( strict_verify( 0, "5866666666666666666666666666666666666666666666666666666666666666de762301e4578e91a98c58c330231e60ddaf36d568169d3b97688ff7c8ae7409", strict_base_point ) == 1 );
+    check( strict_verify( 13, "5866666666666666666666666666666666666666666666666666666666666666c11c367653ed21f17a58ded81eb42b9d0ec1da83c438e38b37fd954ce2625b05", mixed_key ) == 1 );
 
     // the judgement's witness: key B (secret scalar 1), R = the identity,
     // S = k: the equation holds and only the small-order R check refuses
 
     int admitted = 0;
-    if ( strict_verify( 0, "01000000000000000000000000000000000000000000000000000000000000004e68490ddf770a0960616671416709fc29b743db4d754865521bb8d5d3ef820b", strict_base_point ) )
+    if ( strict_verify( 0, "01000000000000000000000000000000000000000000000000000000000000000446a5b66d22b9d59070d3f558f25cf42805eb08a1cab6a5c129bcba3e5c4802", strict_base_point ) )
     {
         printf( "strict ed25519: a signature whose R is of small order verified: the identity under the base point\n" );
         admitted++;

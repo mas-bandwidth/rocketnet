@@ -16,6 +16,10 @@
     message, receives the echo, prints its state changes, disconnects, and
     prints the state that says how the connection ended.
 
+    --link-mtus <list> sets the link MTU list (examples/link_mtus.h); the
+    server must be given the same list. Once connected the client prints the
+    packet size its connection chose and its largest unreliable message.
+
     With --stay it does not disconnect after the echo: it stays connected
     until the server disconnects it (a ban, or another session of the same
     user taking its place on the backend's whitelist), and passes only if
@@ -28,6 +32,7 @@
 #include "rocketnet.h"
 #include "dev_keys.h"
 #include "shutdown.h"
+#include "link_mtus.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,6 +46,14 @@ static void state_changed( void * context, enum rocketnet_client_state_t previou
 
 int main( int argc, char ** argv )
 {
+    int link_mtus[ROCKETNET_MAX_LINK_MTUS];
+    int num_link_mtus = 0;
+    argc = rn_cli_take_link_mtus( argc, argv, link_mtus, &num_link_mtus );
+    if ( argc < 0 )
+    {
+        return 1;
+    }
+
     const char * token = NULL;
     int stay = 0;
     double seconds = 10.0;
@@ -105,6 +118,19 @@ int main( int argc, char ** argv )
     config.transport = "portable";
     memcpy( config.packet_filter, packet_filter, sizeof( packet_filter ) );
     config.state_change_callback = state_changed;
+    if ( num_link_mtus > 0 )
+    {
+        memcpy( config.link_mtus, link_mtus, sizeof( int ) * (size_t) num_link_mtus );
+        config.num_link_mtus = num_link_mtus;
+
+        // a list down to 576 carries the default 1 MiB message in 480-byte
+        // fragments, more than the default window of 1024 holds, so create
+        // would refuse it (LINK_MTUS_TOO_SMALL_FOR_MESSAGES): raise both
+        // windows, as "Path MTU" in examples/backend/README.md says
+
+        config.reliable_messages_in_flight = 4096;
+        config.packets_in_flight = 4096;
+    }
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
@@ -144,9 +170,16 @@ int main( int argc, char ** argv )
     // a negative state ends a connection that failed: a refused or expired
     // token, or a server that never answered
 
-    int sent = 0, received = 0;
+    // With a link MTU list of more than one entry the connection starts at the
+    // list's smallest packet size and rises as the probe finds a larger one
+    // (standard/TRANSPORT.md t11.4), so the client stays up to one more
+    // second after its echo to show the rise. The default list never probes.
+
+    const double linger_seconds = num_link_mtus > 1 ? 1.0 : 0.0;
+    int sent = 0, received = 0, reported_packet_bytes = 0;
+    double received_time = 0.0;
     const double start = rocketnet_time();
-    while ( ( stay || !received ) && rocketnet_client_state( client ) >= 0 && rocketnet_time() - start < seconds )
+    while ( ( stay || !received || rocketnet_time() - received_time < linger_seconds ) && rocketnet_client_state( client ) >= 0 && rocketnet_time() - start < seconds )
     {
         rocketnet_client_update( client, 1000.0 + rocketnet_time() - start );
 
@@ -156,8 +189,20 @@ int main( int argc, char ** argv )
             for ( int i = 0; i < batch->num_messages; i++, received++ )
             {
                 printf( "client received: %.*s\n", batch->bytes[i], (const char *) batch->data[i] );
+                received_time = received ? received_time : rocketnet_time();
                 fflush( stdout );
             }
+        }
+
+        // the connection's packet size, the largest UNRELIABLE message that
+        // still goes in one packet, and the link MTU list entry the size comes
+        // from: at connect, and again each time the size rises (it never falls)
+
+        if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED && rocketnet_client_max_packet_bytes( client ) > reported_packet_bytes )
+        {
+            reported_packet_bytes = rocketnet_client_max_packet_bytes( client );
+            printf( "backend_client: packet_bytes=%d max_unreliable_message_bytes=%d link_mtu=%d\n",
+                    reported_packet_bytes, rocketnet_client_max_unreliable_message_bytes( client ), rocketnet_client_link_mtu( client ) );
         }
 
         if ( !sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )

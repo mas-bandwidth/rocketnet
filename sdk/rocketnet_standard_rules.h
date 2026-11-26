@@ -18,8 +18,10 @@
 // The unreliable send path's one-record limit, from the standard's m2.1 rule:
 // the largest message whose record header and form byte fit the one-packet
 // capacity. The header is the one rocketnet_message_record_header_bytes
-// writes for the record's code and channel.
-static inline int rn_endpoint_unreliable_record_limit( int reliability, int channel, int capacity )
+// writes for the record's code and channel. single_bytes is the connection's
+// SINGLE limit, C(P) - 1 of its packet size (ROCKETNET_MESSAGE_SINGLE_BYTES
+// at the ceiling), which the packed unreliable records are written to.
+static inline int rn_endpoint_unreliable_record_limit( int reliability, int channel, int capacity, int single_bytes )
 {
     const bool sequenced = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED;
 
@@ -28,16 +30,16 @@ static inline int rn_endpoint_unreliable_record_limit( int reliability, int chan
     shape.code = sequenced ? ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED : ROCKETNET_MESSAGE_CODE_UNRELIABLE;
     shape.channel = (uint32_t) channel;
 
-    const int one_packet_capacity = sequenced ? capacity : ( capacity < ROCKETNET_MESSAGE_SINGLE_BYTES ? capacity : ROCKETNET_MESSAGE_SINGLE_BYTES );
+    const int one_packet_capacity = sequenced ? capacity : ( capacity < single_bytes ? capacity : single_bytes );
 
     return one_packet_capacity - rocketnet_message_record_header_bytes( &shape ) - 1;
 }
 
 // The unreliable send path's record-size comparison: over when the message is
 // above its one-record limit.
-static inline bool rn_endpoint_unreliable_over_record_capacity( int reliability, int channel, int bytes, int capacity )
+static inline bool rn_endpoint_unreliable_over_record_capacity( int reliability, int channel, int bytes, int capacity, int single_bytes )
 {
-    return (int64_t) (uint32_t) bytes > (int64_t) rn_endpoint_unreliable_record_limit( reliability, channel, capacity );
+    return (int64_t) (uint32_t) bytes > (int64_t) rn_endpoint_unreliable_record_limit( reliability, channel, capacity, single_bytes );
 }
 
 #endif // #ifdef __cplusplus
