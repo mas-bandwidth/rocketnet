@@ -2286,6 +2286,49 @@ static void test_connection_reset_disconnect_reason_kept_until_next_connection()
 }
 REGISTER_UNIT_TEST( test_connection_reset_disconnect_reason_kept_until_next_connection );
 
+// A client's disconnect at its transport, delivered, ends the server's slot
+// with exactly CLIENT_DISCONNECTED in the message layer: the server accepts
+// the client's disconnect packet and ends the slot within a few updates, never
+// by its timeout (the token's 10 seconds) and never with another reason. The
+// functional rocketnet_test_message_objects_loopback_from_t1000 runs the
+// same disconnect over real UDP, where every copy of the burst can be lost, so
+// it also allows TIMED_OUT; this lossless case is where the exact reason is
+// checked.
+static void test_message_server_reads_client_disconnected()
+{
+    reset_loopback_t f;
+    memset( &f, 0, sizeof( f ) );
+    f.now = 1000.0;
+    f.server = reset_loopback_server_create( f.now );
+    check( f.server );
+
+    const int slot = reset_loopback_connect( &f, 0, 0xE201 );
+    reset_loopback_settle_messages( &f );
+    check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_message_client_disconnect_reason( f.clients[0] ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
+    rocketnet_client_transport_disconnect( rocketnet_message_client_transport( f.clients[0] ) );
+
+    const double disconnect_time = f.now;
+    for ( int i = 0; i < 10 && rocketnet_message_server_client_connected( f.server, slot ); i++ )
+    {
+        f.now += 0.01;
+        (void) rocketnet_message_client_update( f.clients[0], f.now );
+        rocketnet_message_client_send_packets( f.clients[0] );
+        reset_loopback_drain_client( f.clients[0] );
+        check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
+        reset_loopback_drain_server( f.server );
+        rocketnet_message_server_send_packets( f.server );
+    }
+
+    check( !rocketnet_message_server_client_connected( f.server, slot ) );
+    check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED );
+    check( f.now - disconnect_time < 1.0 );
+
+    reset_loopback_destroy( &f );
+}
+REGISTER_UNIT_TEST( test_message_server_reads_client_disconnected );
+
 // Reuse the same server slot with deliberately dirty payload storage and an
 // unsealed aggregate from the former client. Reset must clear ownership/state,
 // not the payload bytes. Each delivery mode must work for the replacement.
