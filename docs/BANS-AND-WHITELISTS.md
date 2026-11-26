@@ -40,7 +40,11 @@ can observe the source address of the HTTP connection that requests a
 token. The game server's transport separately observes the source address
 of incoming UDP packets. A player can change either observed address by
 changing networks or using a VPN. The public SDK exposes the connected
-account's `client_id` for moderation. It has no per-client IP address getter.
+account's `client_id` for moderation. `rocketnet_server_client_address`
+reports the address and port the connected client sends from, as the server
+sees them; it is for diagnostics, support and logging, not for bans.
+Ban by the user hash in `client_id` and enforce the ban with the whitelist,
+as below.
 
 On a mobile network that uses carrier-grade NAT (CGNAT), two strangers
 playing on separate phones with separate subscriptions can reach the game

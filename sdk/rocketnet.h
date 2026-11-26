@@ -49,7 +49,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.2.2"
+    #define ROCKETNET_VERSION_FULL                         "v1.3.0"
 
     /// The major component of the SDK version.
 
@@ -57,11 +57,11 @@
 
     /// The minor component of the SDK version.
 
-    #define ROCKETNET_VERSION_MINOR                        2
+    #define ROCKETNET_VERSION_MINOR                        3
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        2
+    #define ROCKETNET_VERSION_PATCH                        0
 
 #else // !ROCKETNET_DEV
 
@@ -3813,6 +3813,52 @@ ROCKETNET_EXPORT uint64_t rocketnet_server_client_connection_id( const struct ro
 /// copied.
 
 ROCKETNET_EXPORT bool rocketnet_server_client_user_data( const struct rocketnet_server_t * server, int client_index, uint8_t * user_data );
+
+/// Writes the address and port the connected client sends from, as the
+/// server sees them: "a.b.c.d:port" for IPv4, "[v6]:port" for IPv6. The
+/// port is the client's source port, so two clients behind one address read
+/// different strings.
+/// Returns true if the slot holds a connected client and the address fits.
+/// Use a buffer of ROCKETNET_MAX_ADDRESS_STRING_BYTES.
+///
+/// The address is for diagnostics, support and logging. To look a client up
+/// or key per-client state fast, use client_index or
+/// rocketnet_server_client_id, not the address. Do not ban by it: banning by
+/// IP address does not work. A player changes address easily, by changing
+/// networks or through a VPN, and many players share one address behind
+/// carrier-grade NAT, so an IP ban misses the player it is for and locks out
+/// strangers. Ban the authenticated account by its user hash, the slot's
+/// rocketnet_server_client_id, and enforce it with per-server whitelists:
+/// see the bans and whitelists guide, BANS-AND-WHITELISTS.md ("Why IP bans
+/// fail" and "How to enforce an account ban").
+///
+/// With a buffer of ROCKETNET_MAX_ADDRESS_STRING_BYTES it returns true
+/// exactly when rocketnet_server_client_connected does: from the moment the
+/// slot connects until it is released (a disconnect, a timeout, or the server
+/// stopping). A slot without a connected client, and any slot while stopped,
+/// returns false; that is not misuse.
+///
+/// Failure is handled as rocketnet_server_ipv4_address handles it: every
+/// failure writes an empty string if address_bytes is positive, never part
+/// of an address. A buffer too small for the address logs an error. A
+/// zero-sized buffer is left untouched.
+///
+/// Callable running or stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time. It is a main thread call: between
+/// rocketnet_server_update_receive and rocketnet_server_update_finish, and
+/// while game threads send, it must not run.
+///
+/// @param server The server. NULL counts as API misuse, writes an empty
+/// string and returns false.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error, counts as API misuse, writes an empty string and returns false.
+/// @param address The output buffer. NULL counts as API misuse, writes
+/// nothing and returns false.
+/// @param address_bytes The size of address in bytes.
+/// @return True if the slot holds a connected client and its address was
+/// written.
+
+ROCKETNET_EXPORT bool rocketnet_server_client_address( const struct rocketnet_server_t * server, int client_index, char * address, size_t address_bytes );
 
 /// Disconnects a client and frees its slot.
 ///

@@ -1,11 +1,25 @@
 # RocketNet v1.3.0
 
-Changes compared with the `v1.2.2` tag. A minor release with a new protocol
-version: the connect token and the connection request change size, the
-connection response carries a packet size, and packet type 9 is the new
-connection probe, so v1.3.0 endpoints do not interoperate with v1.2.x
-endpoints. Backends must issue the new token format. The counter contract
-grows from 292 to 315 counters, appended at the end.
+Changes compared with the `v1.2.2` tag. v1.2.3 was labelled on `main` but
+never tagged or published, so its changes ship for the first time here.
+
+## Wire change
+
+A minor release with a new protocol version, `0x065014D9`: the connect token
+and the connection request change size, the connection response carries a
+packet size, and packet type 9 is the new connection probe
+([TRANSPORT.md t6 Connect token](../standard/TRANSPORT.md#t6),
+[t8.4 Connection response](../standard/TRANSPORT.md#t8.4),
+[t8.13 Connection probe](../standard/TRANSPORT.md#t8.13),
+[t11.4 Path probe](../standard/TRANSPORT.md#t11.4)).
+
+Compatibility: v1.3.0 endpoints do not interoperate with v1.2.x or earlier
+endpoints, in either direction, and a v1.2.x connect token does not open on
+v1.3.0. Clients, game servers and backends must be upgraded together. The
+public API and the ABI only grow, and the counter contract grows from 292 to
+315 counters, appended at the end.
+
+## Link MTU fallback
 
 - Link MTU fallback. The client and server configs gain `link_mtus` and
   `num_link_mtus` (`ROCKETNET_CLIENT_LINK_MTUS`, `ROCKETNET_SERVER_LINK_MTUS`,
@@ -33,15 +47,20 @@ grows from 292 to 315 counters, appended at the end.
   falls, and probing stops for good once it is the largest size. A size
   ruled out is tried again later, 10, 20 and 30 s after the rule-out, then
   at gaps doubling to 300 s and every 300 s after, so a size heavy loss
-  ruled out is taken once the loss ends; the sizes above a ruled-out size
+  ruled out is taken once the loss ends; a re-try that gets through raises
+  the size and the walk goes on up, and the next size's schedule, should it
+  be ruled out, starts afresh at 10 s. The sizes above a ruled-out size
   are never tried before the connection is at it. On a clean path the
   three-step list is at full size two round trips after connect, and on a
   1200 link at 1172 in one round trip, probing waiting in about half a
   second; on a 576 path 1452 is never sent. A path that does not carry even the smallest
   size ends the connection in the new client state
   `ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED` (-14).
-  standard/TRANSPORT.md t2.3, t8.4, t8.13, t11.4 and t12 rules 15 and 16;
-  proofs/tla/RNPathProbe.tla.
+  [TRANSPORT.md t2.3](../standard/TRANSPORT.md#t2.3),
+  [t8.4](../standard/TRANSPORT.md#t8.4),
+  [t8.13](../standard/TRANSPORT.md#t8.13),
+  [t11.4](../standard/TRANSPORT.md#t11.4) and
+  [t12](../standard/TRANSPORT.md#t12) rules 15 and 16.
 - Create refuses a bad list with its own status:
   `ROCKETNET_STATUS_LINK_MTUS_EMPTY` (-36), `_NOT_DESCENDING` (-37),
   `_TOO_LARGE` (-38), `_TOO_SMALL` (-39, an entry below 546), and
@@ -74,3 +93,55 @@ grows from 292 to 315 counters, appended at the end.
   `CLIENT_PROBE_STRIKE`, `CLIENT_PROBE_RULED_OUT`, `CLIENT_PROBE_FAILED`,
   `CONNECTION_PROBE_CONFIRMED` and `CONNECTION_RESPONSE_SIZE_NOT_ALLOWED`.
   The kernel filter accepts type 9 from 34 bytes to the receive ceiling.
+
+## Client address on the server
+
+- Public API: `rocketnet_server_client_address( server, client_index,
+  address, address_bytes )` writes the address and port the connected client
+  sends from, as the server sees them, as "a.b.c.d:port" or
+  "[v6]:port". With a buffer of `ROCKETNET_MAX_ADDRESS_STRING_BYTES` it returns
+  true exactly when `rocketnet_server_client_connected` does; a free slot, a
+  stopped server, a bad index, a NULL server or a buffer too small for the
+  address returns false and writes an empty string, as
+  `rocketnet_server_ipv4_address` does (a NULL buffer writes nothing). The
+  address is for diagnostics, support and logging; to look a client up, use
+  its index or `rocketnet_server_client_id`. Do not ban by it: ban the
+  account's user hash (`rocketnet_server_client_id`) and enforce the ban with
+  per-server whitelists, as [Bans and whitelists](BANS-AND-WHITELISTS.md)
+  describes.
+
+## Examples
+
+- Authentication and bans: the example backends sign players in through one
+  seam, derive `client_id` as a keyed hash of the provider and user id, serve
+  bans and a per-server whitelist, and give each user one seat; the example
+  server fetches its whitelist and kicks a client the list does not hold
+  ([Bans and whitelists](BANS-AND-WHITELISTS.md)). The match request is now
+  `POST /match` with the sign-in ticket.
+- The example server's whitelist fetch has one deadline for the whole
+  request (connect, send and receive), so a backend that answers slowly or
+  trickles its answer fails that fetch, and the server keeps its last good
+  list, instead of holding the fetch thread and shutdown.
+- The Go and C# example backends refuse a sign-in ticket holding any
+  character outside the standard base64 alphabet and `=`, so both give the
+  same answer to a ticket with whitespace in it.
+- `examples/backend_server.c` prints each client's address when it connects.
+- `example_backend_client` and `example_backend_server` take `--link-mtus`
+  and print the connection's packet size, its largest unreliable message and
+  its link MTU at connect and each time the size rises.
+
+## Upgrade
+
+Replace v1.2.2 with v1.3.0 everywhere at once: the client, the game server
+and the backend. A v1.2.x endpoint cannot connect to a v1.3.0 one.
+
+- Backends: issue the new connect token (576 bytes, a 768-character string)
+  with at most 64 bytes of user data. Data that does not fit moves to the
+  backend's own records, and the token carries a key to it. A backend built
+  on the example also moves its match request to `POST /match`.
+- Games: no source change is needed. The default `link_mtus` list, `{ 1500 }`,
+  behaves as v1.2.2 did. To use link MTU fallback, set the same list on the
+  client and the server, and raise `reliable_messages_in_flight` if create
+  returns `ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES`.
+- Code that reads the packet size should read it per connection with the new
+  calls, since a connection's size can start below 1452 and rise.

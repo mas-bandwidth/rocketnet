@@ -358,6 +358,9 @@ const (
 	aliceHashVector   = uint64(0x5098a1e5575a941f)
 )
 
+// alice's ticket with each of these put inside it is refused by both
+var whitespaceVectors = []string{" ", "\n", "\r\n", "\t"}
+
 func TestCrossBackendVectors(t *testing.T) {
 	mock, users := testUsers()
 	if ticket := mustTicket(t, mock, "alice", testNow); ticket != aliceTicketVector {
@@ -365,6 +368,15 @@ func TestCrossBackendVectors(t *testing.T) {
 	}
 	if userHash := mustHash(t, users, "mock", "alice"); userHash != aliceHashVector {
 		t.Fatalf("alice's hash is %.16x", userHash)
+	}
+	if userID, err := mock.verify(aliceTicketVector, testNow); err != nil || userID != "alice" {
+		t.Fatalf("alice's ticket did not verify: %q %v", userID, err)
+	}
+	for _, inserted := range whitespaceVectors {
+		text := aliceTicketVector[:8] + inserted + aliceTicketVector[8:]
+		if _, err := mock.verify(text, testNow); err == nil {
+			t.Fatalf("alice's ticket with %q inside verified", inserted)
+		}
 	}
 }
 

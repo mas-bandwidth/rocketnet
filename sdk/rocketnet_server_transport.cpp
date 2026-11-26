@@ -6287,6 +6287,23 @@ bool rocketnet_server_transport_client_user_data( struct rocketnet_server_transp
     return true;
 }
 
+// the address the slot's packets come from, the one the encryption map holds
+// for its connection (rocketnet_server_protocol_client_address). This read
+// changes no state but the SLOT_WITHOUT_MAPPING counter, on a connected slot
+// that has lost its mapping (a broken invariant); a free slot leaves address
+// untouched
+
+bool rocketnet_server_transport_client_address( struct rocketnet_server_transport_t * server_transport, int client_index, struct rocketnet_address_t * address )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) || !rocketnet_api_null_guard( address ) )
+    {
+        return false;
+    }
+    rocketnet_assert( server_transport );
+
+    return rocketnet_server_protocol_client_address( &server_transport->protocol, client_index, address ) != 0;
+}
+
 // standard/MESSAGES.md m1.4 rule 5: the connection that holds the slot now
 
 uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_server_transport_t * server_transport, int client_index )

@@ -3894,6 +3894,77 @@ bool rocketnet_server_client_user_data( const struct rocketnet_server_t * server
     return rocketnet_server_transport_client_user_data( rn_server_transport( server ), slot, user_data );
 }
 
+// as rn_server_family_address: every failure leaves an empty string, so a
+// caller never reads part of an address; a zero-sized buffer is untouched
+
+static void rn_server_client_address_clear( char * address, size_t address_bytes )
+{
+    if ( address_bytes > 0 )
+    {
+        address[0] = '\0';
+    }
+}
+
+// the connected address of the slot, read where the transport sends to it
+// (rocketnet_server_protocol_client_address), and only while
+// rocketnet_server_client_connected reads true: a slot the message layer has
+// let go of reports no address even while the transport finishes with it
+
+bool rocketnet_server_client_address( const struct rocketnet_server_t * server, int client_index, char * address, size_t address_bytes )
+{
+    if ( !rocketnet_api_null_guard( address ) )
+    {
+        return false;
+    }
+
+    rn_server_client_address_clear( address, address_bytes );
+
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return false;
+    }
+
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+    {
+        return false;
+    }
+
+    if ( rocketnet_message_server_client_connected( rn_server( server ), slot ) == 0 )
+    {
+        return false;
+    }
+
+    struct rocketnet_address_t connected;
+    if ( !rocketnet_server_transport_client_address( rn_server_transport( server ), slot, &connected ) )
+    {
+        return false;
+    }
+
+    // a formatting failure writes "NONE" into the local buffer: that is no
+    // address, and the caller's buffer keeps its empty string
+
+    char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    rocketnet_address_to_string( &connected, buffer );
+    if ( strcmp( buffer, "NONE" ) == 0 )
+    {
+        return false;
+    }
+
+    const size_t length = strlen( buffer );
+    if ( length + 1 > address_bytes )
+    {
+        // as rn_server_family_address: the buffer keeps its empty string
+
+        rocketnet_error( "client address refused: the buffer is %d bytes, the address needs %d", (int) address_bytes, (int) ( length + 1 ) );
+        return false;
+    }
+
+    memcpy( address, buffer, length + 1 );
+
+    return true;
+}
+
 // The slot ends at once, before the next update, in every query and send: a
 // slot the message layer holds CONNECTED is kicked (rn_message_object_kick),
 // which cancels its open in-place start,

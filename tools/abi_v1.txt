@@ -45,6 +45,7 @@ export rocketnet_quiet
 export rocketnet_server_abort_client_message
 export rocketnet_server_abort_message
 export rocketnet_server_can_send_message
+export rocketnet_server_client_address
 export rocketnet_server_client_conditions
 export rocketnet_server_client_connected
 export rocketnet_server_client_max_packet_bytes
@@ -139,6 +140,7 @@ prototype rocketnet_quiet void rocketnet_quiet(bool)
 prototype rocketnet_server_abort_client_message void rocketnet_server_abort_client_message(struct rocketnet_server_t*, int)
 prototype rocketnet_server_abort_message void rocketnet_server_abort_message(struct rocketnet_server_t*)
 prototype rocketnet_server_can_send_message bool rocketnet_server_can_send_message(const struct rocketnet_server_t*, int, int, enum rocketnet_reliability_t, int)
+prototype rocketnet_server_client_address bool rocketnet_server_client_address(const struct rocketnet_server_t*, int, char*, size_t)
 prototype rocketnet_server_client_conditions bool rocketnet_server_client_conditions(const struct rocketnet_server_t*, int, struct rocketnet_conditions_t*, int)
 prototype rocketnet_server_client_connected bool rocketnet_server_client_connected(const struct rocketnet_server_t*, int)
 prototype rocketnet_server_client_max_packet_bytes int rocketnet_server_client_max_packet_bytes(struct rocketnet_server_t*, int)

@@ -34,6 +34,11 @@ For each backend in examples/backend/:
    list's smallest size, 548, 507 and 576, rise in all three each time, and
    end at 1452, 1411 and 1492, since loopback carries every size.
 
+5. The whitelist fetch's deadline, once: a fake backend registers the server
+   and then trickles its whitelist answer a byte at a time, and the server
+   must give that fetch up within one whitelist interval plus
+   FETCH_SLACK_SECONDS. See fetch_deadline below.
+
 This is the functional tier: it uses sockets and the wall clock. The unit
 tests of the backends are `go test` in examples/backend/go and
 `dotnet run --project Tests` in examples/backend/csharp. Each backend is
@@ -67,6 +72,12 @@ TIMEOUT_SECONDS = 60
 READY_SECONDS = 30
 SHARE_TRY_SECONDS = 3  # long enough for a loopback handshake many times over
 KICK_SLACK_SECONDS = 0.5  # beyond one whitelist interval: the fetch, a frame, the disconnect packet
+FETCH_SLACK_SECONDS = 1.0  # beyond the fetch's deadline (one whitelist interval): a poll step, the print
+TRICKLE_SECONDS = 0.5  # the fake backend's gap between bytes, well inside any one poll's wait
+# how examples/backend_client.c ends --stay when the server never let it in:
+# a refusal, a handshake that timed out, or one still going when --seconds ran out
+REFUSED_STATES = ("CONNECTION_DENIED", "COOKIE_REQUEST_TIMED_OUT", "CONNECTION_REQUEST_TIMED_OUT",
+                  "REQUESTING_COOKIE", "SENDING_CONNECTION_REQUEST")
 PROTOCOL_ID = "0x52434b544e455431"  # EXAMPLE_PROTOCOL_ID, examples/dev_keys.h
 CLIENT_ID = 1234567890123
 CAROL_CLIENT_ID = 0xCA401  # minted offline: seated on no server, so on no whitelist
@@ -282,10 +293,96 @@ def mint_offline(command, server_text, keys, client_id):
 
 
 def shared_token_refused(client_binary, token, workdir, link_args):
-    """True when a client with token never connects in SHARE_TRY_SECONDS."""
+    """True when a client with token is refused, or times out, in
+    SHARE_TRY_SECONDS: it exits 1 with "FAIL: the echo did not arrive", its
+    connection ended in one of REFUSED_STATES, and it never connected. Any
+    other end, a crash or a signal among them, is not a refusal."""
     tried = subprocess.run([str(client_binary), "--token", token, "--stay", "--seconds", str(SHARE_TRY_SECONDS)] + link_args, cwd=workdir,
                            env=backend_environment({}), capture_output=True, text=True, timeout=execution_timeout(TIMEOUT_SECONDS))
-    return tried.returncode != 0 and "-> CONNECTED" not in tried.stdout
+    ended = re.search(r"^client stayed [0-9.]+ seconds, state (\S+)$", tried.stdout, re.MULTILINE)
+    refused = (tried.returncode == 1 and last_line(tried.stdout) == "FAIL: the echo did not arrive" and ended is not None
+               and ended.group(1) in REFUSED_STATES and "-> CONNECTED" not in tried.stdout)
+    if not refused:
+        print(f"shared token: client exited {tried.returncode}\n{tried.stdout}{tried.stderr}", file=sys.stderr)
+    return refused
+
+
+def trickle_backend(listener, accepted, stop_event):
+    """A fake backend: PUT /servers/{id} is 204, and GET .../whitelist is
+    answered one byte every TRICKLE_SECONDS, without end, until the server
+    hangs up. accepted gets the monotonic time of each GET."""
+    listener.settimeout(0.1)
+    while not stop_event.is_set():
+        try:
+            connection, _ = listener.accept()
+        except socket.timeout:
+            continue
+        with connection:
+            connection.settimeout(2)
+            request = b""
+            try:
+                while b"\r\n\r\n" not in request:
+                    data = connection.recv(4096)
+                    if not data:
+                        break
+                    request += data
+                if request.startswith(b"PUT "):
+                    connection.sendall(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                    continue
+                accepted.append(time.monotonic())
+                answer = b"HTTP/1.1 200 OK\r\nX-Trickle: "
+                sent = 0
+                while not stop_event.is_set():
+                    connection.sendall(answer[sent:sent + 1] if sent < len(answer) else b"a")
+                    sent += 1
+                    time.sleep(TRICKLE_SECONDS)
+            except OSError:
+                continue
+
+
+def fetch_deadline(server_binary, keys):
+    """The server gives up a whitelist fetch the backend trickles, within
+    one whitelist interval plus FETCH_SLACK_SECONDS of the request, and says
+    so: with no overall deadline the fetch would never end, no new list
+    would come, and the server could not shut down."""
+    label = "whitelist_fetch_deadline"
+    workdir = Path(tempfile.mkdtemp(prefix="rocketnet_backend_trickle_"))
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    stop_event = threading.Event()
+    accepted = []
+    backend = threading.Thread(target=trickle_backend, args=(listener, accepted, stop_event), daemon=True)
+    server = None
+    try:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(4)
+        port = listener.getsockname()[1]
+        backend.start()
+        env = backend_environment({"ROCKETNET_SERVER_BACKEND_PUBLIC_KEY": keys["ROCKETNET_SERVER_BACKEND_PUBLIC_KEY"],
+                                   "ROCKETNET_EXAMPLE_PORT": str(free_port(socket.SOCK_DGRAM))})
+        server = start([str(server_binary), "--backend", f"127.0.0.1:{port}", "--server-id", "trickle", "--sessions", "1"], workdir, env)
+        timing = wait_for(lambda: whitelist_timing(server.text()), server.process, READY_SECONDS)
+        if not timing:
+            return fail(label, f"the server did not say its whitelist interval\n{server.text()}")
+        interval, _ = timing
+        if not wait_for(lambda: accepted, server.process, READY_SECONDS):
+            return fail(label, f"the server did not fetch its whitelist\n{server.text()}")
+        gave_up_line = "whitelist: fetch failed, keeping the last good list: GET /servers/trickle/whitelist: timed out receiving"
+        bound = interval + FETCH_SLACK_SECONDS
+        gave_up = wait_for(lambda: server.find(gave_up_line), server.process, bound * 3)
+        if gave_up is None:
+            return fail(label, f"the server did not give up a trickled fetch within {bound * 3:.1f} seconds\n{server.text()}")
+        took = gave_up - accepted[0]
+        if took > bound:
+            return fail(label, f"the server gave up a trickled fetch after {took:.3f} seconds, over {bound:.1f}\n{server.text()}")
+        print(f"whitelist_fetch_deadline: trickled_fetch_gave_up={took:.3f}s bound={bound:.1f}s")
+        return True
+    finally:
+        stop_event.set()
+        if server is not None:
+            stop(server.process)
+        backend.join(timeout=10)
+        listener.close()
+        shutil.rmtree(workdir, ignore_errors=True)
 
 
 def reported_size_history(output, prefix):
@@ -540,6 +637,7 @@ def main():
             return 1
 
     outdir = Path(tempfile.mkdtemp(prefix="rocketnet_backend_build_"))
+    fetch_checked = False
     try:
         for name in args.backend or ["go", "csharp"]:
             command = build_backend(name, outdir)
@@ -550,6 +648,11 @@ def main():
             if not check_token(name, command, binaries["backend_check_token"], keys):
                 return 1
             print(f"PASS backend_{name}_token")
+            if not fetch_checked:
+                if not fetch_deadline(binaries["example_backend_server"], keys):
+                    return 1
+                print("PASS whitelist_fetch_deadline")
+                fetch_checked = True
             if not end_to_end(name, command, binaries["example_backend_server"], binaries["example_backend_client"], keys, args.production):
                 return 1
             print(f"PASS backend_{name}_end_to_end")

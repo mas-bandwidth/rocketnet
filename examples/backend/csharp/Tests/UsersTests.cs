@@ -58,6 +58,9 @@ static class UsersTests
     public const string AliceTicketVector = "PNJJawAAAAAFYWxpY2UVSwku1PojgU3PTAD0HSHXU7W62CcrHPOs0kJVr/0h0A==";
     public const ulong AliceHashVector = 0x5098a1e5575a941f;
 
+    // alice's ticket with each of these put inside it is refused by both
+    public static readonly string[] WhitespaceVectors = { " ", "\n", "\r\n", "\t" };
+
     public static void test_mock_ticket()
     {
         MockProvider mock = TestMock();
@@ -123,6 +126,11 @@ static class UsersTests
     {
         Check( TestMock().Issue( "alice", Now, MockProvider.TicketSeconds ) == AliceTicketVector, $"alice's ticket is {TestMock().Issue( "alice", Now, MockProvider.TicketSeconds )}" );
         Check( TestUsers().Hash( "mock", "alice" ) == AliceHashVector, $"alice's hash is {TestUsers().Hash( "mock", "alice" ):x16}" );
+        Check( TestMock().Verify( AliceTicketVector, Now ) == "alice", "alice's ticket verifies" );
+        foreach ( string inserted in WhitespaceVectors )
+        {
+            Check( Refused( TestMock(), AliceTicketVector.Insert( 8, inserted ), Now ), $"alice's ticket with {inserted.Length} whitespace character(s) inside is refused" );
+        }
     }
 
     public static void test_whitelist()

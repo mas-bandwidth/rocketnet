@@ -1445,6 +1445,15 @@ uint64_t rocketnet_server_transport_client_id( struct rocketnet_server_transport
  */
 bool rocketnet_server_transport_client_user_data( struct rocketnet_server_transport_t * server_transport, int client_index, uint8_t * user_data );
 
+// a NULL server_transport or address is a counted no-op that returns false
+/** @brief Read the address and port the packets of the client currently assigned to a slot come from.
+ * @param server_transport [in] Created server transport; NULL is a counted no-op.
+ * @param client_index [in] Slot index from 0 through max_clients - 1.
+ * @param address [out] The connected address; untouched for a free slot.
+ * @return True if the slot is connected and its address was copied. Read on the main thread outside update work.
+ */
+bool rocketnet_server_transport_client_address( struct rocketnet_server_transport_t * server_transport, int client_index, struct rocketnet_address_t * address );
+
 // the connection that holds the slot now: nonzero and unique for each
 // connection over the transport's life, 0 while the slot is free (and for an
 // index out of range). A reconnect into the same slot, even inside one
