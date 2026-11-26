@@ -313,6 +313,10 @@ jobs:
           esac
           if [ "${{ matrix.unit }}" = true ]; then targets+=(test); fi
           if [ "${{ matrix.extras }}" = true ]; then targets+=(test_wide test_platform_primitives test_internal_c connect_token_vectors); fi
+          # the ASan runtime DLL is staged beside the executables by its own
+          # target (CMakeLists.txt rocketnet_asan_runtime, part of ALL only),
+          # without which every sanitized executable fails to load
+          if [ "$LEG_OPTION" = ROCKETNET_SANITIZE_ADDRESS=ON ]; then targets+=(rocketnet_asan_runtime); fi
           cmake --build build --config "$LEG_CONFIG" --target "${targets[@]}" --parallel 8
           if [ "$LEG" = system-sodium ]; then cp "$LEG_SODIUM_DLL" "$LEG_BIN/"; fi
           mkdir -p logs
