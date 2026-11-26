@@ -224,13 +224,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // measured; the other platforms derived from the macOS reading.
 // The path probe after connect: two more appended counters
 // (CLIENT_PROBE_RULED_OUT, CONNECTION_PROBE_CONFIRMED) and the walk's pair,
-// strike and confirm state in the client protocol: 192 more to the client;
+// strike and confirm state in the client protocol: 128 more to the client;
 // the large probe's own allowance in each of the encryption map's two
 // entries a client (8 bytes each) and the counters: 16064 more to the server
-// at 1000 clients: actual=15195410 and 2146872178 (space, gcc, Debug, DEV
+// at 1000 clients: actual=15195346 and 2146872178 (space, gcc, Debug, DEV
 // ON), measured; the other platforms derived from the Linux reading.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1576723295 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350700 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350636 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -365,13 +365,13 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // measured; the other platforms derived from the macOS reading.
 // The path probe after connect: two more appended counters
 // (CLIENT_PROBE_RULED_OUT, CONNECTION_PROBE_CONFIRMED) and the walk's pair,
-// strike and confirm state in the client protocol: 192 more to the client;
+// strike and confirm state in the client protocol: 128 more to the client;
 // the large probe's own allowance in each of the encryption map's two
 // entries a client (8 bytes each) and the counters: 16064 more to the server
-// at 1000 clients: actual=15195410 and 2146872178 (space, gcc, Debug, DEV
+// at 1000 clients: actual=15195346 and 2146872178 (space, gcc, Debug, DEV
 // ON), measured; the other platforms derived from the Linux reading.
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1663740859 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13998218 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13998154 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -562,12 +562,12 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // than the macOS derivation, actual=15195218 (space, gcc, Debug, DEV ON).
 // The path probe after connect: two more appended counters
 // (CLIENT_PROBE_RULED_OUT, CONNECTION_PROBE_CONFIRMED) and the walk's pair,
-// strike and confirm state in the client protocol: 192 more to the client;
+// strike and confirm state in the client protocol: 128 more to the client;
 // the large probe's own allowance in each of the encryption map's two
 // entries a client (8 bytes each) and the counters: 16064 more to the server
-// at 1000 clients: actual=15195410 and 2146872178 (space, gcc, Debug, DEV
+// at 1000 clients: actual=15195346 and 2146872178 (space, gcc, Debug, DEV
 // ON), measured; the other platforms derived from the Linux reading.
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146834 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146770 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

@@ -18,9 +18,10 @@
 // Then both ends together, a real client protocol and a real server
 // protocol across a path of the test's own: a capacity each way, a one-way
 // delay, and loss by a seeded generator. The times to the largest size at
-// 0%, 10%, 50% for the first 10 s and 100% for the first 10 s, the strike
-// spacing that rides out a loss burst of large packets, the -14 of a P0 the
-// path does not carry, and the end of probing for good.
+// 0%, 10%, 50% for the first 10 s and 100% for the first 10 s, strikes in a
+// row at the fast pace and their reset on a lost small probe, the times on
+// a 1200 link and a 576 path, the -14 of a P0 the path does not carry, and
+// the end of probing for good.
 //
 // No socket, no thread, no clock: both ends are driven through their protocol
 // calls with the time passed in, from the published test values. Set
@@ -1144,9 +1145,9 @@ static void test_link_mtu_lossless_reaches_max_in_one_round_trip()
 REGISTER_UNIT_TEST( test_link_mtu_lossless_reaches_max_in_one_round_trip );
 
 // 10% loss each way, the whole time, over 50 seeds: every one at 1452 at
-// both ends within 5 s, the pairs paced at a quarter second and doubling to
-// one a second (planted: a pair every 5 s, the first design's pace, and the
-// worst seed passes 5 s).
+// both ends within 5 s, the pairs paced at a tenth of a second and doubling
+// to one a second on each lost small probe (planted: a pair every 5 s, the
+// first design's pace, and the worst seed passes 5 s).
 
 static void test_link_mtu_ten_percent_loss_reaches_max_in_seconds()
 {
@@ -1163,9 +1164,10 @@ REGISTER_UNIT_TEST( test_link_mtu_ten_percent_loss_reaches_max_in_seconds );
 
 // 50% loss each way for the first 10 s on a 1500 path, then none, over 50
 // seeds: every one ends at 1452 at both ends, never ruled out by the loss,
-// since four counted strikes span 15 s; once the loss ends, within about a
-// second (planted: every strike counts, unspaced, and a seed rules 1452 out
-// and ends at 1172).
+// since a pair whose small probe is lost is no strike and sets the strikes
+// back to zero; once the loss ends, within about a second (planted: a pair
+// with no large reply is a strike whether its small probe came back or not,
+// and a seed rules 1452 out and ends at 1172).
 
 static void test_link_mtu_heavy_loss_first_ten_seconds_still_ends_at_max()
 {
@@ -1227,22 +1229,21 @@ static void test_link_mtu_total_loss_then_clean_reaches_max_within_two_seconds()
 
 REGISTER_UNIT_TEST( test_link_mtu_total_loss_then_clean_reaches_max_within_two_seconds );
 
-// A burst of 12 s in which every packet above 200 bytes is lost both ways,
-// the small probes and keep-alives arriving: the large probes collect
-// strikes, but a strike counts only 5 s after the last counted one, so at
-// most three count before the burst ends and 1452 is never ruled out
-// (planted: every strike counts, and 1452 is ruled out at about one second).
+// A burst of 0.25 s from connect in which every packet above 200 bytes is
+// lost both ways, the small probes and keep-alives arriving: the pairs sent
+// in it are three strikes, one fewer than STRIKES, so 1452 is not ruled out
+// and the next pair raises both ends to it (planted: three strikes rule a
+// candidate out, and the connection ends at 1172).
 
 static void test_link_mtu_large_loss_burst_never_rules_out_a_carried_size()
 {
     path_t * path = new path_t();
     path_setup( path, probe_three_step, 3, probe_three_step, 3, 1 );
     path->large_bytes = 200;
-    path->large_loss_seconds = 12.0;
-    path_run( path, 25.0, 1452 );
+    path->large_loss_seconds = 0.25;
+    path_run( path, 5.0, 1452 );
 
-    check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_STRIKE] >= 2 );
-    check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_STRIKE] <= 3 );
+    check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_STRIKE] == ROCKETNET_LINK_MTU_PROBE_STRIKES - 1 );
     check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT] == 0 );
     check( rocketnet_client_protocol_packet_bytes( &path->client ) == 1452 );
     check( path_server_packet_bytes( path ) == 1452 );
@@ -1253,11 +1254,75 @@ static void test_link_mtu_large_loss_burst_never_rules_out_a_carried_size()
 
 REGISTER_UNIT_TEST( test_link_mtu_large_loss_burst_never_rules_out_a_carried_size );
 
-// A 1200 link (1172-byte datagrams both ways): 1452 collects four counted
-// strikes 5 s apart and is ruled out about 16 s after connect, 1172 is
-// answered at once, and both ends end at 1172; then probing has ended for
-// good: in a minute more nothing but the confirm's echo is sent (planted:
-// the walk goes on after the raise, and probes keep going out).
+// The pace and the strikes pair by pair: a pair whose small probe came back
+// and whose large one did not is a strike and keeps the interval; a pair
+// whose small probe is lost sets the strikes back to zero and doubles the
+// interval; so three strikes, a lost small probe, then three strikes more
+// do not rule the candidate out, and the fourth in a row does (planted: a
+// lost small probe leaves the strikes as they are, and the candidate is
+// ruled out at the sixth strike's resolve; and, apart, a strike doubles the
+// interval).
+
+static void probe_resolve_pair( rocketnet_client_protocol_t * client, double now, int small_back )
+{
+    uint8_t small[ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES];
+    uint8_t large[ROCKETNET_RECEIVE_CEILING];
+    int small_bytes = 0;
+    int large_bytes = 0;
+    rocketnet_client_protocol_probe_send_pair( client, now, small, &small_bytes, large, &large_bytes );
+    check( small_bytes == ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES && large_bytes == 1452 );
+    client->probe_pair_small = small_back;
+    check( rocketnet_client_protocol_probe_resolve( client ) == 1 );
+}
+
+static void test_link_mtu_strikes_in_a_row_and_reset_on_small_loss()
+{
+    path_t * path = new path_t();
+    path_setup( path, probe_three_step, 3, probe_three_step, 3, 1 );
+    rocketnet_client_protocol_t * client = &path->client;
+    check( client->probing && client->probe_index == 0 );
+    const double first = client->probe_interval;
+    check( first == ROCKETNET_LINK_MTU_PROBE_FIRST_INTERVAL_SECONDS );
+
+    for ( int i = 0; i < ROCKETNET_LINK_MTU_PROBE_STRIKES - 1; i++ )
+    {
+        probe_resolve_pair( client, path->now, 1 );
+        check( client->probe_strikes == i + 1 );
+        check( client->probe_interval == first );
+        check( rocketnet_client_protocol_probe_rule_out( client ) == 0 );
+    }
+
+    probe_resolve_pair( client, path->now, 0 );
+    check( client->probe_strikes == 0 );
+    check( client->probe_interval == 2.0 * first );
+
+    for ( int i = 0; i < ROCKETNET_LINK_MTU_PROBE_STRIKES - 1; i++ )
+    {
+        probe_resolve_pair( client, path->now, 1 );
+        check( client->probe_interval == 2.0 * first );
+        check( rocketnet_client_protocol_probe_rule_out( client ) == 0 );
+    }
+    check( client->probe_index == 0 );
+    check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_STRIKE] == 2 * ( ROCKETNET_LINK_MTU_PROBE_STRIKES - 1 ) );
+
+    probe_resolve_pair( client, path->now, 1 );
+    check( rocketnet_client_protocol_probe_rule_out( client ) == 1 );
+    check( client->probe_index == 1 && client->probe_strikes == 0 && client->probe_interval == first );
+    check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT] == 1 );
+
+    path_teardown( path );
+    delete path;
+}
+
+REGISTER_UNIT_TEST( test_link_mtu_strikes_in_a_row_and_reset_on_small_loss );
+
+// A 1200 link (1172-byte datagrams both ways) at a 50 ms round trip: 1452
+// collects four strikes at the first interval and is ruled out within half
+// a second of connect, 1172 is answered at once, and both ends are at 1172
+// within a second; then probing has ended for good: in a minute more nothing
+// but the confirm's echo is sent (planted: the walk goes on after the raise,
+// and probes keep going out; and, apart, a strike doubles the interval, and
+// both ends reach 1172 only after 1.5 s).
 
 static void test_link_mtu_rules_out_what_the_path_does_not_carry_then_stops()
 {
@@ -1271,7 +1336,8 @@ static void test_link_mtu_rules_out_what_the_path_does_not_carry_then_stops()
     check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_STRIKE] == ROCKETNET_LINK_MTU_PROBE_STRIKES );
     check( rocketnet_client_protocol_packet_bytes( &path->client ) == 1172 );
     check( path_server_packet_bytes( path ) == 1172 );
-    check( path->client_reached >= 15.0 && path->client_reached <= 18.0 );
+    check( path->client_reached >= ROCKETNET_LINK_MTU_PROBE_STRIKES * ROCKETNET_LINK_MTU_PROBE_FIRST_INTERVAL_SECONDS );
+    check( path->server_reached >= 0.0 && path->server_reached <= 1.0 );
     check( !path->client.probing );
     check( path->client.confirm_bytes == 0 );
 
@@ -1291,6 +1357,50 @@ static void test_link_mtu_rules_out_what_the_path_does_not_carry_then_stops()
 }
 
 REGISTER_UNIT_TEST( test_link_mtu_rules_out_what_the_path_does_not_carry_then_stops );
+
+// A 576 path (548-byte datagrams both ways) at a 50 ms round trip: 1452 and
+// then 1172 are ruled out, STRIKES pairs at the first interval each, and the
+// large reply at 548, the connection's own size, ends the walk within a
+// second of connect; both ends stay at 548 and no probe follows (planted: a
+// strike doubles the interval, and the walk ends only after 2.5 s).
+
+static void test_link_mtu_576_path_ends_the_walk_at_548_within_a_second()
+{
+    path_t * path = new path_t();
+    path_setup( path, probe_three_step, 3, probe_three_step, 3, 1 );
+    path->cap_up = 548;
+    path->cap_down = 548;
+
+    double ended = -1.0;
+    for ( int i = 0; i < 1000 && ended < 0.0; i++ )
+    {
+        path_step( path, 548 );
+        if ( !path->client.probing )
+        {
+            ended = path->now - path->connect_time;
+        }
+    }
+    check( ended > 0.0 && ended <= 1.0 );
+    check( path->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT] == 2 );
+    check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_FAILED] == 0 );
+    check( rocketnet_client_protocol_packet_bytes( &path->client ) == 548 );
+    check( path_server_packet_bytes( path ) == 548 );
+
+    const uint64_t sent = path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT];
+    path_run( path, 10.0, 548 );
+    check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT] == sent );
+
+    if ( path_print_times() )
+    {
+        printf( "link mtu probe, a 576 path: 1452 and 1172 ruled out and the walk ended at 548 after %.3f s\n", ended );
+    }
+
+    path_teardown( path );
+    delete path;
+}
+
+REGISTER_UNIT_TEST( test_link_mtu_576_path_ends_the_walk_at_548_within_a_second );
 
 // Once the size is the largest candidate, probing ends for good: on a clean
 // path, after the raise and the confirm's echo, a minute more sends no probe
@@ -1392,8 +1502,10 @@ REGISTER_UNIT_TEST( test_link_mtu_client_raises_only_on_an_authenticated_reply )
 // A path that carries the small probes but not P0 (1000-byte datagrams, the
 // list { 1500, 1200 } connecting at 1172): 1452 is ruled out, then 1172, the
 // connection's own size, and the connection ends in mtu probe failed (-14)
-// within the walk's bound (planted: past the last candidate the walk starts
-// over, and the client is still connected).
+// within a second: STRIKES pairs at the first interval for each (planted:
+// past the last candidate the walk starts over, and the client is still
+// connected; and, apart, a strike doubles the interval, and the failure
+// comes after 2.5 s).
 
 static void test_link_mtu_fails_when_its_own_size_is_not_carried()
 {
@@ -1414,7 +1526,7 @@ static void test_link_mtu_fails_when_its_own_size_is_not_carried()
         }
     }
     check( failed > 0.0 );
-    check( failed <= 2 * ( 4 * ROCKETNET_LINK_MTU_PROBE_STRIKE_SPACING_SECONDS ) );
+    check( failed <= 1.0 );
     check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT] == 2 );
     check( path->client_counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_FAILED] == 1 );
 

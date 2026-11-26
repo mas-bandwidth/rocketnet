@@ -310,15 +310,17 @@ both ends, or create refuses the list (`LINK_MTUS_TOO_SMALL_FOR_MESSAGES`).
 
 **How probing works.** Each probe is a pair: a small probe and a large one at
 the size being tried, sent together. The first pair goes out in the update the
-client connects in. While pairs go unanswered the client waits longer between
-them, starting at 0.25 s (or twice the round trip) and doubling to at most one
-pair a second. A large probe that is lost while its small partner comes back
-is a strike against that size; four strikes, from pairs sent at least 5 s
-apart, rule the size out and the client moves to the next one down. When both
-probes are lost nothing counts, so loss alone never rules a size out, and
-there is no time limit while it lasts: the first pair after the loss clears
-goes out within about a second. When the large reply arrives the client raises
-its size at once and confirms; the server raises when the confirm arrives.
+client connects in, and the next every 0.1 s (or twice the round trip, when
+that is longer). A large probe that is lost while its small partner comes back
+is a strike against that size: evidence about the size, not loss, so the pace
+holds, and four strikes in a row rule the size out and the client moves to the
+next one down. A pair whose small probe is lost too is loss: it sets the
+strikes back to zero and doubles the wait, up to one pair a second. So loss
+alone never rules a size out, and there is no time limit while it lasts: the
+first pair after the loss clears goes out within about a second. A loss of
+large packets only, while the small ones come back, for four pairs in a row
+does rule a size out. When the large reply arrives the client raises its size
+at once and confirms; the server raises when the confirm arrives.
 
 **Join cost and time to full size.** Every list joins as the default does: in
 10 ms steps on a path with no added delay, the default and the three-step list
@@ -328,18 +330,20 @@ both join in 40 ms on every path. The time from connect until both ends reach
 | Path | Both ends at 1452 |
 | --- | --- |
 | no loss | 0.09 s (the client at 0.06 s) |
-| 10% loss each way, 50 runs | 0.25 s mean, 1.34 s worst |
-| 50% loss each way for the first 10 s, 50 runs | 3.6 s mean, 10.8 s worst |
-| every packet lost for the first 10 s | 10.84 s, 0.84 s after the loss ends |
+| 10% loss each way, 50 runs | 0.20 s mean, 1.19 s worst |
+| 50% loss each way for the first 10 s, 50 runs | 2.7 s mean, 10.8 s worst |
+| every packet lost for the first 10 s | 10.59 s, 0.59 s after the loss ends |
 
 On a path that carries 1200 but not 1492, 1452 is ruled out and both ends are
-at 1172 about 17 s after connect, sending at 548 until then. A path that does
-not carry 548 ends in -14 about 34 s after connect.
+at 1172 0.49 s after connect, sending at 548 until then. On a 576 path, 1452
+and 1172 are ruled out and probing ends at 548 0.86 s after connect. A path
+that does not carry 548 ends in -14 1.32 s after connect.
 
 **Bandwidth.** A pair is at most 1452 + 34 bytes each way, and a confirm 34
 bytes. On a clean path the whole cost is one pair and one confirm. While pairs
 go unanswered the client sends at most one pair a second, about 1.5 KB/s each
-way, until probing ends. The default list sends none.
+way, until probing ends; while the small probes come back it sends up to ten
+pairs a second, four for each size ruled out. The default list sends none.
 
 ## 5. Handle token and handshake refusals safely
 

@@ -292,8 +292,10 @@ REGISTER_UNIT_TEST( test_link_mtu_no_hang_on_a_1200_link );
 // A path that carries the handshake but no packet size of the list (540
 // bytes: the request is 518, the smallest size 548): the client connects at
 // 548, every candidate is ruled out, 548 last, and the connection ends in
-// MTU_PROBE_FAILED rather than hanging (planted: past the last candidate the
-// walk starts over, and the client stays connected).
+// MTU_PROBE_FAILED rather than hanging, within 1.5 s of connect: STRIKES
+// pairs at the fast pace for each of the three (planted: past the last
+// candidate the walk starts over, and the client stays connected; and,
+// apart, a strike doubles the interval, and the end comes after 4 s).
 
 static void test_link_mtu_probe_fails_when_no_size_fits()
 {
@@ -302,14 +304,23 @@ static void test_link_mtu_probe_fails_when_no_size_fits()
     hang_pair_t pair;
     hang_pair_create( pair, true, 1000 );
     check( pair.connect_steps > 0 );
-    for ( int step = 0; step < 8000 && rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED; step++ )
+    int steps = 0;
+    while ( steps < 8000 && rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
     {
         hang_pump( pair.server, pair.client );
+        steps++;
     }
     check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED );
+    check( steps * HANG_STEP_SECONDS <= 1.5 );
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED ), "MTU_PROBE_FAILED" ) == 0 );
     check( hang_client_counter( pair, ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT ) == 3 );
     check( hang_client_counter( pair, ROCKETNET_COUNTER_CLIENT_PROBE_FAILED ) == 1 );
+
+    char print[8];
+    if ( rocketnet_test_getenv( "ROCKETNET_LINK_MTU_PRINT_TIMES", print, sizeof( print ) ) )
+    {
+        printf( "link mtu, a 540-byte link on the three-step list: mtu probe failed (-14) after %.3f s\n", steps * HANG_STEP_SECONDS );
+    }
 
     hang_pair_destroy( pair );
 }
@@ -553,6 +564,43 @@ static void test_link_mtu_reported_as_the_size_rises()
 }
 
 REGISTER_UNIT_TEST( test_link_mtu_reported_as_the_size_rises );
+
+// A lossless link MTU of 1200 (1172-byte IPv4 datagrams), the staff VPN case:
+// both ends join at 548 on the three-step list, 1452 is ruled out in
+// STRIKES pairs at the probe's fast pace, and both ends are at 1172,
+// reporting link MTU 1200, within one second of connect (planted: a strike
+// doubles the interval as a lost pair does, and both ends reach 1172 only
+// after 1.5 s).
+
+static void test_link_mtu_lossless_1200_link_settles_within_a_second()
+{
+    rocketnet_loopback_test_link_max_bytes( 1172 );
+
+    hang_pair_t pair;
+    hang_pair_create( pair, true, 1000 );
+    check( pair.connect_steps > 0 );
+    check( rocketnet_client_link_mtu( pair.client ) == 576 );
+
+    int seen[8];
+    int num_seen = 0;
+    const int steps = hang_link_mtu_steps( pair, 1200, 1000, seen, &num_seen, 8 );
+    check( steps >= 0 );
+    check( steps * HANG_STEP_SECONDS <= 1.0 );
+    check( rocketnet_client_max_packet_bytes( pair.client ) == 1172 );
+    check( rocketnet_server_client_max_packet_bytes( pair.server, 0 ) == 1172 );
+    check( hang_client_counter( pair, ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT ) == 1 );
+    check( hang_client_counter( pair, ROCKETNET_COUNTER_CLIENT_PROBE_STRIKE ) == ROCKETNET_LINK_MTU_PROBE_STRIKES );
+
+    char print[8];
+    if ( rocketnet_test_getenv( "ROCKETNET_LINK_MTU_PRINT_TIMES", print, sizeof( print ) ) )
+    {
+        printf( "link mtu, a lossless 1200 link: both ends at 1172 (link mtu 1200) after %.3f s\n", steps * HANG_STEP_SECONDS );
+    }
+
+    hang_pair_destroy( pair );
+}
+
+REGISTER_UNIT_TEST( test_link_mtu_lossless_1200_link_settles_within_a_second );
 
 // IPv4 { 1500, 1492 }: both entries give 1452 (1492 - 28 = 1464, capped at
 // 1452), so the connection joins at 1452 and both ends report the first,

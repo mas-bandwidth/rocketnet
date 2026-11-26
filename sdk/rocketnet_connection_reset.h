@@ -49,8 +49,8 @@ struct rn_message_object_t;
     X( KEEP, link_mtus ) X( KEEP, num_link_mtus ) \
     X( RESET, probe_candidates ) X( RESET, num_probe_candidates ) X( RESET, probe_index ) \
     X( RESET, probe_strikes ) X( RESET, probe_pair ) X( RESET, probe_pair_small ) \
-    X( RESET, probe_pair_large ) X( RESET, probe_pair_out ) X( RESET, probe_pair_spaced ) X( RESET, probe_next_time ) X( RESET, probe_interval ) X( RESET, probe_pair_time ) \
-    X( RESET, probe_strike_time ) X( RESET, probing ) \
+    X( RESET, probe_pair_large ) X( RESET, probe_pair_out ) X( RESET, probe_next_time ) X( RESET, probe_interval ) \
+    X( RESET, probing ) \
     X( RESET, confirm_bytes ) X( RESET, confirm_next_time ) X( RESET, packet_bytes )
 
 #define ROCKETNET_CLIENT_SLOTS_OWNER_FIELDS( X ) \

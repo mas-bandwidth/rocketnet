@@ -25,13 +25,15 @@ grows from 292 to 315 counters, appended at the end.
   Each probe is a pair, a small probe and a large one, sealed under the
   session keys, so only the two ends of the connection can make one; a forged
   probe spends nothing. A large probe that goes unanswered while its small
-  partner comes back is a strike, and four strikes from pairs sent at least
-  5 s apart rule a size out, so loss alone, which takes the small probe as
-  well, never does. The client raises on the server's authenticated reply and
+  partner comes back is a strike, and four strikes in a row rule a size out
+  at the probe's own pace, ten pairs a second; a pair whose small probe is
+  lost too sets the strikes back to zero, so loss alone, which takes the
+  small probe as well, never does. The client raises on the server's authenticated reply and
   confirms; the server raises only on the confirm. The packet size never
   falls, and probing stops for good once it is the largest size or every
   larger size is ruled out. On a clean path the connection is at full size
-  one round trip after connect. A path that does not carry even the smallest
+  one round trip after connect, and on a 1200 link at 1172 in about half a
+  second. A path that does not carry even the smallest
   size ends the connection in the new client state
   `ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED` (-14).
   standard/TRANSPORT.md t2.3, t8.4, t8.13, t11.4 and t12 rules 15 and 16;

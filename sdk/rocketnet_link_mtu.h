@@ -159,30 +159,33 @@ static inline int rocketnet_link_mtu_first_packet_bytes( const int * link_mtus, 
 // first -- at connect, so on a clean path the size is the largest within one
 // round trip and the confirm. A pair resolves when the next is due. The next
 // is due FIRST_INTERVAL after connect (or twice the handshake's round trip,
-// when that is longer), and every pair that resolves without success
-// doubles the interval up to MAX_INTERVAL: one pair a second at most under
-// loss, so the first pair after a loss clears goes out within a second.
-// While the small probes are lost too nothing counts and the probe keeps
-// going: it has no time limit, and ends only at the largest candidate or
-// when every larger one is ruled out (or with the connection).
+// when that is longer), and the pace holds while the small probes come back.
+// A pair whose small probe is lost doubles the interval up to MAX_INTERVAL:
+// one pair a second at most under loss, so the first pair after a loss
+// clears goes out within a second. While the small probes are lost nothing
+// counts and the probe keeps going: it has no time limit, and ends only at
+// the largest candidate or when every larger one is ruled out (or with the
+// connection).
 //
-// A pair counts only when its small probe came back: then a missing large
-// reply is a strike against the candidate, and STRIKES counted strikes rule
-// it out. A strike counts only when its pair was sent STRIKE_SPACING after
-// the pair of the strike counted before it, so four counted strikes span at
-// least 15 s and a loss burst shorter than that never rules a carried size
-// out; under independent loss p each way a carried size is ruled out with
-// probability at most (1 - (1 - p)^2)^4: 0.13% at p = 10%, 1.7% at 20%. A
-// size the path does not carry, on a path that carries the small probes, is
-// ruled out about 16 s after its first pair. A large reply at the candidate
-// from any earlier pair still proves it carried, so a round trip longer
-// than the interval costs nothing. A pair costs at most 1452 + 34
-// bytes each way, one a second at most, and none once the walk ends. An
-// unechoed confirm is resent every CONFIRM_INTERVAL.
+// A pair whose small probe came back and whose large one did not is
+// evidence about the size, not loss: a strike against the candidate, at the
+// same pace, and STRIKES strikes in a row rule it out. A pair whose small
+// probe is lost sets the candidate's strikes back to zero, so a size the
+// path does not carry is ruled out STRIKES pairs after its first, 0.4 s on
+// a lossless path with a round trip under 50 ms, and a link of 1200 bytes
+// settles at 1172 in about half a second. Under independent loss p each way
+// a carried size is ruled out with probability a^4 / (1 - r (1 + a + a^2 +
+// a^3)), where r = 1 - (1 - p)^2 and a = (1 - p)^2 r: 0.07% at p = 10%,
+// 0.5% at 20%, 1.6% at 50%. A burst that drops large packets only, while
+// the small ones come back, for STRIKES pairs in a row does rule a carried
+// size out. A large reply at the candidate from any earlier pair still
+// proves it carried, so a round trip longer than the interval costs
+// nothing. A pair costs at most 1452 + 34 bytes each way, ten a second at
+// most, and none once the walk ends. An unechoed confirm is resent every
+// CONFIRM_INTERVAL.
 
-#define ROCKETNET_LINK_MTU_PROBE_FIRST_INTERVAL_SECONDS 0.25
+#define ROCKETNET_LINK_MTU_PROBE_FIRST_INTERVAL_SECONDS 0.1
 #define ROCKETNET_LINK_MTU_PROBE_MAX_INTERVAL_SECONDS   1.0
-#define ROCKETNET_LINK_MTU_PROBE_STRIKE_SPACING_SECONDS 5.0
 #define ROCKETNET_LINK_MTU_PROBE_STRIKES                4
 #define ROCKETNET_LINK_MTU_CONFIRM_INTERVAL_SECONDS     1.0
 

@@ -52,20 +52,16 @@
 //                    (SEND_PROBE) goes down at the size the server wrote
 //   tick             the walk's clock to the next pair's time and
 //                    rocketnet_server_protocol_update: Tick
-//   spaced           the walk's clock to a strike spacing after the pair of
-//                    the last counted strike: Spaced
 //   server_update    rocketnet_server_protocol_update at the same time:
 //                    ServerUpdate
 //   burst, replay, attack, attack_reply, done   the walk's path and
 //                    attacker: LossBurst(k), Replay(p), AttackProbe(p),
 //                    AttackReply(s), Done
 //
-// The clock is not a model variable: the walk moves it only in tick and
-// spaced, each of which crosses exactly one of the two instants the model
-// sees, the pair's due time (due) and a spacing after the last counted
-// strike's pair (spaced), and silently when it crosses neither (to a
-// confirm's next send). A tick goes PP_TICK_LATE past the due time, off the
-// 0.25 s grid of the pair intervals, so a spacing never falls at a due time.
+// The clock is not a model variable: the walk moves it only in tick, which
+// crosses the one instant the model sees, the pair's due time (due), and
+// silently when it does not cross it (to a confirm's next send). A tick
+// goes PP_TICK_LATE past the due time.
 //
 // Every model variable is read from the code but the path's and the
 // attacker's (the client's from the copy taken at its -14 once it has
@@ -74,12 +70,16 @@
 // from the client's state and probing flag, ruled the candidates before
 // probe_index, strikes probe_strikes, out probe_pair_out, pairNo the parity
 // of probe_pair, pairS the size of the large probe the client last wrote
-// (P0 before it wrote one), pairSpaced probe_pair_spaced, smallSeen and
-// largeSeen probe_pair_small and probe_pair_large, due the clock against
-// probe_next_time, spaced the clock against probe_strike_time, confirmS
+// (P0 before it wrote one), smallSeen and largeSeen probe_pair_small and
+// probe_pair_large, due the clock against probe_next_time, confirmS
 // confirm_bytes, ansSmall and ansLarge the mapping's probe_update and
 // probe_large_update against the server's update_number. capUp, capDown,
-// burst, bursts, span, attacks, up and down are the walk's. A packet in
+// burst, bursts, pairInBurst, burstStrikes, attacks, up and down are the
+// walk's: pairInBurst and burstStrikes follow the model's loss assumption
+// (a burst meets a pair sent in it or out when it starts; the strikes of
+// the current row taken on pairs a burst met), and the walk starts a burst,
+// or sends a pair into a burst of large packets, only while that allows. A
+// packet in
 // flight is the model's record: its kind, its source, its size (0 for the
 // 34-byte small probe, confirm and echo, and the confirm's or echo's size
 // field otherwise kept in s), the parity of its pair number and whether it
@@ -123,9 +123,7 @@
 
 #define PP_SEND_RATE        64.0
 #define PP_START_TIME       100.0
-// how far past the due time a tick moves the clock: 1/1024 s, so the pair
-// times leave the 0.25 s grid of the intervals and a spacing (5 s after a
-// pair) never lands on a due time while fewer than 256 pairs fit in it
+// how far past the due time a tick moves the clock: 1/1024 s
 #define PP_TICK_LATE        ( 1.0 / 1024.0 )
 // the token's silence timeout and the server's handshake deadline, past any
 // walk: neither end times the connection out
@@ -234,8 +232,9 @@ struct pp_walk_t
     // the model's burst: 0 off, 1 "all", 2 "large"
     int burst;
     int bursts;
-    int span;
-    int span_limit;
+    // the model's pairInBurst and burstStrikes
+    bool pair_in_burst;
+    int burst_strikes;
     int attacks;
     int pair_bytes;
     std::vector<pp_packet_t> up;
@@ -311,15 +310,10 @@ static bool pp_due( const pp_walk_t * walk )
     return walk->now >= pp_client( walk )->probe_next_time;
 }
 
-static bool pp_spaced( const pp_walk_t * walk )
+// the model's BurstMayMeet: a burst may still meet a pair that can strike
+static bool pp_burst_may_meet( const pp_walk_t * walk )
 {
-    return pp_client( walk )->probe_strike_time < 0.0 ||
-           walk->now - pp_client( walk )->probe_strike_time >= ROCKETNET_LINK_MTU_PROBE_STRIKE_SPACING_SECONDS;
-}
-
-static double pp_spacing_time( const pp_walk_t * walk )
-{
-    return walk->client.probe_strike_time + ROCKETNET_LINK_MTU_PROBE_STRIKE_SPACING_SECONDS;
+    return walk->burst_strikes < ROCKETNET_LINK_MTU_PROBE_STRIKES - 1;
 }
 
 static tla_record_t pp_state( pp_walk_t * walk )
@@ -342,17 +336,16 @@ static tla_record_t pp_state( pp_walk_t * walk )
     state.add( "out", tla_bool( client->probe_pair_out != 0 ) );
     state.add( "pairNo", tla_int( (int) ( client->probe_pair & 1 ) ) );
     state.add( "pairS", tla_int( walk->pair_bytes ) );
-    state.add( "pairSpaced", tla_bool( client->probe_pair_spaced != 0 ) );
+    state.add( "pairInBurst", tla_bool( walk->pair_in_burst ) );
     state.add( "smallSeen", tla_bool( client->probe_pair_small != 0 ) );
     state.add( "largeSeen", tla_bool( client->probe_pair_large != 0 ) );
     state.add( "due", tla_bool( pp_due( walk ) ) );
-    state.add( "spaced", tla_bool( pp_spaced( walk ) ) );
     state.add( "confirmS", tla_int( client->confirm_bytes ) );
     state.add( "ansSmall", tla_bool( pp_answered_small( walk ) ) );
     state.add( "ansLarge", tla_bool( pp_answered_large( walk ) ) );
     state.add( "burst", tla_string( pp_burst_name( walk->burst ) ) );
     state.add( "bursts", tla_int( walk->bursts ) );
-    state.add( "span", tla_int( walk->span ) );
+    state.add( "burstStrikes", tla_int( walk->burst_strikes ) );
     state.add( "attacks", tla_int( walk->attacks ) );
     state.add( "up", pp_set( walk->up ) );
     state.add( "down", pp_set( walk->down ) );
@@ -505,7 +498,7 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
     // the seed's scenario:
     //   0 a path that carries every size, both ends at 1452 one pair after
     //     connect; then the attacker, replays, bursts and the confirm
-    //   1 a path whose capacity up is 1372: 1452 is ruled out by spaced
+    //   1 a path whose capacity up is 1372: 1452 is ruled out by its
     //     strikes and the walk raises to 1372
     //   2 two candidates and a path that carries no large probe: both are
     //     ruled out, P0 last, and the client fails -14
@@ -572,9 +565,8 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
     }
 
     // the noise each scenario carries: the rule-out and failing walks need
-    // their spaced strikes inside the walk, so they carry little
+    // their strikes in a row inside the walk, so they carry little
     const bool noisy = scenario == 0 || scenario == 3;
-    walk->span_limit = steps;
     walk->forged_sequence = 1;
 
     records.push_back( tla_step( "init", "init", "<<>>", pp_state( walk ) ) );
@@ -591,38 +583,23 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
         const bool probing = phase == "probing";
         const bool terminal = phase == "done" || phase == "failed";
         const bool due = pp_due( walk );
-        const bool spaced = pp_spaced( walk );
         const bool confirming = walk->client.confirm_bytes > 0 && phase == "done";
         const bool confirm_due = confirming && walk->now >= walk->client.confirm_next_time;
         const bool answered = pp_answered_small( walk ) || pp_answered_large( walk );
 
-        // the next instant the model sees: the due time (a tick) or the
-        // spacing (spaced), whichever comes first; a tick moves the clock
-        // PP_TICK_LATE past the due time, and a spacing inside that gap is
-        // taken first
-        bool next_is_tick = !due;
-        double next_time = walk->client.probe_next_time + PP_TICK_LATE;
-        if ( !spaced && ( due || pp_spacing_time( walk ) < next_time ) )
-        {
-            if ( due || pp_spacing_time( walk ) < walk->client.probe_next_time )
-            {
-                next_is_tick = false;
-                next_time = pp_spacing_time( walk );
-            }
-            else if ( pp_spacing_time( walk ) > walk->client.probe_next_time )
-            {
-                next_time = walk->client.probe_next_time;
-            }
-            else
-            {
-                fprintf( stderr, "tla_trace path-probe: a spacing falls at the due time %.9f, one instant the model sees as two\n",
-                         walk->client.probe_next_time );
-                failed = true;
-                break;
-            }
-        }
-        const bool clock_event = !due || !spaced;
-        const bool spaced_allowed = walk->burst == 0 || walk->span < walk->span_limit;
+        // the next instant the model sees: the due time, a tick moving the
+        // clock PP_TICK_LATE past it
+        const double next_time = walk->client.probe_next_time + PP_TICK_LATE;
+        const bool clock_event = !due;
+
+        // the loss assumption: a pair goes into a burst of large packets,
+        // and a burst starts on a pair that is out and can still strike,
+        // only while a burst may meet another strike
+        const bool sends_next = !walk->client.probe_pair_out && walk->client.probe_strikes < ROCKETNET_LINK_MTU_PROBE_STRIKES;
+        const bool pair_allowed = !( sends_next && walk->burst == 2 ) || pp_burst_may_meet( walk );
+        const bool pair_out = walk->client.probe_pair_out != 0;
+        const bool burst_all_allowed = !( pair_out && walk->client.probe_pair_small ) || pp_burst_may_meet( walk );
+        const bool burst_large_allowed = !pair_out || pp_burst_may_meet( walk );
 
         bool pair_in_flight = false;
         bool honest_up = false;
@@ -641,14 +618,14 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
         enum { OP_CLIENT_PAIR, OP_CONFIRM, OP_CLOCK, OP_SERVER_UPDATE, OP_SERVER_RECV, OP_CLIENT_RECV,
                OP_BURST_START, OP_BURST_END, OP_REPLAY, OP_ATTACK, OP_ATTACK_REPLY, OP_SILENT, OP_DONE, OP_COUNT };
         int weights[OP_COUNT] = { 0 };
-        weights[OP_CLIENT_PAIR] = probing && due ? 8 : 0;
+        weights[OP_CLIENT_PAIR] = probing && due && pair_allowed ? 8 : 0;
         weights[OP_CONFIRM] = confirm_due ? 4 : 0;
         // the clock moves when the pair is in, or now and then without it
-        weights[OP_CLOCK] = clock_event && ( next_is_tick || spaced_allowed ) && phase != "failed" ? ( pair_in_flight ? 1 : 8 ) : 0;
+        weights[OP_CLOCK] = clock_event && phase != "failed" ? ( pair_in_flight ? 1 : 8 ) : 0;
         weights[OP_SERVER_UPDATE] = answered ? 1 : 0;
         weights[OP_SERVER_RECV] = !walk->up.empty() ? 8 : 0;
         weights[OP_CLIENT_RECV] = !walk->down.empty() && phase != "failed" ? 8 : 0;
-        weights[OP_BURST_START] = noisy && walk->burst == 0 && walk->bursts < PP_MAX_BURSTS && walk->span <= walk->span_limit ? 1 : 0;
+        weights[OP_BURST_START] = noisy && walk->burst == 0 && walk->bursts < PP_MAX_BURSTS && ( burst_all_allowed || burst_large_allowed ) ? 1 : 0;
         weights[OP_BURST_END] = walk->burst != 0 ? 3 : 0;
         weights[OP_REPLAY] = honest_up ? ( noisy ? 2 : 1 ) : 0;
         weights[OP_ATTACK] = forged_up < 2 && walk->attacks < steps ? ( noisy ? 2 : 0 ) : 0;
@@ -684,7 +661,17 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
                 // strikes, else send the next pair
                 if ( walk->client.probe_pair_out )
                 {
+                    const int strikes_before = walk->client.probe_strikes;
+                    const bool small_before = walk->client.probe_pair_small != 0;
                     const int resolved = rocketnet_client_protocol_probe_resolve( &walk->client );
+                    if ( walk->client.probe_strikes > strikes_before )
+                    {
+                        walk->burst_strikes += walk->pair_in_burst ? 1 : 0;
+                    }
+                    else if ( !small_before )
+                    {
+                        walk->burst_strikes = 0;
+                    }
                     const char * act = resolved == 1 ? "ClientResolvePair" : "NotAResolve";
                     report.act( act );
                     records.push_back( tla_step( "client_resolve", act, "<<>>", pp_state( walk ) ) );
@@ -699,6 +686,7 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
                     const char * act = ruled == 1 ? "ClientRuleOut" : ( ruled == -1 ? "ClientFail" : "NotARuleOut" );
                     report.act( act );
                     walk->has_failed_client = ruled == -1;
+                    walk->burst_strikes = ruled == 1 ? 0 : walk->burst_strikes;
                     records.push_back( tla_step( "client_rule_out", act, "<<>>", pp_state( walk ) ) );
                     break;
                 }
@@ -724,6 +712,7 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
                     }
                 }
                 walk->pair_bytes = large_bytes;
+                walk->pair_in_burst = walk->burst != 0;
                 pp_packet_t sent_small = { PP_SMALL, PP_C, 0, pn, 0, std::vector<uint8_t>( small, small + small_bytes ) };
                 pp_packet_t sent_large = { PP_LARGE, PP_C, large_bytes, pn, 0, std::vector<uint8_t>( large, large + large_bytes ) };
                 pp_send( walk, walk->up, walk->cap_up, sent_small );
@@ -750,19 +739,9 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
             case OP_CLOCK:
             {
                 walk->now = next_time;
-                if ( next_is_tick )
-                {
-                    rocketnet_server_protocol_update( &walk->server, walk->now );
-                    report.act( "Tick" );
-                    records.push_back( tla_step( "tick", "Tick", "<<>>", pp_state( walk ) ) );
-                    break;
-                }
-                if ( walk->bursts > 0 && walk->span <= walk->span_limit )
-                {
-                    walk->span++;
-                }
-                report.act( "Spaced" );
-                records.push_back( tla_step( "spaced", "Spaced", "<<>>", pp_state( walk ) ) );
+                rocketnet_server_protocol_update( &walk->server, walk->now );
+                report.act( "Tick" );
+                records.push_back( tla_step( "tick", "Tick", "<<>>", pp_state( walk ) ) );
                 break;
             }
 
@@ -842,9 +821,18 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
             case OP_BURST_START:
             case OP_BURST_END:
             {
-                const int kind = op == OP_BURST_END ? 0 : 1 + random.below( 2 );
+                int kind = op == OP_BURST_END ? 0 : 1 + random.below( 2 );
+                if ( kind == 1 && !burst_all_allowed )
+                {
+                    kind = 2;
+                }
+                else if ( kind == 2 && !burst_large_allowed )
+                {
+                    kind = 1;
+                }
                 if ( kind != 0 )
                 {
+                    walk->pair_in_burst = pair_out || walk->pair_in_burst;
                     // the burst takes what is in flight that it covers
                     for ( size_t j = walk->up.size(); j-- > 0; )
                     {
@@ -947,9 +935,9 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
     std::string constants;
     char line[256];
     snprintf( line, sizeof( line ),
-              "    CapsUp = {%d}\n    CapsDown = {%d}\n    K = %d\n    MaxBursts = %d\n    BurstSpacings = %d\n    AttackBudget = %d\n"
+              "    CapsUp = {%d}\n    CapsDown = {%d}\n    K = %d\n    MaxBursts = %d\n    AttackBudget = %d\n"
               "    Forger = FALSE\n    Timed = FALSE\n    Broken = \"none\"\n",
-              walk->cap_up, walk->cap_down, ROCKETNET_LINK_MTU_PROBE_STRIKES, PP_MAX_BURSTS, walk->span_limit, steps );
+              walk->cap_up, walk->cap_down, ROCKETNET_LINK_MTU_PROBE_STRIKES, PP_MAX_BURSTS, steps );
     constants += line;
     constants += "    ClientSet = " + pp_int_set( client_set ) + "\n";
     constants += "    ServerList = " + pp_int_set( server_list ) + "\n";

@@ -117,11 +117,8 @@ typedef void ( *rocketnet_client_retire_keys_t )( void * context );
     X( probe_pair_small, int probe_pair_small ) \
     X( probe_pair_large, int probe_pair_large ) \
     X( probe_pair_out, int probe_pair_out ) \
-    X( probe_pair_spaced, int probe_pair_spaced ) \
     X( probe_next_time, double probe_next_time ) \
     X( probe_interval, double probe_interval ) \
-    X( probe_pair_time, double probe_pair_time ) \
-    X( probe_strike_time, double probe_strike_time ) \
     X( probing, int probing ) \
     X( confirm_bytes, int confirm_bytes ) \
     X( confirm_next_time, double confirm_next_time ) \

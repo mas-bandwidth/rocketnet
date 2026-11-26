@@ -156,11 +156,12 @@ int rocketnet_client_protocol_packet_bytes( const struct rocketnet_client_protoc
 // then at the paced interval: a small probe and a large one at the
 // candidate, under one pair number. The pair resolves when the next is due:
 // a large reply raised the size already; a small reply with no large one is
-// a strike against the candidate, counted when spaced from the last counted
-// one; no small reply is no evidence, so loss alone never rules a size out.
-// ROCKETNET_LINK_MTU_PROBE_STRIKES counted strikes rule the candidate out and
-// the walk moves to the next. An authenticated large reply above P raises P
-// at once and the client confirms it to the server, which raises its own
+// a strike against the candidate, at the same pace; no small reply is loss,
+// which sets the candidate's strikes back to zero and doubles the interval,
+// so loss alone never rules a size out. ROCKETNET_LINK_MTU_PROBE_STRIKES
+// strikes in a row rule the candidate out and the walk moves to the next. An
+// authenticated large reply above P raises P at once and the client
+// confirms it to the server, which raises its own
 // sends only on the confirm. P never decreases. The walk ends for good at
 // the first size raised to, which is the largest not ruled out; when every
 // candidate above P0 is ruled out, P0 itself is the walk's last candidate,
@@ -1154,11 +1155,12 @@ void rocketnet_client_protocol_probe_update( struct rocketnet_client_protocol_t 
 }
 
 // the previous pair resolves without success (a large reply ends the walk
-// at once): a small reply with no large one is a strike, counted when its
-// pair was sent STRIKE_SPACING after the pair of the last counted strike
-// (probe_pair_spaced, fixed at its send); no small reply is no evidence.
-// Either way the next pair waits twice as long, up to MAX_INTERVAL
-// (proofs/tla/RNPathProbe.tla ClientResolvePair)
+// at once). A small reply with no large one is evidence about the size, not
+// loss: a strike, and the pace holds. No small reply is loss: the
+// candidate's strikes go back to zero, so only an unbroken run of pairs
+// whose small probes came back rules a size out, and the next pair waits
+// twice as long, up to MAX_INTERVAL (proofs/tla/RNPathProbe.tla
+// ClientResolvePair, Strike)
 
 int rocketnet_client_protocol_probe_resolve( struct rocketnet_client_protocol_t * client )
 {
@@ -1170,22 +1172,24 @@ int rocketnet_client_protocol_probe_resolve( struct rocketnet_client_protocol_t 
         return 0;
     }
 
-    if ( client->probe_pair_small && !client->probe_pair_large && client->probe_pair_spaced )
+    if ( client->probe_pair_small && !client->probe_pair_large )
     {
         client->probe_strikes++;
-        client->probe_strike_time = client->probe_pair_time;
         client->counters->values[ROCKETNET_COUNTER_CLIENT_PROBE_STRIKE]++;
+    }
+    else if ( !client->probe_pair_small )
+    {
+        client->probe_strikes = 0;
+        client->probe_interval *= 2.0;
+        if ( client->probe_interval > ROCKETNET_LINK_MTU_PROBE_MAX_INTERVAL_SECONDS )
+        {
+            client->probe_interval = ROCKETNET_LINK_MTU_PROBE_MAX_INTERVAL_SECONDS;
+        }
     }
 
     client->probe_pair_out = 0;
     client->probe_pair_small = 0;
     client->probe_pair_large = 0;
-
-    client->probe_interval *= 2.0;
-    if ( client->probe_interval > ROCKETNET_LINK_MTU_PROBE_MAX_INTERVAL_SECONDS )
-    {
-        client->probe_interval = ROCKETNET_LINK_MTU_PROBE_MAX_INTERVAL_SECONDS;
-    }
 
     return 1;
 }
@@ -1222,15 +1226,12 @@ int rocketnet_client_protocol_probe_rule_out( struct rocketnet_client_protocol_t
 
     client->probe_index++;
     client->probe_strikes = 0;
-    client->probe_strike_time = -1.0;
     client->probe_interval = rocketnet_client_probe_first_interval( client );
     return 1;
 }
 
 // the next pair: the small probe and the large one at the walk's candidate,
-// one new pair number (ClientSendPair). It is spaced when no strike has been
-// counted against the candidate, or the last counted one's pair was sent
-// STRIKE_SPACING or more before it
+// one new pair number (ClientSendPair)
 
 void rocketnet_client_protocol_probe_send_pair( struct rocketnet_client_protocol_t * client,
                                                 double current_time,
@@ -1254,9 +1255,6 @@ void rocketnet_client_protocol_probe_send_pair( struct rocketnet_client_protocol
     client->probe_pair_out = 1;
     client->probe_pair_small = 0;
     client->probe_pair_large = 0;
-    client->probe_pair_spaced = client->probe_strike_time < 0.0 ||
-                                current_time - client->probe_strike_time >= ROCKETNET_LINK_MTU_PROBE_STRIKE_SPACING_SECONDS;
-    client->probe_pair_time = current_time;
     client->probe_next_time = current_time + client->probe_interval;
 
     *out_small_bytes = rocketnet_client_write_probe( client, ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES, ROCKETNET_PROBE_KIND_PROBE,
@@ -1705,10 +1703,8 @@ static int rocketnet_client_process_keep_alive( struct rocketnet_client_protocol
             client->probe_strikes = 0;
             client->probe_pair = 0;
             client->probe_pair_out = 0;
-            client->probe_pair_spaced = 1;
             client->probe_next_time = current_time;
             client->probe_interval = rocketnet_client_probe_first_interval( client );
-            client->probe_strike_time = -1.0;
         }
     }
 

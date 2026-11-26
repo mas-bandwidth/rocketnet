@@ -47,9 +47,9 @@ VARIABLES ti,        \* the index of the record the state matches
 \* every model variable by the field name the harness writes
 VarsRec == [capUp |-> capUp, capDown |-> capDown, cP |-> cP, sP |-> sP, phase |-> phase,
            ruled |-> ruled, strikes |-> strikes, out |-> out, pairNo |-> pairNo, pairS |-> pairS,
-           pairSpaced |-> pairSpaced, smallSeen |-> smallSeen, largeSeen |-> largeSeen, due |-> due,
-           spaced |-> spaced, confirmS |-> confirmS, ansSmall |-> ansSmall, ansLarge |-> ansLarge,
-           burst |-> burst, bursts |-> bursts, span |-> span, attacks |-> attacks, up |-> up, down |-> down]
+           pairInBurst |-> pairInBurst, smallSeen |-> smallSeen, largeSeen |-> largeSeen, due |-> due,
+           confirmS |-> confirmS, ansSmall |-> ansSmall, ansLarge |-> ansLarge,
+           burst |-> burst, bursts |-> bursts, burstStrikes |-> burstStrikes, attacks |-> attacks, up |-> up, down |-> down]
 
 \* the actions each operation of the code can be
 OpActs == [client_resolve |-> {"ClientResolvePair"},
@@ -59,7 +59,6 @@ OpActs == [client_resolve |-> {"ClientResolvePair"},
            client_recv |-> {"ClientRecvSmall", "ClientRecvLarge", "ClientRecvForged", "ClientRecvConfirmEcho"},
            server_recv |-> {"ServerRecvProbe", "ServerRecvForged", "ServerRecvConfirm"},
            tick |-> {"Tick"},
-           spaced |-> {"Spaced"},
            server_update |-> {"ServerUpdate"},
            burst |-> {"LossBurst"},
            replay |-> {"Replay"},
@@ -82,7 +81,6 @@ Act(a, x) == CASE a = "ClientResolvePair" -> ClientResolvePair
                [] a = "ServerRecvForged" -> ServerRecvForged(x[1])
                [] a = "ServerRecvConfirm" -> ServerRecvConfirm(x[1])
                [] a = "Tick" -> Tick
-               [] a = "Spaced" -> Spaced
                [] a = "ServerUpdate" -> ServerUpdate
                [] a = "LossBurst" -> LossBurst(x[1])
                [] a = "Replay" -> Replay(x[1])
