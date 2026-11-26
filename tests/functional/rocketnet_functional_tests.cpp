@@ -18107,8 +18107,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #endif // production excludes dev-key cases
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    { "test_server_bind_refused_iocp", rocketnet_test_server_bind_refused_iocp, NULL },
-    { "test_server_bind_refused_rio", rocketnet_test_server_bind_refused_rio, NULL },
+    { "test_server_bind_refused_iocp", rocketnet_test_server_bind_refused_iocp, rocketnet_test_server_pin_is_not_loopback },
+    { "test_server_bind_refused_rio", rocketnet_test_server_bind_refused_rio, rocketnet_test_server_pin_is_not_loopback },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_bind_address_not_reached_on_another_address", rocketnet_test_server_bind_address_not_reached_on_another_address, rocketnet_test_server_pin_allows_portable },
