@@ -1799,6 +1799,22 @@ static bool rocketnet_server_link_send( rocketnet_server_transport_t * transport
     return true;
 }
 
+// whether a held connection's packet size can rise: the server's link MTU
+// list gives some address family more than one packet size, so a client may
+// probe upward and confirm a larger one (sdk/rocketnet_link_mtu.h). False
+// on the default list.
+
+bool rocketnet_server_transport_packet_bytes_can_rise( const struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+
+    const int * link_mtus = server_transport->protocol.link_mtus;
+    const int num_link_mtus = server_transport->protocol.num_link_mtus;
+    int candidates[ROCKETNET_LINK_MTU_MAX_ENTRIES];
+    return rocketnet_link_mtu_candidates( link_mtus, num_link_mtus, ROCKETNET_ADDRESS_IPV4, candidates ) > 1 ||
+           rocketnet_link_mtu_candidates( link_mtus, num_link_mtus, ROCKETNET_ADDRESS_IPV6, candidates ) > 1;
+}
+
 // The development network simulator call on a running transport: applies at
 // once. A development server always owns a link simulator, so this stores the
 // new settings as a config record under the tiny mutex and the thread that owns
@@ -1822,22 +1838,6 @@ bool rocketnet_server_transport_network_simulator( struct rocketnet_server_trans
                                              latency_ms / 1000.0, jitter_ms / 1000.0,
                                              (float) packet_loss_percent, (float) duplicate_percent );
     return true;
-}
-
-// whether a held connection's packet size can rise: the server's link MTU
-// list gives some address family more than one packet size, so a client may
-// probe upward and confirm a larger one (sdk/rocketnet_link_mtu.h). False
-// on the default list.
-
-bool rocketnet_server_transport_packet_bytes_can_rise( const struct rocketnet_server_transport_t * server_transport )
-{
-    rocketnet_assert( server_transport );
-
-    const int * link_mtus = server_transport->protocol.link_mtus;
-    const int num_link_mtus = server_transport->protocol.num_link_mtus;
-    int candidates[ROCKETNET_LINK_MTU_MAX_ENTRIES];
-    return rocketnet_link_mtu_candidates( link_mtus, num_link_mtus, ROCKETNET_ADDRESS_IPV4, candidates ) > 1 ||
-           rocketnet_link_mtu_candidates( link_mtus, num_link_mtus, ROCKETNET_ADDRESS_IPV6, candidates ) > 1;
 }
 
 #if ROCKETNET_DEV

@@ -292,7 +292,7 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // again for the probe after connect's two (CLIENT_PROBE_RULED_OUT and
 // CONNECTION_PROBE_CONFIRMED), with every packet and byte count the same.
 static const struct loopback_trace_t loopback_base_trace_simulator_off = { 68, 67, 5639, 4389, 67, 67, 4389, 5578, UINT64_C( 0x9dc38f4041b0e746 ), UINT64_C( 0xc5771c20f393af84 ), 4 };
-static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5391, 4328, 67, 66, 4389, 5269,UINT64_C( 0x26a8b9c3ef85d287 ), UINT64_C( 0x01e77012f9919c25 ), 10 };
+static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5391, 4328, 67, 66, 4389, 5269, UINT64_C( 0x26a8b9c3ef85d287 ), UINT64_C( 0x01e77012f9919c25 ), 10 };
 
 static void test_loopback_transport_patterns_off_same_trace()
 {

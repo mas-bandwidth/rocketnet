@@ -710,11 +710,11 @@ static void test_client_joins_at_its_smallest_size_with_no_probe()
     check( rocketnet_client_protocol_packet_bytes( &one.client ) == ROCKETNET_MAX_PACKET_BYTES );
 
     const int small_list[1] = { 1200 };
-    struct probe_client_t small;
-    probe_client_setup( &small, small_list, 1 );
-    check( probe_client_next_send( &small, packet ) == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
-    check( probe_client_response_field( &small ) == 1172 );
-    check( rocketnet_client_protocol_packet_bytes( &small.client ) == 1172 );
+    struct probe_client_t small_list_client;
+    probe_client_setup( &small_list_client, small_list, 1 );
+    check( probe_client_next_send( &small_list_client, packet ) == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+    check( probe_client_response_field( &small_list_client ) == 1172 );
+    check( rocketnet_client_protocol_packet_bytes( &small_list_client.client ) == 1172 );
 
     struct probe_client_t three;
     probe_client_setup( &three, probe_three_step, 3 );
@@ -726,7 +726,7 @@ static void test_client_joins_at_its_smallest_size_with_no_probe()
 
     check( unset.counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT] == 0 );
     check( one.counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT] == 0 );
-    check( small.counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT] == 0 );
+    check( small_list_client.counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT] == 0 );
     check( three.counters.values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT] == 0 );
 }
 
@@ -1000,12 +1000,12 @@ static void path_step( path_t * path, int target )
         rocketnet_client_protocol_update( &path->client, path->now, packet, &packet_bytes );
         path_client_send( path, packet, packet_bytes );
 
-        uint8_t small[ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES];
+        uint8_t small_probe[ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES];
         uint8_t large[ROCKETNET_RECEIVE_CEILING];
         int small_bytes = 0;
         int large_bytes = 0;
-        rocketnet_client_protocol_probe_update( &path->client, path->now, small, &small_bytes, large, &large_bytes );
-        path_client_send( path, small, small_bytes );
+        rocketnet_client_protocol_probe_update( &path->client, path->now, small_probe, &small_bytes, large, &large_bytes );
+        path_client_send( path, small_probe, small_bytes );
         path_client_send( path, large, large_bytes );
     }
 
@@ -1265,11 +1265,11 @@ REGISTER_UNIT_TEST( test_link_mtu_large_loss_burst_never_rules_out_a_carried_siz
 
 static void probe_resolve_pair( rocketnet_client_protocol_t * client, double now, int small_back )
 {
-    uint8_t small[ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES];
+    uint8_t small_probe[ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES];
     uint8_t large[ROCKETNET_RECEIVE_CEILING];
     int small_bytes = 0;
     int large_bytes = 0;
-    rocketnet_client_protocol_probe_send_pair( client, now, small, &small_bytes, large, &large_bytes );
+    rocketnet_client_protocol_probe_send_pair( client, now, small_probe, &small_bytes, large, &large_bytes );
     check( small_bytes == ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES && large_bytes == 1452 );
     client->probe_pair_small = small_back;
     check( rocketnet_client_protocol_probe_resolve( client ) == 1 );

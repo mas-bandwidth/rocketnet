@@ -571,7 +571,7 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
 
     records.push_back( tla_step( "init", "init", "<<>>", pp_state( walk ) ) );
 
-    uint8_t small[ROCKETNET_RECEIVE_CEILING];
+    uint8_t small_probe[ROCKETNET_RECEIVE_CEILING];
     uint8_t large[ROCKETNET_RECEIVE_CEILING];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
@@ -692,7 +692,7 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
                 }
                 int small_bytes = 0;
                 int large_bytes = 0;
-                rocketnet_client_protocol_probe_send_pair( &walk->client, walk->now, small, &small_bytes, large, &large_bytes );
+                rocketnet_client_protocol_probe_send_pair( &walk->client, walk->now, small_probe, &small_bytes, large, &large_bytes );
                 const char * act = small_bytes == ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES && large_bytes > 0 ? "ClientSendPair" : "NotAPair";
                 // the model drops what is left of the pair two back, which
                 // shares this pair number's parity, both ways
@@ -713,7 +713,7 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
                 }
                 walk->pair_bytes = large_bytes;
                 walk->pair_in_burst = walk->burst != 0;
-                pp_packet_t sent_small = { PP_SMALL, PP_C, 0, pn, 0, std::vector<uint8_t>( small, small + small_bytes ) };
+                pp_packet_t sent_small = { PP_SMALL, PP_C, 0, pn, 0, std::vector<uint8_t>( small_probe, small_probe + small_bytes ) };
                 pp_packet_t sent_large = { PP_LARGE, PP_C, large_bytes, pn, 0, std::vector<uint8_t>( large, large + large_bytes ) };
                 pp_send( walk, walk->up, walk->cap_up, sent_small );
                 pp_send( walk, walk->up, walk->cap_up, sent_large );
@@ -727,9 +727,9 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
                 int small_bytes = 0;
                 int large_bytes = 0;
                 const int confirm = walk->client.confirm_bytes;
-                rocketnet_client_protocol_probe_update( &walk->client, walk->now, small, &small_bytes, large, &large_bytes );
+                rocketnet_client_protocol_probe_update( &walk->client, walk->now, small_probe, &small_bytes, large, &large_bytes );
                 const char * act = small_bytes == ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES && large_bytes == 0 ? "ClientSendConfirm" : "NotAConfirm";
-                pp_packet_t sent = { PP_CONFIRM, PP_C, confirm, 0, 0, std::vector<uint8_t>( small, small + small_bytes ) };
+                pp_packet_t sent = { PP_CONFIRM, PP_C, confirm, 0, 0, std::vector<uint8_t>( small_probe, small_probe + small_bytes ) };
                 pp_send( walk, walk->up, walk->cap_up, sent );
                 report.act( act );
                 records.push_back( tla_step( "client_confirm", act, "<<>>", pp_state( walk ) ) );

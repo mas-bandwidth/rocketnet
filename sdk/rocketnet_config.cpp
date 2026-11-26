@@ -113,9 +113,9 @@ void rocketnet_message_default_config( struct rocketnet_message_config_t * confi
 
 static const struct rocketnet_config_field_t rocketnet_client_config_fields[] = {
     ROCKETNET_CLIENT_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DESC_INT, ROCKETNET_CONFIG_DESC_UINT64, ROCKETNET_CONFIG_DESC_BYTES, ROCKETNET_CONFIG_DESC_STRING )
-    ROCKETNET_CONFIG_DESC_LINK_MTUS
+        ROCKETNET_CONFIG_DESC_LINK_MTUS
 #if ROCKETNET_DEV
-        { "step_driven", ROCKETNET_CONFIG_KIND_UINT64, (int) offsetof( struct rocketnet_client_transport_config_t, step_driven ), (int) sizeof( uint64_t ), 0, 1, 0 },
+    { "step_driven", ROCKETNET_CONFIG_KIND_UINT64, (int) offsetof( struct rocketnet_client_transport_config_t, step_driven ), (int) sizeof( uint64_t ), 0, 1, 0 },
 #endif // #if ROCKETNET_DEV
 };
 
@@ -124,7 +124,7 @@ static const struct rocketnet_config_field_t rocketnet_client_config_fields[] = 
 
 static const struct rocketnet_config_field_t rocketnet_server_config_fields[] = {
     ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( ROCKETNET_CONFIG_DESC_INT, ROCKETNET_CONFIG_DESC_UINT64, ROCKETNET_CONFIG_DESC_BYTES, ROCKETNET_CONFIG_DESC_STRING )
-    ROCKETNET_CONFIG_DESC_LINK_MTUS
+        ROCKETNET_CONFIG_DESC_LINK_MTUS
 };
 
 #undef ROCKETNET_CONFIG_DESC_STRUCT
@@ -675,11 +675,11 @@ static void rocketnet_config_field_to_string( const void * config, const struct 
             // order: read in place, never as bytes
 
             const int max_entries = field->size / (int) sizeof( int ) - 1;
-            const int * list = (const int *) (const void *) base;
+            const int * list = reinterpret_cast<const int *>( base );
             const int count = list[max_entries];
             if ( count < 0 || count > max_entries )
             {
-                snprintf( buffer, (size_t) buffer_size, "(%d entries)", count );
+                (void) snprintf( buffer, (size_t) buffer_size, "(%d entries)", count );
                 break;
             }
 
@@ -687,7 +687,7 @@ static void rocketnet_config_field_to_string( const void * config, const struct 
             for ( int i = 0; i < count; i++ )
             {
                 const size_t used = strlen( buffer );
-                snprintf( buffer + used, (size_t) buffer_size - used, "%s%d", i > 0 ? "," : "", list[i] );
+                (void) snprintf( buffer + used, (size_t) buffer_size - used, "%s%d", i > 0 ? "," : "", list[i] );
             }
         }
         break;
@@ -876,7 +876,7 @@ static bool rocketnet_config_apply_env_value( const char * transport_name, void 
                 return false;
             }
 
-            int * list = (int *) (void *) base;
+            int * list = reinterpret_cast<int *>( base );
             memcpy( list, entries, sizeof( int ) * (size_t) count );
             list[max_entries] = count;
         }
@@ -1017,18 +1017,13 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
             break;
 
             case ROCKETNET_CONFIG_KIND_BYTES:
+            case ROCKETNET_CONFIG_KIND_INT_LIST:
             {
                 // any value of the full width is structurally valid;
                 // semantic checks (keys present, and so on) stay with the
-                // transport that owns the meaning
-            }
-            break;
-
-            case ROCKETNET_CONFIG_KIND_INT_LIST:
-            {
-                // the link MTU list's checks each have their own status
-                // (rocketnet_config_link_mtus_status), run by the creates on
-                // the resolved config, not this range walk
+                // transport that owns the meaning. The link MTU list's checks
+                // each have their own status (rocketnet_config_link_mtus_status),
+                // run by the creates on the resolved config, not this range walk
             }
             break;
 

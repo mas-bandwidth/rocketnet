@@ -1448,9 +1448,9 @@ static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * 
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    const bool small = packet_bytes == ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES;
+    const bool is_small = packet_bytes == ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES;
 
-    if ( !small && !rocketnet_server_packet_bytes_allowed( server, from, packet_bytes ) )
+    if ( !is_small && !rocketnet_server_packet_bytes_allowed( server, from, packet_bytes ) )
     {
         rocketnet_spam( "server ignored connection probe. size is not on the server's link MTU list" );
         counters[ROCKETNET_COUNTER_CONNECTION_PROBE_SIZE_NOT_ALLOWED]++;
@@ -1477,7 +1477,7 @@ static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * 
     // the update's allowances hold the update number plus one, so a
     // mapping's zero means none opened yet, even before the first update
 
-    uint64_t * allowance = small ? &mapping->probe_update : &mapping->probe_large_update;
+    uint64_t * allowance = is_small ? &mapping->probe_update : &mapping->probe_large_update;
 
     if ( *allowance == server->update_number + 1 )
     {

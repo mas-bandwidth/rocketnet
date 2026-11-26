@@ -46,7 +46,7 @@ struct packet_size_pair_t
 
 // a step-driven loopback pair; small is the three-step link list with the
 // window raised to hold one max_message_bytes message at P = 548 (F = 480)
-static bool packet_size_pair_create( packet_size_pair_t & pair, bool small )
+static bool packet_size_pair_create( packet_size_pair_t & pair, bool small_size )
 {
     rocketnet_quiet( 1 );
     packet_size_now = 1000.0;
@@ -70,7 +70,7 @@ static bool packet_size_pair_create( packet_size_pair_t & pair, bool small )
     memcpy( server_config.backend_public_key, backend_public, sizeof( backend_public ) );
     server_config.transport = "loopback";
     server_config.loopback_hub = rocketnet_test_loopback_hub();
-    if ( small )
+    if ( small_size )
     {
         memcpy( server_config.link_mtus, link_mtus, sizeof( link_mtus ) );
         server_config.num_link_mtus = 3;
@@ -87,7 +87,7 @@ static bool packet_size_pair_create( packet_size_pair_t & pair, bool small )
     client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = true;
     client_config.time_callback = packet_size_clock;
-    if ( small )
+    if ( small_size )
     {
         memcpy( client_config.link_mtus, link_mtus, sizeof( link_mtus ) );
         client_config.num_link_mtus = 3;
@@ -361,11 +361,11 @@ static void test_link_mtu_packet_size_ack_block_budget()
 
     uint8_t block[ROCKETNET_MAX_PACKET_BYTES];
     const int other = 100;
-    const int small = rocketnet_session_ack_block_build( block, 548, other, &accepted );
-    check( small > 0 );
-    check( small <= 548 - ROCKETNET_PACKET_OVERHEAD_BYTES - other );
+    const int small_block = rocketnet_session_ack_block_build( block, 548, other, &accepted );
+    check( small_block > 0 );
+    check( small_block <= 548 - ROCKETNET_PACKET_OVERHEAD_BYTES - other );
     const int large = rocketnet_session_ack_block_build( block, ROCKETNET_MAX_PACKET_BYTES, other, &accepted );
-    check( large > small );
+    check( large > small_block );
     check( large <= ROCKETNET_MAX_PACKET_BYTES - ROCKETNET_PACKET_OVERHEAD_BYTES - other );
 }
 

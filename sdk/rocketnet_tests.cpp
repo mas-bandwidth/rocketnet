@@ -12227,7 +12227,7 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
 
                 expected_list[0] = (int) field->max_value;
                 expected_list[1] = (int) field->min_value;
-                snprintf( value_string, sizeof( value_string ), "%d,%d", expected_list[0], expected_list[1] );
+                (void) snprintf( value_string, sizeof( value_string ), "%d,%d", expected_list[0], expected_list[1] );
             }
             break;
 
@@ -12280,7 +12280,7 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
             case ROCKETNET_CONFIG_KIND_INT_LIST:
             {
                 const int max_entries = field->size / (int) sizeof( int ) - 1;
-                const int * list = (const int *) (const void *) base;
+                const int * list = reinterpret_cast<const int *>( base );
 
                 rocketnet_check( list[max_entries] == 2 );
                 rocketnet_check( list[0] == expected_list[0] && list[1] == expected_list[1] );

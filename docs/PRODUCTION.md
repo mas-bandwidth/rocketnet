@@ -112,7 +112,7 @@ in this local example is reachable only from the same host.
 
 The create/start failure branch below is an excerpt, with `config`, `address`,
 and the example shutdown helper already defined. From
-[examples/backend_server.c](../examples/backend_server.c), lines 238 to 257:
+[examples/backend_server.c](../examples/backend_server.c), lines 265 to 284:
 
 ```c
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;

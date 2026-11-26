@@ -47,6 +47,7 @@ tag. The job classifies a commit as wire-affecting when it touches one of these 
 - `standard/TRANSPORT.md`
 - `standard/MESSAGES.md`
 - `sdk/rocketnet_wire.h`
+- `sdk/rocketnet_link_mtu.h`
 - `sdk/rocketnet_protocol.h`
 - `sdk/rocketnet_protocol.cpp`
 - `sdk/rocketnet_connect_token.h`

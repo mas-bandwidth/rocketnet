@@ -91,8 +91,7 @@ struct link_mtus_refusal_t
     int status;
 };
 
-static const link_mtus_refusal_t link_mtus_refusals[] =
-{
+static const link_mtus_refusal_t link_mtus_refusals[] = {
     { "empty", { 1500 }, 0, ROCKETNET_STATUS_LINK_MTUS_EMPTY },
     { "nine entries", { 1500, 1400, 1300, 1200, 1100, 1000, 900, 800 }, ROCKETNET_MAX_LINK_MTUS + 1, ROCKETNET_STATUS_LINK_MTUS_EMPTY },
     { "negative count", { 1500 }, -1, ROCKETNET_STATUS_LINK_MTUS_EMPTY },
@@ -371,8 +370,7 @@ static void test_link_mtus_older_config_reads_the_default()
 // CONFIG_ENV_INVALID at create. Each variable is restored before returning.
 
 // (an empty value is ignored, as for every config variable)
-static const char * link_mtus_env_junk[] =
-{
+static const char * link_mtus_env_junk[] = {
     "a",
     "1492,,576",
     ",1492",

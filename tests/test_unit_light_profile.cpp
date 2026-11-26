@@ -369,8 +369,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // the large probe's own allowance in each of the encryption map's two
 // entries a client (8 bytes each) and the counters: 16064 more to the server
 // at 1000 clients: actual=15195346 and 2146872178 (space, gcc, Debug, DEV
-// ON), measured; the other platforms derived from the Linux reading.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1663740859 )
+// ON), measured; the other platforms derived from the Linux reading. On
+// macOS the server measured 16128 more, not 16064: actual=1664789499 (CI,
+// macos Debug unit, Apple clang, DEV=ON).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1663740923 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13998154 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
