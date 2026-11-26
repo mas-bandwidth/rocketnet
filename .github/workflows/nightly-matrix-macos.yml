@@ -41,8 +41,6 @@ on:
   schedule:
     - cron: "20 8 * * *"
   workflow_dispatch:
-  push:
-    branches: [matrix-owed-macos]
 
 permissions:
   contents: read
@@ -66,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'push') && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         # id: the build; build, flags, cmake: its configure; server, client: the
         # pins; variant (and prod for the Release cells): the
         # tests/functional/expected_skips.txt legs of the functional runs;
@@ -250,7 +248,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'push') && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
       group: nightly-matrix-macos-binaries-${{ github.event_name }}-${{ matrix.ref }}
       cancel-in-progress: true
@@ -296,7 +294,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'push') && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         option: [ROCKETNET_BUILD_SHARED=OFF, ROCKETNET_BUILD_DEV_LIBRARIES=OFF]
     concurrency:
       group: nightly-matrix-macos-package-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.option }}
