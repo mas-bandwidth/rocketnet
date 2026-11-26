@@ -99,9 +99,22 @@ func (provider *mockProvider) issue(userID string, now uint64, expireSeconds uin
 
 var errTicket = errors.New("the ticket is not valid")
 
+// 1 when text holds only the standard base64 alphabet and '=': no
+// whitespace of any kind, which decoders differ on, so both backends
+// refuse the same tickets
+func base64Alphabet(text string) bool {
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '+' || c == '/' || c == '=') {
+			return false
+		}
+	}
+	return true
+}
+
 // checks a ticket at now (unix seconds) and returns its user id
 func (provider *mockProvider) verify(text string, now uint64) (string, error) {
-	if len(text) > maxTicketTextBytes {
+	if len(text) > maxTicketTextBytes || !base64Alphabet(text) {
 		return "", errTicket
 	}
 	ticket, err := base64.StdEncoding.DecodeString(text)
