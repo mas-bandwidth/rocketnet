@@ -257,6 +257,37 @@ int rn_endpoint_packet_bytes( const struct rn_endpoint_t * endpoint )
     return endpoint->packet_bytes;
 }
 
+void rn_endpoint_raise_packet_bytes( struct rn_endpoint_t * endpoint, int packet_bytes )
+{
+    // proofs/tla/RNPathProbe.tla ClientRecvLarge and ServerRecvConfirm: the
+    // path probe raised the connection's packet size in place. The block
+    // stride stays F(P0) for the connection's life -- the region's
+    // fragment_bytes, which the receive ring, the block checks and the CONFIG
+    // both ends agreed on are keyed to -- and only the payload capacity C(P)
+    // grows: the SINGLE limit the builders write to, and with it the
+    // channels' small-message threshold and the unreliable one-record limit.
+    // Every record already queued or in flight was built for the smaller
+    // capacity, so it still fits; a sequenced state queued at the old full
+    // capacity is below the new one and goes as an ordinary record. A size
+    // that does not rise is ignored: the size never falls.
+
+    rocketnet_assert( packet_bytes <= ROCKETNET_MAX_PACKET_BYTES );
+
+    if ( packet_bytes <= endpoint->packet_bytes || packet_bytes > ROCKETNET_MAX_PACKET_BYTES )
+    {
+        return;
+    }
+
+    endpoint->packet_bytes = packet_bytes;
+
+    const int single = rn_endpoint_single_bytes( endpoint );
+    const bool raised = rn_channels_set_payload_capacity( &endpoint->ordered.channels, (uint32_t) single );
+    rocketnet_assert( raised );
+    (void) raised;
+    endpoint->ordered.builder.payload_capacity = single;
+    endpoint->unreliable_builder.payload_capacity = single;
+}
+
 // ---------------------------------------------------------------
 //                     init and reset
 // ---------------------------------------------------------------
@@ -289,9 +320,11 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
 
     rn_region_reset( endpoint->region );
 
-    // the connection's packet size P (rn_endpoint_set_packet_bytes) sets its
-    // block stride F(P) and payload capacity C(P) for its whole life, before
-    // any layer binds to the region; at the ceiling these are 1152 and 1416
+    // the connection's first packet size P0 (rn_endpoint_set_packet_bytes)
+    // sets its block stride F(P0) for its whole life and its first payload
+    // capacity C(P0), before any layer binds to the region; a later raise
+    // (rn_endpoint_raise_packet_bytes) grows only the capacity. At the
+    // ceiling these are 1152 and 1416
 
     endpoint->region->fragment_bytes = (uint32_t) rocketnet_link_mtu_block_stride( endpoint->packet_bytes );
 

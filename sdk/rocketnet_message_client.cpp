@@ -47,6 +47,12 @@ static int rn_client_link_packet_bytes( void * transport, int client_index )
     return rocketnet_client_transport_packet_bytes( (rocketnet_client_transport_t *) transport );
 }
 
+static int rn_client_link_link_mtu( void * transport, int client_index, int packet_bytes )
+{
+    (void) client_index;
+    return rocketnet_client_transport_link_mtu( (rocketnet_client_transport_t *) transport, packet_bytes );
+}
+
 static uint64_t rn_client_link_connection( void * transport, int client_index )
 {
     (void) client_index;
@@ -120,6 +126,7 @@ void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_c
     link->acked_connection = rn_client_link_entry_connection;
     link->max_payload_bytes = RN_LINK_FORWARD( rocketnet_client_transport_max_payload_bytes )::call;
     link->packet_bytes = rn_client_link_packet_bytes;
+    link->link_mtu = rn_client_link_link_mtu;
     link->start_packet = rn_client_link_start_packet;
     link->finish_packet = RN_LINK_FORWARD( rocketnet_client_transport_finish_packet )::call;
     link->abort_packet = RN_LINK_FORWARD( rocketnet_client_transport_abort_packet )::call;
@@ -320,6 +327,15 @@ int rocketnet_message_client_max_packet_bytes( struct rocketnet_message_client_t
         return 0;
     }
     return rocketnet_message_client_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ? rn_message_object_packet_bytes( &client->object, 0 ) : 0;
+}
+
+int rocketnet_message_client_link_mtu( struct rocketnet_message_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+    {
+        return 0;
+    }
+    return rocketnet_message_client_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ? rn_message_object_link_mtu( &client->object, 0 ) : 0;
 }
 
 int rocketnet_message_client_max_unreliable_message_bytes( struct rocketnet_message_client_t * client )

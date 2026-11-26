@@ -1720,7 +1720,7 @@ static void test_xdp_transport_host_invalid_type_drops()
             { 1, 34, "connection denied" },
             { 2, 66, "connection challenge" },
             { 7, 38, "connection cookie" },
-            { 9, 517, "connection probe one byte below its floor" },
+            { 9, 33, "connection probe one byte below its floor" },
             { 10, 40, "reserved type 10" },
             { 10, 1452, "reserved type 10 at the receive ceiling" },
             { 11, 100, "reserved type 11" },
@@ -1769,7 +1769,7 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
         { 5, 34, ceiling },     // payload
         { 6, 33, ceiling },     // disconnect
         { 8, 33, ceiling },     // ack
-        { 9, 518, ceiling },    // connection probe
+        { 9, 34, ceiling },     // connection probe
     };
     const int standard_rows = (int) ( sizeof( standard ) / sizeof( standard[0] ) );
 
@@ -1879,10 +1879,10 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
     }
 
     // 2 families x 256 types x 1454 sizes, and the accepted set is exactly
-    // the table's: 2 x ( 1 + 1 + 1412 + 1419 + 1420 + 1420 + 935 )
+    // the table's: 2 x ( 1 + 1 + 1412 + 1419 + 1420 + 1420 + 1419 )
 
     rocketnet_unit_check( runs == 2L * 256 * ( ceiling + 2 ) );
-    rocketnet_unit_check( redirects == 2L * ( 1 + 1 + 1412 + 1419 + 1420 + 1420 + 935 ) );
+    rocketnet_unit_check( redirects == 2L * ( 1 + 1 + 1412 + 1419 + 1420 + 1420 + 1419 ) );
 }
 
 // ---------------------------------------------------------------------------

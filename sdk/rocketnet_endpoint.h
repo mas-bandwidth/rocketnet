@@ -118,6 +118,12 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now );
 void rn_endpoint_set_packet_bytes( struct rn_endpoint_t * endpoint, int packet_bytes );
 int rn_endpoint_packet_bytes( const struct rn_endpoint_t * endpoint );
 
+// Raises the bound connection's packet size in place when the path probe
+// raised it (proofs/tla/RNPathProbe.tla): the payload capacity C(P) grows,
+// the block stride stays the one its reset bound. A size not above the
+// current one is ignored.
+void rn_endpoint_raise_packet_bytes( struct rn_endpoint_t * endpoint, int packet_bytes );
+
 // C(P) of the bound packet size (ROCKETNET_MAX_PACKET_PAYLOAD_BYTES at the
 // ceiling), and the largest UNRELIABLE message sent unpromoted at it
 // (ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES at the ceiling)

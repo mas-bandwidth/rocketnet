@@ -127,6 +127,10 @@ static int standard_timing_and_counters_generate( const char * id, uint8_t * out
 
 // Re-pin t17 because the ACK-debt threshold now records one eliciting packet,
 // and again for the handshake work budget's default of 16.
+// Re-pin t18 for the path probe after connect: CLIENT_PROBE_STRIKE in the
+// place of WINDOW_EXPIRED, CONNECTION_PROBE_NOT_CONNECTED (a refusal) in the
+// place of ALREADY_CONNECTED, and CLIENT_PROBE_RULED_OUT and
+// CONNECTION_PROBE_CONFIRMED appended.
 static const rn_standard_vector_t standard_timing_and_counters_table[] = {
     RN_STANDARD_VECTOR( "t17.timing-defaults", "0a0000000000000005000000000000000a000000000000000300000000000000"
                                                "3c000000000000000a000000000000000a000000000000000100000000000000"
@@ -183,10 +187,11 @@ static const rn_standard_vector_t standard_timing_and_counters_table[] = {
                         "6305000000a1e90dd30000002c798ccf010000830eee6b00000086ee149c000000da282cb9000000"
                         "9fba380a000000c1131fae000000ad332a9801000067059ade000000d20ca4a8000000485b6f9600"
                         "000011006a390000002a8985220000008b6394cc000000dd5b1fd00100004a275c4400000065b8a7"
-                        "430100006e8685b7030000de1bdd800025015961eb790025014761afd4002501d34e51ec01250126"
+                        "430100006e8685b7030000de1bdd800025015961eb790025014761afd4002501d6ac478700250126"
                         "58e6cf00250135f7c25400250171294e4a00250123ac0a080025019a4d5ac7012501266fab790020"
                         "00e35666440300007be2d00e0130010d301326003001a6e693bf003001780ea713003001761a1fc8"
-                        "003001d1196dff013001265eb5770100001eb299120100006de075be000000" ),
+                        "003001d1196dff013001265eb577010000122578db0100006de075be000000ed51e25f010000fa24"
+                        "8d97012501" ),
 };
 
 static void test_standard_timing_and_counters_vectors()

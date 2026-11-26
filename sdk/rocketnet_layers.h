@@ -87,7 +87,7 @@ bool rocketnet_get_thread_priority( void );
  */
 #define ROCKETNET_TRANSPORT_STRING_LENGTH                     64
 
-/** @brief No packet size of the client's link MTU list was carried both ways: the path probe after the challenge heard no reply at any size (the transport value of ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED). */
+/** @brief The path does not carry the smallest packet size of the client's link MTU list, the size the connection started at: probes at that size went unanswered while smaller ones came back (the transport value of ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED). */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_MTU_PROBE_FAILED           (-14)
 /** @brief The server sent what the protocol forbids: the attempt ended at a connection challenge whose server ephemeral key is a small-order point (the transport value of ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION). */
 #define ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION         (-10)
@@ -485,6 +485,12 @@ int rocketnet_client_transport_max_payload_bytes( struct rocketnet_client_transp
 // a NULL client_transport is a counted no-op that returns 0
 int rocketnet_client_transport_packet_bytes( struct rocketnet_client_transport_t * client_transport );
 
+// the entry of the client's link MTU list that a connection to its server
+// at packet_bytes is using (rocketnet_link_mtu_entry): the first, largest,
+// entry that gives the server's address family that size; 0 for none.
+// A NULL client_transport is a counted no-op that returns 0
+int rocketnet_client_transport_link_mtu( struct rocketnet_client_transport_t * client_transport, int packet_bytes );
+
 // the batch behind the copying cursor above: by count and index, and as
 // parallel arrays in one call. valid until the next update.
 
@@ -609,6 +615,8 @@ int rocketnet_client_transport_state( struct rocketnet_client_transport_t * clie
 const char * rocketnet_client_transport_io_name( struct rocketnet_client_transport_t * client_transport );
 bool rocketnet_client_transport_network_simulator( struct rocketnet_client_transport_t * client_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 bool rocketnet_server_transport_network_simulator( struct rocketnet_server_transport_t * server_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
+/** @brief Whether a held connection's packet size can rise: the server's link MTU list gives some address family more than one packet size. False on the default list. */
+bool rocketnet_server_transport_packet_bytes_can_rise( const struct rocketnet_server_transport_t * server_transport );
 #if ROCKETNET_DEV
 /** @brief The link MTU list a transport's protocol holds, for a unit test: its entries written to link_mtus (ROCKETNET_MAX_LINK_MTUS of room), its count returned. */
 int rocketnet_client_transport_link_mtus_for_test( const struct rocketnet_client_transport_t * client_transport, int * link_mtus );
@@ -1504,6 +1512,13 @@ int rocketnet_server_transport_max_payload_bytes( struct rocketnet_server_transp
 int rocketnet_server_transport_client_max_payload_bytes( struct rocketnet_server_transport_t * server_transport, int client_index );
 int rocketnet_server_transport_client_packet_bytes( struct rocketnet_server_transport_t * server_transport, int client_index );
 
+// the entry of the server's link MTU list that the slot's connection at
+// packet_bytes is using (rocketnet_link_mtu_entry), by the family of the
+// client's address: the first, largest, entry that gives it that size; 0
+// for a slot that holds no connection. A NULL server_transport is a counted
+// no-op that returns 0
+int rocketnet_server_transport_client_link_mtu( struct rocketnet_server_transport_t * server_transport, int client_index, int packet_bytes );
+
 // the server's whole-socket rates: packets and bandwidth per second, both
 // directions, over the trailing second, from time-based buckets (about 4 ms
 // boundary resolution) at bounded cost: no per-client sweep, no extra pass
@@ -1875,6 +1890,11 @@ int rocketnet_message_client_state( struct rocketnet_message_client_t * client )
 int rocketnet_message_client_max_packet_bytes( struct rocketnet_message_client_t * client );
 int rocketnet_message_client_max_unreliable_message_bytes( struct rocketnet_message_client_t * client );
 
+// the link MTU list entry the connection's packet size comes from, the first,
+// largest, that gives it (rocketnet_link_mtu_entry), while CONNECTED; 0
+// otherwise. a NULL client is a counted no-op that returns 0
+int rocketnet_message_client_link_mtu( struct rocketnet_message_client_t * client );
+
 // ROCKETNET_UPDATE_OK, or ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED. a NULL client is a counted no-op that returns ROCKETNET_UPDATE_OK
 int rocketnet_message_client_update( struct rocketnet_message_client_t * client, double time );
 
@@ -2074,6 +2094,11 @@ int rocketnet_message_server_client_connected( struct rocketnet_message_server_t
 // no-op that returns 0
 int rocketnet_message_server_client_max_packet_bytes( struct rocketnet_message_server_t * server, int client_index );
 int rocketnet_message_server_client_max_unreliable_message_bytes( struct rocketnet_message_server_t * server, int client_index );
+
+// the link MTU list entry the slot's packet size comes from, the first,
+// largest, that gives the client's family that size (rocketnet_link_mtu_entry);
+// 0 for a slot not connected. a NULL server is a counted no-op that returns 0
+int rocketnet_message_server_client_link_mtu( struct rocketnet_message_server_t * server, int client_index );
 
 // a NULL server is a counted no-op that returns NULL
 const struct rocketnet_counters_t * rocketnet_message_server_counters( struct rocketnet_message_server_t * server );

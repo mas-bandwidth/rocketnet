@@ -15,17 +15,19 @@
 #define check rocketnet_unit_check
 
 // The hang, and the path probe that ends it (standard/TRANSPORT.md t11.4;
-// proofs/tla/RNPathProbe.tla NoHang, FailsWhenNoneFits).
+// proofs/tla/RNPathProbe.tla ReachesBest, FailsWhenP0NotCarried).
 //
 // On a path whose link MTU is below 1500 the handshake's packets, all small,
 // arrive, the client connects, and then every packet larger than the path
 // carries is lost: a reliable message that needs a full packet is resent
 // forever while the small keep-alives keep the connection up. A client and
 // server on the default link MTU list { 1500 } still behave that way, byte
-// for byte; on a three-step list { 1492, 1200, 576 } the client probes after
-// the challenge, the connection takes the largest size the path carries both
-// ways, and the message arrives. When no size of the list is carried, the
-// attempt ends in MTU_PROBE_FAILED instead of hanging.
+// for byte; on a three-step list { 1492, 1200, 576 } the connection starts
+// at the smallest size, 548, which every such path carries, so the message
+// arrives, and the probe after connect raises the size to the largest the
+// path carries both ways. When the path does not carry even 548 the
+// connection ends in MTU_PROBE_FAILED instead of hanging. A raise in the
+// middle of a large reliable message loses and corrupts nothing.
 //
 // A step-driven loopback pair on a fixed clock, 10 ms a step; the path is the
 // loopback driver's link seam, which loses every datagram above its size.
@@ -55,11 +57,18 @@ struct hang_pair_t
 
 static const int hang_three_step[3] = { 1492, 1200, 576 };
 
-// a pair on the three-step list (with the window raised to hold the default
-// 1 MiB message at the 576 entry's 480-byte block, as create requires), or on
-// the default list when three_step is false; connects for at most max_steps
-static void hang_pair_create( hang_pair_t & pair, bool three_step, int max_steps )
+// a pair with both ends on the link MTU list link_mtus (the default list
+// when num_link_mtus is 0; with the window raised to hold the default 1 MiB
+// message at a 576 entry's 480-byte block, as create requires); connects for
+// at most max_steps
+static void hang_pair_create_list( hang_pair_t & pair, const int * link_mtus, int num_link_mtus, int max_steps )
 {
+    bool small_entry = false;
+    for ( int i = 0; i < num_link_mtus; i++ )
+    {
+        small_entry = small_entry || link_mtus[i] < 1200;
+    }
+
     rocketnet_quiet( 1 );
     hang_now = 1000.0;
 
@@ -80,10 +89,13 @@ static void hang_pair_create( hang_pair_t & pair, bool three_step, int max_steps
     memcpy( server_config.backend_public_key, backend_public, sizeof( backend_public ) );
     server_config.transport = "loopback";
     server_config.loopback_hub = rocketnet_test_loopback_hub();
-    if ( three_step )
+    if ( num_link_mtus > 0 )
     {
-        memcpy( server_config.link_mtus, hang_three_step, sizeof( hang_three_step ) );
-        server_config.num_link_mtus = 3;
+        memcpy( server_config.link_mtus, link_mtus, sizeof( int ) * (size_t) num_link_mtus );
+        server_config.num_link_mtus = num_link_mtus;
+    }
+    if ( small_entry )
+    {
         server_config.reliable_messages_in_flight = 4096;
         server_config.packets_in_flight = 4096;
     }
@@ -97,10 +109,13 @@ static void hang_pair_create( hang_pair_t & pair, bool three_step, int max_steps
     client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = true;
     client_config.time_callback = hang_clock;
-    if ( three_step )
+    if ( num_link_mtus > 0 )
     {
-        memcpy( client_config.link_mtus, hang_three_step, sizeof( hang_three_step ) );
-        client_config.num_link_mtus = 3;
+        memcpy( client_config.link_mtus, link_mtus, sizeof( int ) * (size_t) num_link_mtus );
+        client_config.num_link_mtus = num_link_mtus;
+    }
+    if ( small_entry )
+    {
         client_config.reliable_messages_in_flight = 4096;
         client_config.packets_in_flight = 4096;
     }
@@ -130,6 +145,13 @@ static void hang_pair_create( hang_pair_t & pair, bool three_step, int max_steps
     }
 }
 
+// a pair on the three-step list, or on the default list when three_step is
+// false
+static void hang_pair_create( hang_pair_t & pair, bool three_step, int max_steps )
+{
+    hang_pair_create_list( pair, hang_three_step, three_step ? 3 : 0, max_steps );
+}
+
 static void hang_pair_destroy( hang_pair_t & pair )
 {
     rn_test_client_stop_and_destroy( pair.client );
@@ -150,7 +172,8 @@ static uint64_t hang_server_counter( hang_pair_t & pair, int counter )
 }
 
 // one reliable message of bytes each way, sent at once; true when both
-// arrive whole within max_steps
+// arrive whole, every byte as sent, within max_steps. Each step, the sizes
+// both ends report are checked never to fall.
 static bool hang_reliable_both_ways( hang_pair_t & pair, int bytes, int max_steps )
 {
     uint8_t * up = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE, bytes );
@@ -171,6 +194,8 @@ static bool hang_reliable_both_ways( hang_pair_t & pair, int bytes, int max_step
 
     bool up_arrived = false;
     bool down_arrived = false;
+    int client_size = rocketnet_client_max_packet_bytes( pair.client );
+    int server_size = rocketnet_server_client_max_packet_bytes( pair.server, 0 );
     for ( int step = 0; step < max_steps && !( up_arrived && down_arrived ); step++ )
     {
         hang_pump( pair.server, pair.client );
@@ -180,24 +205,56 @@ static bool hang_reliable_both_ways( hang_pair_t & pair, int bytes, int max_step
         {
             for ( int m = 0; m < batch->num_messages; m++ )
             {
-                up_arrived = up_arrived || ( batch->bytes[m] == bytes && batch->data[m][bytes - 1] == (uint8_t) ( ( bytes - 1 ) * 7 + 1 ) );
+                bool whole = batch->bytes[m] == bytes;
+                for ( int i = 0; whole && i < bytes; i++ )
+                {
+                    whole = batch->data[m][i] == (uint8_t) ( i * 7 + 1 );
+                }
+                up_arrived = up_arrived || whole;
             }
         }
         while ( ( batch = rocketnet_client_receive_messages( pair.client ) ) != NULL )
         {
             for ( int m = 0; m < batch->num_messages; m++ )
             {
-                down_arrived = down_arrived || ( batch->bytes[m] == bytes && batch->data[m][bytes - 1] == (uint8_t) ( ( bytes - 1 ) * 11 + 3 ) );
+                bool whole = batch->bytes[m] == bytes;
+                for ( int i = 0; whole && i < bytes; i++ )
+                {
+                    whole = batch->data[m][i] == (uint8_t) ( i * 11 + 3 );
+                }
+                down_arrived = down_arrived || whole;
             }
         }
+
+        const int client_now = rocketnet_client_max_packet_bytes( pair.client );
+        const int server_now = rocketnet_server_client_max_packet_bytes( pair.server, 0 );
+        check( client_now >= client_size );
+        check( server_now >= server_size );
+        client_size = client_now;
+        server_size = server_now;
     }
     return up_arrived && down_arrived;
 }
 
-// A link MTU of 1200 (1172-byte IPv4 datagrams): the probe's 1452 window
-// expires, the 1172 probe is answered, and a 64 KiB reliable message crosses
-// both ways in packets no larger than the path carries. On the default list
-// the same pair connects and the message never arrives while both ends stay
+// steps the pair until both ends report size, at most max_steps; the steps
+// taken, or -1
+static int hang_steps_to_size( hang_pair_t & pair, int size, int max_steps )
+{
+    for ( int step = 0; step < max_steps; step++ )
+    {
+        if ( rocketnet_client_max_packet_bytes( pair.client ) == size && rocketnet_server_client_max_packet_bytes( pair.server, 0 ) == size )
+        {
+            return step;
+        }
+        hang_pump( pair.server, pair.client );
+    }
+    return -1;
+}
+
+// A link MTU of 1200 (1172-byte IPv4 datagrams): the connection starts at
+// 548 and a 64 KiB reliable message crosses both ways at once; the probe
+// rules 1452 out and raises both ends to 1172. On the default list the same
+// pair connects and the message never arrives while both ends stay
 // connected: today's hang (planted: hang_no_hang_three_step = false).
 
 static bool hang_no_hang_three_step = true;
@@ -210,9 +267,6 @@ static void test_link_mtu_no_hang_on_a_1200_link()
     hang_pair_create( pair, hang_no_hang_three_step, 1000 );
     check( pair.connect_steps > 0 );
 
-    // from here on every datagram either end hands the path is counted
-    rocketnet_loopback_test_link_max_bytes( 1172 );
-
     // 30 seconds of the pair's clock: every resend of a full packet is lost
     // on the default list, and the connection does not end
     const bool arrived = hang_reliable_both_ways( pair, 65536, 3000 );
@@ -224,21 +278,22 @@ static void test_link_mtu_no_hang_on_a_1200_link()
     check( arrived );
     check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
 
-    check( rocketnet_client_max_packet_bytes( pair.client ) == 1172 );
-    check( rocketnet_server_client_max_packet_bytes( pair.server, 0 ) == 1172 );
-    check( rocketnet_loopback_test_largest_sent() <= 1172 );
-    check( hang_client_counter( pair, ROCKETNET_COUNTER_CLIENT_PROBE_WINDOW_EXPIRED ) == 1 );
+    check( hang_steps_to_size( pair, 1172, 3000 ) >= 0 );
+    check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( hang_client_counter( pair, ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT ) == 1 );
     check( hang_client_counter( pair, ROCKETNET_COUNTER_CLIENT_PROBE_ACCEPTED ) == 1 );
-    check( hang_server_counter( pair, ROCKETNET_COUNTER_CONNECTION_PROBE_ANSWERED ) >= 1 );
+    check( hang_server_counter( pair, ROCKETNET_COUNTER_CONNECTION_PROBE_CONFIRMED ) == 1 );
 
     hang_pair_destroy( pair );
 }
 
 REGISTER_UNIT_TEST( test_link_mtu_no_hang_on_a_1200_link );
 
-// A path that carries the connection request but no packet size of the list
-// (540 bytes: the request is 518, the 576 entry's probe 548): every window
-// expires and the attempt ends in MTU_PROBE_FAILED, with nothing connected.
+// A path that carries the handshake but no packet size of the list (540
+// bytes: the request is 518, the smallest size 548): the client connects at
+// 548, every candidate is ruled out, 548 last, and the connection ends in
+// MTU_PROBE_FAILED rather than hanging (planted: past the last candidate the
+// walk starts over, and the client stays connected).
 
 static void test_link_mtu_probe_fails_when_no_size_fits()
 {
@@ -246,14 +301,15 @@ static void test_link_mtu_probe_fails_when_no_size_fits()
 
     hang_pair_t pair;
     hang_pair_create( pair, true, 1000 );
-    check( pair.connect_steps == -1 );
+    check( pair.connect_steps > 0 );
+    for ( int step = 0; step < 8000 && rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED; step++ )
+    {
+        hang_pump( pair.server, pair.client );
+    }
     check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED );
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED ), "MTU_PROBE_FAILED" ) == 0 );
-    check( !rocketnet_server_client_connected( pair.server, 0 ) );
-    check( hang_client_counter( pair, ROCKETNET_COUNTER_CLIENT_PROBE_WINDOW_EXPIRED ) == 3 );
+    check( hang_client_counter( pair, ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT ) == 3 );
     check( hang_client_counter( pair, ROCKETNET_COUNTER_CLIENT_PROBE_FAILED ) == 1 );
-    check( hang_client_counter( pair, ROCKETNET_COUNTER_CLIENT_PROBE_SENT ) == 12 );
-    check( hang_server_counter( pair, ROCKETNET_COUNTER_CONNECTION_PROBE_RECEIVED ) == 0 );
 
     hang_pair_destroy( pair );
 }
@@ -268,6 +324,10 @@ static void test_link_mtu_default_list_sends_no_probe()
     hang_pair_t pair;
     hang_pair_create( pair, false, 1000 );
     check( pair.connect_steps > 0 );
+    for ( int step = 0; step < 500; step++ )
+    {
+        hang_pump( pair.server, pair.client );
+    }
     check( hang_client_counter( pair, ROCKETNET_COUNTER_CLIENT_PROBE_SENT ) == 0 );
     check( hang_server_counter( pair, ROCKETNET_COUNTER_CONNECTION_PROBE_RECEIVED ) == 0 );
     check( hang_server_counter( pair, ROCKETNET_COUNTER_CONNECTION_RESPONSE_SIZE_NOT_ALLOWED ) == 0 );
@@ -278,11 +338,12 @@ static void test_link_mtu_default_list_sends_no_probe()
 
 REGISTER_UNIT_TEST( test_link_mtu_default_list_sends_no_probe );
 
-// The join cost, in steps of 10 ms on a lossless path with no delay (one
-// step is the round trip): the default list's handshake; the three-step list
-// when the path carries its first entry (one probe round trip more); its
-// second (one expired window of four sends at the 10 Hz send rate, 0.4 s,
-// and the round trip); and its third (two windows, 0.8 s).
+// The join cost, in steps of 10 ms on a lossless path with no delay: every
+// list joins in the steps the default list does, whatever the path carries,
+// since the connection starts at the list's smallest size and probes after
+// connect; on a path that carries 1452 both ends are there within a few
+// steps of connect (planted: the first pair waits a second after connect,
+// and 1452 takes a hundred steps).
 
 static void test_link_mtu_join_cost()
 {
@@ -291,12 +352,14 @@ static void test_link_mtu_join_cost()
         bool three_step;
         int link_max_bytes;
         int connect_steps;
+        int steps_to_max;
     } joins[] = {
-        { false, 0, 0 },
-        { true, 0, 0 },
-        { true, 1172, 0 },
-        { true, 548, 0 },
+        { false, 0, 0, 0 },
+        { true, 0, 0, 0 },
+        { true, 1172, 0, 0 },
+        { true, 548, 0, 0 },
     };
+    const int max_size[4] = { 1452, 1452, 1172, 548 };
 
     for ( size_t i = 0; i < sizeof( joins ) / sizeof( joins[0] ); i++ )
     {
@@ -305,6 +368,8 @@ static void test_link_mtu_join_cost()
         hang_pair_create( pair, joins[i].three_step, 1000 );
         joins[i].connect_steps = pair.connect_steps;
         check( pair.connect_steps > 0 );
+        joins[i].steps_to_max = hang_steps_to_size( pair, max_size[i], 6000 );
+        check( joins[i].steps_to_max >= 0 );
         hang_pair_destroy( pair );
     }
 
@@ -313,22 +378,206 @@ static void test_link_mtu_join_cost()
     {
         printf( "join steps of 10 ms: default %d, three-step at 1452 %d, at 1172 %d, at 548 %d\n",
                 joins[0].connect_steps, joins[1].connect_steps, joins[2].connect_steps, joins[3].connect_steps );
+        printf( "steps of 10 ms from connect to the largest size carried: three-step at 1452 %d, at 1172 %d, at 548 %d\n",
+                joins[1].steps_to_max, joins[2].steps_to_max, joins[3].steps_to_max );
     }
 
-    const int base = joins[0].connect_steps;
-    const int window = (int) ( 4 / ROCKETNET_DEFAULT_SEND_RATE / HANG_STEP_SECONDS );     // 40 steps
+    for ( size_t i = 1; i < sizeof( joins ) / sizeof( joins[0] ); i++ )
+    {
+        check( joins[i].connect_steps == joins[0].connect_steps );
+    }
 
-    // the first entry: at most the probe's round trip and its early send more
-    check( joins[1].connect_steps > base );
-    check( joins[1].connect_steps <= base + 3 );
-
-    // each further entry: one window more, within a send interval
-    check( joins[2].connect_steps >= joins[1].connect_steps + window - 10 );
-    check( joins[2].connect_steps <= joins[1].connect_steps + window + 10 );
-    check( joins[3].connect_steps >= joins[2].connect_steps + window - 10 );
-    check( joins[3].connect_steps <= joins[2].connect_steps + window + 10 );
+    // a path that carries 1452: the first pair at connect, the size within a
+    // few steps; one that carries 548 alone: the larger two ruled out, the
+    // walk ending at 548 with no error
+    check( joins[1].steps_to_max <= 5 );
 }
 
 REGISTER_UNIT_TEST( test_link_mtu_join_cost );
+
+// A raise in the middle of a large reliable message: on a clean path the
+// pair connects at 548 and at once queues a 256 KiB reliable message each
+// way, fragments at the 480-byte stride of 548 queued and in flight while
+// both ends rise to 1452 a few steps later; both messages arrive whole,
+// every byte as sent, the sizes each end reports never falling, and the
+// stride kept (planted: the raise rebinds the block stride to 1452's 1152,
+// and the transfer breaks).
+
+static void test_link_mtu_raise_with_fragments_in_flight()
+{
+    rocketnet_loopback_test_link_max_bytes( 0 );
+
+    hang_pair_t pair;
+    hang_pair_create( pair, true, 1000 );
+    check( pair.connect_steps > 0 );
+    check( rocketnet_client_max_packet_bytes( pair.client ) == 548 );
+    check( rocketnet_server_client_max_packet_bytes( pair.server, 0 ) == 548 );
+    const int unreliable_at_connect = rocketnet_client_max_unreliable_message_bytes( pair.client );
+
+    check( hang_reliable_both_ways( pair, 262144, 3000 ) );
+    check( rocketnet_client_max_packet_bytes( pair.client ) == 1452 );
+    check( rocketnet_server_client_max_packet_bytes( pair.server, 0 ) == 1452 );
+    check( rocketnet_client_max_unreliable_message_bytes( pair.client ) > unreliable_at_connect );
+    check( rocketnet_server_client_max_unreliable_message_bytes( pair.server, 0 ) > unreliable_at_connect );
+    check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
+    // and again after the raise, at the new size
+    check( hang_reliable_both_ways( pair, 65536, 3000 ) );
+
+    hang_pair_destroy( pair );
+}
+
+REGISTER_UNIT_TEST( test_link_mtu_raise_with_fragments_in_flight );
+
+// The link MTU each end reports (rocketnet_client_link_mtu,
+// rocketnet_server_client_link_mtu): the list entry the connection's packet
+// size comes from, the first, largest, where entries share a size, rising
+// with the size and 0 when not connected.
+
+// steps the pair for at most max_steps, until both ends report the link MTU
+// want, recording each value the client reports in order (a value repeated
+// is recorded once); checks at every step that each end's link MTU is the
+// entry of its own packet size and never falls. Returns the steps taken, or
+// -1 when the pair did not get there.
+static int hang_link_mtu_steps( hang_pair_t & pair, int want, int max_steps, int * seen, int * num_seen, int max_seen )
+{
+    int client_last = rocketnet_client_link_mtu( pair.client );
+    int server_last = rocketnet_server_client_link_mtu( pair.server, 0 );
+    if ( *num_seen < max_seen )
+    {
+        seen[( *num_seen )++] = client_last;
+    }
+    for ( int step = 0; step <= max_steps; step++ )
+    {
+        const int client_now = rocketnet_client_link_mtu( pair.client );
+        const int server_now = rocketnet_server_client_link_mtu( pair.server, 0 );
+        check( client_now >= client_last );
+        check( server_now >= server_last );
+        if ( client_now != client_last && *num_seen < max_seen )
+        {
+            seen[( *num_seen )++] = client_now;
+        }
+        client_last = client_now;
+        server_last = server_now;
+        if ( client_now == want && server_now == want )
+        {
+            return step;
+        }
+        hang_pump( pair.server, pair.client );
+    }
+    return -1;
+}
+
+// The default list { 1500 }: 0 before the client connects, from both ends
+// (the server's slot is empty), and 1500 once connected; 0 again from both
+// ends after the client disconnects (planted: the entry comes from the
+// packet size plus the IPv4 header, 1480, not from the list; and, apart, the
+// connected checks removed).
+
+static void test_link_mtu_reported_on_the_default_list()
+{
+    rocketnet_loopback_test_link_max_bytes( 0 );
+
+    rocketnet_client_config_t config;
+    rocketnet_client_default_config( &config );
+    config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    rocketnet_client_t * idle = rocketnet_client_create( NULL, &config, NULL );
+    check( idle != NULL );
+    check( rocketnet_client_link_mtu( idle ) == 0 );
+    rocketnet_client_destroy( idle );
+
+    hang_pair_t pair;
+    hang_pair_create( pair, false, 0 );
+    check( rocketnet_client_link_mtu( pair.client ) == 0 );
+    check( rocketnet_server_client_link_mtu( pair.server, 0 ) == 0 );
+    for ( int step = 0; step < 1000 && !( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED && rocketnet_server_client_connected( pair.server, 0 ) ); step++ )
+    {
+        check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED || rocketnet_client_link_mtu( pair.client ) == 0 );
+        check( rocketnet_server_client_connected( pair.server, 0 ) || rocketnet_server_client_link_mtu( pair.server, 0 ) == 0 );
+        hang_pump( pair.server, pair.client );
+    }
+    check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_link_mtu( pair.client ) == 1500 );
+    check( rocketnet_server_client_link_mtu( pair.server, 0 ) == 1500 );
+
+    rocketnet_client_disconnect( pair.client );
+    for ( int step = 0; step < 300 && rocketnet_server_client_connected( pair.server, 0 ); step++ )
+    {
+        hang_pump( pair.server, pair.client );
+    }
+    check( !rocketnet_server_client_connected( pair.server, 0 ) );
+    check( rocketnet_client_link_mtu( pair.client ) == 0 );
+    check( rocketnet_server_client_link_mtu( pair.server, 0 ) == 0 );
+
+    hang_pair_destroy( pair );
+}
+
+REGISTER_UNIT_TEST( test_link_mtu_reported_on_the_default_list );
+
+// The three-step list { 1492, 1200, 576 }: both ends report 576 at connect,
+// with the packet size at 548, and then each entry the size rises to, the
+// client's values in order: 576 then 1492 on a path that carries 1452, 576
+// then 1200 on one that carries 1172 (planted: the entry is the first one at
+// or above the packet size, so 1492 at connect; and, apart, the entry is
+// the one the connection joined at, so it never rises).
+
+static void test_link_mtu_reported_as_the_size_rises()
+{
+    const struct
+    {
+        int link_max_bytes;
+        int last;
+    } paths[] = { { 0, 1492 }, { 1172, 1200 } };
+
+    for ( size_t i = 0; i < sizeof( paths ) / sizeof( paths[0] ); i++ )
+    {
+        rocketnet_loopback_test_link_max_bytes( paths[i].link_max_bytes );
+        hang_pair_t pair;
+        hang_pair_create( pair, true, 1000 );
+        check( pair.connect_steps > 0 );
+        check( rocketnet_client_max_packet_bytes( pair.client ) == 548 );
+        check( rocketnet_client_link_mtu( pair.client ) == 576 );
+        check( rocketnet_server_client_link_mtu( pair.server, 0 ) == 576 );
+
+        int seen[8];
+        int num_seen = 0;
+        check( hang_link_mtu_steps( pair, paths[i].last, 6000, seen, &num_seen, 8 ) >= 0 );
+        check( num_seen == 2 );
+        check( seen[0] == 576 );
+        check( seen[1] == paths[i].last );
+        check( rocketnet_client_max_packet_bytes( pair.client ) == ( paths[i].last == 1492 ? 1452 : 1172 ) );
+
+        hang_pair_destroy( pair );
+    }
+}
+
+REGISTER_UNIT_TEST( test_link_mtu_reported_as_the_size_rises );
+
+// IPv4 { 1500, 1492 }: both entries give 1452 (1492 - 28 = 1464, capped at
+// 1452), so the connection joins at 1452 and both ends report the first,
+// largest, entry, 1500 (planted: the last entry of the size, 1492).
+
+static const int hang_equal_size[2] = { 1500, 1492 };
+
+static void test_link_mtu_reported_first_of_equal_sizes()
+{
+    rocketnet_loopback_test_link_max_bytes( 0 );
+
+    hang_pair_t pair;
+    hang_pair_create_list( pair, hang_equal_size, 2, 1000 );
+    check( pair.connect_steps > 0 );
+    check( rocketnet_client_max_packet_bytes( pair.client ) == 1452 );
+    for ( int step = 0; step < 300; step++ )
+    {
+        check( rocketnet_client_link_mtu( pair.client ) == 1500 );
+        check( rocketnet_server_client_link_mtu( pair.server, 0 ) == 1500 );
+        hang_pump( pair.server, pair.client );
+    }
+
+    hang_pair_destroy( pair );
+}
+
+REGISTER_UNIT_TEST( test_link_mtu_reported_first_of_equal_sizes );
 
 #endif // #if ROCKETNET_DEV

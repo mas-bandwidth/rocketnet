@@ -310,21 +310,16 @@ LAYERS = {
     "path-probe": {
         "modules": ["RNPathProbe.tla", "TraceRNPathProbe.tla"],
         "untraced": {
-            "ClientSendData": "the payload after connect is the session layer's; the walk stops sending from the client at connect",
-            "ServerSendData": "the payload after connect is the session layer's; the walk sends the slot only keep-alives",
-            "ClientRecvData": "no payload is sent (ClientSendData, ServerSendData)",
-            "ServerRecvData": "no payload is sent (ClientSendData, ServerSendData)",
+            "ClientSendData": "a payload at P changes no model variable; the session layer sends it, not the probe",
+            "ServerSendData": "a payload at the slot's P changes no model variable; the session layer sends it, not the probe",
         },
         "ghost": {
-            "proof": "the reply the client took, kept for CrossedBothWays; the code keeps only the size",
-            "upGot": "a payload reached the server, kept for NoHang; no payload is sent",
-            "downGot": "a payload reached the client, kept for NoHang; no payload is sent",
-            "badUnproven": "the history of ReplyOnlyProven, computed by the model",
+            "badUnproven": "the history of ReplyOnlyConnected, computed by the model",
             "badLarger": "the history of ReplyNoLarger, computed by the model",
             "badOffList": "the history of ReplyOwnList, computed by the model",
             "badTwice": "the history of OneReplyPerUpdate, computed by the model",
         },
-        "reach": ["LateReplyTaken", "ConnectedBelowFirst"],
+        "reach": ["RaisedBelowMax", "ServerRaised"],
     },
 }
 

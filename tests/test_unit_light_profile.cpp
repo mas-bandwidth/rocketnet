@@ -222,8 +222,15 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // more to the server at 1000 clients and 512 more to the client:
 // actual=1664773371 and 15046602 (studio, Apple clang, Debug, DEV=ON),
 // measured; the other platforms derived from the macOS reading.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1576707231 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350508 )
+// The path probe after connect: two more appended counters
+// (CLIENT_PROBE_RULED_OUT, CONNECTION_PROBE_CONFIRMED) and the walk's pair,
+// strike and confirm state in the client protocol: 192 more to the client;
+// the large probe's own allowance in each of the encryption map's two
+// entries a client (8 bytes each) and the counters: 16064 more to the server
+// at 1000 clients: actual=15195410 and 2146872178 (space, gcc, Debug, DEV
+// ON), measured; the other platforms derived from the Linux reading.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1576723295 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350700 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -356,8 +363,15 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // more to the server at 1000 clients and 512 more to the client:
 // actual=1664773371 and 15046602 (studio, Apple clang, Debug, DEV=ON),
 // measured; the other platforms derived from the macOS reading.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1663724795 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13998026 )
+// The path probe after connect: two more appended counters
+// (CLIENT_PROBE_RULED_OUT, CONNECTION_PROBE_CONFIRMED) and the walk's pair,
+// strike and confirm state in the client protocol: 192 more to the client;
+// the large probe's own allowance in each of the encryption map's two
+// entries a client (8 bytes each) and the counters: 16064 more to the server
+// at 1000 clients: actual=15195410 and 2146872178 (space, gcc, Debug, DEV
+// ON), measured; the other platforms derived from the Linux reading.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1663740859 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13998218 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -517,9 +531,9 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // Measured on Linux with the probe under the session keys: 64 more than
 // the macOS derivation, actual=2146856114 (space, gcc, Debug, DEV ON);
 // arm64 the same 64, computed.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145807546ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145823610ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145807538ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145823602ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
@@ -546,7 +560,14 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // measured; the other platforms derived from the macOS reading.
 // Measured on Linux with the probe under the session keys: 64 fewer
 // than the macOS derivation, actual=15195218 (space, gcc, Debug, DEV ON).
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146642 )
+// The path probe after connect: two more appended counters
+// (CLIENT_PROBE_RULED_OUT, CONNECTION_PROBE_CONFIRMED) and the walk's pair,
+// strike and confirm state in the client protocol: 192 more to the client;
+// the large probe's own allowance in each of the encryption map's two
+// entries a client (8 bytes each) and the counters: 16064 more to the server
+// at 1000 clients: actual=15195410 and 2146872178 (space, gcc, Debug, DEV
+// ON), measured; the other platforms derived from the Linux reading.
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146834 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

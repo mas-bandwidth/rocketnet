@@ -1824,6 +1824,22 @@ bool rocketnet_server_transport_network_simulator( struct rocketnet_server_trans
     return true;
 }
 
+// whether a held connection's packet size can rise: the server's link MTU
+// list gives some address family more than one packet size, so a client may
+// probe upward and confirm a larger one (sdk/rocketnet_link_mtu.h). False
+// on the default list.
+
+bool rocketnet_server_transport_packet_bytes_can_rise( const struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+
+    const int * link_mtus = server_transport->protocol.link_mtus;
+    const int num_link_mtus = server_transport->protocol.num_link_mtus;
+    int candidates[ROCKETNET_LINK_MTU_MAX_ENTRIES];
+    return rocketnet_link_mtu_candidates( link_mtus, num_link_mtus, ROCKETNET_ADDRESS_IPV4, candidates ) > 1 ||
+           rocketnet_link_mtu_candidates( link_mtus, num_link_mtus, ROCKETNET_ADDRESS_IPV6, candidates ) > 1;
+}
+
 #if ROCKETNET_DEV
 // the unit seam for the list the protocol answers probes with: its entries
 // into link_mtus (ROCKETNET_MAX_LINK_MTUS of room), and its count
@@ -6532,6 +6548,23 @@ int rocketnet_server_transport_client_packet_bytes( struct rocketnet_server_tran
     }
     rocketnet_assert( server_transport );
     return rocketnet_server_protocol_client_packet_bytes( &server_transport->protocol, client_index );
+}
+
+int rocketnet_server_transport_client_link_mtu( struct rocketnet_server_transport_t * server_transport, int client_index, int packet_bytes )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+    {
+        return 0;
+    }
+    rocketnet_assert( server_transport );
+
+    struct rocketnet_address_t address;
+    if ( !rocketnet_server_protocol_client_address( &server_transport->protocol, client_index, &address ) )
+    {
+        return 0;
+    }
+
+    return rocketnet_link_mtu_entry( server_transport->protocol.link_mtus, server_transport->protocol.num_link_mtus, address.type, packet_bytes );
 }
 
 int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_t * server_transport, const int ** client_index, const uint64_t ** packet_ids )

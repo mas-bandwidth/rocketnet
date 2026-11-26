@@ -317,7 +317,8 @@ settles on a smaller packet size has a smaller limit:
 `rocketnet_client_max_unreliable_message_bytes` (on the server,
 `rocketnet_server_client_max_packet_bytes` and
 `rocketnet_server_client_max_unreliable_message_bytes`) return that
-connection's values once it is connected.
+connection's values once it is connected, and `rocketnet_client_link_mtu`
+(`rocketnet_server_client_link_mtu`) the list entry that size comes from.
 
 The channel is the ordering channel. RELIABLE_ORDERED,
 RELIABLE_ORDERED_WITH_ACK_RECEIPT and the two SEQUENCED types are ordered or

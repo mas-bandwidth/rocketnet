@@ -116,16 +116,39 @@ class RunBackendExamplesTest(unittest.TestCase):
         self.assertIn("binary not found", result.stderr)
 
     def test_reported_sizes_are_read_from_each_end(self):
-        client = "backend_client: mode=development transport=portable\nbackend_client: packet_bytes=1172 max_unreliable_message_bytes=1131\nPASS\n"
-        server = "server listening\nbackend_server: client 0 packet_bytes=1452 max_unreliable_message_bytes=1411\nPASS\n"
-        self.assertEqual(run_backend_examples.reported_sizes(client, "backend_client: "), (1172, 1131))
-        self.assertEqual(run_backend_examples.reported_sizes(server, "backend_server: client 0 "), (1452, 1411))
+        client = "backend_client: mode=development transport=portable\nbackend_client: packet_bytes=1172 max_unreliable_message_bytes=1131 link_mtu=1200\nPASS\n"
+        server = "server listening\nbackend_server: client 0 packet_bytes=1452 max_unreliable_message_bytes=1411 link_mtu=1500\nPASS\n"
+        self.assertEqual(run_backend_examples.reported_sizes(client, "backend_client: "), (1172, 1131, 1200))
+        self.assertEqual(run_backend_examples.reported_sizes(server, "backend_server: client 0 "), (1452, 1411, 1500))
+
+    def test_a_three_step_history_starts_small_and_rises_to_the_ceiling(self):
+        client = ("backend_client: packet_bytes=548 max_unreliable_message_bytes=507 link_mtu=576\n"
+                  "backend_client: packet_bytes=1452 max_unreliable_message_bytes=1411 link_mtu=1492\nPASS\n")
+        history = run_backend_examples.reported_size_history(client, "backend_client: ")
+        self.assertEqual(history, [(548, 507, 576), (1452, 1411, 1492)])
+        self.assertIsNone(run_backend_examples.size_history_problem(history, run_backend_examples.THREE_STEP))
+        self.assertEqual(run_backend_examples.reported_sizes(client, "backend_client: "), (1452, 1411, 1492))
+
+    def test_a_wrong_size_history_is_refused(self):
+        problem = run_backend_examples.size_history_problem
+        three = run_backend_examples.THREE_STEP
+        self.assertIn("start at", problem([(1452, 1411, 1492)], three))
+        self.assertIn("start at", problem([(548, 507, 1492), (1452, 1411, 1492)], three))
+        self.assertIn("end at", problem([(548, 507, 576)], three))
+        self.assertIn("end at", problem([(548, 507, 576), (1452, 1411, 1500)], three))
+        self.assertIn("did not rise", problem([(548, 507, 576), (1172, 1131, 1200), (1172, 1131, 1200), (1452, 1411, 1492)], three))
+        self.assertIn("did not rise", problem([(548, 507, 576), (1452, 1411, 1492), (1172, 1131, 1200), (1452, 1411, 1492)], three))
+        self.assertIn("did not rise", problem([(548, 507, 576), (1172, 1131, 576), (1452, 1411, 1492)], three))
+        self.assertIn("no size", problem([], three))
+        self.assertIn("default list", problem([(548, 507, 576), (1452, 1411, 1500)], None))
+        self.assertIn("default list", problem([(1452, 1411, 1492)], None))
+        self.assertIsNone(problem([(1452, 1411, 1500)], None))
 
     def test_missing_or_broken_sizes_are_none(self):
         self.assertIsNone(run_backend_examples.reported_sizes("backend_client: mode=development transport=portable\nPASS\n", "backend_client: "))
-        self.assertIsNone(run_backend_examples.reported_sizes("backend_client: packet_bytes=x max_unreliable_message_bytes=1\n", "backend_client: "))
-        self.assertIsNone(run_backend_examples.reported_sizes("backend_server: client 1 packet_bytes=1452 max_unreliable_message_bytes=1411\n", "backend_server: client 0 "))
-
+        self.assertIsNone(run_backend_examples.reported_sizes("backend_client: packet_bytes=x max_unreliable_message_bytes=1 link_mtu=1500\n", "backend_client: "))
+        self.assertIsNone(run_backend_examples.reported_sizes("backend_client: packet_bytes=1452 max_unreliable_message_bytes=1411\n", "backend_client: "))
+        self.assertIsNone(run_backend_examples.reported_sizes("backend_server: client 1 packet_bytes=1452 max_unreliable_message_bytes=1411 link_mtu=1500\n", "backend_server: client 0 "))
 
 if __name__ == "__main__":
     unittest.main()

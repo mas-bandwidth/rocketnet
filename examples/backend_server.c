@@ -343,7 +343,7 @@ int main( int argc, char ** argv )
     }
 
     int had_client = 0, echoed = 0, thread_failed = 0;
-    int reported[MAX_CLIENTS] = { 0 };
+    int reported_packet_bytes[MAX_CLIENTS] = { 0 };
     const double start = rocketnet_time();
     double frame_end = start + FRAME_DT;
     for ( uint32_t frame_number = 0; rocketnet_time() - start < 60.0; frame_number++ )
@@ -401,19 +401,20 @@ int main( int argc, char ** argv )
         // 3. the world update, on the main thread: a game simulates here.
         // This server only notes whether its client has come and gone
 
-        // each client's packet size, chosen from the link MTU list by its own
-        // handshake, and its largest UNRELIABLE message, once per connection
+        // each client's packet size and its largest UNRELIABLE message: at
+        // connect, and again each time the size rises as the client's probe
+        // finds a larger one the path carries (it never falls)
 
         for ( int client_index = 0; client_index < MAX_CLIENTS; client_index++ )
         {
-            const int connected = rocketnet_server_client_connected( server, client_index );
-            if ( connected && !reported[client_index] )
+            const int packet_bytes = rocketnet_server_client_connected( server, client_index ) ? rocketnet_server_client_max_packet_bytes( server, client_index ) : 0;
+            if ( packet_bytes > reported_packet_bytes[client_index] )
             {
-                printf( "backend_server: client %d packet_bytes=%d max_unreliable_message_bytes=%d\n", client_index,
-                        rocketnet_server_client_max_packet_bytes( server, client_index ),
-                        rocketnet_server_client_max_unreliable_message_bytes( server, client_index ) );
+                printf( "backend_server: client %d packet_bytes=%d max_unreliable_message_bytes=%d link_mtu=%d\n", client_index,
+                        packet_bytes, rocketnet_server_client_max_unreliable_message_bytes( server, client_index ),
+                        rocketnet_server_client_link_mtu( server, client_index ) );
             }
-            reported[client_index] = connected;
+            reported_packet_bytes[client_index] = packet_bytes;
         }
 
         if ( rocketnet_server_num_connected_clients( server ) > 0 )

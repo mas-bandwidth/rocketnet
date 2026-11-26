@@ -45,44 +45,49 @@ VARIABLES ti,        \* the index of the record the state matches
           rejected   \* the record after ti is not a model step
 
 \* every model variable by the field name the harness writes
-VarsRec == [capUp |-> capUp, capDown |-> capDown, phase |-> phase, idx |-> idx,
-           size |-> size, sends |-> sends, maySend |-> maySend, mapping |-> mapping,
-           slot |-> slot, answered |-> answered, age |-> age, up |-> up, down |-> down,
-           losses |-> losses, attacks |-> attacks]
+VarsRec == [capUp |-> capUp, capDown |-> capDown, cP |-> cP, sP |-> sP, phase |-> phase,
+           ruled |-> ruled, strikes |-> strikes, out |-> out, pairNo |-> pairNo, pairS |-> pairS,
+           pairSpaced |-> pairSpaced, smallSeen |-> smallSeen, largeSeen |-> largeSeen, due |-> due,
+           spaced |-> spaced, confirmS |-> confirmS, ansSmall |-> ansSmall, ansLarge |-> ansLarge,
+           burst |-> burst, bursts |-> bursts, span |-> span, attacks |-> attacks, up |-> up, down |-> down]
 
 \* the actions each operation of the code can be
-OpActs == [client_update |-> {"ClientSendProbe", "ClientExpireNext", "ClientExpireFail", "ClientSendResponse"},
-           client_timeout |-> {"ClientTimeout"},
-           client_recv |-> {"ClientRecvReply", "ClientRecvKeepAlive"},
-           server_recv |-> {"ServerRecvProbe", "ServerRecvForged", "ServerRecvResponse"},
-           keep_alive |-> {"ServerSendKeepAlive"},
+OpActs == [client_resolve |-> {"ClientResolvePair"},
+           client_rule_out |-> {"ClientRuleOut", "ClientFail"},
+           client_send |-> {"ClientSendPair"},
+           client_confirm |-> {"ClientSendConfirm"},
+           client_recv |-> {"ClientRecvSmall", "ClientRecvLarge", "ClientRecvForged", "ClientRecvConfirmEcho"},
+           server_recv |-> {"ServerRecvProbe", "ServerRecvForged", "ServerRecvConfirm"},
            tick |-> {"Tick"},
+           spaced |-> {"Spaced"},
            server_update |-> {"ServerUpdate"},
-           lose_up |-> {"LoseUp"},
-           lose_down |-> {"LoseDown"},
+           burst |-> {"LossBurst"},
            replay |-> {"Replay"},
            attack |-> {"AttackProbe"},
+           attack_reply |-> {"AttackReply"},
            done |-> {"Done"}]
 
 \* the action a record names, with the record's arguments; a name this CASE
 \* lacks stops TLC with an error
-Act(a, x) == CASE a = "ClientSendProbe" -> ClientSendProbe
-               [] a = "ClientExpireNext" -> ClientExpireNext
-               [] a = "ClientExpireFail" -> ClientExpireFail
-               [] a = "ClientSendResponse" -> ClientSendResponse
-               [] a = "ClientTimeout" -> ClientTimeout
-               [] a = "ClientRecvReply" -> ClientRecvReply(x[1])
-               [] a = "ClientRecvKeepAlive" -> ClientRecvKeepAlive(x[1])
+Act(a, x) == CASE a = "ClientResolvePair" -> ClientResolvePair
+               [] a = "ClientRuleOut" -> ClientRuleOut
+               [] a = "ClientFail" -> ClientFail
+               [] a = "ClientSendPair" -> ClientSendPair
+               [] a = "ClientSendConfirm" -> ClientSendConfirm
+               [] a = "ClientRecvSmall" -> ClientRecvSmall(x[1])
+               [] a = "ClientRecvLarge" -> ClientRecvLarge(x[1])
+               [] a = "ClientRecvForged" -> ClientRecvForged(x[1])
+               [] a = "ClientRecvConfirmEcho" -> ClientRecvConfirmEcho(x[1])
                [] a = "ServerRecvProbe" -> ServerRecvProbe(x[1])
                [] a = "ServerRecvForged" -> ServerRecvForged(x[1])
-               [] a = "ServerRecvResponse" -> ServerRecvResponse(x[1])
-               [] a = "ServerSendKeepAlive" -> ServerSendKeepAlive
+               [] a = "ServerRecvConfirm" -> ServerRecvConfirm(x[1])
                [] a = "Tick" -> Tick
+               [] a = "Spaced" -> Spaced
                [] a = "ServerUpdate" -> ServerUpdate
-               [] a = "LoseUp" -> LoseUp(x[1])
-               [] a = "LoseDown" -> LoseDown(x[1])
+               [] a = "LossBurst" -> LossBurst(x[1])
                [] a = "Replay" -> Replay(x[1])
-               [] a = "AttackProbe" -> AttackProbe(x[1], x[2])
+               [] a = "AttackProbe" -> AttackProbe(x[1])
+               [] a = "AttackReply" -> AttackReply(x[1])
                [] a = "Done" -> Done
 
 TraceInit ==
@@ -119,9 +124,9 @@ TraceSpec == TraceInit /\ [][TraceStep \/ TraceReject \/ TraceDone]_<<vars, ti, 
 \* every record of the trace is the model step it names, from the one before
 TraceConsistent == ~rejected
 
-\* the row's reach predicates: a reply from an earlier window taken (the
-\* late-reply rule), and a connection at a size below the first candidate
-LateReplyTaken == phase = "response" /\ size # Cand(idx)
-ConnectedBelowFirst == phase = "connected" /\ size < Max(ClientSet)
+\* the row's reach predicates: a candidate ruled out and the walk raised to
+\* the next one below the largest, and the server raised by a confirm
+RaisedBelowMax == cP > P0 /\ cP < MaxC
+ServerRaised == sP > P0
 
 =============================================================================

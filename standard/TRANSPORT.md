@@ -274,9 +274,10 @@ implementation refuses each with its own status (`LINK_MTUS_EMPTY`,
 and with `LINK_MTUS_TOO_SMALL_FOR_MESSAGES` a list whose smallest packet
 size cannot carry the largest message in the reliable window
 ([RN-2 m2.2 Constants](MESSAGES.md#m2.2)). The packet sizes a list gives,
-and the probe that chooses one, are [t11.4 Path probe](#t11.4). The client
-and the server SHOULD hold the same list: a server answers a probe, and
-accepts a response, only at a packet size its own list gives.
+and the probe that raises a connection to a larger one, are
+[t11.4 Path probe](#t11.4). The client and the server SHOULD hold the same
+list: a server answers a large probe, accepts a response and raises a
+connection only at a packet size its own list gives.
 
 An implementation MAY add fields of its own (for example a count of kernel
 queues for one transport); each one keeps rules 1 to 5.
@@ -1425,8 +1426,8 @@ The connection challenge is sealed. Its cleartext session nonce lets a client th
 ### t8.4. Connection response packet (type 3)
 
 The connection response is sealed and carries 24 bytes: the connection's
-packet size P of [t11.4 Path probe](#t11.4) as a u16, 0 when P is the
-maximum packet size, then 22 zero bytes. A client on the default link MTU
+first packet size P0 of [t11.4 Path probe](#t11.4) as a u16, 0 when P0 is
+the maximum packet size, then 22 zero bytes. A client on the default link MTU
 list sends 24 zero bytes.
 
 ```
@@ -1635,9 +1636,9 @@ The wire size of each type is the sum of its fields. The handshake types have a 
 
 A session packet MUST NOT exceed the receive ceiling, and a sender MUST NOT emit one larger than the maximum packet size. The payload capacity and the receive payload maximum are rows of [t3 Constants and registries](#t3).
 
-The packet budget is per connection. A connection uses one packet size P for its whole life, at most the maximum packet size; an implementation that chooses P from a list of link MTUs ([t11.4 Path probe](#t11.4)) MUST NOT emit a session packet larger than that connection's P, and its payload capacity is C(P) = floor((P − 33) / 8) × 8 bytes, the ack block cut to fit the same P. The rows `maximum packet size` and `payload capacity` of [t3 Constants and registries](#t3) are the ceiling's values, P = 1452 and C = 1416, which a connection with no link MTU list uses, byte for byte. A receiver still accepts a session packet up to the receive ceiling.
+The packet budget is per connection. A connection has one packet size P at a time, at most the maximum packet size: it starts at its first size P0 and only rises, never falls; an implementation that takes P from a list of link MTUs ([t11.4 Path probe](#t11.4)) MUST NOT emit a session packet larger than that connection's P at the time it builds it, and its payload capacity is C(P) = floor((P − 33) / 8) × 8 bytes, the ack block cut to fit the same P. The rows `maximum packet size` and `payload capacity` of [t3 Constants and registries](#t3) are the ceiling's values, P = 1452 and C = 1416, which a connection with no link MTU list uses, byte for byte. A receiver still accepts a session packet up to the receive ceiling.
 
-Every handshake type but the connection probe fits 548 bytes, the UDP payload of a 576-byte IPv4 MTU (576 less a 20-byte IPv4 header and an 8-byte UDP header), the smallest datagram every IPv4 host accepts, so a client on any IPv4 path can connect. The connection request is the largest of them. A connection probe is as large as the packet size it probes, and is sent only after the challenge ([t11.4 Path probe](#t11.4)).
+Every handshake type but the connection probe fits 548 bytes, the UDP payload of a 576-byte IPv4 MTU (576 less a 20-byte IPv4 header and an 8-byte UDP header), the smallest datagram every IPv4 host accepts, so a client on any IPv4 path can connect. The connection request is the largest of them. A large connection probe is as large as the packet size it probes, and is sent only once the connection is connected ([t11.4 Path probe](#t11.4)).
 
 <a id="t8.12"></a>
 ### t8.12. Vectors
@@ -1794,7 +1795,9 @@ input: session client-to-server key bytes a0 to bf
 <a id="t8.13"></a>
 ### t8.13. Connection probe packet (type 9)
 
-The connection probe is sealed and carries only zero padding: its wire size is the packet size it probes. A client sends it after the challenge, and a server answers it with a probe of the same wire size ([t11.4 Path probe](#t11.4), [t12 Handshake: server](#t12) rule 15). A probe is authenticated as every packet after the challenge is: a client's probe is sealed under the session client-to-server key and a server's under the session server-to-client key, each on its sender's session sequence, with the associated data of [t9 Packet protection](#t9), which carries no ephemeral key for this type. Only the two ends of the challenge's ephemeral exchange hold those keys. A probe does not mark the receiver's replay window.
+The connection probe is sealed and carries an 8-byte probe header, then zero padding: its wire size is the size it probes. A client sends probes and confirms only once connected, and a server answers each with a probe of the same wire size and header ([t11.4 Path probe](#t11.4), [t12 Handshake: server](#t12) rule 15). A probe is authenticated as every packet after the challenge is: a client's probe is sealed under the session client-to-server key and a server's under the session server-to-client key, each on its sender's session sequence, with the associated data of [t9 Packet protection](#t9), which carries no ephemeral key for this type. Only the two ends of the challenge's ephemeral exchange hold those keys. A probe does not mark the receiver's replay window, is not recorded in its sender's ack history, and is never acknowledged.
+
+The header's kind is 0 for a probe and 1 for a confirm. A probe's size field is its own wire size and its pair field pairs a small probe, of the minimum wire size, with the large probe sent beside it. A confirm is always of the minimum wire size; its size field is the packet size the client raised to and its pair field is zero.
 
 ```
  0                   1                   2                   3
@@ -1804,7 +1807,11 @@ The connection probe is sealed and carries only zero padding: its wire size is t
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                       sequence (u32)                          |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-|               padding (zero[492] to zero[1426])               |
+|     kind      |   reserved    |          size (u16)           |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                         pair (u32)                            |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                padding (zero[0] to zero[1418])                |
 |                              ...                              |
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |                     AEAD tag (bytes[16])                      |
@@ -1818,14 +1825,18 @@ The connection probe is sealed and carries only zero padding: its wire size is t
 | filter epoch | 1 | 1 | u8 | the epoch of the filter value | `0` |
 | filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
 | sequence | 6 | 4 | u32 | the sender's session sequence | any; a reconstructed value of zero is ignored ([t4 Wire encoding primitives](#t4)) |
-| padding | 10 | 492 to 1426 | zero[n] | zero bytes, sealed; n is the wire size less the per-packet overhead | all zero |
-| AEAD tag | 10 plus the padding size | 16 | bytes[16] | the tag over the padding | any |
+| kind | 10 | 1 | u8 | 0 a probe, 1 a confirm; sealed | `0` or `1` |
+| reserved | 11 | 1 | u8 | sealed | `0` |
+| size | 12 | 2 | u16 | a probe: its own wire size; a confirm: the packet size confirmed; sealed | a probe: its wire size; a confirm: a candidate packet size |
+| pair | 14 | 4 | u32 | a probe: its pair number; a confirm: zero; sealed | a confirm: `0` |
+| padding | 18 | 0 to 1418 | zero[n] | zero bytes, sealed; n is the wire size less the per-packet overhead and the header | all zero |
+| AEAD tag | 18 plus the padding size | 16 | bytes[16] | the tag over the header and padding | any |
 
-A receiver MUST drop a probe whose wire size is below the minimum below, or above the receive ceiling, before it examines any field. The sizes:
+A receiver MUST drop a probe whose wire size is below the minimum below, or above the receive ceiling, before it examines any field. A probe that opens with a malformed header -- a reserved byte not zero, an unknown kind, a probe whose size field is not its wire size, a confirm that is not of the minimum wire size or whose pair is not zero -- or with padding not all zero is refused as padding not zero ([t11.4 Path probe](#t11.4) rule 5, [t12 Handshake: server](#t12) rule 15). The sizes:
 
 | Name | Value | Unit | Composition |
 |---|---|---|---|
-| connection probe packet minimum wire size | `518` | bytes | the connection request packet wire size |
+| connection probe packet minimum wire size | `34` | bytes | the per-packet overhead and the 8-byte probe header |
 | connection probe packet maximum wire size | `1452` | bytes | the maximum packet size |
 
 <a id="t9"></a>
@@ -2495,14 +2506,14 @@ The client is in exactly one of the states of the table below. A state number is
 5. The client MUST enter requesting cookie (1), sending connection request (2), sending connection response (3) and connected (4) in that order, each at most once per attempt.
 6. While the client is in requesting cookie (1) or sending connection request (2), it MUST abandon the attempt for connect token expired (-7) once the token's lifetime, the difference between its expire timestamp and its create timestamp, has elapsed since the attempt began. The check does not apply in sending connection response (3) or connected (4): from the moment the client has sent its connection response the server can already hold it connected, so from then on the only clock that ends the attempt is the timeout of rule 8, and in sending connection response (3) the client waits for the timeout even when the timeout is larger than the token's lifetime.
 7. In requesting cookie (1), sending connection request (2) and sending connection response (3), the client MUST retransmit its current packet at the send rate of [t17 Timing and defaults](#t17) until a packet advances it, or a packet or a deadline ends the attempt. When a packet advances the client from requesting cookie (1) to sending connection request (2), or from sending connection request (2) to sending connection response (3), the client MAY send the packet of the new state at its next protocol update without waiting for the send rate, at most once for each advance; the send rate then runs from that send. In those three states, apart from that one send for each advance, a client MUST NOT send a packet because a packet arrived, and it MUST NOT send from inside the processing of a received packet. Each state is entered at most once in an attempt, so an attempt sends at most two packets more than the send rate alone would send, whatever arrives. The first cookie the client accepts can be forged by anyone who sees its cookie request and echoes its salt, and such a forgery brings forward that one connection request and no more; a cookie that does not advance the client (a later cookie, forged or not: [t11.1 Cookie processing](#t11.1)) brings nothing forward. The packet brought forward is the one the next scheduled send would have carried, so no arrival can be turned into an amplifier.
-8. In a positive state below connected (4), a client that has accepted no authenticated packet for the token's timeout MUST move to the state whose number is one less than the negation of its current state: requesting cookie (1) to cookie request timed out (-2), sending connection request (2) to connection request timed out (-3), sending connection response (3) to connection response timed out (-4). In connected (4) the same silence MUST move the client to connection timed out (-5). An authenticated packet is one that opens under the attempt's keys: a connection challenge or a session packet. The timeout runs from the attempt's start until the first one, and a connection cookie never restarts it ([t11.1 Cookie processing](#t11.1)). While a client probes the path ([t11.4 Path probe](#t11.4)) this timeout does not run: the walk ends the attempt itself, within the probe time bound, and an accepted probe restarts the timeout.
+8. In a positive state below connected (4), a client that has accepted no authenticated packet for the token's timeout MUST move to the state whose number is one less than the negation of its current state: requesting cookie (1) to cookie request timed out (-2), sending connection request (2) to connection request timed out (-3), sending connection response (3) to connection response timed out (-4). In connected (4) the same silence MUST move the client to connection timed out (-5). An authenticated packet is one that opens under the attempt's keys: a connection challenge or a session packet. The timeout runs from the attempt's start until the first one, and a connection cookie never restarts it ([t11.1 Cookie processing](#t11.1)). In connected (4) an authenticated probe reply ([t11.4 Path probe](#t11.4)) is an authenticated packet like any other.
 9. A negative state MUST persist until the client disconnects or accepts a new connect token after any retiring transport from the ended attempt has finished stopping. A disconnect from any state MUST perform the per-connection reset of [t13 Session: keep-alive, timeout, disconnect, slot reset](#t13) and MUST return the client to disconnected (0). From disconnected (0), or from a negative state once any retiring transport has finished stopping, the client MAY connect again with a new token.
 
 The state numbers:
 
 | Name | Value | Meaning |
 |---|---|---|
-| mtu probe failed | `-14` | no packet size of the link MTU list was carried both ways ([t11.4 Path probe](#t11.4)) |
+| mtu probe failed | `-14` | small probes came back but packets of the connection's own first size never did ([t11.4 Path probe](#t11.4)) |
 | protocol violation | `-10` | the server sent what the protocol forbids: a challenge carrying a small-order key ([t11.2 Challenge and denial processing order](#t11.2) step 4) |
 | connect token expired | `-7` | the attempt ended at the token's lifetime |
 | invalid connect token | `-6` | the attempt never began: the token failed a pre-send check |
@@ -2542,7 +2553,7 @@ Each packet MUST be checked in this order:
 1. Its size MUST be the packet's wire size of [t8 Packet formats](#t8). A client MUST refuse a wrong-size packet as WRONG_SIZE before any state, sequence or cryptographic check, MUST NOT count an integrity failure for it, and MUST NOT change its state.
 2. Its sequence MUST be nonzero; a sequence of zero MUST be refused with no state change.
 3. In sending connection request (2), a challenge MUST derive the handshake keys from the carried session nonce and open under them. If it does not open, the client MUST refuse it, MUST count an integrity failure, and MUST NOT change its state.
-4. An accepted challenge whose server ephemeral key is not small-order MUST derive the four connection keys from the ephemeral exchange, MUST erase the ephemeral secret, MUST build the response once, and MUST move to sending connection response (3); a client whose link MTU list gives its server's family more than one packet size builds the response when its probe chooses one ([t11.4 Path probe](#t11.4)). When the exchange reports a small-order server ephemeral key ([t7 Key schedule](#t7) rule 5), the challenge opened under the handshake keys, so the server (or a holder of the token's keys) sent what the protocol forbids: the client MUST count `CLIENT_CHALLENGE_SMALL_ORDER_KEY`, MUST NOT derive a session key, MUST release the connection state and MUST move to protocol violation (-10) at once, without waiting for a deadline.
+4. An accepted challenge whose server ephemeral key is not small-order MUST derive the four connection keys from the ephemeral exchange, MUST erase the ephemeral secret, MUST build the response once, and MUST move to sending connection response (3), carrying its first packet size P0 ([t11.4 Path probe](#t11.4)). When the exchange reports a small-order server ephemeral key ([t7 Key schedule](#t7) rule 5), the challenge opened under the handshake keys, so the server (or a holder of the token's keys) sent what the protocol forbids: the client MUST count `CLIENT_CHALLENGE_SMALL_ORDER_KEY`, MUST NOT derive a session key, MUST release the connection state and MUST move to protocol violation (-10) at once, without waiting for a deadline.
 5. A denial in sending connection request (2) MUST open under handshake keys derived from its carried session nonce; a denial in sending connection response (3) MUST open under the handshake server-to-client key the client already holds. If it does not open, the client MUST refuse it, MUST count an integrity failure, and MUST NOT change its state.
 6. An accepted denial MUST release the connection state and MUST move to connection denied (-1).
 
@@ -2716,15 +2727,17 @@ The cookie moves the client from requesting cookie (1) to sending connection req
 
 A link MTU list ([t2.3 Configuration surface](#t2.3)) gives each address family an ordered list of candidate packet sizes. The packet size of a link MTU m is m less 28 over IPv4 and m less 48 over IPv6, the IP and UDP headers, never above the maximum packet size. The candidates of a family are the list's entries in order, each mapped to its packet size, an entry whose size equals the candidate before it dropped; IPv6 skips every entry below the IPv6 minimum link MTU, and uses that minimum alone when no entry is left. The default list gives both families the one candidate 1452. The list 1500, 1492 gives IPv4 the one candidate 1452, so an IPv4 connection on it sends no probe, and gives IPv6 the candidates 1452 and 1444. The three-step list 1492, 1200, 576 gives IPv4 the candidates 1452, 1172 and 548, and IPv6 the one candidate 1444.
 
-1. A client whose server address family has one candidate MUST NOT send a connection probe. Its packet size P is that candidate, and on accepting the challenge it builds the response as [t11.2 Challenge and denial processing order](#t11.2) step 4 states, carrying P in its packet size field ([t8.4 Connection response packet (type 3)](#t8.4)).
-2. A client whose family has more than one candidate MUST, on accepting the challenge, move to sending connection response (3) without building the response and probe the path: it MUST send connection probes of the wire size of its current candidate, the first candidate first, at the send rate, the first one as the advance's early send.
-3. A candidate's window is the larger of the probe window sends below and three round trips, as measured by the challenge, at the send rate, and never more than the probe window maximum sends. A walk of a list of the link MTU list maximum entries therefore ends within the probe time bound below of the challenge, at the handshake send rate of [t17 Timing and defaults](#t17). A client that has sent a candidate's window with no reply accepted MUST move to the next candidate, counting `CLIENT_PROBE_WINDOW_EXPIRED`; past the last candidate it MUST end the attempt in mtu probe failed (-14), counting `CLIENT_PROBE_FAILED`, rather than send on at a size the path does not carry.
-4. A client MUST process a connection probe only in sending connection response (3) while it probes, counting `CLIENT_PROBE_RECEIVED`; in every other state it is `CLIENT_PROBE_WRONG_STATE`. It MUST then refuse, in this order, a probe whose wire size is not a candidate at or before the one it is probing (`CLIENT_PROBE_SIZE_NOT_CANDIDATE`), one whose sequence is zero (`CLIENT_PROBE_ZERO_SEQUENCE`), one that does not open under the session server-to-client key (`CLIENT_PROBE_DID_NOT_OPEN`, an integrity failure), and one whose padding is not all zero (`CLIENT_PROBE_PADDING_NOT_ZERO`).
-5. An accepted probe, counted `CLIENT_PROBE_ACCEPTED`, MUST set P to its wire size for the connection's life, MUST end the probe, and MUST build the response once carrying P, which the advance sends early and the client retransmits byte for byte as rule 7 of [t11 Handshake: client](#t11) states. A reply to an earlier, larger candidate that arrives late is accepted: that size was carried both ways.
-6. A client MUST NOT send a session packet larger than P on the connection, and its payload capacity is C(P) of [t8.11 Packet sizes](#t8.11).
-7. While a client probes, the silence timeout of [t11 Handshake: client](#t11) rule 8 MUST NOT end the attempt: the walk ends it, in an accepted probe or in mtu probe failed (-14), within the probe time bound.
+1. A client's first packet size P0 is the last candidate of its server's family, the smallest. On accepting the challenge it builds the response as [t11.2 Challenge and denial processing order](#t11.2) step 4 states, carrying P0 in its packet size field ([t8.4 Connection response packet (type 3)](#t8.4)), so every list joins exactly as the default list does: no probe is sent before connected (4).
+2. A client whose server address family has one candidate MUST NOT send a connection probe. A client whose family has more than one candidate MUST, once connected, walk the candidates above P, largest first, sending pairs: one small probe of the minimum wire size and one large probe of the wire size of the candidate, under one pair number, in the same update. The first pair MUST be sent in the update the client connects in. The next pair is due the probe first interval after it, or twice the round trip measured by the challenge when that is longer, never more than the probe maximum interval; each pair that resolves without a raise MUST double the interval, never past the probe maximum interval, so under any loss the client sends a pair at least once a probe maximum interval.
+3. A pair resolves when the next pair is due. A small reply of the pair with no large reply at the candidate is a strike against the candidate, counting `CLIENT_PROBE_STRIKE`, but only when the pair was sent the probe strike spacing or more after the pair of the last strike counted against it; a pair whose small reply did not come is no evidence. The probe strikes counted strikes MUST rule the candidate out, counting `CLIENT_PROBE_RULED_OUT`, and the walk moves to the next candidate, with no strike against it, at the probe first interval. Loss alone, which takes the small probe as well, never rules a candidate out, and four counted strikes span three strike spacings, so a loss of large packets shorter than that never rules out a size the path carries. When every candidate above P0 has been ruled out, the walk's last candidate is P0 itself: its counted strikes MUST end the connection in mtu probe failed (-14), counting `CLIENT_PROBE_FAILED`, since small probes come back and packets of the connection's own size never do; a large reply at P0 ends the walk at P0, which is not an error.
+4. The walk has no time limit while its pairs are not evidence: it ends only when P is raised, when P0 is answered or fails as rule 3 states, or with the connection. Once it has ended the client MUST NOT send another probe on the connection; a connection whose P is the largest candidate never probes again.
+5. A client MUST process a connection probe only in connected (4), counting `CLIENT_PROBE_RECEIVED`; in every other state it is `CLIENT_PROBE_WRONG_STATE`. It MUST then refuse, in this order, a probe whose wire size is neither the minimum wire size nor a candidate (`CLIENT_PROBE_SIZE_NOT_CANDIDATE`), one whose sequence is zero (`CLIENT_PROBE_ZERO_SEQUENCE`), one that does not open under the session server-to-client key (`CLIENT_PROBE_DID_NOT_OPEN`, an integrity failure), and one whose header is malformed or whose padding is not all zero (`CLIENT_PROBE_PADDING_NOT_ZERO`). A confirm's echo whose size is at least the size being confirmed ends the confirm. A probe reply while the walk has ended, of a pair number never sent, a small reply of an earlier pair, or a large reply at a candidate no longer probed is `CLIENT_PROBE_WRONG_STATE`. A small reply of the current pair marks it answered.
+6. A large reply at the candidate being probed, from the current pair or any earlier one, proves that size carried both ways. Above P, the client MUST raise P to it at once, counting `CLIENT_PROBE_ACCEPTED`, MUST end the walk, and MUST send a confirm carrying the new P, then again every confirm interval until the server's echo of it arrives. At P0 the walk ends at P0. P never decreases.
+7. A client MUST NOT send a session packet larger than P on the connection, and its payload capacity is C(P) of [t8.11 Packet sizes](#t8.11). A raise keeps the connection's block stride F(P0) of [RN-2 m2.2 Constants](MESSAGES.md#m2.2) and its CONFIG for the connection's life; only the payload capacity grows, so every record queued or in flight, built for a smaller capacity, still fits.
 
-A client and a server on the default list exchange no probe and send the same bytes as an implementation with no link MTU list. On a path that carries the handshake but not a full packet, a client on a longer list connects at the largest size the path carries both ways, or ends the attempt; it never connects at a size the path drops.
+A client and a server on the default list exchange no probe and send the same bytes as an implementation with no link MTU list. On a path that carries the handshake but not a full packet, a client on a longer list connects at its smallest size, which the path carries when the list holds the path's MTU, and then rises to the largest size the path carries both ways; it never sends at a size the path drops, and a connection whose own first size the path does not carry ends in mtu probe failed (-14) rather than hanging.
+
+The probe's costs, with the reference implementation on a three-step list at a 50 ms round trip: the join is the default list's, on every path; both ends reach 1452 in 0.09 s on a lossless 1500 path, the first pair at connect; at 10% loss each way, in 0.25 s on average and 1.34 s at worst over 50 seeds; at 50% loss for the first 10 s, in 3.6 s on average and 10.8 s at worst; at 100% loss for the first 10 s, 0.84 s after the loss ends. A size the path does not carry is ruled out about 16 s after its first pair. A pair costs at most 1452 + 34 bytes each way, at most one a second, and none once the walk ends: one pair and one confirm on a clean path.
 
 The policy values of this section are below.
 
@@ -2733,9 +2746,11 @@ The policy values of this section are below.
 | link MTU list maximum entries | `8` | entries |
 | smallest link MTU | `546` | bytes |
 | IPv6 minimum link MTU | `1280` | bytes |
-| probe window sends | `4` | sends |
-| probe window maximum sends | `10` | sends |
-| probe time bound | `8` | seconds |
+| probe first interval | `0.25` | seconds |
+| probe maximum interval | `1` | seconds |
+| probe strike spacing | `5` | seconds |
+| probe strikes | `4` | strikes |
+| confirm interval | `1` | seconds |
 
 <a id="t12"></a>
 ## t12. Handshake: server
@@ -2762,9 +2777,9 @@ The claim is checked, without being recorded, before the signature; the first re
 11. A server MUST deny, with a connection denied packet sealed under the handshake server-to-client key, a request that finds no free slot, and MUST NOT create a mapping for it.
 12. A server MUST generate a fresh session nonce and ephemeral keypair for each mapping, MUST derive the connection keys, MUST erase the ephemeral secret, and MUST store the connection challenge in the mapping so that a repeat is byte-identical. A request whose client ephemeral public key the derivation reports as a small-order point ([t7 Key schedule](#t7) rule 5) MUST be ignored, unanswered, counting `CONNECTION_REQUEST_SMALL_ORDER_KEY`, and recorded against its source as a failure ([t17 Timing and defaults](#t17) item 12).
 13. A connection response MUST be processed only after it has opened under the mapping's handshake client-to-server key. A server MUST bind the token identifier to the source address at that point, MUST ignore a response when the source address or the client id already holds a slot, MUST deny one that finds no free slot, MUST ignore, without denying, one whose free slots are all still held under [t13.4 Slot reset](#t13.4), counting `CONNECTION_RESPONSE_NO_SLOTS`, the counter a denial uses, and otherwise MUST assign a slot, mark the client unconfirmed, and send the first keep-alive. A held slot counts as free for rule 11 and for the denial of this rule.
-14. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which a request carrying the mapping's connection salt or a response that opens under the mapping's handshake key refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A retransmitted connection response MUST NOT refresh a connected slot's receive time. A mapping whose source family the server's own link MTU list gives more than one candidate packet size MUST be created with its handshake deadline, and its request claim, later by the probe time bound of [t11.4 Path probe](#t11.4), so a client walking any allowed list ends its walk before the mapping's handshake deadline; on the default list the deadline is unchanged. The deadline follows the server's list, which a client does not know: a client whose list gives the family more candidates than its server's, against a server whose list gives one, may still be walking at the handshake deadline, and its attempt then ends in mtu probe failed (-14), never in a hang. Holding the same list at both ends ([t2.3 Configuration surface](#t2.3)) keeps every walk inside the deadline. The walk's last probe reaches the server within the probe time bound and one round trip of the challenge, inside the half-open idle deadline for any round trip below 2 s. A server MUST count these removals apart: the handshake deadline as `MAPPING_HANDSHAKE_DEADLINE_EXPIRED`, the half-open idle deadline as `MAPPING_IDLE_TIMEOUT`, and the connected idle timeout as both `MAPPING_IDLE_TIMEOUT` and `CLIENT_TIMED_OUT`, so the half-open removals are the difference of the last two. That shared `MAPPING_IDLE_TIMEOUT` is an exception of this revision to [t18 Error handling and counters](#t18) rule 2. When a server removes a half-open mapping before its handshake deadline -- at the half-open idle deadline, or because the integrity limit tears the mapping down -- it MUST release that mapping's request claim before removing the mapping, so a claim never outlives the mapping that holds it. The claim window is therefore min(handshake deadline, half-open idle deadline), and it stays open only while the holder keeps the mapping alive by sending its copied request. A client refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED` recovers by retrying from its own address within its token timeout once the claim is gone.
-15. A server MUST process a connection probe in this order, counting `CONNECTION_PROBE_RECEIVED` on entry, and MUST stop at the first check that refuses: a wire size below the probe minimum or above the receive ceiling, `CONNECTION_PROBE_WRONG_SIZE`; a wire size that is not a candidate packet size its own link MTU list gives the source's family ([t11.4 Path probe](#t11.4)), `CONNECTION_PROBE_SIZE_NOT_ALLOWED`; a source with no mapping, `CONNECTION_PROBE_NO_MAPPING`; a mapping that holds a connected slot, `CONNECTION_PROBE_ALREADY_CONNECTED`; a mapping that has opened a probe in this update, ignored unopened, `CONNECTION_PROBE_WITHHELD`; a sequence of zero, `CONNECTION_PROBE_ZERO_SEQUENCE`; a probe that does not open under the mapping's session client-to-server key, `CONNECTION_PROBE_DID_NOT_OPEN`, an integrity failure; padding that is not all zero, `CONNECTION_PROBE_PADDING_NOT_ZERO`. Only a probe that opened spends the mapping's one probe of the update: a probe that does not open spends nothing, so a probe forged at the client's address never withholds the client's own. A probe that passes MUST be answered with one connection probe of the same wire size, sealed under the session server-to-client key on the mapping's session sequence, counting `CONNECTION_PROBE_ANSWERED`, and refreshes the half-open idle deadline of rule 14. A server MUST NOT answer a probe in any other way: a reply is never larger than the probe that provoked it, and is sent only to an address that holds the session key the probe opened under.
-16. A connection response that opens MUST carry in its packet size field ([t8.4 Connection response packet (type 3)](#t8.4)) 0, read as the maximum packet size, or a candidate packet size the server's own link MTU list gives the source's family; any other value is ignored, counting `CONNECTION_RESPONSE_SIZE_NOT_ALLOWED`, and is not an integrity failure. The slot that rule 13 assigns holds that packet size for the connection's life, and a server MUST NOT send a session packet larger than it on that connection.
+14. A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed, or at the half-open idle deadline, which a request carrying the mapping's connection salt or a response that opens under the mapping's handshake key refreshes; whichever comes first. A connected slot MUST be removed at its idle timeout. A retransmitted connection response MUST NOT refresh a connected slot's receive time. The handshake deadline is the same on every link MTU list: the path probe runs after connect ([t11.4 Path probe](#t11.4)). A server MUST count these removals apart: the handshake deadline as `MAPPING_HANDSHAKE_DEADLINE_EXPIRED`, the half-open idle deadline as `MAPPING_IDLE_TIMEOUT`, and the connected idle timeout as both `MAPPING_IDLE_TIMEOUT` and `CLIENT_TIMED_OUT`, so the half-open removals are the difference of the last two. That shared `MAPPING_IDLE_TIMEOUT` is an exception of this revision to [t18 Error handling and counters](#t18) rule 2. When a server removes a half-open mapping before its handshake deadline -- at the half-open idle deadline, or because the integrity limit tears the mapping down -- it MUST release that mapping's request claim before removing the mapping, so a claim never outlives the mapping that holds it. The claim window is therefore min(handshake deadline, half-open idle deadline), and it stays open only while the holder keeps the mapping alive by sending its copied request. A client refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED` recovers by retrying from its own address within its token timeout once the claim is gone.
+15. A server MUST process a connection probe in this order, counting `CONNECTION_PROBE_RECEIVED` on entry, and MUST stop at the first check that refuses: a wire size below the probe minimum or above the receive ceiling, `CONNECTION_PROBE_WRONG_SIZE`; a wire size above the minimum that is not a candidate packet size its own link MTU list gives the source's family ([t11.4 Path probe](#t11.4)), `CONNECTION_PROBE_SIZE_NOT_ALLOWED`; a source with no mapping, `CONNECTION_PROBE_NO_MAPPING`; a mapping that holds no connected slot, `CONNECTION_PROBE_NOT_CONNECTED`; a mapping that has opened a probe of the same kind in this update -- of the minimum wire size (a small probe or a confirm), or larger -- ignored unopened, `CONNECTION_PROBE_WITHHELD`; a sequence of zero, `CONNECTION_PROBE_ZERO_SEQUENCE`; a probe that does not open under the mapping's session client-to-server key, `CONNECTION_PROBE_DID_NOT_OPEN`, an integrity failure; a malformed header or padding that is not all zero ([t8.13 Connection probe packet (type 9)](#t8.13)), `CONNECTION_PROBE_PADDING_NOT_ZERO`; a confirm whose size is not a candidate its list gives the family, `CONNECTION_PROBE_SIZE_NOT_ALLOWED`. Only a probe that opened spends the mapping's one probe of its kind for the update: a probe that does not open spends nothing, so a probe forged at the client's address never withholds the client's own. A confirm whose size is above the slot's packet size MUST raise the slot's packet size to it, counting `CONNECTION_PROBE_CONFIRMED`; this is the only way a slot's packet size rises, and it never falls. A probe or confirm that passes MUST be answered with one connection probe of the same wire size and header, sealed under the session server-to-client key on the mapping's session sequence, counting `CONNECTION_PROBE_ANSWERED`, and refreshes the slot's receive time. A server MUST NOT answer a probe in any other way: a reply is never larger than the probe that provoked it, and is sent only to an address that holds the session key the probe opened under.
+16. A connection response that opens MUST carry in its packet size field ([t8.4 Connection response packet (type 3)](#t8.4)) 0, read as the maximum packet size, or a candidate packet size the server's own link MTU list gives the source's family; any other value is ignored, counting `CONNECTION_RESPONSE_SIZE_NOT_ALLOWED`, and is not an integrity failure. The slot that rule 13 assigns starts at that packet size, which only a confirm of rule 15 raises, and a server MUST NOT send a session packet larger than the slot's packet size on that connection.
 
 An application message the server sends to a slot that is not connected is dropped and counted, as [RN-2 m1.5 Sending on a connection that is not connected](MESSAGES.md#m1.5) states.
 
@@ -4001,7 +4016,7 @@ The registry of counters, in index order, is:
 | `CONNECTION_PROBE_WRONG_SIZE` | `refusal` | `CONNECTION_PROBE_RECEIVED` |
 | `CONNECTION_PROBE_SIZE_NOT_ALLOWED` | `refusal` | `CONNECTION_PROBE_RECEIVED` |
 | `CONNECTION_PROBE_NO_MAPPING` | `refusal` | `CONNECTION_PROBE_RECEIVED` |
-| `CONNECTION_PROBE_ALREADY_CONNECTED` | `expected` | `CONNECTION_PROBE_RECEIVED` |
+| `CONNECTION_PROBE_NOT_CONNECTED` | `refusal` | `CONNECTION_PROBE_RECEIVED` |
 | `CONNECTION_PROBE_WITHHELD` | `refusal` | `CONNECTION_PROBE_RECEIVED` |
 | `CONNECTION_PROBE_ZERO_SEQUENCE` | `refusal` | `CONNECTION_PROBE_RECEIVED` |
 | `CONNECTION_PROBE_DID_NOT_OPEN` | `refusal` | `CONNECTION_PROBE_RECEIVED` |
@@ -4016,8 +4031,10 @@ The registry of counters, in index order, is:
 | `CLIENT_PROBE_PADDING_NOT_ZERO` | `refusal` | `CLIENT_PROBE_RECEIVED` |
 | `CLIENT_PROBE_ACCEPTED` | `expected` | `CLIENT_PROBE_RECEIVED` |
 | `CLIENT_PROBE_SENT` | `expected` | `none` |
-| `CLIENT_PROBE_WINDOW_EXPIRED` | `expected` | `none` |
+| `CLIENT_PROBE_STRIKE` | `expected` | `none` |
 | `CLIENT_PROBE_FAILED` | `refusal` | `none` |
+| `CLIENT_PROBE_RULED_OUT` | `expected` | `none` |
+| `CONNECTION_PROBE_CONFIRMED` | `expected` | `CONNECTION_PROBE_RECEIVED` |
 
 `MESSAGE_MEMORY_EXHAUSTED` moves only once the receive side has exhausted a
 connection's message memory, which only a broken invariant of the receiver
@@ -4205,14 +4222,15 @@ de 00 00 00 d2 0c a4 a8 00 00 00 48 5b 6f 96 00
 8b 63 94 cc 00 00 00 dd 5b 1f d0 01 00 00 4a 27
 5c 44 00 00 00 65 b8 a7 43 01 00 00 6e 86 85 b7
 03 00 00 de 1b dd 80 00 25 01 59 61 eb 79 00 25
-01 47 61 af d4 00 25 01 d3 4e 51 ec 01 25 01 26
+01 47 61 af d4 00 25 01 d6 ac 47 87 00 25 01 26
 58 e6 cf 00 25 01 35 f7 c2 54 00 25 01 71 29 4e
 4a 00 25 01 23 ac 0a 08 00 25 01 9a 4d 5a c7 01
 25 01 26 6f ab 79 00 20 00 e3 56 66 44 03 00 00
 7b e2 d0 0e 01 30 01 0d 30 13 26 00 30 01 a6 e6
 93 bf 00 30 01 78 0e a7 13 00 30 01 76 1a 1f c8
 00 30 01 d1 19 6d ff 01 30 01 26 5e b5 77 01 00
-00 1e b2 99 12 01 00 00 6d e0 75 be 00 00 00
+00 12 25 78 db 01 00 00 6d e0 75 be 00 00 00 ed
+51 e2 5f 01 00 00 fa 24 8d 97 01 25 01
 ```
 <a id="t19"></a>
 ## t19. Security considerations
@@ -4287,7 +4305,7 @@ input: each row's packet type (u8) and wire size (u16), in the rows' order
 22 00
 ```
 
-The connection probe of [t8.13 Connection probe packet (type 9)](#t8.13) is the one handshake answer larger than the challenge, and it is not a row above: a server answers a probe only from an address that holds a mapping, so one the challenge reached, only after the probe opened under the session key that the two ends of the ephemeral exchange alone derive, at most once per mapping per update, and never larger than the probe itself ([t12 Handshake: server](#t12) rule 15). It amplifies nothing, and a forged probe costs the server one failed open and spends nothing of the client's allowance.
+The connection probe of [t8.13 Connection probe packet (type 9)](#t8.13) is the one answer that can be larger than the challenge, and it is not a row above: a server answers a probe only from a connected client, so an address the whole handshake reached, only after the probe opened under the session key that the two ends of the ephemeral exchange alone derive, at most once per kind per mapping per update, and never larger than the probe itself ([t12 Handshake: server](#t12) rule 15). It amplifies nothing, and a forged probe costs the server one failed open and spends nothing of the client's allowance.
 
 <a id="t19.2"></a>
 ### t19.2. Development keys

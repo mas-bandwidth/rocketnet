@@ -21,11 +21,14 @@ For each backend in examples/backend/:
    PASS as their last line.
 
 4. Path MTU. Step 3 runs twice: on the default link MTU list (no flag) and
-   with --link-mtus 1492,1200,576 given to both server and client. Both
-   ends must report the packet size the connection chose and its largest
-   unreliable message, the same at each end. Loopback carries every size, so
-   both runs choose the first candidate: 1452 bytes and a largest unreliable
-   message of 1411 (ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES).
+   with --link-mtus 1492,1200,576 given to both server and client. Each end
+   prints the connection's packet size, its largest unreliable message and
+   its link MTU at connect and again each time the size rises. On the
+   default list each end prints exactly one size, 1452 bytes, a largest
+   unreliable message of 1411 (ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES) and a
+   link MTU of 1500. With the three-step list each end must start at the
+   list's smallest size, 548, 507 and 576, rise in all three each time, and
+   end at 1452, 1411 and 1492, since loopback carries every size.
 
 This is the functional tier: it uses sockets and the wall clock. The unit
 tests of the backends are `go test` in examples/backend/go and
@@ -67,6 +70,15 @@ CLIENT_ID = 1234567890123
 THREE_STEP = "1492,1200,576"
 LOOPBACK_PACKET_BYTES = 1452
 LOOPBACK_MAX_UNRELIABLE_MESSAGE_BYTES = 1411
+# the link MTU each end reports at 1452: the default list's 1500, and the
+# three-step list's first entry, 1492
+DEFAULT_LINK_MTU = 1500
+THREE_STEP_LINK_MTU = 1492
+# the three-step list's smallest IPv4 size, where its connection starts: a 576
+# link less 28, and C(548) - 5 = 512 - 5 for the largest unreliable message
+THREE_STEP_START_PACKET_BYTES = 548
+THREE_STEP_START_MAX_UNRELIABLE_MESSAGE_BYTES = 507
+THREE_STEP_START_LINK_MTU = 576
 
 DEV_SERVER_PUBLIC_KEY = bytes.fromhex("3d2490889d374c296fab1d5770cb71476a06f74ef2f2540cf2215f7614f4801c")
 
@@ -222,15 +234,40 @@ def register_server(url, values):
         return False
 
 
-def reported_sizes(output, prefix):
-    """The packet_bytes and max_unreliable_message_bytes an example printed after prefix, or None."""
+def reported_size_history(output, prefix):
+    """Every (packet_bytes, max_unreliable_message_bytes, link_mtu) an example printed after prefix, in order, or None when a line is broken."""
+    history = []
     for line in output.splitlines():
         if line.startswith(prefix + "packet_bytes="):
-            fields = dict(field.split("=", 1) for field in line[len(prefix):].split())
             try:
-                return int(fields["packet_bytes"]), int(fields["max_unreliable_message_bytes"])
+                fields = dict(field.split("=", 1) for field in line[len(prefix):].split())
+                history.append((int(fields["packet_bytes"]), int(fields["max_unreliable_message_bytes"]), int(fields["link_mtu"])))
             except (KeyError, ValueError):
                 return None
+    return history
+
+
+def reported_sizes(output, prefix):
+    """The last packet_bytes, max_unreliable_message_bytes and link_mtu an example printed after prefix, or None."""
+    history = reported_size_history(output, prefix)
+    return history[-1] if history else None
+
+
+def size_history_problem(history, link_mtus):
+    """Why a size history is wrong for the list given (None or THREE_STEP) on loopback, or None when it is right."""
+    if not history:
+        return "no size reported"
+    if not link_mtus:
+        final = (LOOPBACK_PACKET_BYTES, LOOPBACK_MAX_UNRELIABLE_MESSAGE_BYTES, DEFAULT_LINK_MTU)
+        return None if history == [final] else f"expected exactly {[final]} on the default list"
+    final = (LOOPBACK_PACKET_BYTES, LOOPBACK_MAX_UNRELIABLE_MESSAGE_BYTES, THREE_STEP_LINK_MTU)
+    start = (THREE_STEP_START_PACKET_BYTES, THREE_STEP_START_MAX_UNRELIABLE_MESSAGE_BYTES, THREE_STEP_START_LINK_MTU)
+    if history[0] != start:
+        return f"expected the connection to start at {start}"
+    if any(any(b <= a for a, b in zip(earlier, later)) for earlier, later in zip(history, history[1:])):
+        return "a reported size did not rise"
+    if history[-1] != final:
+        return f"expected the connection to end at {final}"
     return None
 
 
@@ -276,11 +313,12 @@ def end_to_end(name, command, server_binary, client_binary, keys, production, li
             return fail(label, "server did not exit after its client disconnected")
         if server.returncode != 0 or last_line(server_out) != "PASS":
             return fail(label, f"server exited {server.returncode}\n{server_out}")
-        expected = (LOOPBACK_PACKET_BYTES, LOOPBACK_MAX_UNRELIABLE_MESSAGE_BYTES)
+        expected = (LOOPBACK_PACKET_BYTES, LOOPBACK_MAX_UNRELIABLE_MESSAGE_BYTES, THREE_STEP_LINK_MTU if link_mtus else DEFAULT_LINK_MTU)
         for role, output, prefix in (("client", client.stdout, "backend_client: "), ("server", server_out, "backend_server: client 0 ")):
-            sizes = reported_sizes(output, prefix)
-            if sizes != expected:
-                return fail(label, f"{role} reported packet_bytes and max_unreliable_message_bytes {sizes}, expected {expected}")
+            history = reported_size_history(output, prefix)
+            problem = size_history_problem(history, link_mtus)
+            if problem:
+                return fail(label, f"{role} reported packet_bytes, max_unreliable_message_bytes and link_mtu {history}: {problem}")
         if production:
             for role, output in (("client", client.stdout), ("server", server_out)):
                 if f"backend_{role}: mode=production transport=portable" not in output.splitlines():
@@ -288,7 +326,7 @@ def end_to_end(name, command, server_binary, client_binary, keys, production, li
                     return fail(label, f"{role} did not confirm production portable mode: {observed}")
         print(f"backend_{name}: fresh_keys=true server_registered_http=true token_from_http=true "
               f"production_required={str(production).lower()} portable_echo=true "
-              f"link_mtus={link_mtus or 'default'} packet_bytes={expected[0]} max_unreliable_message_bytes={expected[1]}")
+              f"link_mtus={link_mtus or 'default'} packet_bytes={expected[0]} max_unreliable_message_bytes={expected[1]} link_mtu={expected[2]}")
         return True
     finally:
         for process in (backend, server):

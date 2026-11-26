@@ -6,7 +6,6 @@
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_platform.h"
 
-static double rocketnet_server_handshake_deadline_seconds( const struct rocketnet_server_protocol_t * server, const struct rocketnet_address_t * from );
 #include "rocketnet_read_write.h"
 #include "rocketnet_keys.h"
 #include "rocketnet_replay.h"
@@ -895,7 +894,7 @@ static int rocketnet_server_protocol_process_connection_request_known( struct ro
     // so this record cannot fail; a failure is a bug, refused closed
 
     if ( !rocketnet_used_token_history_claim_record( server->used_token_history, token_identifier, from,
-                                                     current_time + rocketnet_server_handshake_deadline_seconds( server, from ), current_time ) )
+                                                     current_time + (double) server->handshake_deadline_seconds, current_time ) )
     {
         rocketnet_assert( 0 );
         rocketnet_debug( "server ignored connection request. could not claim connect token" );
@@ -1081,7 +1080,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
             rocketnet_encryption_map_remove_current( server->encryption_map, replace_index );
         }
 
-        int index = rocketnet_encryption_map_add( server->encryption_map, from, current_time + rocketnet_server_handshake_deadline_seconds( server, from ) );
+        int index = rocketnet_encryption_map_add( server->encryption_map, from, current_time + (double) server->handshake_deadline_seconds );
         if ( index == -1 )
         {
             sodium_memzero( &keys, sizeof( keys ) );
@@ -1255,9 +1254,9 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     mapping->control->client_index = client_index;
     mapping->control->established = 1;
 
-    // proofs/tla/RNPathProbe.tla ServerRecvResponse, SlotAgrees: the connection's packet
-    // size is the one its response carried, fixed here for the connection's
-    // life; the client fixed the same size when it built the response
+    // proofs/tla/RNPathProbe.tla Init: the slot starts at the packet size its
+    // response carried, P0, the size the client joined at; only the client's
+    // confirm raises it later (ServerRecvConfirm), and it never falls
 
     mapping->packet_bytes = packet_bytes;
 
@@ -1376,22 +1375,6 @@ static const int * rocketnet_server_link_mtus( const struct rocketnet_server_pro
     return server->link_mtus;
 }
 
-// a half-open mapping's handshake deadline from its creation: the configured
-// deadline, and, when the server's list gives the source's family more than
-// one packet size, the probe's whole bound on top, so a client walking any
-// allowed list finishes before its mapping is removed (standard/TRANSPORT.md
-// t12 rule 14; sdk/rocketnet_link_mtu.h; proofs/tla/RNPathProbe.tla
-// WalkInsideDeadline). The default list adds nothing.
-
-static double rocketnet_server_handshake_deadline_seconds( const struct rocketnet_server_protocol_t * server, const struct rocketnet_address_t * from )
-{
-    int num_link_mtus = 0;
-    const int * link_mtus = rocketnet_server_link_mtus( server, &num_link_mtus );
-    int candidates[ROCKETNET_LINK_MTU_MAX_ENTRIES];
-    const bool probes = rocketnet_link_mtu_candidates( link_mtus, num_link_mtus, from->type, candidates ) > 1;
-    return (double) server->handshake_deadline_seconds + ( probes ? ROCKETNET_LINK_MTU_PROBE_BUDGET_SECONDS : 0.0 );
-}
-
 static bool rocketnet_server_packet_bytes_allowed( const struct rocketnet_server_protocol_t * server,
                                                    const struct rocketnet_address_t * from,
                                                    int packet_bytes )
@@ -1420,10 +1403,10 @@ int rocketnet_server_protocol_client_packet_bytes( const struct rocketnet_server
     return rocketnet_server_protocol_mapping_packet_bytes( rocketnet_encryption_map_entry( server->encryption_map, mapping_index ) );
 }
 
-// proofs/tla/RNPathProbe.tla ServerSendData and ServerRecvData: after
-// connect, every session packet the server seals to this mapping is at most
-// the slot's size, the one the response carried, and the client's packets
-// arrive at its own size, the same one (SlotAgrees)
+// proofs/tla/RNPathProbe.tla ServerSendData: after connect, every session
+// packet the server seals to this mapping is at most the slot's size, P0 at
+// connect and raised only by the client's confirm (ServerRecvConfirm), so
+// never above the client's own (ServerNeverAhead)
 
 int rocketnet_server_protocol_mapping_packet_bytes( const struct rocketnet_encryption_mapping_t * mapping )
 {
@@ -1432,17 +1415,18 @@ int rocketnet_server_protocol_mapping_packet_bytes( const struct rocketnet_encry
 }
 
 // The connection probe (standard/TRANSPORT.md t8.13 and t10;
-// proofs/tla/RNPathProbe.tla ServerRecvProbe). The probe is answered only
-// where the challenge's receiver proved the address: a mapping exists for the
-// source, holds no slot yet, and the probe opens under that mapping's
-// session client-to-server key, which only the ends of the ephemeral
-// exchange hold. The reply is a probe of the same wire size, so the server
-// never sends more than it was sent, and never a size off its own list. One
-// probe per mapping per update is answered: once one has opened, a second in
-// the same update is ignored unopened (OneReplyPerUpdate). A probe that does
-// not open spends nothing (ServerRecvForged), so a source can make the
-// server do one failed open per probe it sends, and one open that succeeds
-// and one seal an update.
+// proofs/tla/RNPathProbe.tla ServerRecvProbe, ServerRecvForged and
+// ServerRecvConfirm). A probe is answered only from a connected client: the
+// source's mapping holds a slot, and the probe opens under its session
+// client-to-server key. The reply is a probe of the same wire size carrying
+// the same header, so the server never sends more than it was sent, and
+// never a size off its own list or the small size. Per mapping per update at
+// most one small probe or confirm and one large probe are answered: once one
+// of a kind has opened, a second of that kind in the same update is ignored
+// unopened (OneReplyPerUpdate). A probe that does not open spends nothing
+// (ServerRecvForged). A confirm names a size the client raised to; when the
+// size is on the server's list and above the slot's, the slot's packet size
+// rises to it -- the only way it rises, and it never falls.
 
 static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * server,
                                            const struct rocketnet_address_t * from,
@@ -1464,7 +1448,9 @@ static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * 
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    if ( !rocketnet_server_packet_bytes_allowed( server, from, packet_bytes ) )
+    const bool small = packet_bytes == ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES;
+
+    if ( !small && !rocketnet_server_packet_bytes_allowed( server, from, packet_bytes ) )
     {
         rocketnet_spam( "server ignored connection probe. size is not on the server's link MTU list" );
         counters[ROCKETNET_COUNTER_CONNECTION_PROBE_SIZE_NOT_ALLOWED]++;
@@ -1481,19 +1467,21 @@ static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * 
 
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
 
-    if ( mapping->control->client_index != -1 )
+    if ( mapping->control->client_index == -1 )
     {
-        rocketnet_spam( "server ignored connection probe. client is already connected" );
-        counters[ROCKETNET_COUNTER_CONNECTION_PROBE_ALREADY_CONNECTED]++;
+        rocketnet_spam( "server ignored connection probe. client is not connected" );
+        counters[ROCKETNET_COUNTER_CONNECTION_PROBE_NOT_CONNECTED]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // probe_update holds the update number plus one, so a mapping's zero
-    // means no probe opened yet, even before the server's first update
+    // the update's allowances hold the update number plus one, so a
+    // mapping's zero means none opened yet, even before the first update
 
-    if ( mapping->probe_update == server->update_number + 1 )
+    uint64_t * allowance = small ? &mapping->probe_update : &mapping->probe_large_update;
+
+    if ( *allowance == server->update_number + 1 )
     {
-        rocketnet_spam( "server ignored connection probe. one probe per mapping per update" );
+        rocketnet_spam( "server ignored connection probe. one probe of a kind per mapping per update" );
         counters[ROCKETNET_COUNTER_CONNECTION_PROBE_WITHHELD]++;
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
@@ -1511,9 +1499,8 @@ static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * 
 #if defined( ROCKETNET_PATH_PROBE_PLANT )
     // the trace check's plant (tests/tla_trace_path_probe.cpp): the
     // allowance is spent before the open, so a probe forged at the client's
-    // address spends it (the reversed witness
-    // proofs/tla/MCRNPathProbeBrokenForgedStarves.cfg)
-    mapping->probe_update = server->update_number + 1;
+    // address spends it
+    *allowance = server->update_number + 1;
 #endif // #if defined( ROCKETNET_PATH_PROBE_PLANT )
 
     uint8_t opened[ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES];
@@ -1534,31 +1521,48 @@ static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * 
     // open and never withholds the genuine probe of the same update
     // (proofs/tla/RNPathProbe.tla ServerRecvForged, ForgedNeverStarves)
 
-    mapping->probe_update = server->update_number + 1;
+    *allowance = server->update_number + 1;
 
-    for ( int i = 0; i < opened_bytes; i++ )
+    int kind = -1;
+    int size_field = 0;
+    uint32_t pair = 0;
+    if ( !rocketnet_probe_header_read( opened, opened_bytes, packet_bytes, &kind, &size_field, &pair ) )
     {
-        if ( opened[i] != 0 )
-        {
-            rocketnet_spam( "server ignored connection probe. padding is not zero" );
-            counters[ROCKETNET_COUNTER_CONNECTION_PROBE_PADDING_NOT_ZERO]++;
-            return ROCKETNET_SERVER_PROCESS_IGNORED;
-        }
+        rocketnet_spam( "server ignored connection probe. header or padding malformed" );
+        counters[ROCKETNET_COUNTER_CONNECTION_PROBE_PADDING_NOT_ZERO]++;
+        return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
-
-    // a probing client is a live half-open connection: its probes refresh
-    // the half-open idle clock as its response does
 
     mapping->control->last_receive_time = current_time;
 
-    // the reply: the same wire size, sealed zero padding under the session
-    // server-to-client key, on the mapping's session sequence
+    if ( kind == ROCKETNET_PROBE_KIND_CONFIRM )
+    {
+        if ( !rocketnet_server_packet_bytes_allowed( server, from, size_field ) )
+        {
+            rocketnet_spam( "server ignored connection confirm. size is not on the server's link MTU list" );
+            counters[ROCKETNET_COUNTER_CONNECTION_PROBE_SIZE_NOT_ALLOWED]++;
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
 
-    memset( opened, 0, (size_t) opened_bytes );
+        if ( size_field > rocketnet_server_protocol_mapping_packet_bytes( mapping ) )
+        {
+            rocketnet_debug( "server raised client %d packet size from %d to %d bytes", mapping->control->client_index,
+                             rocketnet_server_protocol_mapping_packet_bytes( mapping ), size_field );
+
+            mapping->packet_bytes = size_field;
+            counters[ROCKETNET_COUNTER_CONNECTION_PROBE_CONFIRMED]++;
+        }
+    }
+
+    // the reply: the same wire size and header, zero padding, sealed under
+    // the session server-to-client key on the mapping's session sequence
+
+    const int plaintext_bytes = packet_bytes - ROCKETNET_PACKET_OVERHEAD_BYTES;
+    rocketnet_assert( plaintext_bytes == opened_bytes );
     const uint64_t reply_sequence = rocketnet_session_sequence_take( &mapping->send_sequence_session );
     const int reply_bytes = rocketnet_write_sealed_packet( response_packet, ROCKETNET_CONNECTION_PROBE_PACKET,
                                                            server->packet_filter, reply_sequence,
-                                                           NULL, opened_bytes > 0 ? opened : NULL, opened_bytes,
+                                                           NULL, opened, plaintext_bytes,
                                                            server->protocol_id, mapping->connection_salt, NULL,
                                                            mapping->keys.session_server_to_client );
     rocketnet_assert( reply_bytes == packet_bytes );
@@ -1567,7 +1571,6 @@ static int rocketnet_server_process_probe( struct rocketnet_server_protocol_t * 
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    mapping->send_sequence_handshake++;
     *response_bytes = reply_bytes;
 
     counters[ROCKETNET_COUNTER_CONNECTION_PROBE_ANSWERED]++;
@@ -1794,7 +1797,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         // the connection's packet size (TRANSPORT.md t8.4): 0 is the
         // ceiling, which is what a client on the default list sends; any
         // size must be one the server's own list gives the source's family
-        // (proofs/tla/RNPathProbe.tla ServerRecvResponse)
+        // (proofs/tla/RNPathProbe.tla Init: the slot starts at P0)
 
         const int response_packet_bytes = (int) opened[0] | ( (int) opened[1] << 8 );
         const int packet_bytes_chosen = response_packet_bytes != 0 ? response_packet_bytes : ROCKETNET_MAX_PACKET_BYTES;
@@ -2462,8 +2465,7 @@ static int rocketnet_server_keep_alive_due( const struct rocketnet_server_protoc
     return !( current_time - last < 1.0 / send_rate );
 }
 
-// proofs/tla/ServerConnection.tla ServerKeepAlive
-// proofs/tla/RNPathProbe.tla ServerSendKeepAlive: the connected slot's
+// proofs/tla/ServerConnection.tla ServerKeepAlive: the connected slot's
 // keep-alives on their own clock; a response to a connected mapping is
 // ignored, so these are what a client whose first keep-alive was lost hears
 int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_protocol_t * server,

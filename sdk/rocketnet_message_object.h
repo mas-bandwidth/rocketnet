@@ -114,6 +114,10 @@ struct rn_message_link_t
     // handshake decided it, a server slot's while it holds a connection; 0
     // otherwise. NULL (the unit suite's fakes): ROCKETNET_MAX_PACKET_BYTES.
     int ( *packet_bytes )( void * transport, int index );
+    // the link MTU list entry a connection in slot index at packet_bytes is
+    // using (rocketnet_link_mtu_entry); 0 for none. NULL (the unit suite's
+    // fakes): 0.
+    int ( *link_mtu )( void * transport, int index, int packet_bytes );
     // returns the started frame (context->frame), not the payload: the layer
     // writes at frame + context->payload_index. The public transport calls
     // return the payload; the forwarders turn that back into the frame.
@@ -321,6 +325,7 @@ struct rn_message_object_t
     struct rn_message_link_t link;
     int is_server;
     int num_connections;                        // 1 for the client, max_clients for the server
+    int packet_bytes_can_rise;                  // the server's link MTU list gives a family more than one size: a held slot's size may rise (proofs/tla/RNPathProbe.tla)
     struct rocketnet_message_config_t config;
     rocketnet_counters_t counters;              // the message counters of every region of this object
     rn_arena_t * arena;
@@ -475,6 +480,9 @@ int rn_message_object_connected( const struct rn_message_object_t * object, int 
 // rn_endpoint_max_unreliable_message_bytes); 0 for a slot not connected
 int rn_message_object_packet_bytes( const struct rn_message_object_t * object, int index );
 int rn_message_object_max_unreliable_message_bytes( const struct rn_message_object_t * object, int index );
+// the link MTU list entry the connection in slot index is using now, read
+// from the link beside its packet size; 0 for a slot not connected
+int rn_message_object_link_mtu( const struct rn_message_object_t * object, int index );
 
 // R5: ends a connection with `reason`. The transport disconnects it now; its
 // region is reset at the start of the next update, before the slot can be

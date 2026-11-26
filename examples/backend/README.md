@@ -158,12 +158,16 @@ buffers. This does not erase the key output or token held by the caller.
 ## Path MTU
 
 The link MTU list (`link_mtus` and `num_link_mtus` in the client and server
-configs) is the set of link sizes a connection may settle on, largest first.
-The default is the one entry 1500: no probe, and the same packets as a build
-without the list. A longer list makes the client probe after the challenge,
-trying each size in turn. The first size that crosses both ways becomes the
-connection's packet size for its whole life, at both ends. If no size crosses,
-the client ends in `ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED` (-14) instead of hanging.
+configs) is the set of link sizes a connection may use, largest first. The
+default is the one entry 1500: no probe, and the same packets as a build
+without the list. A longer list connects small and probes upward: the
+connection starts at the smallest size the list gives, so it joins exactly as
+fast as the default, and once connected the client probes the larger sizes,
+largest first, and raises the connection's packet size to the largest one that
+crosses both ways. The packet size only grows. Probing stops for good once the
+connection is at the largest size, or once every larger size has been ruled
+out. If the path does not carry even the smallest size, the client ends in
+`ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED` (-14) instead of hanging.
 
 **Both sides must use the same list.** The server only answers the sizes its
 own list gives. Set the list in code, or with `ROCKETNET_CLIENT_LINK_MTUS` and
@@ -178,12 +182,23 @@ reach 576.
 ./bin/example_backend_client --link-mtus 1500,1492 --token "$(curl -s http://127.0.0.1:8080/match/1)"
 ```
 
-Once connected, each prints the packet size its connection chose and the
-largest unreliable message that fits in one packet:
-`rocketnet_client_max_packet_bytes` and
-`rocketnet_client_max_unreliable_message_bytes`, and on the server
-`rocketnet_server_client_max_packet_bytes` and
-`rocketnet_server_client_max_unreliable_message_bytes` for each client.
+Each prints the connection's packet size, the largest unreliable message
+that fits in one packet, and the link MTU, when it connects and again each
+time the size rises: `rocketnet_client_max_packet_bytes`,
+`rocketnet_client_max_unreliable_message_bytes` and
+`rocketnet_client_link_mtu`, and on the server
+`rocketnet_server_client_max_packet_bytes`,
+`rocketnet_server_client_max_unreliable_message_bytes` and
+`rocketnet_server_client_link_mtu` for each client. The link MTU is the entry
+of the `link_mtus` list the packet size comes from; where entries give the
+same size, such as 1500 and 1492 over IPv4, it is the first, largest, of
+them, so `--link-mtus 1500,1492` reports 1500. On the three-step list the
+client prints `packet_bytes=548 max_unreliable_message_bytes=507
+link_mtu=576` at connect and `packet_bytes=1452
+max_unreliable_message_bytes=1411 link_mtu=1492` once the probe finds the
+path carries it. These calls report the current value, which never falls,
+and 0 while not connected, so a game that sizes its unreliable messages from
+them can read them again later and get more room.
 
 A packet size is the link MTU less the IP and UDP headers: 28 bytes over IPv4
 and 48 over IPv6. It is never above the 1452-byte ceiling. Two entries that
@@ -199,8 +214,8 @@ the link MTU 1492 (1500 less 8).
   drops.
 
 For games with IPv6 players, use `{ 1500, 1492 }`. IPv4 connections are
-unchanged. An IPv6 connection behind PPPoE loses its 1452 probe and settles on
-1444.
+unchanged. An IPv6 connection starts at 1444; behind PPPoE its 1452 probe is
+ruled out and it stays at 1444, and on a full 1500 path it rises to 1452.
 
 **VPNs and tunnels.** Players behind a VPN or tunnel can have much smaller
 links. For them, use the three-step list `{ 1492, 1200, 576 }`. It gives IPv4
@@ -209,20 +224,38 @@ alone. The 548 step needs a larger message window: with the default 1 MiB
 message, set `reliable_messages_in_flight` and `packets_in_flight` to 4096 at
 both ends, or create refuses the list (`LINK_MTUS_TOO_SMALL_FOR_MESSAGES`).
 
-**Join cost.** Each size that does not cross costs one probe window before the
-next is tried. A window is three round trips, at least 0.4 s and at most 1 s.
-The server holds a half-open connection up to 8 s longer while a list probes.
-The handshake time on a path with no added delay, in 10 ms steps:
+**How probing works.** Each probe is a pair: a small probe and a large one at
+the size being tried, sent together. The first pair goes out in the update the
+client connects in. While pairs go unanswered the client waits longer between
+them, starting at 0.25 s (or twice the round trip) and doubling to at most one
+pair a second. A large probe that is lost while its small partner comes back
+is a strike against that size; four strikes, from pairs sent at least 5 s
+apart, rule the size out and the client moves to the next one down. When both
+probes are lost nothing counts, so loss alone never rules a size out, and
+there is no time limit while it lasts: the first pair after the loss clears
+goes out within about a second. When the large reply arrives the client raises
+its size at once and confirms; the server raises when the confirm arrives.
 
-| List | Path carries | Packet size (IPv4) | Join |
-| --- | --- | --- | --- |
-| 1500 (default) | any | 1452 | 40 ms |
-| 1492, 1200, 576 | 1492 | 1452 | 50 ms |
-| 1492, 1200, 576 | 1200 | 1172 | 450 ms |
-| 1492, 1200, 576 | 576 | 548 | 850 ms |
+**Join cost and time to full size.** Every list joins as the default does: in
+10 ms steps on a path with no added delay, the default and the three-step list
+both join in 40 ms on every path. The time from connect until both ends reach
+1452, measured with the three-step list on a 1500 path with a 50 ms round trip:
 
-The 1452 step costs one probe round trip over the default. Each fallback adds
-a window. On a path with real delay, add the round trips.
+| Path | Both ends at 1452 |
+| --- | --- |
+| no loss | 0.09 s (the client at 0.06 s) |
+| 10% loss each way, 50 runs | 0.25 s mean, 1.34 s worst |
+| 50% loss each way for the first 10 s, 50 runs | 3.6 s mean, 10.8 s worst |
+| every packet lost for the first 10 s | 10.84 s, 0.84 s after the loss ends |
+
+On a path that carries 1200 but not 1492, 1452 is ruled out and both ends are
+at 1172 about 17 s after connect, sending at 548 until then. A path that does
+not carry 548 ends in -14 about 34 s after connect.
+
+**Bandwidth.** A pair is at most 1452 + 34 bytes each way, and a confirm 34
+bytes. On a clean path the whole cost is one pair and one confirm. While pairs
+go unanswered the client sends at most one pair a second, about 1.5 KB/s each
+way, until probing ends. The default list sends none.
 
 ## Configuration reference
 

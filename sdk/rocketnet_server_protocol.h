@@ -222,9 +222,9 @@ uint64_t rocketnet_server_protocol_connection_id( const struct rocketnet_server_
 int rocketnet_server_protocol_end_reason( const struct rocketnet_server_protocol_t * server, int client_index );
 
 // The packet size of the connection in client_index (sdk/rocketnet_link_mtu.h):
-// the size its connection response carried, fixed for the connection's life,
-// ROCKETNET_MAX_PACKET_BYTES on the default link MTU list; 0 for a slot that
-// holds no connection.
+// the size its connection response carried, raised only by the client's
+// confirm of a larger size and never lowered, ROCKETNET_MAX_PACKET_BYTES on
+// the default link MTU list; 0 for a slot that holds no connection.
 int rocketnet_server_protocol_client_packet_bytes( const struct rocketnet_server_protocol_t * server, int client_index );
 
 // The same packet size read off the connection's mapping: what every session

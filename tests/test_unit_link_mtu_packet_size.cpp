@@ -18,8 +18,9 @@
 
 // Each connection uses its own packet size P above the handshake (standard
 // TRANSPORT.md, the packet budget; MESSAGES.md m2.2, the block stride F(P)).
-// A pair whose path carries only 548-byte datagrams settles on P = 548 and
-// never hands the link a larger datagram, whatever it sends; a default pair
+// A pair whose path carries only 548-byte datagrams settles on P = 548 and,
+// once its probe walk has ended, never hands the link a larger datagram,
+// whatever it sends; a default pair
 // keeps the ceiling's values, 1452 and 1411.
 
 #if ROCKETNET_DEV
@@ -240,6 +241,23 @@ static void test_link_mtu_packet_size_548_pair()
     check( rocketnet_client_transport_start_packet( client_transport, C + 1, &context ) == NULL );
     check( rocketnet_server_transport_start_packet( server_transport, 0, C + 1, &context ) == NULL );
 
+    // the path probe's walk ends first: it sends large probes above P, which
+    // the link drops, until 1452 and 1172 are ruled out and the 548 pair
+    // comes back; it never probes again
+    const rocketnet_counters_t * transport_counters = rocketnet_client_transport_counters( client_transport );
+    for ( int i = 0; i < 6000 && rocketnet_counter_value( transport_counters, ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT ) < 2; i++ )
+    {
+        packet_size_pump( pair.server, pair.client );
+    }
+    check( rocketnet_counter_value( transport_counters, ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT ) == 2 );
+    for ( int i = 0; i < 300; i++ )
+    {
+        packet_size_pump( pair.server, pair.client );
+    }
+    const uint64_t probes_sent = rocketnet_counter_value( transport_counters, ROCKETNET_COUNTER_CLIENT_PROBE_SENT );
+    check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_max_packet_bytes( pair.client ) == P );
+
     // from here no endpoint hands the link a datagram above P: the seam
     // zeroes the largest seen and still drops anything larger, so an
     // oversized datagram would also stall the transfers below
@@ -285,6 +303,7 @@ static void test_link_mtu_packet_size_548_pair()
     const int largest = rocketnet_loopback_test_largest_sent();
     check( largest <= P );
     check( largest > P - 16 );
+    check( rocketnet_counter_value( transport_counters, ROCKETNET_COUNTER_CLIENT_PROBE_SENT ) == probes_sent );
 
     packet_size_pair_destroy( pair );
 }

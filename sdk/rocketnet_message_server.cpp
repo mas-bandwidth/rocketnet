@@ -1232,24 +1232,32 @@ int rn_message_object_update_end( struct rn_message_object_t * object )
     }
 
     // the client's connection was bound at create, before its handshake
-    // decided the packet size (sdk/rocketnet_link_mtu.h). The transport
+    // decided the packet size P0 (sdk/rocketnet_link_mtu.h). The transport
     // decides it before it sends its connection response, so before any
-    // payload of the connection can arrive; a size other than the one bound
-    // is bound here: the endpoint reset with it and its CONFIG, whose
-    // fragment_bytes is F(P), announced again. Nothing was sent or received
+    // payload of the connection can arrive; a smaller size than the one
+    // bound is bound here: the endpoint reset with it and its CONFIG, whose
+    // fragment_bytes is F(P0), announced again. Nothing was sent or received
     // on the binding (application sends before CONNECTED are dropped at
-    // start), so the reset loses nothing. At the ceiling nothing happens.
+    // start), so the reset loses nothing. A larger size is the path probe's
+    // raise on this connection, taken in place with the stride kept
+    // (rn_endpoint_raise_packet_bytes): the size never falls within a
+    // connection, and a bound endpoint is never above a new connection's P0.
+    // At the ceiling nothing happens.
 
     if ( !object->is_server && object->hot_connections[0].state == RN_MESSAGE_CONNECTION_CONNECTED )
     {
         rn_message_connection_t * connection = &object->connections[0];
         const int packet_bytes = object->link.packet_bytes ? object->link.packet_bytes( object->link.transport, 0 ) : 0;
-        if ( packet_bytes > 0 && packet_bytes != rn_endpoint_packet_bytes( connection ) )
+        if ( packet_bytes > 0 && packet_bytes < rn_endpoint_packet_bytes( connection ) )
         {
             rn_endpoint_set_packet_bytes( connection, packet_bytes );
             rn_endpoint_reset( connection, time );
             memset( connection->hot->views, 0, connection->region->delivery_entries );
             rn_endpoint_announce_config( connection, time );     // RNEndpoint Reset: the client's connect (10.3), at its packet size
+        }
+        else if ( packet_bytes > rn_endpoint_packet_bytes( connection ) )
+        {
+            rn_endpoint_raise_packet_bytes( connection, packet_bytes );
         }
     }
 
@@ -1264,6 +1272,19 @@ int rn_message_object_update_end( struct rn_message_object_t * object )
             const int action = rn_slots_observe( &object->slots, i, id );
             if ( action == RN_SLOTS_NONE )
             {
+                // a held connection's packet size rises only by its client's
+                // confirm (proofs/tla/RNPathProbe.tla ServerRecvConfirm),
+                // taken here in place; a list that gives every family one
+                // size never rises, and reads nothing
+
+                if ( object->packet_bytes_can_rise && id != 0 )
+                {
+                    const int packet_bytes = rn_message_link_packet_bytes( object, i );
+                    if ( packet_bytes > rn_endpoint_packet_bytes( connection ) )
+                    {
+                        rn_endpoint_raise_packet_bytes( connection, packet_bytes );
+                    }
+                }
                 continue;
             }
 
@@ -2692,6 +2713,18 @@ int rn_message_object_packet_bytes( const struct rn_message_object_t * object, i
     return rn_endpoint_packet_bytes( &object->connections[index] );
 }
 
+int rn_message_object_link_mtu( const struct rn_message_object_t * object, int index )
+{
+    if ( !rn_message_object_connected( object, index ) )
+    {
+        return 0;
+    }
+    // the entry of the packet size the connection has now, so it moves
+    // only with that size, which never falls (rn_endpoint_raise_packet_bytes)
+    const struct rn_message_connection_t * connection = &object->connections[index];
+    return object->link.link_mtu ? object->link.link_mtu( object->link.transport, index, rn_endpoint_packet_bytes( connection ) ) : 0;
+}
+
 int rn_message_object_max_unreliable_message_bytes( const struct rn_message_object_t * object, int index )
 {
     if ( !rn_message_object_connected( object, index ) )
@@ -2756,6 +2789,7 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->acked_connection_ids = RN_LINK_FORWARD( rocketnet_server_transport_acked_connection_ids )::call;
     link->max_payload_bytes = RN_LINK_FORWARD( rocketnet_server_transport_max_payload_bytes )::call;
     link->packet_bytes = RN_LINK_FORWARD( rocketnet_server_transport_client_packet_bytes )::call;
+    link->link_mtu = RN_LINK_FORWARD( rocketnet_server_transport_client_link_mtu )::call;
     link->start_packet = rn_server_link_start_packet;
     link->finish_packet = RN_LINK_FORWARD( rocketnet_server_transport_finish_packet )::call;
     link->abort_packet = RN_LINK_FORWARD( rocketnet_server_transport_abort_packet )::call;
@@ -2932,6 +2966,7 @@ static struct rocketnet_message_server_t * rn_message_server_create( void * cont
     if ( server )
     {
         server->object.fill_phase = rocketnet_server_transport_fill_phase( transport );
+        server->object.packet_bytes_can_rise = rocketnet_server_transport_packet_bytes_can_rise( transport ) ? 1 : 0;
     }
     *status = server ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_OUT_OF_MEMORY;
 
@@ -3236,6 +3271,15 @@ int rocketnet_message_server_client_max_packet_bytes( struct rocketnet_message_s
         return 0;
     }
     return rn_message_object_packet_bytes( &server->object, client_index );
+}
+
+int rocketnet_message_server_client_link_mtu( struct rocketnet_message_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+    {
+        return 0;
+    }
+    return rn_message_object_link_mtu( &server->object, client_index );
 }
 
 int rocketnet_message_server_client_max_unreliable_message_bytes( struct rocketnet_message_server_t * server, int client_index )
