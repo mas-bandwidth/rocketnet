@@ -594,7 +594,11 @@ static void test_create_failure_names_the_call()
         const char * name;
     };
     const named_error_t named[] = {
-        { 8, "ERROR_NOT_ENOUGH_MEMORY" }, { 14, "ERROR_OUTOFMEMORY" }, { 1450, "ERROR_NO_SYSTEM_RESOURCES" }, { 1455, "ERROR_COMMITMENT_LIMIT" }, { 10055, "WSAENOBUFS" },
+        { 8, "ERROR_NOT_ENOUGH_MEMORY" },
+        { 14, "ERROR_OUTOFMEMORY" },
+        { 1450, "ERROR_NO_SYSTEM_RESOURCES" },
+        { 1455, "ERROR_COMMITMENT_LIMIT" },
+        { 10055, "WSAENOBUFS" },
     };
     for ( const named_error_t & e : named )
     {
