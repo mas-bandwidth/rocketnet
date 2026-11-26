@@ -157,6 +157,16 @@ void rocketnet_client_protocol_probe_update( struct rocketnet_client_protocol_t 
                                              uint8_t * out_large,
                                              int * out_large_bytes );
 
+// Whether rocketnet_client_protocol_probe_update can send anything: a raise
+// waiting for its confirm, or a walk still probing. Neither is ever set on
+// the default link MTU list, so the per-frame path pays this one test and
+// nothing else; when it is false the probe update would send nothing and
+// change nothing.
+static inline bool rocketnet_client_protocol_probe_active( const struct rocketnet_client_protocol_t * client )
+{
+    return ( client->probing | client->confirm_bytes ) != 0;
+}
+
 // The four steps of a due pair inside rocketnet_client_protocol_probe_update,
 // in its order, each a model action of proofs/tla/RNPathProbe.tla, so the
 // trace check (tests/tla_trace_path_probe.cpp) reads the state after each.

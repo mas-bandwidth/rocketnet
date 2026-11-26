@@ -628,15 +628,19 @@ static bool rocketnet_client_send_due( const struct rocketnet_client_protocol_t 
 // the early send counts only in the two states whose advance arms it
 // (proofs/tla/ClientConnection.tla ClientEarlySend; RNPathProbe.tla maySend)
 
-bool rocketnet_client_protocol_send_ready( const struct rocketnet_client_protocol_t * client, double current_time )
+static inline bool rocketnet_client_send_ready( const struct rocketnet_client_protocol_t * client, double current_time )
 {
-    rocketnet_assert( client );
-
     const bool early_send = client->handshake_early_send &&
                             ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST ||
                               client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
 
     return early_send || rocketnet_client_send_due( client, current_time );
+}
+
+bool rocketnet_client_protocol_send_ready( const struct rocketnet_client_protocol_t * client, double current_time )
+{
+    rocketnet_assert( client );
+    return rocketnet_client_send_ready( client, current_time );
 }
 
 // proofs/tla/ClientConnection.tla ClientSend and ClientEarlySend
@@ -670,7 +674,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
     // Retries of the same state stay on the tick, and nothing is sent from
     // the receive path itself.
 
-    const bool send_ready = rocketnet_client_protocol_send_ready( client, current_time );
+    const bool send_ready = rocketnet_client_send_ready( client, current_time );     // rocketnet_client_protocol_send_ready, inline on the per-frame path
     client->handshake_early_send = 0;
 
     // proofs/tla/RNEndpoint.tla WriteAck: sends a packet that carries only the owed acks.

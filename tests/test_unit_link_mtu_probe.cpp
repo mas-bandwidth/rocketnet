@@ -262,9 +262,9 @@ static bool probe_server_open_reply( struct probe_server_t * test, const uint8_t
 
 // A connected client's probes are answered at their own size with their own
 // header: a small probe and a large one in the same update both, a second of
-// either kind withheld unopened, and the next update answers again (planted:
-// one allowance shared by both kinds, the large probe of the pair is
-// withheld).
+// either kind withheld unopened, and the next update answers again; every
+// arrival is counted received (planted: one allowance shared by both kinds,
+// the large probe of the pair is withheld; the received count not kept).
 
 static void test_server_probe_answered_at_its_size_once_per_kind_per_update()
 {
@@ -292,6 +292,7 @@ static void test_server_probe_answered_at_its_size_once_per_kind_per_update()
     check( probe_server_open_reply( &test, reply, reply_bytes, &kind, &size, &pair ) );
     check( kind == ROCKETNET_PROBE_KIND_PROBE && size == 1452 && pair == 7 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_ANSWERED] == 2 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_RECEIVED] == 2 );
 
     // a probe answers nothing about the slot's size: only a confirm raises it
 
@@ -310,6 +311,7 @@ static void test_server_probe_answered_at_its_size_once_per_kind_per_update()
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_WITHHELD] == 3 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_DID_NOT_OPEN] == 0 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_ANSWERED] == 2 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_RECEIVED] == 5 );     // every arrival, withheld ones included
 
     // the next update answers again
 
@@ -318,6 +320,7 @@ static void test_server_probe_answered_at_its_size_once_per_kind_per_update()
     check( probe_server_receive( &test, &test.client_address, probe, 1172, reply, &reply_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_PROBE );
     check( reply_bytes == 1172 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_ANSWERED] == 3 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_RECEIVED] == 6 );
 
     probe_server_teardown( &test );
 }
@@ -1928,12 +1931,14 @@ static void test_server_probe_refused_before_the_open()
     check( probe_server_receive( &test, &test.client_address, probe, ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES - 1, reply, &reply_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( reply_bytes == 0 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_WRONG_SIZE] == 1 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_RECEIVED] == 1 );     // a refusal is an arrival first
 
     check( probe_server_client_probe( &test, probe, 1172, 1, 3, false ) == 1172 );
     memset( probe + ROCKETNET_PREFILTER_BYTES, 0, 4 );     // the sequence field: the writer seals no zero sequence
     check( probe_server_receive( &test, &test.client_address, probe, 1172, reply, &reply_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( reply_bytes == 0 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_ZERO_SEQUENCE] == 1 );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_RECEIVED] == 2 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_DID_NOT_OPEN] == 0 );
     check( test.mapping->integrity_failures == 0 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_PROBE_ANSWERED] == 0 );

@@ -379,9 +379,14 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The path probe's re-try: the ruled-out flag, the wait flag, the re-try
 // count and the next re-try's time in the client protocol: 64 more to the
 // client: actual=15195410 (hetzner1, gcc, Debug, DEV ON), measured; the
-// other platforms derived from the Linux reading.
+// other platforms derived from the Linux reading. On macOS the client
+// measured no change, not 64 more: the four fields grow the client protocol
+// by 24 bytes (234000 to 234024, Apple clang), and the client transport that
+// holds it stays 10131520 bytes, the growth taken by the padding to its
+// 64-byte alignment: actual=15046730 (CI, macos Debug unit, Apple clang,
+// DEV=ON).
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1663740923 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13998218 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13998154 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's

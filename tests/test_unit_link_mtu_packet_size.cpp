@@ -804,7 +804,8 @@ static void reuse_ruled_out_then_full( bool new_client )
     check( rocketnet_client_max_packet_bytes( client ) == 548 );
     check( rocketnet_server_client_max_packet_bytes( world.server, 0 ) == 548 );
     const double reused = reuse_climb( world, client, ROCKETNET_MAX_PACKET_BYTES, any );
-    if ( getenv( "ROCKETNET_LINK_MTU_PRINT_TIMES" ) )
+    char print_times[16];
+    if ( rocketnet_test_getenv( "ROCKETNET_LINK_MTU_PRINT_TIMES", print_times, sizeof( print_times ) ) )
     {
         printf( "reuse (%s): a fresh climb to 1452 in %.2f s, after a rule-out in the slot %.2f s\n", new_client ? "new client" : "same client", fresh, reused );
     }

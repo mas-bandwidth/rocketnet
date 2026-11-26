@@ -3599,15 +3599,17 @@ static void rocketnet_client_transport_update_body( rocketnet_client_transport_t
 
     // the path probe's sends after connect: a pair, or a confirm, or nothing
     // (standard/TRANSPORT.md t11.4; proofs/tla/RNPathProbe.tla ClientSendPair
-    // and ClientSendConfirm); the default list never sends one
+    // and ClientSendConfirm); the default list never sends one, and a frame
+    // with nothing to probe pays one test (rocketnet_client_protocol_probe_active)
 
     uint8_t probe_small[ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES];
     uint8_t probe_large[ROCKETNET_RECEIVE_CEILING];
     int probe_small_bytes = 0;
     int probe_large_bytes = 0;
-    rocketnet_client_protocol_probe_update( &client_transport->protocol, current_time, probe_small, &probe_small_bytes, probe_large, &probe_large_bytes );
-    const uint8_t * probe_packets[2] = { probe_small, probe_large };
-    const int probe_bytes[2] = { probe_small_bytes, probe_large_bytes };
+    if ( rocketnet_client_protocol_probe_active( &client_transport->protocol ) )
+    {
+        rocketnet_client_protocol_probe_update( &client_transport->protocol, current_time, probe_small, &probe_small_bytes, probe_large, &probe_large_bytes );
+    }
 
     // the connection ended inside this update: the reset keeps the batch, so
     // the payloads this update counted delivered reach the caller
@@ -3643,12 +3645,13 @@ static void rocketnet_client_transport_update_body( rocketnet_client_transport_t
         {
             rocketnet_client_transport_io_commit_packet( client_transport, packet, packet_bytes );
         }
-        for ( int i = 0; i < 2; i++ )
+        if ( probe_small_bytes > 0 )
         {
-            if ( probe_bytes[i] > 0 )
-            {
-                rocketnet_client_transport_io_commit_packet( client_transport, probe_packets[i], probe_bytes[i] );
-            }
+            rocketnet_client_transport_io_commit_packet( client_transport, probe_small, probe_small_bytes );
+        }
+        if ( probe_large_bytes > 0 )
+        {
+            rocketnet_client_transport_io_commit_packet( client_transport, probe_large, probe_large_bytes );
         }
 
         rocketnet_client_transport_io_hand_off( client_transport );
