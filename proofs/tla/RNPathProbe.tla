@@ -4,8 +4,11 @@
 (* start the connection at P0, the smallest candidate the client's list   *)
 (* gives the family (the connection response carries it; t12 rule 16).    *)
 (* After CONNECTED, a client whose list has more than one candidate walks  *)
-(* the candidates above P, largest first, with pairs of probes, raises P   *)
-(* on an authenticated large reply and confirms the raise to the server;  *)
+(* up a ladder: the next candidate above P, smallest first, with pairs of *)
+(* probes; an authenticated large reply raises P, confirms the raise to   *)
+(* the server and goes on to the next size up; K strikes rule the size    *)
+(* out and stop the walk (sizes above it are never tried); when the first *)
+(* step is ruled out, P0 itself is checked, and K strikes there are -14;  *)
 (* the server answers probes from a connected mapping and raises its P    *)
 (* only on a confirm (sdk/rocketnet_client_protocol.cpp,                   *)
 (* sdk/rocketnet_server_protocol.cpp; standard/TRANSPORT.md t11 and t12).  *)
@@ -22,7 +25,8 @@
 (* is the client's candidate set for the family (P of each link_mtus      *)
 (* entry, equal sizes collapsed); ServerList is the server's own, which   *)
 (* may differ; P0 = the smallest of ClientSet, on both lists.  A large    *)
-(* probe is at a candidate S above P (or at P0 itself, last).             *)
+(* probe is at the next candidate above P (or at P0 itself, when the      *)
+(* first step was ruled out).                                              *)
 (*                                                                         *)
 (* The path.  A capacity each way, chosen at Init from CapsUp and CapsDown *)
 (* and fixed for the behaviour: a packet larger than its direction's      *)
@@ -50,9 +54,10 @@
 (* server runs an update, which renews the mapping's two answer           *)
 (* allowances; ServerUpdate is a further server update inside it.  Every  *)
 (* pair whose small came back and whose large did not is a strike, and    *)
-(* every strike counts: K in a row rule a candidate out, so a path that   *)
-(* carries a smaller candidate settles in K pair intervals per size it    *)
-(* does not carry.  The confirm is resent whenever none is in flight (its *)
+(* every strike counts: K in a row rule a candidate out and end the walk, *)
+(* so the walk takes one pair interval per size the path carries and K   *)
+(* at the first it does not.  A raise makes the next pair due at once.   *)
+(* The confirm is resent whenever none is in flight (its                  *)
 (* 1 s interval is not modelled).  Timed TRUE: the interval covers a      *)
 (* round trip, so a Tick waits until nothing of the                       *)
 (* pair is in flight (the liveness and loss-only cases).  Timed FALSE is  *)
@@ -67,15 +72,19 @@
 (*   ClientRecvSmall(r)      the small reply of the outstanding pair        *)
 (*   ClientRecvLarge(r)      a large reply that opens, of any pair, taken  *)
 (*                           only while probing at the walk's candidate:   *)
-(*                           above P it raises P and sets the confirm; the  *)
-(*                           walk ends, no pair outstanding; else ignored   *)
+(*                           above P it raises P, sets the confirm and     *)
+(*                           goes on to the next size up (strikes zero, no *)
+(*                           pair outstanding, the next pair due), or ends *)
+(*                           the walk at the largest candidate; at P (the  *)
+(*                           P0 check) it ends the walk; else ignored      *)
 (*   ClientRecvForged(r)     a forged reply: the open fails, ignored        *)
 (*   ClientResolvePair       when the next pair is due: large seen,         *)
 (*                           success; small seen and large not, a strike;   *)
 (*                           small not seen, evidence of loss: the          *)
 (*                           candidate's strikes go back to zero            *)
 (*   ClientRuleOut           K strikes in a row at a candidate above P rule *)
-(*                           it out; the next starts fresh                  *)
+(*                           it out and end the walk; at the first step    *)
+(*                           (P still P0) the walk goes on to P0's check   *)
 (*   ClientFail              K strikes in a row at P0 itself: -14           *)
 (*   ClientSendConfirm       the confirm of the raised P, at each probe     *)
 (*                           update until its echo                         *)
@@ -128,6 +137,10 @@
 (*   "skiplast"     the walk ends without probing P0 itself, so a client  *)
 (*                  whose path does not carry P0 never fails -14           *)
 (*                  (FailsWhenP0NotCarried);                               *)
+(*   "aboveruled"   a rule-out does not stop the walk: it goes on to the  *)
+(*                  sizes above the one ruled out (NeverAboveRuled);       *)
+(*   "skipstep"     the walk skips a step: its candidate is the largest   *)
+(*                  above P, not the next one up (NoSkippedStep);          *)
 (*   "forgedspends" the allowance is spent before the open, so a forger   *)
 (*                  at the client's address withholds every genuine probe  *)
 (*                  (ForgedNeverStarves).                                  *)
@@ -165,7 +178,7 @@ ASSUME /\ ClientSet \subseteq Nat \ {0} /\ ClientSet # {}
        /\ Broken \in {"none", "lower", "strikeonloss", "raiseonprobe",
                       "forgedraise", "probeaftermax", "unproven", "larger",
                       "offlist", "noallowance", "skiplast", "forgedspends",
-                      "noreset", "unboundedburst"}
+                      "noreset", "unboundedburst", "aboveruled", "skipstep"}
 
 \* every size a packet can carry here; 0 is the 34-byte control size
 Sizes == ClientSet \cup ServerList
@@ -232,10 +245,15 @@ Carried(s) == s \in ServerList /\ s <= capUp /\ s <= capDown
 \* only while the row it has made is under K - 1; "unboundedburst" drops it
 BurstMayMeet == burstStrikes < K - 1 \/ Broken = "unboundedburst"
 
-\* the walk: the candidates above P not ruled out, largest first; when none
-\* is left and P is still P0, P0 itself
+\* the walk, a ladder: the next candidate above P, smallest first. A
+\* rule-out ends the walk, so once a size is ruled out nothing above it is
+\* tried; when the first step was ruled out (P still P0) the walk's last
+\* candidate is P0 itself, P. "aboveruled" goes on past a rule-out to the
+\* sizes above it; "skipstep" takes the largest above P, not the next.
 Above == {c \in ClientSet : c > cP /\ c \notin ruled}
-Cur == IF Above # {} THEN Max(Above) ELSE cP
+Cur == IF Above # {} /\ (ruled = {} \/ Broken = "aboveruled")
+       THEN IF Broken = "skipstep" THEN Max(Above) ELSE Min(Above)
+       ELSE cP
 
 \* a probe packet or reply of the client's pairs (not an attacker's)
 PairPkt(p) == p.k \in {"small", "large"} /\ p.src \in {"C", "S"}
@@ -280,13 +298,19 @@ Init ==
 \* dropped. "probeaftermax" keeps sending after the walk has ended. A pair
 \* sent into a burst is met by it; into a large burst only while the loss
 \* assumption allows (a pair sent into a burst of every packet loses its
-\* small probe, so it cannot strike).
+\* small probe, so it cannot strike). When Timed, the pair a raise makes
+\* due at once keeps the interval's promise: nothing of the last pair (a
+\* replayed copy included) is still in flight, as for Tick, and it reaches
+\* the server in a later update than the large reply it follows, so no
+\* earlier large probe spends the large allowance its own needs. Untimed,
+\* both can happen: a strike without loss (NoWrongRuleOut is not claimed).
 ClientSendPair ==
     /\ phase = "probing" \/ (Broken = "probeaftermax" /\ phase = "done")
     /\ due
     /\ ~out
     /\ strikes < K
     /\ burst = "large" => BurstMayMeet
+    /\ Timed => ~PairInFlight /\ ~ansLarge
     /\ LET b == 1 - pairNo
            old == {p \in up : PairPkt(p) /\ p.pn = b}
            u0 == up \ old
@@ -315,9 +339,11 @@ ClientRecvSmall(r) ==
 \* A large reply taken: only while probing and only at the walk's current
 \* candidate, from any pair so far (rocketnet_client_process_probe). Above
 \* P it raises P at once and sets the confirm, which goes at the next probe
-\* update (ClientSendConfirm); at P itself (P0, every candidate above ruled
-\* out) it raises nothing. Either way the walk ends, which leaves no pair
-\* outstanding ("probeaftermax" does not end it: the pair is marked).
+\* update (ClientSendConfirm), and the walk goes on to the next size up:
+\* no pair outstanding, the strikes and the loss assumption's row at zero,
+\* the next pair due at once; at the largest candidate the walk ends
+\* ("probeaftermax" does not end it). At P itself (the P0 check, the first
+\* step ruled out) it raises nothing and the walk ends at P0.
 \* "lower" takes any large reply of a candidate, in any phase.
 Takes(r) == IF Broken = "lower" THEN r.s \in ClientSet
             ELSE phase = "probing" /\ r.s = Cur
@@ -325,13 +351,16 @@ Takes(r) == IF Broken = "lower" THEN r.s \in ClientSet
 Take(r) ==
     /\ cP' = r.s
     /\ confirmS' = IF r.s > cP THEN r.s ELSE confirmS
-    /\ IF Broken = "probeaftermax"
-       THEN /\ largeSeen' = IF out /\ r.pn = pairNo THEN TRUE ELSE largeSeen
-            /\ UNCHANGED << phase, out, smallSeen >>
+    /\ out' = FALSE
+    /\ smallSeen' = FALSE
+    /\ largeSeen' = FALSE
+    /\ IF r.s > cP /\ (r.s < MaxC \/ Broken = "probeaftermax")
+       THEN /\ phase' = "probing"
+            /\ strikes' = 0
+            /\ burstStrikes' = 0
+            /\ due' = TRUE
        ELSE /\ phase' = "done"
-            /\ out' = FALSE
-            /\ smallSeen' = FALSE
-            /\ largeSeen' = FALSE
+            /\ UNCHANGED << strikes, burstStrikes, due >>
 
 \* a large reply that opens under the session server-to-client key; any
 \* other (not probing, or not the walk's candidate) is consumed and ignored
@@ -342,9 +371,10 @@ ClientRecvLarge(r) ==
     /\ down' = down \ {r}
     /\ IF Takes(r)
        THEN Take(r)
-       ELSE UNCHANGED << cP, confirmS, phase, out, smallSeen, largeSeen >>
-    /\ UNCHANGED << capUp, capDown, sP, ruled, strikes, pairNo, pairS, due,
-                    ansSmall, ansLarge, burst, bursts, burstStrikes, pairInBurst,
+       ELSE UNCHANGED << cP, confirmS, phase, out, smallSeen, largeSeen,
+                         strikes, burstStrikes, due >>
+    /\ UNCHANGED << capUp, capDown, sP, ruled, pairNo, pairS,
+                    ansSmall, ansLarge, burst, bursts, pairInBurst,
                     attacks, up >>
     /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
 
@@ -357,9 +387,10 @@ ClientRecvForged(r) ==
     /\ down' = down \ {r}
     /\ IF Broken = "forgedraise" /\ r.s \in ClientSet /\ r.s > cP
        THEN Take(r)
-       ELSE UNCHANGED << cP, confirmS, phase, out, smallSeen, largeSeen >>
-    /\ UNCHANGED << capUp, capDown, sP, ruled, strikes, pairNo, pairS, due,
-                    ansSmall, ansLarge, burst, bursts, burstStrikes, pairInBurst,
+       ELSE UNCHANGED << cP, confirmS, phase, out, smallSeen, largeSeen,
+                         strikes, burstStrikes, due >>
+    /\ UNCHANGED << capUp, capDown, sP, ruled, pairNo, pairS,
+                    ansSmall, ansLarge, burst, bursts, pairInBurst,
                     attacks, up >>
     /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
 
@@ -369,7 +400,7 @@ Strike ==
     /\ smallSeen \/ Broken = "strikeonloss"
 
 \* when the next pair is due: large seen, success (taken at arrival, where
-\* the walk ended; only "probeaftermax" resolves one), strikes unchanged;
+\* the pair stopped being outstanding, so none resolves here), strikes unchanged;
 \* small seen and large not, a strike against the pair's candidate, always;
 \* small not seen, evidence of loss: the candidate's strikes go back to
 \* zero (the code also doubles its pair interval, not tracked here), and so
@@ -392,28 +423,32 @@ ClientResolvePair ==
                     confirmS, ansSmall, ansLarge, burst, bursts, pairInBurst, attacks, up, down >>
     /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
 
-\* K strikes at a candidate above P rule it out; the walk moves to the next
-\* one, fresh (no strikes, a new row), or to P0 itself; the walk ends when P is above P0 and none is left.
-\* "skiplast" ends the walk without P0's own check.
+\* K strikes at a candidate above P rule it out and end the walk: sizes
+\* above it are never tried. At the first step (P still P0, no raise) the
+\* walk goes on to P0's own check, fresh (no strikes, a new row).
+\* "skiplast" ends the walk without P0's own check; "aboveruled" goes on
+\* to the sizes above the one ruled out.
 ClientRuleOut ==
     /\ phase = "probing"
     /\ strikes = K
-    /\ Above # {}
+    /\ Cur # cP
     /\ ruled' = ruled \cup {Cur}
     /\ strikes' = 0
     /\ burstStrikes' = 0
-    /\ phase' = IF Above \ {Cur} = {} /\ (cP > P0 \/ Broken = "skiplast")
-                THEN "done" ELSE "probing"
+    /\ phase' = IF \/ cP = P0 /\ Broken # "skiplast"
+                   \/ Broken = "aboveruled" /\ Above \ {Cur} # {}
+                THEN "probing" ELSE "done"
     /\ UNCHANGED << capUp, capDown, cP, sP, out, pairNo, pairS, smallSeen,
                     largeSeen, due, confirmS, ansSmall, ansLarge, burst, bursts, pairInBurst,
                     attacks, up, down >>
     /\ UNCHANGED << badUnproven, badLarger, badOffList, badTwice >>
 
-\* K strikes at P0 itself: the path does not carry P0, -14
+\* K strikes at P0 itself (the walk's candidate is P): the path does not
+\* carry P0, -14
 ClientFail ==
     /\ phase = "probing"
     /\ strikes = K
-    /\ Above = {}
+    /\ Cur = cP
     /\ phase' = "failed"
     /\ UNCHANGED << capUp, capDown, cP, sP, ruled, strikes, out, pairNo, pairS,
                     smallSeen, largeSeen, due, confirmS, ansSmall, ansLarge,
@@ -734,7 +769,14 @@ ServerNeverAhead == sP <= cP
 NoWrongRuleOut == \A s \in ruled : ~Carried(s)
 
 \* (3) -14 only when P0 itself collected K strikes
-FailOnlyAtP0 == phase = "failed" => cP = P0 /\ strikes = K /\ Above = {}
+FailOnlyAtP0 == phase = "failed" => cP = P0 /\ strikes = K /\ ruled # {}
+
+\* the ladder stops at a rule-out: no pair, and no large probe of the
+\* client's in flight, at a size above one ruled out
+NeverAboveRuled ==
+    \A s \in ruled :
+        /\ pairS <= s
+        /\ \A p \in up : (p.k = "large" /\ p.src = "C") => p.s <= s
 
 \* (4) the server answers a probe only for a connected mapping, never with a
 \* packet larger than the probe, only at sizes on its own list, and at most
@@ -772,6 +814,13 @@ ClientRaisesOnAuthLarge ==
 NoProbeAfterDone ==
     [][pairNo' # pairNo => phase = "probing" /\ cP < MaxC]_vars
 
+\* (10) the ladder skips no step: every pair is at the smallest candidate
+\* above P not ruled out, or at P itself for P0's check once the first
+\* step was ruled out
+NoSkippedStep ==
+    [][pairNo' # pairNo => \/ Above # {} /\ pairS' = Min(Above)
+                           \/ ruled # {} /\ pairS' = cP]_vars
+
 \* Reachability, not a rule: when untimed, a large reply of an earlier pair
 \* (its parity not the last pair's) raises P. MCRNPathProbeReachLateReply.cfg
 \* must violate it, so the late path of the code is explored.
@@ -782,13 +831,15 @@ NoLateRaise ==
 -----------------------------------------------------------------------------
 (* Liveness, under FairSpec with Timed *)
 
-Best == IF \E c \in ClientSet : Carried(c)
-        THEN Max({c \in ClientSet : Carried(c)}) ELSE P0
+\* the top of the ladder: the largest candidate s such that the path
+\* carries every client candidate above P0 up to s (a size it does not
+\* carry, off the server's list or above a capacity, stops the walk there)
+Best == Max({s \in ClientSet : \A c \in ClientSet : (c > P0 /\ c <= s) => Carried(c)})
 
 \* the walk ends and both ends hold the same P from then on
 Converges == <>[](phase # "probing" /\ cP = sP)
 
-\* both ends reach the largest candidate the path carries
+\* both ends reach the top of the ladder the path carries
 ReachesBest == Carried(P0) => <>[](cP = Best /\ sP = Best)
 
 \* a path that does not carry P0 ends in -14

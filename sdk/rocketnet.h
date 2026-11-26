@@ -1749,8 +1749,9 @@ struct rocketnet_client_config_t
     /// nothing new on the wire. A longer list, for example the three steps
     /// { 1492, 1200, 576 }, starts the connection at the list's smallest
     /// size, so it joins as fast as the default, then the client probes the
-    /// larger sizes, largest first, and the connection's packet size rises to
-    /// the largest size the path carries both ways; it never falls
+    /// larger sizes one step at a time, smallest first, and the connection's
+    /// packet size rises with each size the path carries both ways, stopping
+    /// at the first size it does not carry; it never falls
     /// (rocketnet_client_max_packet_bytes; rocketnet_client_state
     /// MTU_PROBE_FAILED when even the smallest is not carried). An entry's packet size is the
     /// MTU less 28 bytes over IPv4 or 48 over IPv6, at most

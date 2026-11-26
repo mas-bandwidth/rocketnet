@@ -159,8 +159,10 @@ void rocketnet_client_protocol_probe_update( struct rocketnet_client_protocol_t 
 // rocketnet_client_protocol_probe_resolve: the outstanding pair resolves
 // (ClientResolvePair), returning 1 when it did, 0 when no pair was out.
 // rocketnet_client_protocol_probe_rule_out: the candidate's counted strikes
-// rule it out (ClientRuleOut, returning 1) or, at P0 itself, end the
-// connection in mtu probe failed (ClientFail, returning -1); 0 otherwise.
+// rule it out (ClientRuleOut, returning 1), which stops the walk, or moves it
+// to P0 itself when the first step up is ruled out at P0; at P0 itself they
+// end the connection in mtu probe failed (ClientFail, returning -1); 0
+// otherwise.
 // rocketnet_client_protocol_probe_send_pair: the next pair (ClientSendPair).
 // None is called but by rocketnet_client_protocol_probe_update and the trace
 // walk, and only while connected, probing and the pair is due.

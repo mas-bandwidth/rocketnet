@@ -68,7 +68,7 @@
 // failed, failed_client below): cP from rocketnet_client_protocol_packet_bytes, sP from the
 // client's mapping (rocketnet_server_protocol_mapping_packet_bytes), phase
 // from the client's state and probing flag, ruled the candidates before
-// probe_index, strikes probe_strikes, out probe_pair_out, pairNo the parity
+// probe_index (below), strikes probe_strikes, out probe_pair_out, pairNo the parity
 // of probe_pair, pairS the size of the large probe the client last wrote
 // (P0 before it wrote one), smallSeen and largeSeen probe_pair_small and
 // probe_pair_large, due the clock against probe_next_time, confirmS
@@ -139,8 +139,20 @@ static const int pp_mtus_four[] = { 1500, 1400, 1280, 576 };
 static const int pp_mtus_short[] = { 1500, 1280, 576 };
 static const int pp_mtus_two[] = { 1500, 576 };
 
-enum pp_kind_t { PP_SMALL, PP_LARGE, PP_CONFIRM, PP_ECHO };
-enum pp_source_t { PP_C, PP_F, PP_X, PP_S };
+enum pp_kind_t
+{
+    PP_SMALL,
+    PP_LARGE,
+    PP_CONFIRM,
+    PP_ECHO
+};
+enum pp_source_t
+{
+    PP_C,
+    PP_F,
+    PP_X,
+    PP_S
+};
 
 struct pp_packet_t
 {
@@ -320,10 +332,19 @@ static tla_record_t pp_state( pp_walk_t * walk )
 {
     struct rocketnet_encryption_mapping_t * mapping = pp_mapping( walk );
     const struct rocketnet_client_protocol_t * client = pp_client( walk );
+    // ruled: the walk goes up one step at a time and stops at a rule-out,
+    // so at most one size is ruled out: the first step up once the walk
+    // moved to P0 itself, or the size probe_index still names once the
+    // walk stopped below it
     std::vector<int> ruled;
-    for ( int i = 0; i < client->probe_index; i++ )
+    const int last = client->num_probe_candidates - 1;
+    if ( client->probe_index == last )
     {
-        ruled.push_back( client->probe_candidates[i] );
+        ruled.push_back( client->probe_candidates[last - 1] );
+    }
+    else if ( !client->probing && rocketnet_client_protocol_packet_bytes( client ) < client->probe_candidates[client->probe_index] )
+    {
+        ruled.push_back( client->probe_candidates[client->probe_index] );
     }
     tla_record_t state;
     state.add( "capUp", tla_int( walk->cap_up ) );
@@ -496,12 +517,13 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
     tla_report_t report;
 
     // the seed's scenario:
-    //   0 a path that carries every size, both ends at 1452 one pair after
-    //     connect; then the attacker, replays, bursts and the confirm
-    //   1 a path whose capacity up is 1372: 1452 is ruled out by its
-    //     strikes and the walk raises to 1372
-    //   2 two candidates and a path that carries no large probe: both are
-    //     ruled out, P0 last, and the client fails -14
+    //   0 a path that carries every size: the walk goes up 548, 1252, 1372,
+    //     1452, a pair a step; the attacker, replays, bursts and the
+    //     confirms throughout
+    //   1 a path whose capacity up is 1372: the walk raises to 1252 and
+    //     1372, 1452 is ruled out by its strikes and the walk stops
+    //   2 two candidates and a path that carries no large probe: 1452 is
+    //     ruled out, then P0 itself, and the client fails -14
     //   3 any capacities of the candidates and a server list without 1400,
     //     with the attacker and bursts throughout
     const int scenario = (int) ( seed % 4 );
@@ -583,7 +605,10 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
         const bool probing = phase == "probing";
         const bool terminal = phase == "done" || phase == "failed";
         const bool due = pp_due( walk );
-        const bool confirming = walk->client.confirm_bytes > 0 && phase == "done";
+        // the walk goes on after a raise, so a confirm can be out while
+        // probing; the code's probe update sends a due confirm first, the
+        // pair in its next call
+        const bool confirming = walk->client.confirm_bytes > 0 && ( phase == "done" || probing );
         const bool confirm_due = confirming && walk->now >= walk->client.confirm_next_time;
         const bool answered = pp_answered_small( walk ) || pp_answered_large( walk );
 
@@ -615,10 +640,25 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
             pair_in_flight = pair_in_flight || ( walk->down[i].src == PP_S && walk->down[i].kind != PP_ECHO );
         }
 
-        enum { OP_CLIENT_PAIR, OP_CONFIRM, OP_CLOCK, OP_SERVER_UPDATE, OP_SERVER_RECV, OP_CLIENT_RECV,
-               OP_BURST_START, OP_BURST_END, OP_REPLAY, OP_ATTACK, OP_ATTACK_REPLY, OP_SILENT, OP_DONE, OP_COUNT };
+        enum
+        {
+            OP_CLIENT_PAIR,
+            OP_CONFIRM,
+            OP_CLOCK,
+            OP_SERVER_UPDATE,
+            OP_SERVER_RECV,
+            OP_CLIENT_RECV,
+            OP_BURST_START,
+            OP_BURST_END,
+            OP_REPLAY,
+            OP_ATTACK,
+            OP_ATTACK_REPLY,
+            OP_SILENT,
+            OP_DONE,
+            OP_COUNT
+        };
         int weights[OP_COUNT] = { 0 };
-        weights[OP_CLIENT_PAIR] = probing && due && pair_allowed ? 8 : 0;
+        weights[OP_CLIENT_PAIR] = probing && due && pair_allowed && !confirm_due ? 8 : 0;
         weights[OP_CONFIRM] = confirm_due ? 4 : 0;
         // the clock moves when the pair is in, or now and then without it
         weights[OP_CLOCK] = clock_event && phase != "failed" ? ( pair_in_flight ? 1 : 8 ) : 0;
@@ -631,7 +671,10 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
         weights[OP_ATTACK] = forged_up < 2 && walk->attacks < steps ? ( noisy ? 2 : 0 ) : 0;
         weights[OP_ATTACK_REPLY] = walk->attacks < steps ? ( noisy ? 1 : 0 ) : 0;
         // the clock to the confirm's next send, crossing nothing the model sees
-        weights[OP_SILENT] = confirming && !confirm_due && ( !clock_event || walk->client.confirm_next_time < next_time ) ? 3 : 0;
+        // while probing, only to a confirm due before the pair is
+        const bool silent_crosses_nothing = probing ? clock_event && walk->client.confirm_next_time < walk->client.probe_next_time
+                                                    : !clock_event || walk->client.confirm_next_time < next_time;
+        weights[OP_SILENT] = confirming && !confirm_due && silent_crosses_nothing ? 3 : 0;
         weights[OP_DONE] = terminal ? 1 : 0;
         int total = 0;
         for ( int i = 0; i < OP_COUNT; i++ )
@@ -808,11 +851,18 @@ static int trace_path_probe( uint64_t seed, int steps, const char * out )
                 const pp_packet_t delivered = walk->down[i];
                 walk->down.erase( walk->down.begin() + (long) i );
                 int payload_bytes = 0;
+                const int index_before = walk->client.probe_index;
                 rocketnet_client_protocol_process_packet( &walk->client, delivered.bytes.data(), (int) delivered.bytes.size(), walk->now,
                                                           payload, (int) sizeof( payload ), &payload_bytes );
+                // a raise that moves the walk a step up starts the next
+                // size's row: the model's burstStrikes goes to zero
+                if ( walk->client.probing && walk->client.probe_index != index_before )
+                {
+                    walk->burst_strikes = 0;
+                }
                 const char * act = delivered.src == PP_F ? "ClientRecvForged"
-                                 : ( delivered.kind == PP_SMALL ? "ClientRecvSmall"
-                                 : ( delivered.kind == PP_LARGE ? "ClientRecvLarge" : "ClientRecvConfirmEcho" ) );
+                                                         : ( delivered.kind == PP_SMALL ? "ClientRecvSmall"
+                                                                                        : ( delivered.kind == PP_LARGE ? "ClientRecvLarge" : "ClientRecvConfirmEcho" ) );
                 report.act( act );
                 records.push_back( tla_step( "client_recv", act, pp_args( pp_record( delivered ) ), pp_state( walk ) ) );
                 break;

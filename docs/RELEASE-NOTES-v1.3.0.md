@@ -16,9 +16,9 @@ grows from 292 to 315 counters, appended at the end.
   and probes upward: the connection starts at the smallest packet size the
   list gives (the MTU less 28 over IPv4, less 48 over IPv6, IPv6 skipping
   entries below 1280), so every list joins exactly as fast as the default,
-  and once connected the client probes the larger sizes, largest first, and
-  raises the connection's packet size to the largest one the path carries
-  both ways. Before, a path that carried the handshake but not a full
+  and once connected the client probes the larger sizes one step at a time,
+  smallest first, raising the connection's packet size to each one the path
+  carries both ways. Before, a path that carried the handshake but not a full
   1452-byte packet connected and then never delivered a message that needed
   a full packet, while keep-alives held the connection open; now the
   connection only ever sends at a size the path has carried.
@@ -30,10 +30,11 @@ grows from 292 to 315 counters, appended at the end.
   lost too sets the strikes back to zero, so loss alone, which takes the
   small probe as well, never does. The client raises on the server's authenticated reply and
   confirms; the server raises only on the confirm. The packet size never
-  falls, and probing stops for good once it is the largest size or every
-  larger size is ruled out. On a clean path the connection is at full size
-  one round trip after connect, and on a 1200 link at 1172 in about half a
-  second. A path that does not carry even the smallest
+  falls, and probing stops for good once it is the largest size or the next
+  size up is ruled out; the sizes above a ruled-out size are never tried. On
+  a clean path the three-step list is at full size two round trips after
+  connect, and on a 1200 link at 1172 in one round trip, probing ending in
+  about half a second; on a 576 path 1452 is never sent. A path that does not carry even the smallest
   size ends the connection in the new client state
   `ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED` (-14).
   standard/TRANSPORT.md t2.3, t8.4, t8.13, t11.4 and t12 rules 15 and 16;

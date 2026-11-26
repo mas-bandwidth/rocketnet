@@ -257,8 +257,9 @@ static void rocketnet_client_probe_done( struct rocketnet_client_protocol_t * cl
 
 // raise the connection's packet size to a size an authenticated large reply
 // proved carried both ways, and confirm it to the server
-// (proofs/tla/RNPathProbe.tla ClientRecvLarge): P never decreases, and a
-// raise ends the walk, being to the largest candidate not ruled out
+// (proofs/tla/RNPathProbe.tla ClientRecvLarge): P never decreases. The walk
+// goes up one step at a time, so a raise moves it to the next size up, its
+// first pair due now, and a raise to the largest candidate ends it
 
 static void rocketnet_client_probe_raise( struct rocketnet_client_protocol_t * client, int packet_bytes, double current_time )
 {
@@ -270,7 +271,20 @@ static void rocketnet_client_probe_raise( struct rocketnet_client_protocol_t * c
     client->confirm_bytes = packet_bytes;
     client->confirm_next_time = current_time;
     client->counters->values[ROCKETNET_COUNTER_CLIENT_PROBE_ACCEPTED]++;
-    rocketnet_client_probe_done( client );
+
+    if ( client->probe_index == 0 )
+    {
+        rocketnet_client_probe_done( client );
+        return;
+    }
+
+    client->probe_index--;
+    client->probe_strikes = 0;
+    client->probe_interval = rocketnet_client_probe_first_interval( client );
+    client->probe_next_time = current_time;
+    client->probe_pair_out = 0;
+    client->probe_pair_small = 0;
+    client->probe_pair_large = 0;
 }
 
 // one rtt sample: first send in the current state to the first packet that
@@ -961,8 +975,9 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 // connected, at the small size or a candidate size, opened under the session
 // server-to-client key, with a well-formed header and zero padding. A small
 // reply marks the current pair's small partner seen; a large one above P
-// raises P (the walk's end); a large one at P0, the walk's last candidate,
-// ends the walk there; a confirm echo stops the confirm's resends.
+// raises P and moves the walk a step up (its end at the largest candidate);
+// a large one at P0, checked once the first step up is ruled out, ends the
+// walk there; a confirm echo stops the confirm's resends.
 
 static int rocketnet_client_process_probe( struct rocketnet_client_protocol_t * client,
                                            const uint8_t * packet_data,
@@ -1087,10 +1102,10 @@ static int rocketnet_client_process_probe( struct rocketnet_client_protocol_t * 
     }
     else
     {
-        // P0 itself, the walk's last candidate, is carried: the connection
-        // stays at P0, which is not an error
+        // P0 itself, checked once the first step up is ruled out, is
+        // carried: the connection stays at P0, which is not an error
 
-        rocketnet_debug( "client kept its packet size %d bytes. every larger candidate ruled out", packet_bytes );
+        rocketnet_debug( "client kept its packet size %d bytes. the next size up is ruled out", packet_bytes );
 
         rocketnet_client_probe_done( client );
     }
@@ -1122,20 +1137,16 @@ void rocketnet_client_protocol_probe_update( struct rocketnet_client_protocol_t 
 
     uint64_t * counters = client->counters->values;
 
-    // a raise is confirmed until the server echoes it; a raise ends the walk,
-    // so a confirm and a pair are never due together
+    // a raise is confirmed until the server echoes it. The walk goes on
+    // after a raise, so a confirm and a pair can be due together: the
+    // confirm goes first, and the pair in the next update
 
-    if ( client->confirm_bytes > 0 )
+    if ( client->confirm_bytes > 0 && current_time >= client->confirm_next_time )
     {
-        rocketnet_assert( !client->probing );
-
-        if ( current_time >= client->confirm_next_time )
-        {
-            *out_small_bytes = rocketnet_client_write_probe( client, ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES, ROCKETNET_PROBE_KIND_CONFIRM,
-                                                             client->confirm_bytes, 0, out_small );
-            client->confirm_next_time = current_time + ROCKETNET_LINK_MTU_CONFIRM_INTERVAL_SECONDS;
-            counters[ROCKETNET_COUNTER_CLIENT_PROBE_SENT]++;
-        }
+        *out_small_bytes = rocketnet_client_write_probe( client, ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES, ROCKETNET_PROBE_KIND_CONFIRM,
+                                                         client->confirm_bytes, 0, out_small );
+        client->confirm_next_time = current_time + ROCKETNET_LINK_MTU_CONFIRM_INTERVAL_SECONDS;
+        counters[ROCKETNET_COUNTER_CLIENT_PROBE_SENT]++;
         return;
     }
 
@@ -1146,7 +1157,7 @@ void rocketnet_client_protocol_probe_update( struct rocketnet_client_protocol_t 
 
     rocketnet_client_protocol_probe_resolve( client );
 
-    if ( rocketnet_client_protocol_probe_rule_out( client ) < 0 )
+    if ( rocketnet_client_protocol_probe_rule_out( client ) < 0 || !client->probing )
     {
         return;
     }
@@ -1154,8 +1165,8 @@ void rocketnet_client_protocol_probe_update( struct rocketnet_client_protocol_t 
     rocketnet_client_protocol_probe_send_pair( client, current_time, out_small, out_small_bytes, out_large, out_large_bytes );
 }
 
-// the previous pair resolves without success (a large reply ends the walk
-// at once). A small reply with no large one is evidence about the size, not
+// the previous pair resolves without success (a large reply moves the walk
+// on at once). A small reply with no large one is evidence about the size, not
 // loss: a strike, and the pace holds. No small reply is loss: the
 // candidate's strikes go back to zero, so only an unbroken run of pairs
 // whose small probes came back rules a size out, and the next pair waits
@@ -1194,10 +1205,13 @@ int rocketnet_client_protocol_probe_resolve( struct rocketnet_client_protocol_t 
     return 1;
 }
 
-// the candidate's counted strikes rule it out and the next starts fresh,
-// its first pair now (ClientRuleOut); at P0, the connection's own size, they
-// end the connection in mtu probe failed, small probes being carried while
-// packets of the connection's size are not (ClientFail)
+// the candidate's counted strikes rule it out and the walk stops there:
+// the sizes above a ruled-out size are never tried (ClientRuleOut). One
+// exception keeps P0 checked: when the first step up is ruled out and the
+// connection is still at P0, P0 itself is the walk's last candidate, its
+// first pair now. Its counted strikes end the connection in mtu probe
+// failed, small probes being carried while packets of the connection's size
+// are not (ClientFail)
 
 int rocketnet_client_protocol_probe_rule_out( struct rocketnet_client_protocol_t * client )
 {
@@ -1224,8 +1238,19 @@ int rocketnet_client_protocol_probe_rule_out( struct rocketnet_client_protocol_t
 
     rocketnet_debug( "client ruled out packet size %d bytes", client->probe_candidates[client->probe_index] );
 
-    client->probe_index++;
     client->probe_strikes = 0;
+
+    // probe_index stays at the ruled-out size when the walk stops there
+
+    const int p0 = client->probe_candidates[client->num_probe_candidates - 1];
+
+    if ( rocketnet_client_protocol_packet_bytes( client ) != p0 )
+    {
+        rocketnet_client_probe_done( client );
+        return 1;
+    }
+
+    client->probe_index = client->num_probe_candidates - 1;
     client->probe_interval = rocketnet_client_probe_first_interval( client );
     return 1;
 }
@@ -1693,13 +1718,13 @@ static int rocketnet_client_process_keep_alive( struct rocketnet_client_protocol
         client->max_clients = (int) rocketnet_read_uint32( &p );
         rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-        // the walk starts at connect, its first pair at the next probe
-        // update; a one-candidate list never probes
+        // the walk starts at connect at the next size up from P0, its first
+        // pair at the next probe update; a one-candidate list never probes
 
         if ( client->num_probe_candidates > 1 )
         {
             client->probing = 1;
-            client->probe_index = 0;
+            client->probe_index = client->num_probe_candidates - 2;
             client->probe_strikes = 0;
             client->probe_pair = 0;
             client->probe_pair_out = 0;

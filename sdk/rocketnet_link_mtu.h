@@ -16,10 +16,11 @@
 // is exactly the behaviour of a build without the list: no probe, nothing new
 // on the wire. On a longer list a connection starts at its smallest candidate
 // size P0, so it joins as fast as the default, and once connected the
-// client's path probe raises it, largest candidate first, to the largest size
-// proven carried both ways (proofs/tla/RNPathProbe.tla). The size only ever
-// rises, at both ends, and the probe ends for good once the size is the
-// largest candidate or every larger one is ruled out.
+// client's path probe raises it one step at a time, smallest first, while
+// each next size up is proven carried both ways (proofs/tla/RNPathProbe.tla).
+// The size only ever rises, at both ends, and the probe ends for good once the
+// size is the largest candidate or the next size up is ruled out; the sizes
+// above a ruled-out size are never tried.
 //
 // Everything here is plain arithmetic on the list, shared by the client, the
 // server and the tests, so the two ends can never derive different sizes.
@@ -155,28 +156,34 @@ static inline int rocketnet_link_mtu_first_packet_bytes( const int * link_mtus, 
 
 // The path probe after connect (standard/TRANSPORT.md t11.4;
 // proofs/tla/RNPathProbe.tla). The client sends a pair -- a small probe,
-// which every path carries, and a large probe at the candidate, largest
-// first -- at connect, so on a clean path the size is the largest within one
-// round trip and the confirm. A pair resolves when the next is due. The next
-// is due FIRST_INTERVAL after connect (or twice the handshake's round trip,
-// when that is longer), and the pace holds while the small probes come back.
+// which every path carries, and a large probe at the candidate, the next
+// size up from the connection's -- at connect. A large reply raises the size
+// to the candidate and the walk moves to the next size up at once, its first
+// pair now, so on a clean path the size reaches the largest candidate one
+// round trip a step: two on the three-step list. A pair resolves when the
+// next is due. The next is due FIRST_INTERVAL after the step's first (or
+// twice the handshake's round trip, when that is longer), and the pace holds
+// while the small probes come back.
 // A pair whose small probe is lost doubles the interval up to MAX_INTERVAL:
 // one pair a second at most under loss, so the first pair after a loss
 // clears goes out within a second. While the small probes are lost nothing
 // counts and the probe keeps going: it has no time limit, and ends only at
-// the largest candidate or when every larger one is ruled out (or with the
+// the largest candidate or when the next size up is ruled out (or with the
 // connection).
 //
 // A pair whose small probe came back and whose large one did not is
 // evidence about the size, not loss: a strike against the candidate, at the
-// same pace, and STRIKES strikes in a row rule it out. A pair whose small
-// probe is lost sets the candidate's strikes back to zero, so a size the
-// path does not carry is ruled out STRIKES pairs after its first, 0.4 s on
-// a lossless path with a round trip under 50 ms, and a link of 1200 bytes
-// settles at 1172 in about half a second. Under independent loss p each way
-// a carried size is ruled out with probability a^4 / (1 - r (1 + a + a^2 +
-// a^3)), where r = 1 - (1 - p)^2 and a = (1 - p)^2 r: 0.07% at p = 10%,
-// 0.5% at 20%, 1.6% at 50%. A burst that drops large packets only, while
+// same pace, and STRIKES strikes in a row rule it out and stop the walk
+// there. When the first step up is ruled out at P0, P0 itself is checked
+// last: its STRIKES strikes end the connection. A pair whose small probe is
+// lost sets the candidate's strikes back to zero, so a size the path does
+// not carry is ruled out STRIKES pairs after its first, 0.4 s on a lossless
+// path with a round trip under 50 ms: a link of 1200 bytes is at 1172 in one
+// round trip and the walk ends there in about half a second. Under
+// independent loss p each way a step's carried size is ruled out with
+// probability a^4 / (1 - r (1 + a + a^2 + a^3)), where r = 1 - (1 - p)^2 and
+// a = (1 - p)^2 r: 0.07% at p = 10%, 0.5% at 20%, 1.6% at 50%, and the walk
+// takes that chance once for each step it climbs. A burst that drops large packets only, while
 // the small ones come back, for STRIKES pairs in a row does rule a carried
 // size out. A large reply at the candidate from any earlier pair still
 // proves it carried, so a round trip longer than the interval costs

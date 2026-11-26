@@ -1219,9 +1219,11 @@ MCRNCreateUnwindBrokenBoundedUnwind.cfg	MCRNCreateUnwind.tla	invariant	LiveTrans
 MCRNCreateUnwindBrokenNoRetain.cfg	MCRNCreateUnwind.tla	invariant	LiveTransportOwned	ignore-terminal	rncreateunwind	required	-
 MCRNCreateUnwindBrokenFreeAtDeadline.cfg	MCRNCreateUnwind.tla	invariant	FreedOnlyAfterExit	ignore-terminal	rncreateunwind	required	-
 MCRNPathProbe.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
+MCRNPathProbeUp3.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeServerList.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeOneEntry.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeLate.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
+MCRNPathProbeLateBurst.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeLossRow.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeForged.cfg	MCRNPathProbe.tla	pass	-	check	rnpathprobe	required	-
 MCRNPathProbeReachLateReply.cfg	MCRNPathProbe.tla	action	NoLateRaise	check	rnpathprobe	required	-
@@ -1238,3 +1240,5 @@ MCRNPathProbeBrokenOffList.cfg	MCRNPathProbe.tla	invariant	ReplyOwnList	check	rn
 MCRNPathProbeBrokenNoAllowance.cfg	MCRNPathProbe.tla	invariant	OneReplyPerUpdate	check	rnpathprobe	required	-
 MCRNPathProbeBrokenSkipLast.cfg	MCRNPathProbe.tla	temporal	FailsWhenP0NotCarried	check	rnpathprobe	required	-
 MCRNPathProbeBrokenForgedStarves.cfg	MCRNPathProbe.tla	temporal	ForgedNeverStarves	check	rnpathprobe	required	-
+MCRNPathProbeBrokenAboveRuled.cfg	MCRNPathProbe.tla	invariant	NeverAboveRuled	check	rnpathprobe	required	-
+MCRNPathProbeBrokenSkipStep.cfg	MCRNPathProbe.tla	action	NoSkippedStep	check	rnpathprobe	required	-

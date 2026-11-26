@@ -162,11 +162,11 @@ configs) is the set of link sizes a connection may use, largest first. The
 default is the one entry 1500: no probe, and the same packets as a build
 without the list. A longer list connects small and probes upward: the
 connection starts at the smallest size the list gives, so it joins exactly as
-fast as the default, and once connected the client probes the larger sizes,
-largest first, and raises the connection's packet size to the largest one that
-crosses both ways. The packet size only grows. Probing stops for good once the
-connection is at the largest size, or once every larger size has been ruled
-out. If the path does not carry even the smallest size, the client ends in
+fast as the default, and once connected the client probes the larger sizes
+one step at a time, smallest first, raising the connection's packet size to
+each one that crosses both ways. The packet size only grows. Probing stops for
+good once the connection is at the largest size, or once the next size up has
+been ruled out: the sizes above it are never tried. If the path does not carry even the smallest size, the client ends in
 `ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED` (-14) instead of hanging.
 
 **Both sides must use the same list.** The server only answers the sizes its
@@ -229,14 +229,17 @@ the size being tried, sent together. The first pair goes out in the update the
 client connects in, and the next every 0.1 s (or twice the round trip, when
 that is longer). A large probe that is lost while its small partner comes back
 is a strike against that size: evidence about the size, not loss, so the pace
-holds, and four strikes in a row rule the size out and the client moves to the
-next one down. A pair whose small probe is lost too is loss: it sets the
+holds, and four strikes in a row rule the size out and probing stops there.
+A pair whose small probe is lost too is loss: it sets the
 strikes back to zero and doubles the wait, up to one pair a second. So loss
 alone never rules a size out, and there is no time limit while it lasts: the
 first pair after the loss clears goes out within about a second. A loss of
 large packets only, while the small ones come back, for four pairs in a row
-does rule a size out. When the large reply arrives the client raises its size
-at once and confirms; the server raises when the confirm arrives.
+does rule a size out; under 50% loss each way that happens to a size the path
+carries 1.6% of the time. When the large reply arrives the client raises its
+size at once, confirms, and probes the next size up at once; the server raises
+when the confirm arrives. On the three-step list a 1500 path takes two steps:
+548, then 1172, then 1452.
 
 **Join cost and time to full size.** Every list joins as the default does: in
 10 ms steps on a path with no added delay, the default and the three-step list
@@ -245,21 +248,23 @@ both join in 40 ms on every path. The time from connect until both ends reach
 
 | Path | Both ends at 1452 |
 | --- | --- |
-| no loss | 0.09 s (the client at 0.06 s) |
-| 10% loss each way, 50 runs | 0.20 s mean, 1.19 s worst |
-| 50% loss each way for the first 10 s, 50 runs | 2.7 s mean, 10.8 s worst |
-| every packet lost for the first 10 s | 10.59 s, 0.59 s after the loss ends |
+| no loss | 0.16 s (the client at 0.13 s) |
+| 10% loss each way, 50 runs | 0.29 s mean, 1.26 s worst |
+| 50% loss each way for the first 10 s, 50 runs | 3.4 s mean, 10.9 s worst of the 49 that reach it; one rules 1452 out and stays at 1172 |
+| every packet lost for the first 10 s | 10.66 s, 0.66 s after the loss ends |
 
-On a path that carries 1200 but not 1492, 1452 is ruled out and both ends are
-at 1172 0.49 s after connect, sending at 548 until then. On a 576 path, 1452
-and 1172 are ruled out and probing ends at 548 0.86 s after connect. A path
-that does not carry 548 ends in -14 1.32 s after connect.
+On a path that carries 1200 but not 1492, both ends are at 1172 0.09 s after
+connect; 1452 is then ruled out and probing ends 0.48 s after connect. On a
+576 path, 1172 is ruled out, 548 answers, and probing ends 0.46 s after
+connect; 1452 is never sent. A path that does not carry 548 ends in -14 0.88 s
+after connect.
 
 **Bandwidth.** A pair is at most 1452 + 34 bytes each way, and a confirm 34
-bytes. On a clean path the whole cost is one pair and one confirm. While pairs
+bytes. On a clean path the whole cost is one pair and one confirm for each
+step. While pairs
 go unanswered the client sends at most one pair a second, about 1.5 KB/s each
 way, until probing ends; while the small probes come back it sends up to ten
-pairs a second, four for each size ruled out. The default list sends none.
+pairs a second, four for the size ruled out. The default list sends none.
 
 ## Configuration reference
 

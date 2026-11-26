@@ -5,10 +5,13 @@ design, v2. The handshake carries no probe: the client's connection response
 carries P0, the smallest candidate its list gives the server's family (t12
 rule 16), and both ends start the connection at P0, so every list joins as fast
 as the default. After CONNECTED, a client whose list gives the family more than
-one candidate walks the candidates above P, largest first, with pairs of probes
-(packet type 9), raises P on an authenticated large reply and confirms the raise
-to the server; the server answers probes from a connected mapping and raises its
-P only on a confirm. The default list `{ 1500 }` has one candidate: no probe,
+one candidate walks up a ladder with pairs of probes (packet type 9): the next
+candidate above P, smallest first. An authenticated large reply raises P,
+confirms the raise to the server and goes on to the next size up; K strikes
+rule the size out and stop the walk, so sizes above a size the path does not
+carry are never tried; when the first step is ruled out, P0 itself is checked,
+and K strikes there end the connection -14. The server answers probes from a
+connected mapping and raises its P only on a confirm. The default list `{ 1500 }` has one candidate: no probe,
 nothing new on the wire.
 
 It is written ahead of the v2 code. The coverage rows `rn-path-probe-client` and
@@ -24,8 +27,9 @@ TraceRNPathProbe.tla, which still bind the v1 handshake probe).
   client's candidate set for the family (P of each `link_mtus` entry, equal
   sizes collapsed), `ServerList` the server's own, which may differ; P0 =
   min(`ClientSet`) is on both (an ASSUME, as t12 rule 16 makes the server refuse
-  any other). The walk's candidate `Cur` is the largest candidate above P not
-  ruled out, or P itself (P0) when none is left.
+  any other). The walk's candidate `Cur` is the smallest candidate above P
+  while nothing is ruled out, and P itself (P0) once the first step was ruled
+  out (a rule-out at any later step ends the walk).
 - **The path.** A capacity each way, chosen at `Init` from `CapsUp` and
   `CapsDown` and fixed for the behaviour: a packet larger than its direction's
   capacity is dropped when sent, always. `Carried(S)` is S on the server's list
@@ -48,24 +52,28 @@ TraceRNPathProbe.tla, which still bind the v1 handshake probe).
   outstanding pair. A pair sent into a burst of every packet loses its small
   probe and cannot strike, and needs no bound.
 - **Pairs and strikes.** The first pair goes at connect; then one per pair
-  interval (`Tick`; FIRST, 0.25 s or twice the handshake round trip, doubling
+  interval, and at once after a raise (`Tick`; FIRST, 0.25 s or twice the handshake round trip, doubling
   after a pair whose small probe was lost, up to MAX, 1 s, back to FIRST at a
   rule-out; the interval is not tracked). A pair is the small probe and the large
   at `Cur`, one new pair number (`pairNo` is its parity). When the next pair is
   due, the outstanding pair resolves (`ClientResolvePair`): small seen and large
   not is a strike, and every strike counts; small not seen is evidence of loss,
-  not of size, and sets the candidate's strikes to zero; large seen (only under
-  `"probeaftermax"`, as a large reply ends the walk where it arrives) leaves
-  them. K strikes in a row rule a candidate above P out (`ClientRuleOut`; the
-  next starts fresh), and at P0 itself end the connection -14 (`ClientFail`). So
-  a path that carries a smaller candidate settles in K pair intervals for each
-  size above it, with no wait between strikes.
+  not of size, and sets the candidate's strikes to zero (a large reply ends the
+  pair where it arrives, so none resolves on one). K strikes in a row rule a
+  candidate above P out and end the walk (`ClientRuleOut`); at the first step,
+  with P still P0, the walk goes on to P0's own check, fresh, and K strikes at
+  P0 end the connection -14 (`ClientFail`). So the walk takes one pair interval
+  for each size the path carries and K for the first it does not.
 - **Large replies.** A large reply that opens is taken only while probing and
   only at the walk's current candidate, from any pair so far
-  (`ClientRecvLarge`): above P it raises P at once and sets the confirm; at P
-  itself (P0, every candidate above ruled out) it raises nothing. Either way the
-  walk ends and no pair is left outstanding. Any other large reply is consumed and
-  ignored; a forged one fails the open (`ClientRecvForged`).
+  (`ClientRecvLarge`): above P it raises P at once, sets the confirm and goes
+  on to the next size up: no pair outstanding, the strikes and the loss
+  assumption's row at zero, and the next pair due at once; at the largest
+  candidate the walk ends. At P itself (P0's check) it raises nothing and the
+  walk ends at P0. Any other large reply is consumed and ignored; a forged one
+  fails the open (`ClientRecvForged`). A confirm can be outstanding while the
+  walk goes on (the code sends a confirm due in the same update as a pair
+  first and the pair at the next update; the model does not order them).
 - **Confirms.** The confirm goes at the next probe update after the raise and is
   resent until an echo carrying its size or larger arrives
   (`ClientSendConfirm`, `ClientRecvConfirmEcho`); the server's
@@ -85,7 +93,15 @@ TraceRNPathProbe.tla, which still bind the v1 handshake probe).
   in all. With `Forger` = TRUE, `F` sends without limit, one packet in flight at
   a time.
 - **Timed.** TRUE: the pair interval covers a round trip, so a `Tick` waits
-  until nothing of the pair is in flight (the liveness and loss-only cases).
+  until nothing of the pair is in flight (the liveness and loss-only cases),
+  and the pair a raise makes due at once keeps the same promise:
+  `ClientSendPair` waits until nothing of the last pair is in flight and the
+  server's update that answered the last large probe has ended. Without it TLC
+  finds a size the path carries ruled out by one burst and one strike that no
+  loss made: the next step's large probe withheld by the update's large
+  allowance, spent by the last step's large probe or by an on-path replay of
+  it still in flight (2026-11-26, space). Untimed, the code's own timing, both
+  can happen, which is one more reason `NoWrongRuleOut` is claimed Timed only.
   FALSE is the code's untimed view: a pair's packets may arrive after it
   resolved, until the pair after next reuses the pair number's parity, when what
   is left of it is dropped (the code's u32 pair number keeps them distinct; a
@@ -114,12 +130,14 @@ confirm may be resent whenever none is in flight).
 | -14 only when P0 itself collected K strikes | `FailOnlyAtP0` | |
 | P is never a candidate ruled out | `NeverAtRuledOut` | |
 | no pair once P is the largest candidate or the walk has ended | `NoProbeAfterDone` (action) | `MCRNPathProbeBrokenProbeAfterMax.cfg` |
+| the ladder stops at a rule-out: no pair and no large probe of the client's in flight above a size ruled out | `NeverAboveRuled` | `MCRNPathProbeBrokenAboveRuled.cfg` |
+| the ladder skips no step: every pair is at the smallest candidate above P not ruled out, or at P for P0's check | `NoSkippedStep` (action) | `MCRNPathProbeBrokenSkipStep.cfg` |
 | the server answers only from a connected mapping | `ReplyOnlyConnected` | `MCRNPathProbeBrokenUnproven.cfg` |
 | no reply larger than the probe it answers | `ReplyNoLarger` | `MCRNPathProbeBrokenLarger.cfg` |
 | a large reply only at a size on the server's list | `ReplyOwnList` | `MCRNPathProbeBrokenOffList.cfg` |
 | at most one small (or confirm) and one large answered per mapping per update | `OneReplyPerUpdate` | `MCRNPathProbeBrokenNoAllowance.cfg` |
 | the walk ends and both ends hold the same P | `Converges` | |
-| both ends reach the largest candidate the path carries | `ReachesBest` | |
+| both ends reach the top of the ladder: the largest candidate up to which the path carries every candidate above P0 | `ReachesBest` | |
 | a path that does not carry P0 ends -14 | `FailsWhenP0NotCarried` | `MCRNPathProbeBrokenSkipLast.cfg` |
 | a forger at the client's address, without limit, cannot starve the walk | `ForgedNeverStarves` | `MCRNPathProbeBrokenForgedStarves.cfg` |
 
@@ -135,10 +153,12 @@ and server lists `{3, 2, 1}`, `K` = 2, one burst (`MaxBursts` = 1),
 
 | Case | Notes |
 | --- | --- |
-| `MCRNPathProbe.cfg` | every capacity `0 .. 3` each way, every invariant and property under `FairSpec` |
-| `MCRNPathProbeServerList.cfg` | server list `{3, 1}`: the client's middle size is never answered and is ruled out; the same checks at the same capacities |
+| `MCRNPathProbe.cfg` | capacity `0 .. 2` up and `0 .. 3` down, every invariant and property under `FairSpec` |
+| `MCRNPathProbeUp3.cfg` | capacity 3 up and `0 .. 3` down, the same checks: with `MCRNPathProbe.cfg`, every path `0 .. 3` each way (the capacities are fixed for a behaviour, so the split loses no behaviour; split 2026-11-26 when the ladder took the one sweep to 72.9 s, over 60% of the case budget) |
+| `MCRNPathProbeServerList.cfg` | server list `{3, 1}`: the client's middle size is never answered, is ruled out and stops the ladder, so 3 is never tried; the same checks at the same capacities |
 | `MCRNPathProbeOneEntry.cfg` | client set `{2}`, server list `{2, 1}`: no probing |
-| `MCRNPathProbeLate.cfg` | `Timed` = FALSE, capacities `{1, 3}`, one attacker send, safety (`Spec`) |
+| `MCRNPathProbeLate.cfg` | `Timed` = FALSE, capacities `{1, 3}`, one attacker send and no burst, safety (`Spec`) |
+| `MCRNPathProbeLateBurst.cfg` | `Timed` = FALSE, capacities `{1, 3}`, one burst and no attacker send, safety (`Spec`); split from `MCRNPathProbeLate.cfg` on 2026-11-26, when the ladder took the two together to 107 s of the 110 s case budget (the Timed cases keep the burst and the attacker together) |
 | `MCRNPathProbeLossRow.cfg` | client and server `{2, 1}`, `K` = 2, three bursts of either kind, capacities `{1, 2}`, no attacker: `NoWrongRuleOut` across a row broken by a lost small probe (safety); `MCRNPathProbeBrokenNoReset.cfg` is its instance at capacity 2 each way with the reset removed |
 | `MCRNPathProbeForged.cfg` | `Forger` = TRUE and no other attacker, capacities `{1, 3}`: `ForgedNeverStarves` and `Converges` |
 | `MCRNPathProbeReachLateReply.cfg` | `Timed` = FALSE, capacity 3 each way, `K` = 2, no loss: must violate `NoLateRaise` |
@@ -146,14 +166,14 @@ and server lists `{3, 2, 1}`, `K` = 2, one burst (`MaxBursts` = 1),
 
 ## Counterexamples
 
-Each read against the model by hand (2026-11-25, TLC 2.19 on studio.local);
-against the code once the v2 code is in.
+Each read against the model by hand (2026-11-25, TLC 2.19 on studio.local;
+the ladder's, 2026-11-26 on space); against the code once the v2 code is in.
 
-- **Lower** (`PNeverDecreases`, untimed, `K` = 1): the pair at 3 is answered but
-  its large reply is late; the pair resolves on the small alone, a strike, and 3
-  is ruled out; the pair at 2 is sent; the late reply of 3 is taken (the broken
-  client takes any candidate's reply), P = 3; then the reply of 2 is taken, P =
-  2.
+- **Lower** (`PNeverDecreases`, untimed, `K` = 1): the pair at 2 is answered but
+  its large reply is late; the pair resolves on the small alone, a strike, and 2
+  is ruled out at the first step, so P0's check sends a pair at 1; the late
+  reply of 2 is taken (the broken client takes any candidate's reply), P = 2;
+  then the reply of 1 is taken, P = 1.
 - **StrikeOnLoss** (`StrikeNeedsSmall`): a burst of every packet; the pair sent
   inside it loses both probes, and the broken client counts a strike.
 - **NoReset** (read on space, 2026-11-26; `NoWrongRuleOut`, `MaxBursts` = 3, `K` = 2, a path that carries
@@ -174,57 +194,72 @@ against the code once the v2 code is in.
 - **ForgedRaise** (`ClientRaisesOnAuthLarge`): a forged large reply at 2 on a path
   of capacity 1; the broken client raises to 2.
 - **ProbeAfterMax** (`NoProbeAfterDone`): the first pair at 2 succeeds and P = 2,
-  the largest candidate; the broken walk does not end and the next pair goes.
+  the largest candidate; the broken walk does not end, and after the server's
+  update the next pair goes, at 2 again.
 - **Unproven** (`ReplyOnlyConnected`): a probe from `X`, whose mapping is not
   connected, is answered.
 - **Larger** (`ReplyNoLarger`): client `{2, 1}`, server `{3, 2, 1}`: the probe at 2
   is answered at 3.
-- **OffList** (`ReplyOwnList`): client `{3, 2, 1}`, server `{2, 1}`: the probe at 3
-  is answered.
+- **OffList** (`ReplyOwnList`): client `{3, 2, 1}`, server `{2, 1}`: the ladder
+  raises to 2, the next pair goes at 3, and the probe at 3 is answered.
 - **NoAllowance** (`OneReplyPerUpdate`): the large probe and a replayed copy of it
   arrive in one update and both are answered.
 - **SkipLast** (`FailsWhenP0NotCarried`): a path that carries nothing above the
-  control size; 2 is ruled out and the broken walk ends without probing P0, so
-  the client stays at a P0 the path drops.
+  control size; 2 is ruled out at the first step and the broken walk ends
+  without probing P0, so the client stays at a P0 the path drops.
 - **ForgedStarves** (`ForgedNeverStarves`): in every update the forger's packet
   arrives first, fails the open and spends the allowance, so the client's probes
   are withheld and the walk never reaches 2.
-- **ReachLateReply** (`NoLateRaise`): the pair at 3 resolves on its small reply
-  with its large reply still in flight; the next pair at 3 is sent, and the late
-  reply of the first is taken at the walk's candidate: P = 3.
+- **ReachLateReply** (`NoLateRaise`): the pair at 2 is answered, its small probe
+  still in flight up and its large reply in flight down; it resolves with the
+  small not seen (strikes stay at zero), the next pair at 2 is sent, and the late
+  reply of the first is taken at the walk's candidate: P = 2.
+- **AboveRuled** (`NeverAboveRuled`): client `{3, 2, 1}`, server `{3, 1}`,
+  capacity 3 each way: two pairs at 2 come back small only (2 is off the
+  server's list), 2 is ruled out, and the broken walk sends its next pair at 3,
+  above the size ruled out.
+- **SkipStep** (`NoSkippedStep`): client and server `{3, 2, 1}`: the broken walk's
+  first pair goes at 3, the largest candidate (the old order), not at 2.
 
 ## Records
 
 The records in `RUNS.tsv` are measured on space with the pinned tlacheck
 (`tlacheck run --group rnpathprobe`, which refuses to run on macOS), one case
-per bounded run, two workers, 2026-11-26. With the strike spacing gone the
-state space is smaller, and the full capacity sweep and the untimed case with an
-attacker send fit the 110 s case budget: they are the per-PR cases
-`MCRNPathProbe.cfg` and `MCRNPathProbeLate.cfg`, and no case of the group is
-timeout debt.
+per bounded run, two workers, 2026-11-26, after the ladder. The ladder's
+raises go on to the next size up with a confirm outstanding, which grows the
+state space: the full capacity sweep from 41.5 s to 72.9 s, over 60% of the
+110 s case budget, so it is two cases split on the up capacity
+(`MCRNPathProbe.cfg`, `MCRNPathProbeUp3.cfg`); and the untimed case with a
+burst and an attacker send to 107.0 s, so it is two cases
+(`MCRNPathProbeLate.cfg` with the attacker send, `MCRNPathProbeLateBurst.cfg`
+with the burst). No case of the group is timeout debt.
 
 | Case | Result | Generated | Distinct | Seconds |
 | --- | --- | --- | --- | --- |
-| `MCRNPathProbe.cfg` | pass | 826,611 | 135,482 | 41.5 |
-| `MCRNPathProbeServerList.cfg` | pass | 748,937 | 126,980 | 36.2 |
-| `MCRNPathProbeOneEntry.cfg` | pass | 2,457 | 432 | 1.1 |
-| `MCRNPathProbeLate.cfg` | pass | 18,818,594 | 2,079,348 | 36.6 |
+| `MCRNPathProbe.cfg` | pass | 714,624 | 116,600 | 36.4 |
+| `MCRNPathProbeUp3.cfg` | pass | 710,979 | 105,363 | 37.9 |
+| `MCRNPathProbeServerList.cfg` | pass | 526,217 | 89,065 | 26.6 |
+| `MCRNPathProbeOneEntry.cfg` | pass | 2,457 | 432 | 1.0 |
+| `MCRNPathProbeLate.cfg` | pass | 21,329,496 | 2,239,276 | 45.6 |
+| `MCRNPathProbeLateBurst.cfg` | pass | 1,890,254 | 218,556 | 5.5 |
 | `MCRNPathProbeLossRow.cfg` | pass | 29,601 | 5,625 | 1.1 |
-| `MCRNPathProbeForged.cfg` | pass | 91,758 | 14,552 | 4.8 |
-| `MCRNPathProbeReachLateReply.cfg` | `NoLateRaise` | 324 | 103 | 0.8 |
-| `MCRNPathProbeBrokenLower.cfg` | `PNeverDecreases` | 8,164 | 1,886 | 1.0 |
+| `MCRNPathProbeForged.cfg` | pass | 156,062 | 22,712 | 7.5 |
+| `MCRNPathProbeReachLateReply.cfg` | `NoLateRaise` | 335 | 120 | 0.8 |
+| `MCRNPathProbeBrokenLower.cfg` | `PNeverDecreases` | 12,842 | 3,209 | 1.0 |
 | `MCRNPathProbeBrokenStrikeOnLoss.cfg` | `StrikeNeedsSmall` | 103 | 42 | 0.8 |
 | `MCRNPathProbeBrokenNoReset.cfg` | `NoWrongRuleOut` | 9,003 | 1,644 | 1.0 |
-| `MCRNPathProbeBrokenUnboundedBurst.cfg` | `NoWrongRuleOut` | 1,622 | 311 | 0.9 |
-| `MCRNPathProbeBrokenRaiseOnProbe.cfg` | `ServerRaisesOnConfirm` | 7 | 4 | 0.8 |
+| `MCRNPathProbeBrokenUnboundedBurst.cfg` | `NoWrongRuleOut` | 1,622 | 311 | 0.8 |
+| `MCRNPathProbeBrokenRaiseOnProbe.cfg` | `ServerRaisesOnConfirm` | 7 | 4 | 0.7 |
 | `MCRNPathProbeBrokenForgedRaise.cfg` | `ClientRaisesOnAuthLarge` | 66 | 26 | 0.8 |
-| `MCRNPathProbeBrokenProbeAfterMax.cfg` | `NoProbeAfterDone` | 192 | 56 | 0.8 |
-| `MCRNPathProbeBrokenUnproven.cfg` | `ReplyOnlyConnected` | 37 | 28 | 0.7 |
+| `MCRNPathProbeBrokenProbeAfterMax.cfg` | `NoProbeAfterDone` | 130 | 40 | 0.9 |
+| `MCRNPathProbeBrokenUnproven.cfg` | `ReplyOnlyConnected` | 37 | 28 | 0.8 |
 | `MCRNPathProbeBrokenLarger.cfg` | `ReplyNoLarger` | 7 | 4 | 0.8 |
-| `MCRNPathProbeBrokenOffList.cfg` | `ReplyOwnList` | 7 | 4 | 0.8 |
+| `MCRNPathProbeBrokenOffList.cfg` | `ReplyOwnList` | 183 | 53 | 0.8 |
 | `MCRNPathProbeBrokenNoAllowance.cfg` | `OneReplyPerUpdate` | 378 | 129 | 0.8 |
-| `MCRNPathProbeBrokenSkipLast.cfg` | `FailsWhenP0NotCarried` | 6,824 | 1,565 | 1.5 |
-| `MCRNPathProbeBrokenForgedStarves.cfg` | `ForgedNeverStarves` | 31,737 | 5,016 | 2.2 |
+| `MCRNPathProbeBrokenSkipLast.cfg` | `FailsWhenP0NotCarried` | 6,824 | 1,565 | 1.4 |
+| `MCRNPathProbeBrokenForgedStarves.cfg` | `ForgedNeverStarves` | 31,605 | 5,016 | 2.3 |
+| `MCRNPathProbeBrokenAboveRuled.cfg` | `NeverAboveRuled` | 91 | 27 | 0.8 |
+| `MCRNPathProbeBrokenSkipStep.cfg` | `NoSkippedStep` | 2 | 2 | 0.8 |
 
 ## Trace binding
 

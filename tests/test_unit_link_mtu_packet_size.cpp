@@ -241,15 +241,15 @@ static void test_link_mtu_packet_size_548_pair()
     check( rocketnet_client_transport_start_packet( client_transport, C + 1, &context ) == NULL );
     check( rocketnet_server_transport_start_packet( server_transport, 0, C + 1, &context ) == NULL );
 
-    // the path probe's walk ends first: it sends large probes above P, which
-    // the link drops, until 1452 and 1172 are ruled out and the 548 pair
-    // comes back; it never probes again
+    // the path probe's walk ends first: it sends large probes at 1172, the
+    // first step up, which the link drops, until 1172 is ruled out and the
+    // 548 pair comes back; it never probes again
     const rocketnet_counters_t * transport_counters = rocketnet_client_transport_counters( client_transport );
-    for ( int i = 0; i < 6000 && rocketnet_counter_value( transport_counters, ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT ) < 2; i++ )
+    for ( int i = 0; i < 6000 && rocketnet_counter_value( transport_counters, ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT ) < 1; i++ )
     {
         packet_size_pump( pair.server, pair.client );
     }
-    check( rocketnet_counter_value( transport_counters, ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT ) == 2 );
+    check( rocketnet_counter_value( transport_counters, ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT ) == 1 );
     for ( int i = 0; i < 300; i++ )
     {
         packet_size_pump( pair.server, pair.client );
