@@ -235,8 +235,10 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // other platforms derived from the Linux reading. On Windows the client
 // measured no change, not 64 more, as on macOS: the growth is taken by the
 // client transport's padding to its 64-byte alignment: actual=15399212 (CI,
-// windows Release unit, MSVC).
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1576723295 )
+// windows Release unit, MSVC). The server measured 64 more than the
+// Linux-derived pin, as on macOS (16128 more for the path probe, not 16064):
+// actual=1577771935 (CI, windows Release unit, MSVC).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1576723359 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350636 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
