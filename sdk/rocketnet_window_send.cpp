@@ -21,15 +21,13 @@ static uint64_t rn_window_send_single_span( int holdable, uint32_t bytes )
 
 // A block's numbers and its one contiguous span, fragment i at p + i * F; the
 // final fragment's rounded actual bytes (standard/MESSAGES.md m4, m8).
-static uint32_t rn_window_send_block_count( uint32_t bytes )
+static uint32_t rn_window_send_block_count( uint32_t F, uint32_t bytes )
 {
-    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     return ( bytes + F - 1 ) / F;
 }
 
-static uint64_t rn_window_send_block_span( uint32_t bytes, uint32_t count )
+static uint64_t rn_window_send_block_span( uint32_t F, uint32_t bytes, uint32_t count )
 {
-    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     return (uint64_t) ( count - 1 ) * F + rn_window_send_round16( bytes - ( count - 1 ) * F );
 }
 
@@ -204,13 +202,13 @@ uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, ui
     rocketnet_assert( code >= ROCKETNET_MESSAGE_CODE_RELIABLE && code <= ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED );
     (void) code; // read only by the assert above
 
-    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t F = rn_region_fragment_bytes( send->region );
     rocketnet_assert( bytes > F && bytes <= send->region->max_message_bytes );
 
-    const uint32_t count = rn_window_send_block_count( bytes );
+    const uint32_t count = rn_window_send_block_count( F, bytes );
     rocketnet_assert( count >= 2 && count <= send->region->window );
 
-    const uint64_t span = rn_window_send_block_span( bytes, count );
+    const uint64_t span = rn_window_send_block_span( F, bytes, count );
     rocketnet_assert( span <= send->region->ring_bytes );
 
     uint64_t p;
@@ -245,8 +243,9 @@ int rn_window_send_would_number( const rn_window_send_t * send, int code, uint32
 
     if ( fragments > 1 )
     {
-        const uint32_t count = rn_window_send_block_count( bytes );
-        return rn_window_send_fits( send, count, rn_window_send_block_span( bytes, count ), 1, &p );
+        const uint32_t F = rn_region_fragment_bytes( send->region );
+        const uint32_t count = rn_window_send_block_count( F, bytes );
+        return rn_window_send_fits( send, count, rn_window_send_block_span( F, bytes, count ), 1, &p );
     }
 
     if ( code == ROCKETNET_MESSAGE_CODE_UNRELIABLE || code == ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED )

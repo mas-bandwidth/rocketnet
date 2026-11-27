@@ -64,6 +64,7 @@ struct rn_endpoint_config_t
     X( default_kbps, int32_t default_kbps ) /* the budget a reset starts with; 0 or lower uncapped */                                                 \
     X( send_budget_enabled, int send_budget_enabled ) /* 0: this connection is uncapped (R6, standard/MESSAGES.md m9.4) */                                \
     X( max_payload_bytes, int max_payload_bytes ) /* the transport's payload cap (rn_endpoint_send) */                                                \
+    X( packet_bytes, int packet_bytes ) /* the connection's packet size P (rn_endpoint_set_packet_bytes): its payload capacity and block stride */     \
     X( send_error, int send_error ) /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED once a send found the region exhausted by the receive side (R5), else NONE */ /* CONFIG (10.3): the wait for the remote endpoint's CONFIG */                                                                                               \
     X( send_refused, uint64_t send_refused ) /* starts refused for no room on this connection (m1.7; rocketnet_conditions_t) */ \
     X( config_wait_start, double config_wait_start ) /* when this end began waiting for the remote endpoint's CONFIG, or -1 before its transport is connected */ \
@@ -107,6 +108,27 @@ void rn_endpoint_init( struct rn_endpoint_t * endpoint, rn_region_t * region, co
 // A new connection on this endpoint: the region carved again and every layer
 // bound to it fresh, so nothing of the previous connection is reachable.
 void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now );
+
+// The connection's packet size P in wire bytes (sdk/rocketnet_link_mtu.h),
+// which the next rn_endpoint_reset binds: the payload capacity C(P) every
+// packet this endpoint plans is held to, the SINGLE limit C(P) - 1, the
+// unreliable promotion threshold and the block stride F(P) of its region.
+// ROCKETNET_MAX_PACKET_BYTES from init, today's sizes. Set it before the
+// reset that starts the connection; both ends of a connection set the same P.
+void rn_endpoint_set_packet_bytes( struct rn_endpoint_t * endpoint, int packet_bytes );
+int rn_endpoint_packet_bytes( const struct rn_endpoint_t * endpoint );
+
+// Raises the bound connection's packet size in place when the path probe
+// raised it (proofs/tla/RNPathProbe.tla): the payload capacity C(P) grows,
+// the block stride stays the one its reset bound. A size not above the
+// current one is ignored.
+void rn_endpoint_raise_packet_bytes( struct rn_endpoint_t * endpoint, int packet_bytes );
+
+// C(P) of the bound packet size (ROCKETNET_MAX_PACKET_PAYLOAD_BYTES at the
+// ceiling), and the largest UNRELIABLE message sent unpromoted at it
+// (ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES at the ceiling)
+int rn_endpoint_payload_capacity( const struct rn_endpoint_t * endpoint );
+int rn_endpoint_max_unreliable_message_bytes( const struct rn_endpoint_t * endpoint );
 
 // proofs/tla/RNEndpoint.tla Reset, the CONFIG half (10.3): called when the connection
 // this endpoint was reset for is connected, before anything else is queued.

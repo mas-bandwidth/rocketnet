@@ -8,7 +8,7 @@
 // the identifier -- and the client-side connect parse, on two kinds of input.
 //
 // TWO HALVES, selected by the input's first byte, because they find different
-// bugs. The RAW half feeds arbitrary bytes as a 768-byte token: it hunts
+// bugs. The RAW half feeds arbitrary bytes as a 576-byte token: it hunts
 // parser crashes, and it can never pass verification, so it exercises the
 // refusal check sequence only. The STRUCTURED half starts from a VALID token -- built
 // once with the real minting path and the published development keys -- and
@@ -85,8 +85,8 @@ static uint64_t rocketnet_fuzz_connect_coverage = 0;
 static int rocketnet_fuzz_connect_generate_seed_dir( const char * directory );
 
 // the signed-data regions, from the token layout in rocketnet_connect_token.h:
-// [0,640) is covered by the signature (signed data then the signature itself),
-// [640,768) is the clear session keys and the pad, outside it
+// [0,448) is covered by the signature (signed data then the signature itself),
+// [448,576) is the clear session keys and the pad, outside it
 
 #define FUZZ_TOKEN_COVERED_BYTES  ( ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES )
 
@@ -129,9 +129,9 @@ static void rocketnet_fuzz_build_base_token()
     }
 }
 
-// the server-side check sequence over one 768-byte buffer, with the oracle switches
+// the server-side check sequence over one 576-byte buffer, with the oracle switches
 // the caller derives from what it knows it changed. touched_covered means an
-// effective flip landed in [0,640); touched_any means one landed anywhere.
+// effective flip landed in [0,448); touched_any means one landed anywhere.
 
 static void rocketnet_fuzz_token_checks( const uint8_t * token_data, int touched_covered, int touched_any, int is_mutant )
 {

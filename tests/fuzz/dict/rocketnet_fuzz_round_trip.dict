@@ -30,7 +30,7 @@ sequence_wrap_minus_one="\xff\xff\xff\xff\x00\x00\x00\x00"
 dev_protocol_id="\x88\x77\x66\x55\x44\x33\x22\x11"
 
 # ROCKETNET_WIRE_VERSION (sdk/rocketnet_connect_token.h)
-version="\x93\x1a\x7c\x4e"
+version="\xd9\x14\x50\x06"
 
 # ROCKETNET_ACK_BLOCK_MAX_RANGES 255 as the block's range count (sdk/rocketnet_wire.h)
 ack_max_ranges="\xff"

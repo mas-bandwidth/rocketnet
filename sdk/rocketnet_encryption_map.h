@@ -86,7 +86,10 @@ static_assert( sizeof( struct rocketnet_encryption_mapping_control_t ) == 32, "t
     X( handshake_highest_opened, uint64_t handshake_highest_opened )                                                                                              \
     X( replay_session, struct rocketnet_replay_protection_t replay_session )                                                                                       \
     X( accepted_session, struct rocketnet_replay_protection_t accepted_session ) \
-    X( integrity_failures, uint64_t integrity_failures ) /* sealed packets that did not open under either key; ROCKETNET_INTEGRITY_LIMIT tears the mapping down */
+    X( integrity_failures, uint64_t integrity_failures ) /* sealed packets that did not open under either key; ROCKETNET_INTEGRITY_LIMIT tears the mapping down */ \
+    X( probe_update, uint64_t probe_update ) /* the server update a small probe or confirm was last opened in: one per mapping per update (proofs/tla/RNPathProbe.tla OneReplyPerUpdate) */ \
+    X( probe_large_update, uint64_t probe_large_update ) /* the server update a large probe was last opened in: one per mapping per update (proofs/tla/RNPathProbe.tla OneReplyPerUpdate) */ \
+    X( packet_bytes, int packet_bytes ) /* the connection's packet size: from its connection response, raised only by the client's confirm, never lowered (proofs/tla/RNPathProbe.tla ServerRecvConfirm) */
 
 struct rocketnet_encryption_mapping_t
 {

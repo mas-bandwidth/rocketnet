@@ -15,6 +15,7 @@
 #include "rocketnet_protocol.h"
 #include "rocketnet_encryption_map.h"
 #include "rocketnet_ack.h"
+#include "rocketnet_link_mtu.h"
 
 // The client state machine, per standard/TRANSPORT.md t11: the machine steps forward or
 // fails, never sideways. A client climbs 1, 2, 3, 4 entering each state
@@ -105,7 +106,27 @@ typedef void ( *rocketnet_client_retire_keys_t )( void * context );
     X( retire_keys, rocketnet_client_retire_keys_t retire_keys ) \
     X( keys_context, void * keys_context ) \
     X( record_verdict, uint8_t record_verdict ) \
-    X( record_sequence, uint64_t record_sequence )
+    X( record_sequence, uint64_t record_sequence ) \
+    X( link_mtus, int link_mtus[ROCKETNET_LINK_MTU_MAX_ENTRIES] ) \
+    X( num_link_mtus, int num_link_mtus ) \
+    X( probe_candidates, int probe_candidates[ROCKETNET_LINK_MTU_MAX_ENTRIES] ) \
+    X( num_probe_candidates, int num_probe_candidates ) \
+    X( probe_index, int probe_index ) \
+    X( probe_strikes, int probe_strikes ) \
+    X( probe_pair, uint32_t probe_pair ) \
+    X( probe_pair_small, int probe_pair_small ) \
+    X( probe_pair_large, int probe_pair_large ) \
+    X( probe_pair_out, int probe_pair_out ) \
+    X( probe_next_time, double probe_next_time ) \
+    X( probe_interval, double probe_interval ) \
+    X( probing, int probing ) \
+    X( probe_ruled, int probe_ruled ) \
+    X( probe_waiting, int probe_waiting ) \
+    X( probe_retries, int probe_retries ) \
+    X( probe_retry_time, double probe_retry_time ) \
+    X( confirm_bytes, int confirm_bytes ) \
+    X( confirm_next_time, double confirm_next_time ) \
+    X( packet_bytes, int packet_bytes )
 
 struct rocketnet_client_protocol_t
 {
@@ -115,6 +136,64 @@ struct rocketnet_client_protocol_t
 };
 
 void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters );
+
+// The connection's packet size P (sdk/rocketnet_link_mtu.h): the smallest
+// candidate of the link MTU list, which the response carries, until the path
+// probe raises it; it never decreases. ROCKETNET_MAX_PACKET_BYTES before the
+// response is built and on the default link MTU list.
+int rocketnet_client_protocol_packet_bytes( const struct rocketnet_client_protocol_t * client );
+
+// The path probe's sends of this update, after rocketnet_client_protocol_update
+// (standard/TRANSPORT.md t11.4; proofs/tla/RNPathProbe.tla ClientSendPair and
+// ClientSendConfirm): while connected and probing, a pair at connect and
+// then at the probe's paced interval -- the small probe into
+// out_small, the large one at the candidate into out_large -- or a confirm
+// into out_small. Each buffer holds ROCKETNET_RECEIVE_CEILING bytes; a zero
+// size is no packet. May end the connection in mtu probe failed (-14).
+void rocketnet_client_protocol_probe_update( struct rocketnet_client_protocol_t * client,
+                                             double current_time,
+                                             uint8_t * out_small,
+                                             int * out_small_bytes,
+                                             uint8_t * out_large,
+                                             int * out_large_bytes );
+
+// Whether rocketnet_client_protocol_probe_update can send anything: a raise
+// waiting for its confirm, or a walk still probing. Neither is ever set on
+// the default link MTU list, so the per-frame path pays this one test and
+// nothing else; when it is false the probe update would send nothing and
+// change nothing.
+static inline bool rocketnet_client_protocol_probe_active( const struct rocketnet_client_protocol_t * client )
+{
+    return ( client->probing | client->confirm_bytes ) != 0;
+}
+
+// The four steps of a due pair inside rocketnet_client_protocol_probe_update,
+// in its order, each a model action of proofs/tla/RNPathProbe.tla, so the
+// trace check (tests/tla_trace_path_probe.cpp) reads the state after each.
+// rocketnet_client_protocol_probe_resolve: the outstanding pair resolves
+// (ClientResolvePair), returning 1 when it did, 0 when no pair was out.
+// rocketnet_client_protocol_probe_rule_out: the candidate's counted strikes
+// rule it out (ClientRuleOut, returning 1): the walk waits to re-try it at
+// the next time of its schedule (sdk/rocketnet_link_mtu.h), or, at its first
+// rule-out, when it is the first step up and the connection is at P0, moves
+// to P0 itself first; at P0 itself they end the connection in mtu probe
+// failed (ClientFail, returning -1); 0 otherwise.
+// rocketnet_client_protocol_probe_retry: the wait is over and the walk
+// probes the ruled-out size again, its strikes at zero and its pace the
+// first interval (ClientRetry), returning 1; 0 when it was not waiting.
+// rocketnet_client_protocol_probe_send_pair: the next pair (ClientSendPair).
+// None is called but by rocketnet_client_protocol_probe_update and the trace
+// walk, and only while connected, probing and the pair (or the re-try) is
+// due.
+int rocketnet_client_protocol_probe_resolve( struct rocketnet_client_protocol_t * client );
+int rocketnet_client_protocol_probe_rule_out( struct rocketnet_client_protocol_t * client, double current_time );
+int rocketnet_client_protocol_probe_retry( struct rocketnet_client_protocol_t * client );
+void rocketnet_client_protocol_probe_send_pair( struct rocketnet_client_protocol_t * client,
+                                                double current_time,
+                                                uint8_t * out_small,
+                                                int * out_small_bytes,
+                                                uint8_t * out_large,
+                                                int * out_large_bytes );
 
 // Every field zeroed but the ack history's record rings (guarded by its
 // written bits, rocketnet_ack_endpoint_reset) and the acked packet ids
@@ -146,6 +225,13 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
                                        double current_time,
                                        uint8_t * out_packet,
                                        int * out_packet_bytes );
+
+// Whether the next update sends its state's packet: the early send a
+// handshake advance armed, or the send interval elapsed. The update reads
+// its send decision here and nowhere else (proofs/tla/RNPathProbe.tla
+// maySend, which the TLA+ trace check reads through this call).
+
+bool rocketnet_client_protocol_send_ready( const struct rocketnet_client_protocol_t * client, double current_time );
 
 // Processes one received packet. Returns 1 when the packet was accepted and
 // advanced or fed the connection, 0 when it was refused -- the counters name

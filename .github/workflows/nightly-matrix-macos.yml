@@ -1,0 +1,318 @@
+# THE NIGHTLY macOS RUN-MATRIX CELLS (tools/verification_matrix.tsv).
+#
+# Every macOS cell of the run matrix that no other workflow runs, on the
+# fleet's darwin members (labels macOS, ARM64, fleet) with Apple clang, the
+# system toolchain (/usr/bin/clang). Three jobs:
+#
+#   suites-macos     one parameterised job: each matrix cell is a build (a
+#                    build type, sanitizer flags or a CMake option) and a
+#                    transport pin pair (server~client, auto = unset). Each
+#                    cell configures and builds its own tree and runs, by its
+#                    fields, the unit suite, the functional suite under its
+#                    pins, and (the Release cells) the production functional
+#                    suite under the same pins from a ROCKETNET_DEV=OFF tree.
+#                    The pins are those of ci.yml's TRANSPORT_MATRIX_MACOS plus
+#                    auto~auto; the per-commit and the other nightly workflows
+#                    run the remaining cells (Debug and Release auto~auto,
+#                    msgx~msgx and portable~portable under the sanitizers,
+#                    Release portable~portable).
+#   binaries-macos   the functional-tier and tool binaries built on every OS:
+#                    test_wide (the unit cases at ROCKETNET_MAX_CHANNELS=512),
+#                    test_platform_primitives, test_internal_c, and the
+#                    connect-token vectors generator, whose output is compared
+#                    byte for byte with the committed standard vectors.
+#   package-macos    a library-only build with ROCKETNET_BUILD_SHARED=OFF or
+#                    ROCKETNET_BUILD_DEV_LIBRARIES=OFF, installed, relocated and
+#                    consumed (tools/check_package.py --embedded).
+#
+# The asan+ubsan cells are one build with both sanitizers, as
+# nightly-macos-sanitizers.yml builds them; Apple silicon ASan has no
+# detect_leaks (the leaks leg there is the leak check). The tsan cells build at
+# -O1 (tools/check_tsan_flags.py) and scale the functional case windows by 30,
+# as that workflow does. No suppression, skipped case or changed bound: every
+# whole functional run goes through tools/run_functional.sh, which holds its
+# skips to tests/functional/expected_skips.txt both ways. Every run step runs
+# even when an earlier one is red. Nightly execution has no repository
+# wall-clock cap.
+
+name: nightly-matrix-macos
+
+on:
+  schedule:
+    - cron: "20 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+  CC: /usr/bin/clang
+  CXX: /usr/bin/clang++
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+jobs:
+  suites-macos:
+    name: macOS ${{ fromJSON(matrix.cell).id }} ${{ fromJSON(matrix.cell).server }}~${{ fromJSON(matrix.cell).client }}
+    runs-on: [self-hosted, macOS, ARM64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        # id: the build; build, flags, cmake: its configure; server, client: the
+        # pins; variant (and prod for the Release cells): the
+        # tests/functional/expected_skips.txt legs of the functional runs;
+        # unit: whether this build runs the unit suite (once per build, in its
+        # first cell: the unit binary clears both pins before any case).
+        cell:
+          - '{"id":"debug","build":"Debug","flags":"","cmake":"","server":"loopback","client":"loopback","variant":"dev-loopback","prod":"","unit":false,"scale":""}'
+          - '{"id":"debug","build":"Debug","flags":"","cmake":"","server":"msgx","client":"msgx","variant":"dev-msgx","prod":"","unit":false,"scale":""}'
+          - '{"id":"debug","build":"Debug","flags":"","cmake":"","server":"msgx","client":"portable","variant":"dev-msgx-portable","prod":"","unit":false,"scale":""}'
+          - '{"id":"debug","build":"Debug","flags":"","cmake":"","server":"portable","client":"auto","variant":"dev-portable-auto","prod":"","unit":false,"scale":""}'
+          - '{"id":"debug","build":"Debug","flags":"","cmake":"","server":"portable","client":"msgx","variant":"dev-portable-msgx","prod":"","unit":false,"scale":""}'
+          - '{"id":"debug","build":"Debug","flags":"","cmake":"","server":"portable","client":"portable","variant":"dev-portable","prod":"","unit":false,"scale":""}'
+          - '{"id":"asan+ubsan","build":"Debug","flags":"-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer","cmake":"","server":"auto","client":"auto","variant":"dev-sanitized","prod":"","unit":false,"scale":""}'
+          - '{"id":"asan+ubsan","build":"Debug","flags":"-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer","cmake":"","server":"loopback","client":"loopback","variant":"dev-sanitized-loopback","prod":"","unit":false,"scale":""}'
+          - '{"id":"asan+ubsan","build":"Debug","flags":"-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer","cmake":"","server":"msgx","client":"portable","variant":"dev-sanitized-msgx-portable","prod":"","unit":false,"scale":""}'
+          - '{"id":"asan+ubsan","build":"Debug","flags":"-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer","cmake":"","server":"portable","client":"auto","variant":"dev-sanitized-portable-auto","prod":"","unit":false,"scale":""}'
+          - '{"id":"asan+ubsan","build":"Debug","flags":"-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer","cmake":"","server":"portable","client":"msgx","variant":"dev-sanitized-portable-msgx","prod":"","unit":false,"scale":""}'
+          - '{"id":"tsan","build":"Debug","flags":"-fsanitize=thread -fno-omit-frame-pointer -O1","cmake":"","server":"auto","client":"auto","variant":"dev-sanitized","prod":"","unit":false,"scale":"30"}'
+          - '{"id":"tsan","build":"Debug","flags":"-fsanitize=thread -fno-omit-frame-pointer -O1","cmake":"","server":"loopback","client":"loopback","variant":"dev-sanitized-loopback","prod":"","unit":false,"scale":"30"}'
+          - '{"id":"tsan","build":"Debug","flags":"-fsanitize=thread -fno-omit-frame-pointer -O1","cmake":"","server":"msgx","client":"portable","variant":"dev-sanitized-msgx-portable","prod":"","unit":false,"scale":"30"}'
+          - '{"id":"tsan","build":"Debug","flags":"-fsanitize=thread -fno-omit-frame-pointer -O1","cmake":"","server":"portable","client":"auto","variant":"dev-sanitized-portable-auto","prod":"","unit":false,"scale":"30"}'
+          - '{"id":"tsan","build":"Debug","flags":"-fsanitize=thread -fno-omit-frame-pointer -O1","cmake":"","server":"portable","client":"msgx","variant":"dev-sanitized-portable-msgx","prod":"","unit":false,"scale":"30"}'
+          - '{"id":"release","build":"Release","flags":"","cmake":"","server":"loopback","client":"loopback","variant":"dev-loopback","prod":"prod-loopback","unit":false,"scale":""}'
+          - '{"id":"release","build":"Release","flags":"","cmake":"","server":"msgx","client":"msgx","variant":"dev-msgx","prod":"prod-msgx","unit":false,"scale":""}'
+          - '{"id":"release","build":"Release","flags":"","cmake":"","server":"msgx","client":"portable","variant":"dev-msgx-portable","prod":"prod-msgx-portable","unit":false,"scale":""}'
+          - '{"id":"release","build":"Release","flags":"","cmake":"","server":"portable","client":"auto","variant":"dev-portable-auto","prod":"prod-portable-auto","unit":false,"scale":""}'
+          - '{"id":"release","build":"Release","flags":"","cmake":"","server":"portable","client":"msgx","variant":"dev-portable-msgx","prod":"prod-portable-msgx","unit":false,"scale":""}'
+          - '{"id":"minsizerel","build":"MinSizeRel","flags":"","cmake":"","server":"auto","client":"auto","variant":"dev","prod":"","unit":true,"scale":""}'
+          - '{"id":"relwithdebinfo","build":"RelWithDebInfo","flags":"","cmake":"","server":"auto","client":"auto","variant":"dev","prod":"","unit":true,"scale":""}'
+          - '{"id":"HISTORY_PACKETS=32768","build":"Release","flags":"","cmake":"-DROCKETNET_HISTORY_PACKETS=32768","server":"auto","client":"auto","variant":"dev","prod":"","unit":true,"scale":""}'
+          - '{"id":"MAX_CLIENTS=32768","build":"Release","flags":"","cmake":"-DROCKETNET_MAX_CLIENTS=32768","server":"auto","client":"auto","variant":"dev","prod":"","unit":true,"scale":""}'
+          - '{"id":"MAX_CLIENTS=512","build":"Release","flags":"","cmake":"-DROCKETNET_MAX_CLIENTS=512","server":"auto","client":"auto","variant":"dev","prod":"","unit":true,"scale":""}'
+          - '{"id":"ROCKETNET_HARDEN=OFF","build":"Release","flags":"","cmake":"-DROCKETNET_HARDEN=OFF","server":"auto","client":"auto","variant":"dev","prod":"","unit":true,"scale":""}'
+          - '{"id":"ROCKETNET_USE_SYSTEM_SODIUM=ON","build":"Release","flags":"","cmake":"-DROCKETNET_USE_SYSTEM_SODIUM=ON","server":"auto","client":"auto","variant":"dev","prod":"","unit":true,"scale":""}'
+    concurrency:
+      group: nightly-matrix-macos-suites-${{ github.event_name }}-${{ matrix.ref }}-${{ fromJSON(matrix.cell).id }}-${{ fromJSON(matrix.cell).server }}-${{ fromJSON(matrix.cell).client }}
+      cancel-in-progress: true
+    env:
+      ASAN_OPTIONS: detect_leaks=0
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+      - uses: ./.github/actions/ccache
+
+      - name: Check the member's build dependencies are present
+        env:
+          CMAKE_ARGS: ${{ fromJSON(matrix.cell).cmake }}
+        run: |
+          missing=0
+          for tool in cmake xxd python3 /usr/bin/clang /usr/bin/clang++; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          # the system-sodium cell links the host's libsodium through pkg-config (cmake/RocketNetDependencies.cmake)
+          case "$CMAKE_ARGS" in
+            *ROCKETNET_USE_SYSTEM_SODIUM=ON*)
+              if ! command -v pkg-config >/dev/null 2>&1; then
+                echo "TOOL-MISSING pkg-config (any) (missing) on $RUNNER_NAME"
+                missing=1
+              elif ! pkg-config --exists libsodium; then
+                echo "TOOL-MISSING libsodium (>= 1.0.20) (pkg-config --exists failed) on $RUNNER_NAME"
+                missing=1
+              fi ;;
+          esac
+          /usr/bin/clang --version | head -1
+          exit "$missing"
+
+      - name: Configure
+        env:
+          BUILD: ${{ fromJSON(matrix.cell).build }}
+          FLAGS: ${{ fromJSON(matrix.cell).flags }}
+          CMAKE_ARGS: ${{ fromJSON(matrix.cell).cmake }}
+        run: |
+          # CMAKE_ARGS is one -D option or none: unquoted, so none is no argument
+          # shellcheck disable=SC2086
+          cmake -S . -B build -DCMAKE_BUILD_TYPE="$BUILD" -DCMAKE_C_FLAGS="$FLAGS" -DCMAKE_CXX_FLAGS="$FLAGS" $CMAKE_ARGS
+
+      - name: Build the suites and the functional suite's exec binaries
+        id: build
+        run: cmake --build build --target test functional test_transport_control test_msgx --parallel 8
+
+      # functional_production links the production library, which only a
+      # ROCKETNET_DEV=OFF configure builds (CMakeLists.txt); it builds in its
+      # own directory, so the development binaries in bin/ stay as they are
+      - name: Build the production functional suite (ROCKETNET_DEV=OFF)
+        id: build_production
+        if: fromJSON(matrix.cell).prod != ''
+        env:
+          BUILD: ${{ fromJSON(matrix.cell).build }}
+        run: |
+          cmake -S . -B build-production -DCMAKE_BUILD_TYPE="$BUILD" -DROCKETNET_DEV=OFF -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-production/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-production/bin"
+          cmake --build build-production --target functional_production --parallel 8
+
+      - name: Unit suite
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && fromJSON(matrix.cell).unit }}
+        run: ./bin/test 2>&1 | tee unit.log
+
+      - name: Functional suite
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          VARIANT: ${{ fromJSON(matrix.cell).variant }}
+          SERVER: ${{ fromJSON(matrix.cell).server }}
+          CLIENT: ${{ fromJSON(matrix.cell).client }}
+          SCALE: ${{ fromJSON(matrix.cell).scale }}
+        run: |
+          # auto is no pin: the variable stays unset, and the suite takes its automatic order
+          unset ROCKETNET_SERVER_TRANSPORT ROCKETNET_CLIENT_TRANSPORT
+          if [ "$SERVER" != auto ]; then export ROCKETNET_SERVER_TRANSPORT="$SERVER"; fi
+          if [ "$CLIENT" != auto ]; then export ROCKETNET_CLIENT_TRANSPORT="$CLIENT"; fi
+          if [ -n "$SCALE" ]; then export ROCKETNET_TEST_CASE_TIME_SCALE="$SCALE"; fi
+          echo "functional suite: server ${ROCKETNET_SERVER_TRANSPORT:-auto}, client ${ROCKETNET_CLIENT_TRANSPORT:-auto}, leg macos-$VARIANT"
+          # one literal run line per leg: tools/check_skips.py --lint reads the variant from it
+          case "$VARIANT" in
+            dev) bash tools/run_functional.sh dev --log functional.log ./bin/functional ;;
+            dev-portable) bash tools/run_functional.sh dev-portable --log functional.log ./bin/functional ;;
+            dev-loopback) bash tools/run_functional.sh dev-loopback --log functional.log ./bin/functional ;;
+            dev-msgx) bash tools/run_functional.sh dev-msgx --log functional.log ./bin/functional ;;
+            dev-msgx-portable) bash tools/run_functional.sh dev-msgx-portable --log functional.log ./bin/functional ;;
+            dev-portable-auto) bash tools/run_functional.sh dev-portable-auto --log functional.log ./bin/functional ;;
+            dev-portable-msgx) bash tools/run_functional.sh dev-portable-msgx --log functional.log ./bin/functional ;;
+            dev-sanitized) bash tools/run_functional.sh dev-sanitized --log functional.log ./bin/functional ;;
+            dev-sanitized-loopback) bash tools/run_functional.sh dev-sanitized-loopback --log functional.log ./bin/functional ;;
+            dev-sanitized-msgx-portable) bash tools/run_functional.sh dev-sanitized-msgx-portable --log functional.log ./bin/functional ;;
+            dev-sanitized-portable-auto) bash tools/run_functional.sh dev-sanitized-portable-auto --log functional.log ./bin/functional ;;
+            dev-sanitized-portable-msgx) bash tools/run_functional.sh dev-sanitized-portable-msgx --log functional.log ./bin/functional ;;
+            *) echo "FUNCTIONAL-VARIANT $VARIANT has no run line in this step"; exit 1 ;;
+          esac
+
+      - name: Production functional suite
+        if: ${{ !cancelled() && fromJSON(matrix.cell).prod != '' && steps.build_production.outcome == 'success' }}
+        env:
+          VARIANT: ${{ fromJSON(matrix.cell).prod }}
+          SERVER: ${{ fromJSON(matrix.cell).server }}
+          CLIENT: ${{ fromJSON(matrix.cell).client }}
+        run: |
+          unset ROCKETNET_SERVER_TRANSPORT ROCKETNET_CLIENT_TRANSPORT
+          if [ "$SERVER" != auto ]; then export ROCKETNET_SERVER_TRANSPORT="$SERVER"; fi
+          if [ "$CLIENT" != auto ]; then export ROCKETNET_CLIENT_TRANSPORT="$CLIENT"; fi
+          echo "production functional suite: server ${ROCKETNET_SERVER_TRANSPORT:-auto}, client ${ROCKETNET_CLIENT_TRANSPORT:-auto}, leg macos-$VARIANT"
+          case "$VARIANT" in
+            prod-loopback) bash tools/run_functional.sh prod-loopback --log functional-production.log ./build-production/bin/functional_production ;;
+            prod-msgx) bash tools/run_functional.sh prod-msgx --log functional-production.log ./build-production/bin/functional_production ;;
+            prod-msgx-portable) bash tools/run_functional.sh prod-msgx-portable --log functional-production.log ./build-production/bin/functional_production ;;
+            prod-portable-auto) bash tools/run_functional.sh prod-portable-auto --log functional-production.log ./build-production/bin/functional_production ;;
+            prod-portable-msgx) bash tools/run_functional.sh prod-portable-msgx --log functional-production.log ./build-production/bin/functional_production ;;
+            *) echo "FUNCTIONAL-VARIANT $VARIANT has no run line in this step"; exit 1 ;;
+          esac
+
+      # GitHub expressions have no replace(): the artifact name's slug is made here
+      - name: Artifact name for the ref and cell
+        id: slug
+        if: failure()
+        env:
+          REF: ${{ matrix.ref }}
+          CELL: ${{ fromJSON(matrix.cell).id }}-${{ fromJSON(matrix.cell).server }}-${{ fromJSON(matrix.cell).client }}
+        run: |
+          s="$REF-$CELL"; s=${s//\//-}; s=${s//+/-}; s=${s//=/-}
+          echo "slug=$s" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: nightly-matrix-macos-logs-${{ steps.slug.outputs.slug }}
+          path: |
+            unit.log
+            functional.log
+            functional-production.log
+          if-no-files-found: ignore
+
+  binaries-macos:
+    name: macOS Release binaries
+    runs-on: [self-hosted, macOS, ARM64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-matrix-macos-binaries-${{ github.event_name }}-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+      - uses: ./.github/actions/ccache
+
+      - name: Configure (Release)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      # test_wide is EXCLUDE_FROM_ALL: built by name
+      - name: Build the binaries
+        id: build
+        run: cmake --build build --target test_wide test_platform_primitives test_internal_c connect_token_vectors --parallel 8
+
+      - name: Wide-channel unit suite (ROCKETNET_MAX_CHANNELS=512)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./bin/test_wide
+
+      - name: Platform primitives
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./bin/test_platform_primitives
+
+      - name: Internal API called from C
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./bin/test_internal_c
+
+      # the one writer of the standard's token vectors mints them again; the
+      # committed file must be what it writes, byte for byte
+      - name: Connect token vectors match the standard
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          ./bin/connect_token_vectors "$RUNNER_TEMP/connect_token_v2.json"
+          cmp standard/vectors/connect_token_v2.json "$RUNNER_TEMP/connect_token_v2.json"
+
+  package-macos:
+    name: macOS package ${{ matrix.option }}
+    runs-on: [self-hosted, macOS, ARM64, fleet]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        option: [ROCKETNET_BUILD_SHARED=OFF, ROCKETNET_BUILD_DEV_LIBRARIES=OFF]
+    concurrency:
+      group: nightly-matrix-macos-package-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.option }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+      - uses: ./.github/actions/ccache
+
+      # tests, examples and tools need the shared and development libraries
+      # (CMakeLists.txt FATAL_ERROR), so the cell is the library build alone,
+      # then the install, the relocation and the consumers
+      - name: Build, install and relocate the SDK; run the C/C++ consumers
+        env:
+          OPTION: ${{ matrix.option }}
+        run: |
+          cmake -S . -B build-package -DCMAKE_BUILD_TYPE=Release -D"$OPTION" -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF
+          cmake --build build-package --parallel 8
+          python3 tools/check_package.py build-package --config Release --embedded

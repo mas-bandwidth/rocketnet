@@ -81,6 +81,7 @@ enum rocketnet_fuzz_type_t
     ROCKETNET_FUZZ_TYPE_PREFILTER_DISCONNECT,
     ROCKETNET_FUZZ_TYPE_PREFILTER_COOKIE,
     ROCKETNET_FUZZ_TYPE_PREFILTER_ACK,
+    ROCKETNET_FUZZ_TYPE_PREFILTER_PROBE,
     ROCKETNET_FUZZ_TYPE_PREFILTER_RESERVED,
     ROCKETNET_FUZZ_TYPE_PREFILTER_TOO_SHORT,
     ROCKETNET_FUZZ_TYPE_PREFILTER_TOO_LARGE,
@@ -116,6 +117,7 @@ static const struct rocketnet_fuzz_type_info_t rocketnet_fuzz_types[ROCKETNET_FU
     { "prefilter_disconnect", -1 },
     { "prefilter_cookie", -1 },
     { "prefilter_ack", -1 },
+    { "prefilter_probe", -1 },
     { "prefilter_reserved_type", -1 },
     { "prefilter_too_short", ROCKETNET_COUNTER_PREFILTER_TOO_SHORT },
     { "prefilter_too_large", ROCKETNET_COUNTER_PREFILTER_TOO_LARGE },
@@ -495,6 +497,7 @@ static int rocketnet_fuzz_seed_build( int type, uint8_t * out, int capacity )
         case ROCKETNET_FUZZ_TYPE_PREFILTER_DISCONNECT:
         case ROCKETNET_FUZZ_TYPE_PREFILTER_COOKIE:
         case ROCKETNET_FUZZ_TYPE_PREFILTER_ACK:
+        case ROCKETNET_FUZZ_TYPE_PREFILTER_PROBE:
             return rocketnet_fuzz_seed_prefilter( out, type - ROCKETNET_FUZZ_TYPE_PREFILTER_REQUEST,
                                                   ROCKETNET_FILTER_EPOCH_UNKEYED, 0, ROCKETNET_PREFILTER_BYTES );
         case ROCKETNET_FUZZ_TYPE_PREFILTER_RESERVED:

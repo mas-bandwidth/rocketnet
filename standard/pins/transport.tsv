@@ -3,9 +3,10 @@
 # standard/pins/<section id>.tsv, never to this file.
 #include "rocketnet_constants.h"
 #include "rocketnet_layers.h"
+#include "rocketnet_link_mtu.h"
 replay window depth minimum	ROCKETNET_HISTORY_PACKETS_MIN	4096
 replay window depth maximum	ROCKETNET_HISTORY_PACKETS_MAX	32768
-version	ROCKETNET_WIRE_VERSION	0x4E7C1A93
+version	ROCKETNET_WIRE_VERSION	0x065014D9
 connection request packet	ROCKETNET_CONNECTION_REQUEST_PACKET	0
 connection denied packet	ROCKETNET_CONNECTION_DENIED_PACKET	1
 connection challenge packet	ROCKETNET_CONNECTION_CHALLENGE_PACKET	2
@@ -15,7 +16,8 @@ connection payload packet	ROCKETNET_CONNECTION_PAYLOAD_PACKET	5
 connection disconnect packet	ROCKETNET_CONNECTION_DISCONNECT_PACKET	6
 connection cookie packet	ROCKETNET_CONNECTION_COOKIE_PACKET	7
 connection ack packet	ROCKETNET_CONNECTION_ACK_PACKET	8
-first reserved packet type	ROCKETNET_FIRST_RESERVED_PACKET_TYPE	9
+connection probe packet	ROCKETNET_CONNECTION_PROBE_PACKET	9
+first reserved packet type	ROCKETNET_FIRST_RESERVED_PACKET_TYPE	10
 unkeyed filter epoch	ROCKETNET_FILTER_EPOCH_UNKEYED	0
 handshake client to server label	ROCKETNET_KDF_CONTEXT_HANDSHAKE_C2S	"RKTNHNDC"
 handshake server to client label	ROCKETNET_KDF_CONTEXT_HANDSHAKE_S2C	"RKTNHNDS"
@@ -40,11 +42,11 @@ associated data	ROCKETNET_AD_BYTES	21
 associated data with ephemeral key	ROCKETNET_AD_WITH_EPHEMERAL_BYTES	53
 connection salt	ROCKETNET_CONNECTION_SALT_BYTES	8
 session nonce	ROCKETNET_SESSION_NONCE_BYTES	8
-connect token	ROCKETNET_CONNECT_TOKEN_BYTES	768
-signed connect data	ROCKETNET_SIGNED_CONNECT_DATA_BYTES	576
-sealed block	ROCKETNET_SEALED_BLOCK_BYTES	432
-private block	ROCKETNET_PRIVATE_BLOCK_BYTES	384
-user data	ROCKETNET_USER_DATA_BYTES	256
+connect token	ROCKETNET_CONNECT_TOKEN_BYTES	576
+signed connect data	ROCKETNET_SIGNED_CONNECT_DATA_BYTES	384
+sealed block	ROCKETNET_SEALED_BLOCK_BYTES	240
+private block	ROCKETNET_PRIVATE_BLOCK_BYTES	192
+user data	ROCKETNET_USER_DATA_BYTES	64
 token key	ROCKETNET_KEY_BYTES	32
 token identifier	ROCKETNET_TOKEN_IDENTIFIER_BYTES	16
 ack block minimum	ROCKETNET_ACK_BLOCK_MIN_BYTES	7
@@ -67,4 +69,6 @@ server max_clients limit	ROCKETNET_MAX_CLIENTS	1000
 server transport	rn_pin_server_default_transport	"auto"
 server max_timeout_seconds	rn_pin_server_default_max_timeout_seconds	60
 server handshake_deadline_seconds	rn_pin_server_default_handshake_deadline_seconds	5
+server link_mtus	ROCKETNET_LINK_MTU_MAX	1500
+client link_mtus	ROCKETNET_LINK_MTU_MAX	1500
 client transport	rn_pin_client_default_transport	"auto"

@@ -143,8 +143,8 @@ def self_test():
         cpp_tree = Path(directory) / "cpp_tree" / "harness"
         cpp_tree.mkdir(parents=True)
         harness = cpp_tree / "planted.cpp"
-        for text, want in (("/* exactly ROCKETNET_SIGNED_CONNECT_DATA_BYTES (576) signed bytes */\n", True),
-                           ("/* exactly ROCKETNET_SIGNED_CONNECT_DATA_BYTES (577) signed bytes */\n", False)):
+        for text, want in (("/* exactly ROCKETNET_SIGNED_CONNECT_DATA_BYTES (384) signed bytes */\n", True),
+                           ("/* exactly ROCKETNET_SIGNED_CONNECT_DATA_BYTES (385) signed bytes */\n", False)):
             harness.write_text(text, encoding="utf-8")
             files = collect(cpp_tree.parent)
             if harness not in files:

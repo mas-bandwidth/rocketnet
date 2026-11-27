@@ -19,6 +19,12 @@ target_link_libraries( example_soak PRIVATE Threads::Threads )
 # The server examples split off the second half of the network update onto a
 # platform thread (examples/thread.h) and join it at the start of the next frame.
 target_link_libraries( example_backend_server PRIVATE Threads::Threads )
+
+# The backend server fetches its whitelist from the backend over plain
+# sockets (examples/whitelist.h): Winsock on Windows.
+if( WIN32 )
+    target_link_libraries( example_backend_server PRIVATE ws2_32 )
+endif()
 target_link_libraries( example_client_server_server PRIVATE Threads::Threads )
 target_link_libraries( example_game_loop PRIVATE Threads::Threads )
 

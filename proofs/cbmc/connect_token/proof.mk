@@ -20,10 +20,10 @@ proofs-connect_token:
 	    harness_private_consistent \
 	    harness_connect_token_identifier; do \
 	    case "$$harness" in \
-	      harness_read_connect_token) unwind=577 ;; \
-	      harness_read_signed_connect_data) unwind=433 ;; \
-	      harness_read_connect_token_private) unwind=257 ;; \
-	      harness_open_connect_token_private) unwind=385 ;; \
+	      harness_read_connect_token) unwind=385 ;; \
+	      harness_read_signed_connect_data) unwind=241 ;; \
+	      harness_read_connect_token_private) unwind=65 ;; \
+	      harness_open_connect_token_private) unwind=193 ;; \
 	      harness_connect_token_identifier) unwind=17 ;; \
 	      *) unwind=1 ;; \
 	    esac; \
