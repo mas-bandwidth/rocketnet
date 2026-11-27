@@ -598,9 +598,12 @@ static uint64_t rocketnet_fuzz_session_run( const uint8_t * data, size_t size )
 
                 // the corrupted way counts as silent this step, but what it
                 // carries is still delivered client -> server when that is
-                // the corrupted way
+                // the corrupted way. Only an intact datagram can wind the
+                // server's receive clock: the corrupted one fails
+                // authentication, so a lone datagram under a nonzero mask
+                // delivers nothing the server accepts
                 rocketnet_fuzz_session_heard_from( pair, ( direction & 1 ) ? 0 : 1 );
-                if ( ( direction & 1 ) == 0 && pair->c2s.count > 0 )
+                if ( ( direction & 1 ) == 0 && ( pair->c2s.count > 1 || ( pair->c2s.count == 1 && mask == 0 ) ) )
                 {
                     rocketnet_fuzz_session_c2s_delivered( pair, ROCKETNET_FUZZ_SESSION_C2S_CORRUPTING );
                 }
