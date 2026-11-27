@@ -28,10 +28,11 @@
 #define ROCKETNET_CONNECTION_DISCONNECT_PACKET  6
 #define ROCKETNET_CONNECTION_COOKIE_PACKET      7
 #define ROCKETNET_CONNECTION_ACK_PACKET         8
+#define ROCKETNET_CONNECTION_PROBE_PACKET       9
 
-// types 9 through 255 are reserved and ignored by a conforming receiver
+// types 10 through 255 are reserved and ignored by a conforming receiver
 
-#define ROCKETNET_FIRST_RESERVED_PACKET_TYPE    9
+#define ROCKETNET_FIRST_RESERVED_PACKET_TYPE    10
 
 // the prefilter header: 6 bytes on the front of every packet -- the packet
 // type, the filter epoch, and a 4-byte filter value whose meaning the epoch
@@ -125,7 +126,7 @@ static inline int rocketnet_wire_header_bytes( int address_type )
 // block and the payload vary -- each keeps its own hard minimum here, and
 // they share the one receive ceiling.
 
-#define ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES         710
+#define ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES         518
 #define ROCKETNET_CONNECTION_DENIED_WIRE_BYTES          34
 #define ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES       66
 #define ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES        50
@@ -148,6 +149,13 @@ static inline int rocketnet_wire_header_bytes( int address_type )
 
 #define ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES              1452    // ( 1500 - 40 - 8 )
 
+// Every handshake packet also fits the smallest MTU IPv4 guarantees: 576
+// bytes less a 20-byte IPv4 header and an 8-byte UDP header is 548 bytes of
+// UDP payload, so a client behind any IPv4 path can connect. A token change
+// that would push the connection request past it fails to compile.
+
+#define ROCKETNET_HANDSHAKE_MIN_MTU_WIRE_BYTES          548     // ( 576 - 20 - 8 )
+
 #ifdef __cplusplus
 #define ROCKETNET_WIRE_STATIC_ASSERT( condition, message ) static_assert( condition, message )
 #elif defined( __STDC_VERSION__ ) && __STDC_VERSION__ >= 201112L
@@ -163,12 +171,28 @@ ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_DENIED_WIRE_BYTES <= ROCKETNE
 ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES, "the connection challenge fits one IPv6 datagram" );
 ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES, "the connection response fits one IPv6 datagram" );
 #define ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES          38
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MIN_MTU_WIRE_BYTES, "the connection request fits 548 bytes, the UDP payload of a 576-byte IPv4 MTU (576 - 20 - 8)" );
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_DENIED_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MIN_MTU_WIRE_BYTES, "the connection denied fits 548 bytes, the UDP payload of a 576-byte IPv4 MTU (576 - 20 - 8)" );
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MIN_MTU_WIRE_BYTES, "the connection challenge fits 548 bytes, the UDP payload of a 576-byte IPv4 MTU (576 - 20 - 8)" );
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MIN_MTU_WIRE_BYTES, "the connection response fits 548 bytes, the UDP payload of a 576-byte IPv4 MTU (576 - 20 - 8)" );
+ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MIN_MTU_WIRE_BYTES, "the connection cookie fits 548 bytes, the UDP payload of a 576-byte IPv4 MTU (576 - 20 - 8)" );
 #define ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES         33  // 6 + 4 + 7 + 0 + 16
 
+// The connection probe (standard/TRANSPORT.md t8.13): sent by a connected
+// client whose link MTU list gives more than one packet size, sealed under
+// the session keys; the server echoes each at its own size. A probe is the
+// small one, its 8-byte header and nothing else (the smallest probe, and the
+// size of every confirm), or a large one at a packet size of a link MTU list,
+// up to the ceiling.
+
+#define ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES     ( 6 + 4 + 8 + 16 )      // prefilter, sequence, the probe header, tag
+#define ROCKETNET_CONNECTION_PROBE_MIN_WIRE_BYTES       ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES
+#define ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES       ROCKETNET_RECEIVE_CEILING
+
 // The server-inbound rule, usable from BPF and from tests alike: the types
-// a server ever receives, each at its exact wire size (the session types at
-// their ranges). DENIED, CHALLENGE and COOKIE travel server to client only,
-// and everything from 9 up is reserved -- a conforming server refuses them
+// a server ever receives, each at its exact wire size (the session types and
+// the probe at their ranges). DENIED, CHALLENGE and COOKIE travel server to client only,
+// and everything from 10 up is reserved -- a conforming server refuses them
 // all, so the kernel filter drops them before they cost a ring slot. This
 // mirrors the refusal check sequence in rocketnet_server_protocol.cpp; the
 // equivalence test in rocketnet_tests.cpp holds the two together.
@@ -183,7 +207,9 @@ ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES <= ROCKET
       ( (packet_type) == ROCKETNET_CONNECTION_DISCONNECT_PACKET  && (packet_bytes) >= ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES \
                                                                  && (packet_bytes) <= ROCKETNET_RECEIVE_CEILING                   ) || \
       ( (packet_type) == ROCKETNET_CONNECTION_ACK_PACKET         && (packet_bytes) >= ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES        \
-                                                                 && (packet_bytes) <= ROCKETNET_RECEIVE_CEILING                   ) )
+                                                                 && (packet_bytes) <= ROCKETNET_RECEIVE_CEILING                   ) || \
+      ( (packet_type) == ROCKETNET_CONNECTION_PROBE_PACKET       && (packet_bytes) >= ROCKETNET_CONNECTION_PROBE_MIN_WIRE_BYTES      \
+                                                                 && (packet_bytes) <= ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES   ) )
 
 // the smallest packet a server can ever accept, for the cheap early bound
 

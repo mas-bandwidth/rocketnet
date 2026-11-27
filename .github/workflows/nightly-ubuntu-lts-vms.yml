@@ -13,11 +13,16 @@
 # Release builds with zero warnings, the legacy-libbpf provider on 22.04 and
 # not elsewhere, ./bin/test, ./bin/test_xdp_compat on 22.04, ./bin/functional
 # (real sockets on the guest kernel: portable, gso, io_uring as the kernel
-# grants them) and tools/check_package.py. The script prints one
-# LTS-VM-PASS or LTS-VM-FAIL line; the step's exit is the script's.
+# grants them), tools/check_package.py, the functional suite again with
+# gso/portable pinned (and io_uring/portable where the build has io_uring:
+# not 22.04), and the xdp/portable cell's cases as root on a veth pair
+# against the release's own AF_XDP provider (legacy libbpf 0.5, libxdp 1.4,
+# libxdp 1.6). The script prints one LTS-VM-PASS or LTS-VM-FAIL line; the
+# step's exit is the script's.
 #
-# What it does not cover: an attached XDP data plane (the guest's virtio NIC
-# is not the deployment NIC), and performance. A red night is a finding.
+# What it does not cover: XDP on the deployment NIC (the xdp cases attach to
+# a veth pair, not the guest's virtio NIC), and performance. A red night is
+# a finding.
 #
 # Images: each release's cloud image is cached on the runner host under
 # ~/.cache/rocketnet-nightly/cloud-images, keyed by its SHA256. Every run
@@ -122,8 +127,15 @@ jobs:
 
           curl -fsSL --retry 3 -o SHA256SUMS "$BASE/SHA256SUMS"
           curl -fsSL --retry 3 -o SHA256SUMS.gpg "$BASE/SHA256SUMS.gpg"
-          export GNUPGHOME="$WORK/gnupg"
-          mkdir -m 700 "$GNUPGHOME"
+          # gpg puts its agent's sockets in GNUPGHOME when the login has no
+          # /run/user directory (the runner login, ghrunner, has none), and a
+          # socket path is at most 107 bytes. Under the runner login's work
+          # directory the agent's socket path is 110 to 118 bytes, so the agent
+          # cannot start ("failed to start gpg-agent", run 44866622279); a
+          # 0700 directory under /tmp keeps it short.
+          GNUPGHOME=$(mktemp -d /tmp/rn-gnupg.XXXXXX)
+          export GNUPGHOME
+          trap 'gpgconf --kill all >/dev/null 2>&1; rm -rf "$GNUPGHOME"' EXIT
           gpg --batch --keyid-format long --keyserver hkps://keyserver.ubuntu.com --recv-keys "$PIN"
           FP=$(gpg --batch --with-colons --fingerprint "$PIN" | awk -F: '/^fpr:/ {print $10; exit}')
           echo "signing-key fingerprint ${FP}"
@@ -268,6 +280,44 @@ jobs:
           "$WORK/g" "sudo DEBIAN_FRONTEND=noninteractive apt-get update -y && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${PACKAGES}"
           "$WORK/g" 'gcc --version | head -1; clang --version | head -1; cmake --version | head -1; dpkg-query -W libbpf-dev liburing-dev'
           # The guest gets the socket buffer ceiling the fleet hosts grant.
+          "$WORK/g" 'sudo sysctl -w net.core.rmem_max=4194304 net.core.wmem_max=4194304'
+
+      # The xdp server's pre-flight refuses a kernel booted without
+      # irqaffinity=, isolcpus= and nohz_full= (B1, scripts/rocketnet-provision),
+      # so the guest script's xdp cases need them: the guest boots once more
+      # with the line ci.yml's xdp guests use, and its /proc/cmdline is read
+      # back. The reboot is bounded as the first boot is.
+      - name: The guest kernel command line the XDP cases need (grub, one reboot)
+        run: |
+          set -euo pipefail
+          "$WORK/g" 'printf "GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT irqaffinity=0 isolcpus=1 nohz_full=1\"\n" | sudo tee /etc/default/grub.d/99-rocketnet-xdp.cfg && sudo update-grub'
+          before=$("$WORK/g" 'cat /proc/sys/kernel/random/boot_id')
+          "$WORK/g" 'sudo systemd-run --on-active=2 systemctl reboot'
+          boot_deadline=300
+          boot_start=$SECONDS
+          ok=0
+          while [ $((SECONDS - boot_start)) -lt "$boot_deadline" ]; do
+            sleep 5
+            if now=$("$WORK/g" 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null) && [ "$now" != "$before" ]; then
+              ok=1
+              echo "ssh up after the reboot, $((SECONDS - boot_start)) s"
+              break
+            fi
+          done
+          if [ "$ok" != 1 ]; then
+            echo "GUEST-DID-NOT-REBOOT no ssh on a new boot after ${boot_deadline} s"
+            tail -n 60 "$WORK/serial.log"
+            exit 1
+          fi
+          cmdline=$("$WORK/g" 'cat /proc/cmdline')
+          echo "guest kernel command line: $cmdline"
+          for want in irqaffinity=0 isolcpus=1 nohz_full=1; do
+            case " $cmdline " in
+              *" $want "*) ;;
+              *) echo "GUEST-CMDLINE the reboot did not take the XDP line ($want missing)"; exit 1 ;;
+            esac
+          done
+          # the sysctl the install step set does not survive the reboot
           "$WORK/g" 'sudo sysctl -w net.core.rmem_max=4194304 net.core.wmem_max=4194304'
 
       - name: Builds, suites and package check on the guest kernel

@@ -38,11 +38,26 @@
 # and building build-msan/bin/test, and RUN_MSAN_KNOWN_FILE a known list to
 # judge it by instead of tools/msan_known.txt; both exist for the gate's own
 # tests.
+#
+# RUN_MSAN_SUITE=functional builds and runs the functional suite instead
+# (build-msan-functional/bin/functional, beside the test binary its unit-suite
+# row runs), with the transports the caller pins in ROCKETNET_SERVER_TRANSPORT
+# and ROCKETNET_CLIENT_TRANSPORT. Real sockets, so real kernel writes: libbpf,
+# libxdp and liburing are not instrumented and their probes would report
+# every byte the kernel fills, so that build has ROCKETNET_XDP=OFF and
+# ROCKETNET_IO_URING=OFF, and the suite runs the portable transports.
+# nightly-matrix-linux.yml runs it with portable/portable pinned. The
+# verdict is the same as the unit suite's.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-build_dir=build-msan
+suite=${RUN_MSAN_SUITE:-test}
+case "$suite" in
+    test) build_dir=build-msan; targets=(test); suite_options=() ;;
+    functional) build_dir=build-msan-functional; targets=(test functional); suite_options=(-DROCKETNET_XDP=OFF -DROCKETNET_IO_URING=OFF) ;;
+    *) echo "MSan: RUN_MSAN_SUITE is test or functional, not $suite"; exit 1 ;;
+esac
 # -O1, as MemorySanitizer's own documentation configures it: at -O0 every
 # libc++ element operation is an out-of-line call that pays for its origin
 # bookkeeping, and the suite's byte vectors made one case run 534 s on a Linux x64 bench
@@ -102,11 +117,12 @@ else
         -DCMAKE_SHARED_LINKER_FLAGS="$flags $libcxx_link" \
         -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$abs_build/bin" \
         -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$abs_build/lib" \
-        -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="$abs_build/lib"
+        -DCMAKE_ARCHIVE_OUTPUT_DIRECTORY="$abs_build/lib" \
+        ${suite_options[@]+"${suite_options[@]}"}
 
-    cmake --build "$build_dir" --target test --parallel 8
+    cmake --build "$build_dir" --target "${targets[@]}" --parallel 8
 
-    test_bin="$abs_build/bin/test"
+    test_bin="$abs_build/bin/$suite"
 fi
 msan_tmp=$(mktemp -d "${TMPDIR:-${RUNNER_TEMP:-/tmp}}/rocketnet-msan.XXXXXX")
 trap 'rm -rf "$msan_tmp"' EXIT

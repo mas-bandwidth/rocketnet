@@ -347,6 +347,10 @@ static std::vector<std::string> env_names_set_candidates()
     set.push_back( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS" );
     env_names_setenv( "ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS", "1000" );
     set.push_back( "ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS" );
+    env_names_setenv( "ROCKETNET_CLIENT_LINK_MTUS", "1492,1400,1200" );
+    set.push_back( "ROCKETNET_CLIENT_LINK_MTUS" );
+    env_names_setenv( "ROCKETNET_SERVER_LINK_MTUS", "1492,1400,1200" );
+    set.push_back( "ROCKETNET_SERVER_LINK_MTUS" );
     env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH", "0" );
     set.push_back( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" );
     env_names_setenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH", "0" );
@@ -606,9 +610,11 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
+    check( env_names_contains( overrides, "ROCKETNET_CLIENT_LINK_MTUS" ) );
+    check( env_names_contains( overrides, "ROCKETNET_SERVER_LINK_MTUS" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_BIND_IPV4_ADDRESS" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_BIND_IPV6_ADDRESS" ) );
-    check( documented.size() == ( ROCKETNET_DEV ? 79u : 77u ) );
+    check( documented.size() == ( ROCKETNET_DEV ? 81u : 79u ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_NUM_XDP_QUEUES" ) );          // retired: read only to warn (rocketnet_config_warn_retired_server_env)
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );

@@ -3,7 +3,7 @@
    Licensed under the GNU Affero General Public License v3.0
 
    Unit tests: no sockets, no real time. The known answers are the C
-   library's own, standard/vectors/connect_token_v1.json, minted by
+   library's own, standard/vectors/connect_token_v2.json, minted by
    rocketnet_write_connect_token_deterministic; this backend must write
    every one of them byte for byte.
 */
@@ -18,8 +18,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
-	"strconv"
 	"testing"
 
 	"golang.org/x/crypto/blake2b"
@@ -47,7 +47,7 @@ type vector struct {
 }
 
 func loadVectors(t *testing.T) []vector {
-	data, err := os.ReadFile("../../../standard/vectors/connect_token_v1.json")
+	data, err := os.ReadFile("../../../standard/vectors/connect_token_v2.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func loadVectors(t *testing.T) []vector {
 	if err := json.Unmarshal(data, &file); err != nil {
 		t.Fatal(err)
 	}
-	if file.Version != strconv.FormatUint(wireVersion, 16) || len(file.Vectors) < 4 {
+	if file.Version != fmt.Sprintf("%08x", wireVersion) || len(file.Vectors) < 4 {
 		t.Fatalf("vectors file version %s with %d vectors", file.Version, len(file.Vectors))
 	}
 	return file.Vectors
@@ -213,7 +213,7 @@ func TestGeneratedTokenOpens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(token) != connectTokenBytes || len(base64.StdEncoding.EncodeToString(token)) != 1024 {
+	if len(token) != connectTokenBytes || len(base64.StdEncoding.EncodeToString(token)) != 768 {
 		t.Fatalf("token is %d bytes", len(token))
 	}
 
@@ -240,7 +240,7 @@ func TestGeneratedTokenOpens(t *testing.T) {
 		!bytes.Equal(token[signedConnectDataBytes+signatureBytes:signedConnectDataBytes+signatureBytes+keyBytes*2], keys) {
 		t.Fatalf("private block %x", block[:88])
 	}
-	if !bytes.Equal(block[88:], make([]byte, privateBlockBytes-88)) || !bytes.Equal(token[704:], make([]byte, connectTokenBytes-704)) {
+	if !bytes.Equal(block[88:], make([]byte, privateBlockBytes-88)) || !bytes.Equal(token[512:], make([]byte, connectTokenBytes-512)) {
 		t.Fatal("padding is not zero")
 	}
 }

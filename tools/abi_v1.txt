@@ -14,6 +14,9 @@ export rocketnet_client_disconnect
 export rocketnet_client_disconnected
 export rocketnet_client_finish_message
 export rocketnet_client_index
+export rocketnet_client_max_packet_bytes
+export rocketnet_client_max_unreliable_message_bytes
+export rocketnet_client_link_mtu
 export rocketnet_client_light_config_internal
 export rocketnet_client_receipts
 export rocketnet_client_receive_messages
@@ -42,8 +45,12 @@ export rocketnet_quiet
 export rocketnet_server_abort_client_message
 export rocketnet_server_abort_message
 export rocketnet_server_can_send_message
+export rocketnet_server_client_address
 export rocketnet_server_client_conditions
 export rocketnet_server_client_connected
+export rocketnet_server_client_max_packet_bytes
+export rocketnet_server_client_max_unreliable_message_bytes
+export rocketnet_server_client_link_mtu
 export rocketnet_server_client_connection_id
 export rocketnet_server_client_id
 export rocketnet_server_client_stats
@@ -98,6 +105,9 @@ prototype rocketnet_client_disconnect void rocketnet_client_disconnect(struct ro
 prototype rocketnet_client_disconnected bool rocketnet_client_disconnected(const struct rocketnet_client_t*)
 prototype rocketnet_client_finish_message uint32_t rocketnet_client_finish_message(struct rocketnet_client_t*, int)
 prototype rocketnet_client_index int rocketnet_client_index(const struct rocketnet_client_t*)
+prototype rocketnet_client_max_packet_bytes int rocketnet_client_max_packet_bytes(struct rocketnet_client_t*)
+prototype rocketnet_client_max_unreliable_message_bytes int rocketnet_client_max_unreliable_message_bytes(struct rocketnet_client_t*)
+prototype rocketnet_client_link_mtu int rocketnet_client_link_mtu(struct rocketnet_client_t*)
 prototype rocketnet_client_light_config static inline enum rocketnet_status_t rocketnet_client_light_config(struct rocketnet_client_config_t*)
 prototype rocketnet_client_light_config_internal enum rocketnet_status_t rocketnet_client_light_config_internal(struct rocketnet_client_config_t*)
 prototype rocketnet_client_network_simulator void rocketnet_client_network_simulator(struct rocketnet_client_t*, int, int, int, int)
@@ -130,8 +140,12 @@ prototype rocketnet_quiet void rocketnet_quiet(bool)
 prototype rocketnet_server_abort_client_message void rocketnet_server_abort_client_message(struct rocketnet_server_t*, int)
 prototype rocketnet_server_abort_message void rocketnet_server_abort_message(struct rocketnet_server_t*)
 prototype rocketnet_server_can_send_message bool rocketnet_server_can_send_message(const struct rocketnet_server_t*, int, int, enum rocketnet_reliability_t, int)
+prototype rocketnet_server_client_address bool rocketnet_server_client_address(const struct rocketnet_server_t*, int, char*, size_t)
 prototype rocketnet_server_client_conditions bool rocketnet_server_client_conditions(const struct rocketnet_server_t*, int, struct rocketnet_conditions_t*, int)
 prototype rocketnet_server_client_connected bool rocketnet_server_client_connected(const struct rocketnet_server_t*, int)
+prototype rocketnet_server_client_max_packet_bytes int rocketnet_server_client_max_packet_bytes(struct rocketnet_server_t*, int)
+prototype rocketnet_server_client_max_unreliable_message_bytes int rocketnet_server_client_max_unreliable_message_bytes(struct rocketnet_server_t*, int)
+prototype rocketnet_server_client_link_mtu int rocketnet_server_client_link_mtu(struct rocketnet_server_t*, int)
 prototype rocketnet_server_client_connection_id uint64_t rocketnet_server_client_connection_id(const struct rocketnet_server_t*, int)
 prototype rocketnet_server_client_id uint64_t rocketnet_server_client_id(const struct rocketnet_server_t*, int)
 prototype rocketnet_server_client_stats void rocketnet_server_client_stats(const struct rocketnet_server_t*, int, struct rocketnet_server_client_stats_t*)
@@ -258,6 +272,8 @@ fieldtype rocketnet_client_config_t loopback_hub struct rocketnet_loopback_hub_t
 fieldtype rocketnet_client_config_t time_callback double(*)(void*context)
 fieldtype rocketnet_client_config_t step_driven bool
 fieldtype rocketnet_client_config_t token_epoch_unix_seconds uint64_t
+fieldtype rocketnet_client_config_t link_mtus int[ROCKETNET_MAX_LINK_MTUS]
+fieldtype rocketnet_client_config_t num_link_mtus int
 fieldtype rocketnet_server_config_t config_bytes size_t
 fieldtype rocketnet_server_config_t protocol_id uint64_t
 fieldtype rocketnet_server_config_t max_clients int
@@ -300,6 +316,8 @@ fieldtype rocketnet_server_config_t num_msgx_transmit_workers int
 fieldtype rocketnet_server_config_t gso_reserve_cpu_0 int
 fieldtype rocketnet_server_config_t io_uring_reserve_cpu_0 int
 fieldtype rocketnet_server_config_t portable_reserve_cpu_0 int
+fieldtype rocketnet_server_config_t link_mtus int[ROCKETNET_MAX_LINK_MTUS]
+fieldtype rocketnet_server_config_t num_link_mtus int
 fieldtype rocketnet_receipt_t serial uint32_t
 fieldtype rocketnet_receipt_t status enum rocketnet_receipt_status_t
 fieldtype rocketnet_connect_token_config_t config_bytes size_t
@@ -384,7 +402,7 @@ field rocketnet_conditions_t seconds_since_heard 0 8
 field rocketnet_conditions_t seconds_since_progress 8 8
 field rocketnet_conditions_t reliable_in_flight 16 8
 field rocketnet_conditions_t send_refused 24 8
-struct rocketnet_client_config_t 128
+struct rocketnet_client_config_t 168
 field rocketnet_client_config_t config_bytes 0 8
 field rocketnet_client_config_t transport 8 8
 field rocketnet_client_config_t state_change_callback 16 8
@@ -409,7 +427,9 @@ field rocketnet_client_config_t loopback_hub 96 8
 field rocketnet_client_config_t time_callback 104 8
 field rocketnet_client_config_t step_driven 112 1
 field rocketnet_client_config_t token_epoch_unix_seconds 120 8
-struct rocketnet_server_config_t 256
+field rocketnet_client_config_t link_mtus 128 32
+field rocketnet_client_config_t num_link_mtus 160 4
+struct rocketnet_server_config_t 288
 field rocketnet_server_config_t config_bytes 0 8
 field rocketnet_server_config_t protocol_id 8 8
 field rocketnet_server_config_t max_clients 16 4
@@ -452,10 +472,12 @@ field rocketnet_server_config_t num_msgx_transmit_workers 236 4
 field rocketnet_server_config_t gso_reserve_cpu_0 240 4
 field rocketnet_server_config_t io_uring_reserve_cpu_0 244 4
 field rocketnet_server_config_t portable_reserve_cpu_0 248 4
+field rocketnet_server_config_t link_mtus 252 32
+field rocketnet_server_config_t num_link_mtus 284 4
 struct rocketnet_receipt_t 8
 field rocketnet_receipt_t serial 0 4
 field rocketnet_receipt_t status 4 4
-struct rocketnet_connect_token_config_t 408
+struct rocketnet_connect_token_config_t 216
 field rocketnet_connect_token_config_t config_bytes 0 8
 field rocketnet_connect_token_config_t backend_secret_key 8 64
 field rocketnet_connect_token_config_t server_address_ipv4 72 8
@@ -463,10 +485,10 @@ field rocketnet_connect_token_config_t server_address_ipv6 80 8
 field rocketnet_connect_token_config_t server_public_key 88 32
 field rocketnet_connect_token_config_t client_id 120 8
 field rocketnet_connect_token_config_t protocol_id 128 8
-field rocketnet_connect_token_config_t user_data 136 256
-field rocketnet_connect_token_config_t expire_seconds 392 4
-field rocketnet_connect_token_config_t timeout_seconds 396 4
-field rocketnet_connect_token_config_t unix_timestamp 400 8
+field rocketnet_connect_token_config_t user_data 136 64
+field rocketnet_connect_token_config_t expire_seconds 200 4
+field rocketnet_connect_token_config_t timeout_seconds 204 4
+field rocketnet_connect_token_config_t unix_timestamp 208 8
 struct rocketnet_message_batch_t 1572872
 field rocketnet_message_batch_t num_messages 0 4
 field rocketnet_message_batch_t client_index 4 262144
@@ -477,6 +499,7 @@ field rocketnet_message_batch_t data 1048584 524288
 enum rocketnet_address_type_t ROCKETNET_ADDRESS_NONE 0
 enum rocketnet_address_type_t ROCKETNET_ADDRESS_IPV4 1
 enum rocketnet_address_type_t ROCKETNET_ADDRESS_IPV6 2
+enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED -14
 enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED -13
 enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED -12
 enum rocketnet_client_state_t ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH -11
@@ -555,10 +578,15 @@ enum rocketnet_status_t ROCKETNET_STATUS_LOOPBACK_HUB_MISSING -32
 enum rocketnet_status_t ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH -33
 enum rocketnet_status_t ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE -34
 enum rocketnet_status_t ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED -35
+enum rocketnet_status_t ROCKETNET_STATUS_LINK_MTUS_EMPTY -36
+enum rocketnet_status_t ROCKETNET_STATUS_LINK_MTUS_NOT_DESCENDING -37
+enum rocketnet_status_t ROCKETNET_STATUS_LINK_MTUS_TOO_LARGE -38
+enum rocketnet_status_t ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL -39
+enum rocketnet_status_t ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES -40
 macro ROCKETNET_ALLOCATION_ALIGNMENT 64
 macro ROCKETNET_BACKEND_PUBLIC_KEY_BYTES 32
 macro ROCKETNET_BACKEND_SECRET_KEY_BYTES 64
-macro ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES 256
+macro ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES 64
 macro ROCKETNET_CPU_0_NOT_RESERVED 2
 macro ROCKETNET_CPU_0_RESERVED 1
 macro ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS 1000
@@ -567,7 +595,8 @@ macro ROCKETNET_FLOW_ID_BIT 9223372036854775808
 macro ROCKETNET_MAX_ADDRESS_STRING_BYTES 256
 macro ROCKETNET_MAX_CHANNELS 32
 macro ROCKETNET_MAX_CLIENTS 1000
-macro ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES 1025
+macro ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES 769
+macro ROCKETNET_MAX_LINK_MTUS 8
 macro ROCKETNET_MAX_MESSAGE_BYTES 1048576
 macro ROCKETNET_MAX_PACKET_BYTES 1452
 macro ROCKETNET_MAX_PACKET_PAYLOAD_BYTES 1416

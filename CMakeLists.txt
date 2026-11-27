@@ -5,10 +5,10 @@ cmake_minimum_required(VERSION 3.20)
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum supported macOS version" FORCE)
 endif()
-# CMake's VERSION holds numbers only, so it is the 1.2.2 of v1.2.2;
+# CMake's VERSION holds numbers only, so it is the 1.3.0 of v1.3.0;
 # the release label, prerelease included, is ROCKETNET_VERSION_STRING below,
 # read from sdk/rocketnet.h, and the installed package carries both.
-project(rocketnet VERSION 1.2.2 LANGUAGES C CXX)
+project(rocketnet VERSION 1.3.0 LANGUAGES C CXX)
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/sdk/rocketnet.h" ROCKETNET_VERSION_FULL_LINE
     REGEX "^ *#define ROCKETNET_VERSION_FULL +\"v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?\"$")
 list(LENGTH ROCKETNET_VERSION_FULL_LINE ROCKETNET_VERSION_FULL_COUNT)
@@ -970,7 +970,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # (cmake/EmbedTestFixtures.cmake), so no unit case reads a file at run time.
     # A change to a fixture or to the script regenerates the source.
     set(ROCKETNET_TEST_FIXTURES
-        standard/vectors/connect_token_v1.json
+        standard/vectors/connect_token_v2.json
         tests/wycheproof/chacha20_poly1305_test.json
         tests/wycheproof/ed25519_test.json
         tests/wycheproof/x25519_test.json)
@@ -985,7 +985,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         COMMENT "Embedding the unit test fixtures"
         VERBATIM)
     target_sources(test PRIVATE "${ROCKETNET_TEST_FIXTURES_SOURCE}")
-    # The one writer of standard/vectors/connect_token_v1.json: ./bin/connect_token_vectors
+    # The one writer of standard/vectors/connect_token_v2.json: ./bin/connect_token_vectors
     # <path> mints the vectors from the generator the unit case checks
     # (tools/connect_token_vectors/main.cpp) and writes only the path given.
     add_executable(connect_token_vectors tools/connect_token_vectors/main.cpp)
@@ -1605,8 +1605,8 @@ endif()
 configure_package_config_file(cmake/RocketNetConfig.cmake.in
     "${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfig.cmake"
     INSTALL_DESTINATION ${ROCKETNET_PACKAGE_DIR})
-# find_package compares numbers, so the package version is 1.2.2; the label
-# v1.2.2 rides beside it as RocketNet_VERSION_STRING; the prerelease string
+# find_package compares numbers, so the package version is 1.3.0; the label
+# v1.3.0 rides beside it as RocketNet_VERSION_STRING; the prerelease string
 # is empty for this release (cmake/RocketNetConfig.cmake.in).
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/RocketNetConfigVersion.cmake"
     VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
