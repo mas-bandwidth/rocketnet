@@ -42,7 +42,7 @@ static inline uint64_t rn_round16( uint64_t bytes )
 bool rn_block_shape_valid( const rn_channels_t * channels, const struct rocketnet_message_record_t * record, int64_t * out_base_units )
 {
     const rn_region_t * region = channels->region;
-    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t F = rn_region_fragment_bytes( region );
     const uint32_t count = record->fragments + 1;
     const uint32_t index = record->fragment;
     const uint32_t max_count = ( region->max_message_bytes + F - 1 ) / F;
@@ -399,10 +399,16 @@ bool rn_channels_init( struct rn_channels_t * channels, struct rn_region_t * reg
 
 bool rn_channels_set_payload_capacity( struct rn_channels_t * channels, uint32_t payload_capacity )
 {
-    // a chunk's record (the longest header, then F bytes) and the form byte must fit (8)
+    // a chunk's record (the longest header, then F bytes of the connection's
+    // block stride) and the form byte must fit (8)
 
-    const uint32_t least = ROCKETNET_MESSAGE_FRAGMENT_BYTES + ROCKETNET_MESSAGE_RECORD_MAX_HEADER_BYTES + 1;
-    if ( !channels || payload_capacity < least || payload_capacity > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+    if ( !channels || !channels->region )
+    {
+        return false;
+    }
+
+    const uint32_t least = rn_region_fragment_bytes( channels->region ) + ROCKETNET_MESSAGE_RECORD_MAX_HEADER_BYTES + 1;
+    if ( payload_capacity < least || payload_capacity > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
     {
         return false;
     }
@@ -916,7 +922,7 @@ rn_receive_descriptor_t * rn_channels_block_collect( rn_channels_t * channels, c
                                                      uint32_t first_number, int64_t base_units, uint32_t * out_held )
 {
     rn_region_t * region = channels->region;
-    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t F = rn_region_fragment_bytes( region );
     const uint32_t count = record->fragments + 1;
     const uint64_t key = rn_held_key( key_channel, key_index );
     rn_receive_descriptor_t * descriptor = &region->receive_descriptors[slot];
@@ -1008,7 +1014,7 @@ void rn_channels_block_settle( rn_channels_t * channels, uint32_t held, rn_recei
 static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct rocketnet_message_record_t * record, rn_delivery_t * out, uint32_t delta )
 {
     rn_region_t * region = channels->region;
-    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t F = rn_region_fragment_bytes( region );
     const uint32_t window = region->window;
     const uint32_t count = record->fragments + 1;
     const uint32_t index = record->fragment;
@@ -1462,7 +1468,7 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
     // takes one number; a larger block takes one number per chunk
     // (RNBlocks!NumberMessage, Count: k = ceil(bytes / F)).
 
-    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t F = rn_region_fragment_bytes( region );
 
     descriptor->bytes = bytes;
 
@@ -1566,7 +1572,7 @@ bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct roc
     body->reliable_messages_in_flight = (uint32_t) config->reliable_messages_in_flight;
     body->receive_message_buffer_bytes = (uint32_t) config->receive_message_buffer_bytes;
     body->max_message_bytes = (uint32_t) config->max_message_bytes;
-    body->fragment_bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    body->fragment_bytes = rn_region_fragment_bytes( region );      // F(P): both ends know P, so a matching pair sends the same stride
 
     if ( rn_region_exhausted( region ) )
     {
@@ -2182,7 +2188,7 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
     }
 
     struct rocketnet_message_reader_t reader;
-    const int violation = rocketnet_message_reader_begin( &reader, payload, bytes, &ordered->limits );
+    const int violation = rocketnet_message_reader_begin_stride( &reader, payload, bytes, &ordered->limits, (int) rn_region_fragment_bytes( ordered->channels.region ) );
     if ( violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
     {
         rn_channels_count_violation( channels, rn_violation_counter( violation ) );

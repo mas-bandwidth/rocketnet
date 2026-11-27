@@ -36,6 +36,9 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
     const rocketnet_client_publish_keys_t publish_keys = client->publish_keys;
     const rocketnet_client_retire_keys_t retire_keys = client->retire_keys;
     void * keys_context = client->keys_context;
+    int link_mtus[ROCKETNET_LINK_MTU_MAX_ENTRIES];
+    memcpy( link_mtus, client->link_mtus, sizeof( link_mtus ) );
+    const int num_link_mtus = client->num_link_mtus;
 
     if ( retire_keys )
     {
@@ -58,6 +61,8 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
     client->publish_keys = publish_keys;
     client->retire_keys = retire_keys;
     client->keys_context = keys_context;
+    memcpy( client->link_mtus, link_mtus, sizeof( link_mtus ) );
+    client->num_link_mtus = num_link_mtus;
 
     rocketnet_ack_endpoint_reset( &client->ack );
 }

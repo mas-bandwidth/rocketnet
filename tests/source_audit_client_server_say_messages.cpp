@@ -131,6 +131,36 @@ static const allowlist_row_t allowlist[] = {
     { F_S, "the start at a size one packet carries never takes the channel", "TRANSPORT SIZE" },
     { F_H, "PACKETS_PER_UPDATE", "TRANSPORT SIZE" },
 
+    // TRANSPORT SIZE, per connection: the packet size the transport decides
+    // for each connection from the link MTU list (sdk/rocketnet_link_mtu.h,
+    // standard/TRANSPORT.md t8), the most wire bytes one datagram of that
+    // connection carries. It is the transport's bound, not a message: the
+    // message layer only reads it (rn_endpoint_packet_bytes) to size what one
+    // packet carries, as ROCKETNET_MAX_PACKET_BYTES was before it.
+    { F_H, "packet size", "TRANSPORT SIZE" },
+    { F_H, "max_packet_bytes", "TRANSPORT SIZE" },
+    { F_H, "carries less per packet", "TRANSPORT SIZE" },
+    { F_H, "sends in one packet,", "TRANSPORT SIZE" },
+    { F_H, "packet, without promoting it to RELIABLE", "TRANSPORT SIZE" },
+    { F_API, "packet size", "TRANSPORT SIZE" },
+    { F_API, "max_packet_bytes", "TRANSPORT SIZE" },
+    { F_C, "max_packet_bytes", "TRANSPORT SIZE" },
+    { F_C, "rn_message_object_packet_bytes", "TRANSPORT SIZE" },
+    { F_S, "packet size", "TRANSPORT SIZE" },
+    { F_S, "ROCKETNET_MAX_PACKET_BYTES", "TRANSPORT SIZE" },
+    { F_S, "max_packet_bytes", "TRANSPORT SIZE" },
+    { F_S, "rn_message_object_packet_bytes", "TRANSPORT SIZE" },
+    { F_S, "rn_message_link_packet_bytes", "TRANSPORT SIZE" },
+    { F_S, "rn_endpoint_packet_bytes", "TRANSPORT SIZE" },
+    { F_S, "rn_endpoint_set_packet_bytes", "TRANSPORT SIZE" },
+    { F_S, "rn_endpoint_raise_packet_bytes", "TRANSPORT SIZE" },
+    { F_S, "packet_bytes_can_rise", "TRANSPORT SIZE" },
+    { F_O, "packet size", "TRANSPORT SIZE" },
+    { F_O, "ROCKETNET_MAX_PACKET_BYTES", "TRANSPORT SIZE" },
+    { F_O, "rn_endpoint_packet_bytes", "TRANSPORT SIZE" },
+    { F_O, "rn_message_object_packet_bytes", "TRANSPORT SIZE" },
+    { F_O, "packet_bytes_can_rise", "TRANSPORT SIZE" },
+
     // FRAGMENT PACKING: how messages are packed into packets.
     { F_O, "rn_message_packet_build_t", "FRAGMENT PACKING" },
     { F_O, "one open outgoing packet per connection", "FRAGMENT PACKING" },
@@ -189,6 +219,19 @@ static const allowlist_row_t allowlist[] = {
     { F_O, "finish_packet", "LINK CALLBACK TO THE TRANSPORT" },
     { F_O, "abort_packet", "LINK CALLBACK TO THE TRANSPORT" },
     { F_O, "( *send_packets )", "LINK CALLBACK TO THE TRANSPORT" },
+    // the link's packet size callbacks: the transport answers the packet
+    // size of a slot's connection and the link MTU list entry it came from
+    { F_C, "rn_client_link_packet_bytes", "LINK CALLBACK TO THE TRANSPORT" },
+    { F_C, "rocketnet_client_transport_packet_bytes", "LINK CALLBACK TO THE TRANSPORT" },
+    { F_C, "rn_client_link_link_mtu", "LINK CALLBACK TO THE TRANSPORT" },
+    { F_C, "rocketnet_client_transport_link_mtu", "LINK CALLBACK TO THE TRANSPORT" },
+    { F_C, "link->packet_bytes", "LINK CALLBACK TO THE TRANSPORT" },
+    { F_S, "link.packet_bytes", "LINK CALLBACK TO THE TRANSPORT" },
+    { F_S, "link->packet_bytes", "LINK CALLBACK TO THE TRANSPORT" },
+    { F_S, "rocketnet_server_transport_client_packet_bytes", "LINK CALLBACK TO THE TRANSPORT" },
+    { F_O, "( *packet_bytes )", "LINK CALLBACK TO THE TRANSPORT" },
+    { F_O, "a connection in slot index at packet_bytes", "LINK CALLBACK TO THE TRANSPORT" },
+    { F_O, "( *link_mtu )", "LINK CALLBACK TO THE TRANSPORT" },
 
     // PACKET BUILDER AND ENDPOINT PACKET PLANNING: assembles the packet the
     // transport sends and reads acks of packets the transport sent.

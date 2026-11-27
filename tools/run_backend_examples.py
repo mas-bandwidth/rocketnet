@@ -12,13 +12,32 @@ For each backend in examples/backend/:
    block opened with the development server keypair, the inner fields
    consistent, and the public client's pre-send checks.
 
-3. End to end, over loopback. example_backend_server starts on a free UDP
-   port and writes backend.env (its address and public key); the backend
-   starts on a free TCP port with an empty registry; the harness registers the
-   live server over HTTP; the token then comes from GET /match/<client id>;
-   example_backend_client connects with it, sends a
-   message and receives the echo. Server and client must both exit 0 with
-   PASS as their last line.
+3. End to end, over loopback: bans, the whitelist and token sharing. The
+   backend starts on a free TCP port with an empty registry (a match is
+   503); example_backend_server starts on a free UDP port, registers itself
+   and fetches its whitelist; a client signs in with a mock ticket, is
+   matched and connects; a second client can neither use its token nor,
+   signed in as the same user, take a second seat; a ban kicks the first
+   within one whitelist interval; the second then connects as the banned
+   user with a token minted before the ban and is kicked the same way; the
+   banned user's next match is 403; with the backend gone, the server keeps
+   its last good list and still kicks a client on no list. See end_to_end
+   below.
+
+4. Path MTU. Step 3 runs twice: on the default link MTU list (no flag) and
+   with --link-mtus 1492,1200,576 given to both server and client. Each end
+   prints the connection's packet size, its largest unreliable message and
+   its link MTU at connect and again each time the size rises. On the
+   default list each end prints exactly one size, 1452 bytes, a largest
+   unreliable message of 1411 (ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES) and a
+   link MTU of 1500. With the three-step list each end must start at the
+   list's smallest size, 548, 507 and 576, rise in all three each time, and
+   end at 1452, 1411 and 1492, since loopback carries every size.
+
+5. The whitelist fetch's deadline, once: a fake backend registers the server
+   and then trickles its whitelist answer a byte at a time, and the server
+   must give that fetch up within one whitelist interval plus
+   FETCH_SLACK_SECONDS. See fetch_deadline below.
 
 This is the functional tier: it uses sockets and the wall clock. The unit
 tests of the backends are `go test` in examples/backend/go and
@@ -32,13 +51,14 @@ ROCKETNET_NIGHTLY_NO_TIMEOUT=1. Per-request and termination cleanup waits stay b
 
 import argparse
 import base64
-import json
 import os
+import re
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -50,11 +70,35 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "examples" / "backend"
 TIMEOUT_SECONDS = 60
 READY_SECONDS = 30
+SHARE_TRY_SECONDS = 3  # long enough for a loopback handshake many times over
+KICK_SLACK_SECONDS = 0.5  # beyond one whitelist interval: the fetch, a frame, the disconnect packet
+FETCH_SLACK_SECONDS = 1.0  # beyond the fetch's deadline (one whitelist interval): a poll step, the print
+TRICKLE_SECONDS = 0.5  # the fake backend's gap between bytes, well inside any one poll's wait
+# how examples/backend_client.c ends --stay when the server never let it in:
+# a refusal, a handshake that timed out, or one still going when --seconds ran out
+REFUSED_STATES = ("CONNECTION_DENIED", "COOKIE_REQUEST_TIMED_OUT", "CONNECTION_REQUEST_TIMED_OUT",
+                  "REQUESTING_COOKIE", "SENDING_CONNECTION_REQUEST")
 PROTOCOL_ID = "0x52434b544e455431"  # EXAMPLE_PROTOCOL_ID, examples/dev_keys.h
 CLIENT_ID = 1234567890123
+CAROL_CLIENT_ID = 0xCA401  # minted offline: seated on no server, so on no whitelist
 
 # the published development server public key (sdk/rocketnet_connect_token.cpp),
 # whose secret half backend_check_token opens the sealed block with
+# the three-step link MTU list, and what a path that carries its first entry
+# gives over IPv4: a 1492 link less 28 header bytes is above the 1452 ceiling
+THREE_STEP = "1492,1200,576"
+LOOPBACK_PACKET_BYTES = 1452
+LOOPBACK_MAX_UNRELIABLE_MESSAGE_BYTES = 1411
+# the link MTU each end reports at 1452: the default list's 1500, and the
+# three-step list's first entry, 1492
+DEFAULT_LINK_MTU = 1500
+THREE_STEP_LINK_MTU = 1492
+# the three-step list's smallest IPv4 size, where its connection starts: a 576
+# link less 28, and C(548) - 5 = 512 - 5 for the largest unreliable message
+THREE_STEP_START_PACKET_BYTES = 548
+THREE_STEP_START_MAX_UNRELIABLE_MESSAGE_BYTES = 507
+THREE_STEP_START_LINK_MTU = 576
+
 DEV_SERVER_PUBLIC_KEY = bytes.fromhex("3d2490889d374c296fab1d5770cb71476a06f74ef2f2540cf2215f7614f4801c")
 
 
@@ -166,102 +210,405 @@ def wait_for(condition, process, seconds):
     return None
 
 
-def read_env_file(path):
-    try:
-        text = path.read_text()
-    except OSError:
-        return None
-    if not text.endswith("\n"):
-        return None
-    values = dict(line.split("=", 1) for line in text.splitlines() if "=" in line)
-    keys = ("ROCKETNET_BACKEND_SERVER_ADDRESSES", "ROCKETNET_BACKEND_SERVER_PUBLIC_KEY")
-    return values if all(values.get(key) for key in keys) else None
-
-
-def fetch_token(url):
-    try:
-        with urllib.request.urlopen(url, timeout=2) as response:
-            return response.read().decode().strip() if response.status == 200 else None
-    except OSError:
-        return None
-
-
-def http_status(url):
-    try:
-        with urllib.request.urlopen(url, timeout=2) as response:
-            return response.status
-    except urllib.error.HTTPError as error:
-        return error.code
-    except OSError:
-        return None
-
-
-def register_server(url, values):
-    body = json.dumps({
-        "addresses": values["ROCKETNET_BACKEND_SERVER_ADDRESSES"].split(","),
-        "public_key": values["ROCKETNET_BACKEND_SERVER_PUBLIC_KEY"],
-    }).encode()
-    request = urllib.request.Request(url, data=body, method="PUT", headers={"Content-Type": "application/json"})
+def http(method, url, body=b""):
+    """One request; returns (status, body bytes), or (None, b"") when the
+    backend cannot be reached."""
+    request = urllib.request.Request(url, data=body if method in ("POST", "PUT") else None, method=method)
     try:
         with urllib.request.urlopen(request, timeout=2) as response:
-            return response.status == 204
+            return response.status, response.read()
+    except urllib.error.HTTPError as error:
+        return error.code, error.read()
     except OSError:
-        return False
+        return None, b""
 
 
-def end_to_end(name, command, server_binary, client_binary, keys, production):
-    label = f"backend_{name}_end_to_end"
-    workdir = Path(tempfile.mkdtemp(prefix=f"rocketnet_backend_{name}_"))
-    server = backend = None
+class Lines:
+    """Reads a process's output on a thread and keeps each line with the
+    monotonic time it arrived, so the harness can time what the process
+    saw."""
+
+    def __init__(self, process):
+        self.process = process
+        self.lines = []
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self.read, daemon=True)
+        self.thread.start()
+
+    def read(self):
+        for line in self.process.stdout:
+            with self.lock:
+                self.lines.append((time.monotonic(), line.rstrip("\r\n")))
+
+    def find(self, text):
+        """The time of the first line holding text, or None."""
+        with self.lock:
+            for when, line in self.lines:
+                if text in line:
+                    return when
+        return None
+
+    def count(self, text):
+        with self.lock:
+            return sum(1 for _, line in self.lines if text in line)
+
+    def text(self):
+        with self.lock:
+            return "\n".join(line for _, line in self.lines)
+
+    def wait(self, timeout):
+        """Waits for the process to exit and its output to be read; returns
+        its exit code, or None when it did not exit in time."""
+        try:
+            code = self.process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return None
+        self.thread.join(timeout=10)
+        return code
+
+
+def start(command, workdir, env):
+    return Lines(subprocess.Popen(command, cwd=workdir, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True))
+
+
+def whitelist_timing(text):
+    """The interval and grace the server prints: "... every 2.0 seconds as
+    <id>; a client not on it is kicked after at most 6.0 seconds"."""
+    match = re.search(r"fetches its whitelist from \S+ every ([0-9.]+) seconds as \S+; a client not on it is kicked after at most ([0-9.]+) seconds", text)
+    return (float(match.group(1)), float(match.group(2))) if match else None
+
+
+def mint_offline(command, server_text, keys, client_id):
+    """A token from the backend's --mint, which seats nobody: for the
+    server's address and public key, as the server printed them."""
+    values = dict(line.split("=", 1) for line in server_text.splitlines()
+                  if line.startswith(("ROCKETNET_BACKEND_SERVER_ADDRESSES=", "ROCKETNET_BACKEND_SERVER_PUBLIC_KEY=")))
+    if len(values) != 2:
+        return None
+    values["ROCKETNET_BACKEND_PRIVATE_KEY"] = keys["ROCKETNET_BACKEND_PRIVATE_KEY"]
+    minted = subprocess.run(command + ["--mint", str(client_id)], env=backend_environment(values), capture_output=True, text=True,
+                            timeout=execution_timeout(TIMEOUT_SECONDS))
+    token = minted.stdout.strip()
+    return token if minted.returncode == 0 and len(token) == 768 else None
+
+
+def shared_token_refused(client_binary, token, workdir, link_args):
+    """True when a client with token is refused, or times out, in
+    SHARE_TRY_SECONDS: it exits 1 with "FAIL: the echo did not arrive", its
+    connection ended in one of REFUSED_STATES, and it never connected. Any
+    other end, a crash or a signal among them, is not a refusal."""
+    tried = subprocess.run([str(client_binary), "--token", token, "--stay", "--seconds", str(SHARE_TRY_SECONDS)] + link_args, cwd=workdir,
+                           env=backend_environment({}), capture_output=True, text=True, timeout=execution_timeout(TIMEOUT_SECONDS))
+    ended = re.search(r"^client stayed [0-9.]+ seconds, state (\S+)$", tried.stdout, re.MULTILINE)
+    refused = (tried.returncode == 1 and last_line(tried.stdout) == "FAIL: the echo did not arrive" and ended is not None
+               and ended.group(1) in REFUSED_STATES and "-> CONNECTED" not in tried.stdout)
+    if not refused:
+        print(f"shared token: client exited {tried.returncode}\n{tried.stdout}{tried.stderr}", file=sys.stderr)
+    return refused
+
+
+def trickle_backend(listener, accepted, stop_event):
+    """A fake backend: PUT /servers/{id} is 204, and GET .../whitelist is
+    answered one byte every TRICKLE_SECONDS, without end, until the server
+    hangs up. accepted gets the monotonic time of each GET."""
+    listener.settimeout(0.1)
+    while not stop_event.is_set():
+        try:
+            connection, _ = listener.accept()
+        except socket.timeout:
+            continue
+        with connection:
+            connection.settimeout(2)
+            request = b""
+            try:
+                while b"\r\n\r\n" not in request:
+                    data = connection.recv(4096)
+                    if not data:
+                        break
+                    request += data
+                if request.startswith(b"PUT "):
+                    connection.sendall(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                    continue
+                accepted.append(time.monotonic())
+                answer = b"HTTP/1.1 200 OK\r\nX-Trickle: "
+                sent = 0
+                while not stop_event.is_set():
+                    connection.sendall(answer[sent:sent + 1] if sent < len(answer) else b"a")
+                    sent += 1
+                    time.sleep(TRICKLE_SECONDS)
+            except OSError:
+                continue
+
+
+def fetch_deadline(server_binary, keys):
+    """The server gives up a whitelist fetch the backend trickles, within
+    one whitelist interval plus FETCH_SLACK_SECONDS of the request, and says
+    so: with no overall deadline the fetch would never end, no new list
+    would come, and the server could not shut down."""
+    label = "whitelist_fetch_deadline"
+    workdir = Path(tempfile.mkdtemp(prefix="rocketnet_backend_trickle_"))
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    stop_event = threading.Event()
+    accepted = []
+    backend = threading.Thread(target=trickle_backend, args=(listener, accepted, stop_event), daemon=True)
+    server = None
     try:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(4)
+        port = listener.getsockname()[1]
+        backend.start()
+        env = backend_environment({"ROCKETNET_SERVER_BACKEND_PUBLIC_KEY": keys["ROCKETNET_SERVER_BACKEND_PUBLIC_KEY"],
+                                   "ROCKETNET_EXAMPLE_PORT": str(free_port(socket.SOCK_DGRAM))})
+        server = start([str(server_binary), "--backend", f"127.0.0.1:{port}", "--server-id", "trickle", "--sessions", "1"], workdir, env)
+        timing = wait_for(lambda: whitelist_timing(server.text()), server.process, READY_SECONDS)
+        if not timing:
+            return fail(label, f"the server did not say its whitelist interval\n{server.text()}")
+        interval, _ = timing
+        if not wait_for(lambda: accepted, server.process, READY_SECONDS):
+            return fail(label, f"the server did not fetch its whitelist\n{server.text()}")
+        gave_up_line = "whitelist: fetch failed, keeping the last good list: GET /servers/trickle/whitelist: timed out receiving"
+        bound = interval + FETCH_SLACK_SECONDS
+        gave_up = wait_for(lambda: server.find(gave_up_line), server.process, bound * 3)
+        if gave_up is None:
+            return fail(label, f"the server did not give up a trickled fetch within {bound * 3:.1f} seconds\n{server.text()}")
+        took = gave_up - accepted[0]
+        if took > bound:
+            return fail(label, f"the server gave up a trickled fetch after {took:.3f} seconds, over {bound:.1f}\n{server.text()}")
+        print(f"whitelist_fetch_deadline: trickled_fetch_gave_up={took:.3f}s bound={bound:.1f}s")
+        return True
+    finally:
+        stop_event.set()
+        if server is not None:
+            stop(server.process)
+        backend.join(timeout=10)
+        listener.close()
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def reported_size_history(output, prefix):
+    """Every (packet_bytes, max_unreliable_message_bytes, link_mtu) an example printed after prefix, in order, or None when a line is broken."""
+    history = []
+    for line in output.splitlines():
+        if line.startswith(prefix + "packet_bytes="):
+            try:
+                fields = dict(field.split("=", 1) for field in line[len(prefix):].split())
+                history.append((int(fields["packet_bytes"]), int(fields["max_unreliable_message_bytes"]), int(fields["link_mtu"])))
+            except (KeyError, ValueError):
+                return None
+    return history
+
+
+def reported_sizes(output, prefix):
+    """The last packet_bytes, max_unreliable_message_bytes and link_mtu an example printed after prefix, or None."""
+    history = reported_size_history(output, prefix)
+    return history[-1] if history else None
+
+
+def size_history_problem(history, link_mtus):
+    """Why a size history is wrong for the list given (None or THREE_STEP) on loopback, or None when it is right."""
+    if not history:
+        return "no size reported"
+    if not link_mtus:
+        final = (LOOPBACK_PACKET_BYTES, LOOPBACK_MAX_UNRELIABLE_MESSAGE_BYTES, DEFAULT_LINK_MTU)
+        return None if history == [final] else f"expected exactly {[final]} on the default list"
+    final = (LOOPBACK_PACKET_BYTES, LOOPBACK_MAX_UNRELIABLE_MESSAGE_BYTES, THREE_STEP_LINK_MTU)
+    start = (THREE_STEP_START_PACKET_BYTES, THREE_STEP_START_MAX_UNRELIABLE_MESSAGE_BYTES, THREE_STEP_START_LINK_MTU)
+    if history[0] != start:
+        return f"expected the connection to start at {start}"
+    if any(any(b <= a for a, b in zip(earlier, later)) for earlier, later in zip(history, history[1:])):
+        return "a reported size did not rise"
+    if history[-1] != final:
+        return f"expected the connection to end at {final}"
+    return None
+
+
+def end_to_end(name, command, server_binary, client_binary, keys, production, link_mtus=None):
+    """Bans, the whitelist and sharing, end to end over loopback, on the
+    default link MTU list or, with link_mtus, on that list given to the
+    server and every client:
+
+    1. With no server registered, a match is 503.
+    2. The server registers itself and fetches its whitelist.
+    3. Client A signs in as alice (a mock ticket), is matched, connects,
+       gets its echo, and stays connected across whitelist fetches: it is
+       on the list.
+    4. Client B, given A's connect token, cannot connect: the server bound
+       that token to A's address.
+    5. B, given alice's sign-in instead, is matched (the same client id, the
+       same one entry on the whitelist) but cannot connect while A holds
+       alice's one seat.
+    6. alice is banned: off the whitelist at once, and the server kicks A
+       within one whitelist interval plus KICK_SLACK_SECONDS (the fetch, a
+       frame and the disconnect packet).
+    7. A's token still cannot connect from another address.
+    8. B's token, minted before the ban, connects now the seat is free, and
+       B, playing as alice, is kicked under alice's ban within the same bound.
+    9. alice's next match is 403.
+    10. Fail closed: bob is matched, connects and is on the list. Then the
+        backend goes away. bob stays (the last good list holds him), while
+        carol, with a token minted offline and so on no list, is kicked
+        within the grace plus KICK_SLACK_SECONDS. bob leaves on his own;
+        the server exits PASS having kicked alice twice and carol once.
+    11. Path MTU: client A, and the server's slot 0 while A held it, each
+        report the size history size_history_problem expects for the list.
+    """
+    label = f"backend_{name}_end_to_end" + ("_link_mtus" if link_mtus else "")
+    link_args = ["--link-mtus", link_mtus] if link_mtus else []
+    workdir = Path(tempfile.mkdtemp(prefix=f"rocketnet_backend_{name}_"))
+    processes = []
+    try:
+        port = free_port(socket.SOCK_STREAM)
+        base = f"http://127.0.0.1:{port}"
+        backend = start(command, workdir, backend_environment({"ROCKETNET_BACKEND_PORT": str(port),
+                        "ROCKETNET_BACKEND_PRIVATE_KEY": keys["ROCKETNET_BACKEND_PRIVATE_KEY"]}))
+        processes.append(backend)
+
+        def ticket(user):
+            status, body = http("POST", f"{base}/mock/ticket/{user}")
+            return body if status == 200 else None
+
+        alice = wait_for(lambda: ticket("alice"), backend.process, READY_SECONDS)
+        if not alice:
+            return fail(label, f"the backend gave no ticket\n{backend.text()}")
+        status, _ = http("POST", f"{base}/match", alice)
+        if status != 503:
+            return fail(label, f"a match with no servers registered answered {status}, not 503\n{backend.text()}")
+
         env = backend_environment({"ROCKETNET_SERVER_BACKEND_PUBLIC_KEY": keys["ROCKETNET_SERVER_BACKEND_PUBLIC_KEY"]})
         env["ROCKETNET_EXAMPLE_PORT"] = str(free_port(socket.SOCK_DGRAM))
-        server = subprocess.Popen([str(server_binary)], cwd=workdir, env=env,
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        values = wait_for(lambda: read_env_file(workdir / "backend.env"), server, READY_SECONDS)
-        if not values:
-            out, _ = stop(server)
-            return fail(label, f"server wrote no backend.env\n{out}")
+        server = start([str(server_binary), "--backend", f"127.0.0.1:{port}", "--server-id", "example", "--sessions", "4"] + link_args, workdir, env)
+        processes.append(server)
+        whitelist_url = f"{base}/servers/example/whitelist"
+        if not wait_for(lambda: http("GET", whitelist_url)[0] == 200, server.process, READY_SECONDS):
+            return fail(label, f"the server did not register itself with the backend\n{server.text()}")
+        timing = wait_for(lambda: whitelist_timing(server.text()), server.process, READY_SECONDS)
+        if not timing:
+            return fail(label, f"the server did not say its whitelist interval and grace\n{server.text()}")
+        interval, grace = timing
+        bound = interval + KICK_SLACK_SECONDS
 
-        port = free_port(socket.SOCK_STREAM)
-        backend = subprocess.Popen(command, cwd=workdir, env=backend_environment({"ROCKETNET_BACKEND_PORT": str(port),
-                                       "ROCKETNET_BACKEND_PRIVATE_KEY": keys["ROCKETNET_BACKEND_PRIVATE_KEY"]}),
-                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        match_url = f"http://127.0.0.1:{port}/match/{CLIENT_ID}"
-        empty = wait_for(lambda: http_status(match_url) == 503, backend, READY_SECONDS)
-        if not empty:
-            out, _ = stop(backend)
-            return fail(label, f"backend did not report an empty server registry\n{out}")
-        registered = wait_for(lambda: register_server(f"http://127.0.0.1:{port}/servers/example", values), backend, READY_SECONDS)
-        if not registered:
-            out, _ = stop(backend)
-            return fail(label, f"backend did not register the live server\n{out}")
-        token = wait_for(lambda: fetch_token(match_url), backend, READY_SECONDS)
-        if not token:
-            out, _ = stop(backend)
-            return fail(label, f"backend served no token\n{out}")
+        status, token = http("POST", f"{base}/match", alice)
+        if status != 200 or len(token) != 768:
+            return fail(label, f"the match answered {status} with {len(token)} bytes, not a token")
+        token = token.decode()
+        status, listed = http("GET", whitelist_url)
+        if status != 200 or len(listed) != 8:
+            return fail(label, f"after one match the whitelist is {status} with {len(listed)} bytes, not one client id")
+        alice_id = int.from_bytes(listed, "little")
 
-        client = subprocess.run([str(client_binary), "--token", token], cwd=workdir, env=backend_environment({}), capture_output=True, text=True, timeout=execution_timeout(TIMEOUT_SECONDS))
-        if client.returncode != 0 or last_line(client.stdout) != "PASS":
-            return fail(label, f"client exited {client.returncode}\n{client.stdout}{client.stderr}")
-        try:
-            server_out, _ = server.communicate(timeout=execution_timeout(TIMEOUT_SECONDS))
-        except subprocess.TimeoutExpired:
-            return fail(label, "server did not exit after its client disconnected")
-        if server.returncode != 0 or last_line(server_out) != "PASS":
-            return fail(label, f"server exited {server.returncode}\n{server_out}")
+        # A connects and stays: whitelist fetches go by and A is still on
+        client_a = start([str(client_binary), "--token", token, "--stay", "--seconds", "40"] + link_args, workdir, backend_environment({}))
+        processes.append(client_a)
+        if not wait_for(lambda: client_a.find("client received:"), client_a.process, READY_SECONDS):
+            return fail(label, f"client A got no echo\n{client_a.text()}")
+        time.sleep(interval * 1.5)
+        if client_a.process.poll() is not None or client_a.find("SERVER_DISCONNECTED"):
+            return fail(label, f"client A, on the whitelist, did not stay connected\n{client_a.text()}\n{server.text()}")
+
+        # B with A's connect token: bound to A's address, it never connects
+        if not shared_token_refused(client_binary, token, workdir, link_args):
+            return fail(label, "client B connected with A's connect token while A held the seat")
+
+        # B with alice's sign-in: the same user, so the same client id and one seat
+        status, token_b = http("POST", f"{base}/match", ticket("alice") or b"")
+        status_list, listed = http("GET", whitelist_url)
+        if status != 200 or status_list != 200 or listed != alice_id.to_bytes(8, "little"):
+            return fail(label, f"a second sign-in as alice was not matched to the same one whitelist entry ({status}, {status_list}, {len(listed)} bytes)")
+        token_b = token_b.decode()
+        if not shared_token_refused(client_binary, token_b, workdir, link_args):
+            return fail(label, "client B, signed in as alice, connected while A held alice's seat")
+
+        # ban alice: off the whitelist at once, then A is kicked
+        status, _ = http("PUT", f"{base}/bans/mock/alice")
+        banned_at = time.monotonic()
+        if status != 204:
+            return fail(label, f"the ban answered {status}, not 204")
+        status, listed = http("GET", whitelist_url)
+        if status != 200 or listed:
+            return fail(label, f"after the ban the whitelist is {status} with {len(listed)} bytes, not empty")
+        if client_a.wait(execution_timeout(TIMEOUT_SECONDS)) != 0 or not client_a.find("-> SERVER_DISCONNECTED"):
+            return fail(label, f"client A was not disconnected by the server\n{client_a.text()}\n{server.text()}")
+        ban_kick = client_a.find("-> SERVER_DISCONNECTED") - banned_at
+        if ban_kick > bound:
+            return fail(label, f"client A was kicked {ban_kick:.3f} seconds after its ban, over {bound:.1f}")
+
+        # A's token stays dead at another address after A has gone
+        if not shared_token_refused(client_binary, token, workdir, link_args):
+            return fail(label, "client B connected with A's connect token after A was kicked")
+
+        # B's token, minted before the ban: B gets alice's seat, and alice's ban
+        client_b = start([str(client_binary), "--token", token_b, "--stay", "--seconds", "20"] + link_args, workdir, backend_environment({}))
+        processes.append(client_b)
+        if client_b.wait(execution_timeout(TIMEOUT_SECONDS)) != 0 or not client_b.find("client received:") or not client_b.find("-> SERVER_DISCONNECTED"):
+            return fail(label, f"client B, signed in as alice, was not connected then kicked\n{client_b.text()}\n{server.text()}")
+        share_kick = client_b.find("-> SERVER_DISCONNECTED") - client_b.find("-> CONNECTED")
+        if share_kick > bound:
+            return fail(label, f"client B was kicked {share_kick:.3f} seconds after it connected, over {bound:.1f}")
+
+        status, _ = http("POST", f"{base}/match", ticket("alice") or b"")
+        if status != 403:
+            return fail(label, f"a banned user's match answered {status}, not 403")
+
+        # fail closed: bob is on the last good list, carol on none, and the backend is gone
+        status, token_bob = http("POST", f"{base}/match", ticket("bob") or b"")
+        if status != 200:
+            return fail(label, f"bob's match answered {status}")
+        client_bob = start([str(client_binary), "--token", token_bob.decode(), "--stay", "--seconds", str(grace * 2 + 4)] + link_args, workdir, backend_environment({}))
+        processes.append(client_bob)
+        if not wait_for(lambda: client_bob.find("client received:"), client_bob.process, READY_SECONDS):
+            return fail(label, f"bob got no echo\n{client_bob.text()}")
+        time.sleep(interval * 1.5)
+        stop(backend.process)
+        token_carol = mint_offline(command, server.text(), keys, CAROL_CLIENT_ID)
+        if not token_carol:
+            return fail(label, "could not mint carol's token offline")
+        client_carol = start([str(client_binary), "--token", token_carol, "--stay", "--seconds", str(grace * 2)] + link_args, workdir, backend_environment({}))
+        processes.append(client_carol)
+        if client_carol.wait(execution_timeout(TIMEOUT_SECONDS)) != 0 or not client_carol.find("-> SERVER_DISCONNECTED"):
+            return fail(label, f"carol, on no whitelist, was not kicked with the backend gone\n{client_carol.text()}\n{server.text()}")
+        closed_kick = client_carol.find("-> SERVER_DISCONNECTED") - client_carol.find("-> CONNECTED")
+        if closed_kick > grace + KICK_SLACK_SECONDS:
+            return fail(label, f"carol was kicked {closed_kick:.3f} seconds after she connected, over {grace + KICK_SLACK_SECONDS:.1f}")
+        if client_bob.process.poll() is not None or client_bob.find("SERVER_DISCONNECTED"):
+            return fail(label, f"bob, on the last good whitelist, was kicked when the backend went away\n{client_bob.text()}\n{server.text()}")
+        if client_bob.wait(execution_timeout(TIMEOUT_SECONDS)) != 1 or "FAIL: the server did not disconnect the client" not in client_bob.text():
+            return fail(label, f"bob did not stay connected to the end\n{client_bob.text()}")
+
+        code = server.wait(execution_timeout(TIMEOUT_SECONDS))
+        server_out = server.text()
+        if code != 0 or last_line(server_out) != "PASS":
+            return fail(label, f"server exited {code}\n{server_out}")
+        kicked = f"server kicked client {alice_id:016x}"
+        if server.count(kicked) != 2 or server.count(f"server kicked client {CAROL_CLIENT_ID:016x}") != 1 or server.count("server kicked client") != 3:
+            return fail(label, f"the server did not kick {alice_id:016x} exactly twice and {CAROL_CLIENT_ID:016x} once\n{server_out}")
+
+        # path MTU: A's connection, at the client and in the server's slot 0
+        # until A left it (later clients reuse the slot and start over)
+        expected = (LOOPBACK_PACKET_BYTES, LOOPBACK_MAX_UNRELIABLE_MESSAGE_BYTES, THREE_STEP_LINK_MTU if link_mtus else DEFAULT_LINK_MTU)
+        slot_0_lines = []
+        for line in server_out.splitlines():
+            if "disconnected from slot 0" in line:
+                break
+            slot_0_lines.append(line)
+        for role, output, prefix in (("client", client_a.text(), "backend_client: "), ("server", "\n".join(slot_0_lines), "backend_server: client 0 ")):
+            history = reported_size_history(output, prefix)
+            problem = size_history_problem(history, link_mtus)
+            if problem:
+                return fail(label, f"{role} reported packet_bytes, max_unreliable_message_bytes and link_mtu {history}: {problem}")
         if production:
-            for role, output in (("client", client.stdout), ("server", server_out)):
+            for role, output in (("client", client_a.text()), ("server", server_out)):
                 if f"backend_{role}: mode=production transport=portable" not in output.splitlines():
                     observed = [line for line in output.splitlines() if line.startswith(f"backend_{role}:")]
                     return fail(label, f"{role} did not confirm production portable mode: {observed}")
-        print(f"backend_{name}: fresh_keys=true server_registered_http=true token_from_http=true "
-              f"production_required={str(production).lower()} portable_echo=true")
+        print(f"backend_{name}: fresh_keys=true server_registered_itself=true ticket_match=true whitelist_interval={interval:.1f}s "
+              f"shared_token_refused=true second_sign_in_refused_while_seated=true ban_kick={ban_kick:.3f}s shared_sign_in_kick={share_kick:.3f}s "
+              f"banned_match=403 grace={grace:.1f}s backend_gone_kept_last_list=true fail_closed_kick={closed_kick:.3f}s "
+              f"production_required={str(production).lower()} "
+              f"link_mtus={link_mtus or 'default'} packet_bytes={expected[0]} max_unreliable_message_bytes={expected[1]} link_mtu={expected[2]}")
         return True
     finally:
-        for process in (backend, server):
-            if process:
-                stop(process)
+        for lines in reversed(processes):
+            stop(lines.process)
         shutil.rmtree(workdir, ignore_errors=True)
 
 
@@ -290,6 +637,7 @@ def main():
             return 1
 
     outdir = Path(tempfile.mkdtemp(prefix="rocketnet_backend_build_"))
+    fetch_checked = False
     try:
         for name in args.backend or ["go", "csharp"]:
             command = build_backend(name, outdir)
@@ -300,9 +648,17 @@ def main():
             if not check_token(name, command, binaries["backend_check_token"], keys):
                 return 1
             print(f"PASS backend_{name}_token")
+            if not fetch_checked:
+                if not fetch_deadline(binaries["example_backend_server"], keys):
+                    return 1
+                print("PASS whitelist_fetch_deadline")
+                fetch_checked = True
             if not end_to_end(name, command, binaries["example_backend_server"], binaries["example_backend_client"], keys, args.production):
                 return 1
             print(f"PASS backend_{name}_end_to_end")
+            if not end_to_end(name, command, binaries["example_backend_server"], binaries["example_backend_client"], keys, args.production, THREE_STEP):
+                return 1
+            print(f"PASS backend_{name}_end_to_end_link_mtus")
     finally:
         shutil.rmtree(outdir, ignore_errors=True)
     return 0

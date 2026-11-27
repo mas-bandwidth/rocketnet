@@ -84,7 +84,7 @@ REGISTER_UNIT_TEST( test_iocp_receive_admit_without_filter_banks_everything );
 static void test_iocp_receive_admit_matches_prefilter_with_room()
 {
     uint8_t packet[ROCKETNET_RECEIVE_CEILING + 1];
-    const int sizes[] = { 1, 5, 6, 33, 34, 35, 100, 709, 710, 711, 1200, ROCKETNET_RECEIVE_CEILING, ROCKETNET_RECEIVE_CEILING + 1 };
+    const int sizes[] = { 1, 5, 6, 33, 34, 35, 100, 517, 518, 519, 1200, ROCKETNET_RECEIVE_CEILING, ROCKETNET_RECEIVE_CEILING + 1 };
     int reasons_seen[ROCKETNET_RECEIVE_NUM_DROPS] = {};
 
     for ( int type = 0; type < 12; ++type )

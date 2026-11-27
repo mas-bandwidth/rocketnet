@@ -415,6 +415,7 @@ struct rn_region_t
     uint32_t holds;                     // Ru
     uint32_t receipt_entries;           // Rq
     uint32_t max_message_bytes;
+    uint32_t fragment_bytes;            // F, the block stride of this region's connection (F(P), sdk/rocketnet_link_mtu.h): ROCKETNET_MESSAGE_FRAGMENT_BYTES until the connection's packet size sets it (rn_endpoint_reset)
     uint32_t room_refusals;             // this region's sends refused for no room (QUEUE_FULL, STORE_FULL): written by its connection's one filler, so a start reads its own refusal here, not on the owner's shared counters
 
     rn_channel_send_t * channel_send;
@@ -465,6 +466,16 @@ struct rn_region_t
     uint64_t held_key_a;                // the held index's home key (rn_held_home): drawn at every carve, never logged or sent
     uint64_t held_key_b;
 };
+
+// The block stride F of the region's connection (standard/MESSAGES.md m2.2,
+// m8): F(P) of its packet size, ROCKETNET_MESSAGE_FRAGMENT_BYTES (1152) at the
+// ceiling and for a region no connection has set. Every fragment count,
+// fragment offset and block shape of this connection reads it, so both ends,
+// which know the same P, agree.
+inline uint32_t rn_region_fragment_bytes( const rn_region_t * region )
+{
+    return region->fragment_bytes > 0 ? region->fragment_bytes : (uint32_t) ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+}
 
 // The next enqueue ticket on this connection. 0 is never issued.
 // proofs/tla/RNUnreliableRingLayout.tla DrawOther: one counter for every enqueue, the wrap noted.
@@ -614,10 +625,13 @@ extern const int rn_send_room_warnings;
 void rn_region_send_room_note( rn_region_t * region, int is_server, int index );
 void rn_region_send_room_exhausted( const rn_region_t * region, int is_server, int index );
 
-// The largest message that takes a store chunk is one fragment, 1152 bytes.
-// A message above it takes a contiguous span (rn_region_send_alloc_span): the
-// application writes it once, in place, and every fragment is copied from it
-// into a frame (4, 8).
+// The largest message that takes a store chunk is one fragment of the
+// connection's block stride (rn_region_fragment_bytes), 1152 bytes at the
+// ceiling. A message above it takes a contiguous span
+// (rn_region_send_alloc_span): the application writes it once, in place, and
+// every fragment is copied from it into a frame (4, 8). RN_SPAN_MIN_BYTES is
+// the ceiling's smallest span; a connection with a smaller stride starts
+// spans lower, so a block always lives in a span.
 #define RN_SPAN_MIN_BYTES       ( RN_STORE_LARGE_BYTES + 1 )
 
 // One send's descriptor and a contiguous span of the send spans, both or
@@ -653,14 +667,14 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes );
 int rn_region_send_fit_store( const rn_region_t * region, int bytes, uint32_t * out_first );
 int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * out_start );
 
-// A start message's room: a store chunk up to one fragment, a span above
-// it. rn_region_send_take allocates it (rn_region_send_alloc or
-// rn_region_send_alloc_span) and rn_region_send_fit decides it, by the same
-// size rule.
+// A start message's room: a store chunk up to one fragment of the
+// connection's block stride, a span above it. rn_region_send_take allocates
+// it (rn_region_send_alloc or rn_region_send_alloc_span) and
+// rn_region_send_fit decides it, by the same size rule.
 
-inline bool rn_region_send_is_span( int bytes )
+inline bool rn_region_send_is_span( const rn_region_t * region, int bytes )
 {
-    return bytes >= (int) RN_SPAN_MIN_BYTES;
+    return bytes > (int) rn_region_fragment_bytes( region );
 }
 
 int rn_region_send_fit( const rn_region_t * region, int bytes );

@@ -12,7 +12,7 @@
 #include "rocketnet_wire.h"
 
 static const rn_standard_vector_t standard_security_and_conformance_table[] = {
-    RN_STANDARD_VECTOR( "t19.amplification", "00c602072600024200033200042900012200" ),
+    RN_STANDARD_VECTOR( "t19.amplification", "000602072600024200033200042900012200" ),
 };
 
 static int standard_security_and_conformance_generate( const char * id, uint8_t * out, int capacity )

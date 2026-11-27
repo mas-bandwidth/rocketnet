@@ -138,12 +138,12 @@ def main() -> int:
         # Structural dry-run token: the runtime later performs the full
         # production connect/crypto/time checks. Signed-field offsets are the
         # canonical rocketnet_connect_token.h layout.
-        token = bytearray(768)
+        token = bytearray(576)
         token[32] = 1  # ROCKETNET_ADDRESS_FLAG_IPV4
         token[33:37] = bytes((10, 40, 0, 1))
         struct.pack_into("<H", token, 37, 40000)
         token_text = base64.b64encode(token).decode("ascii")
-        assert len(token_text) == 1024
+        assert len(token_text) == 768
         token_file.write_text(token_text + "\n", encoding="ascii")
         args = dry_args(binary, manifest_path, str(token_file))
         first = run(args, 0)

@@ -60,9 +60,9 @@ static int standard_key_schedule_verify_signatures( uint8_t * out, int capacity 
 
     uint8_t public_key[32], signatures[3][64];
     rocketnet_unit_check( rn_standard_hex_decode( "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8", public_key, 32 ) == 32 );
-    rocketnet_unit_check( rn_standard_hex_decode( "5ebb1841a19d7dc4f15bfc4d1129ca25e0b89592e7707191046dc3b9c0d55468febcf49e12a5cb474f05c82607820f87591ca54e13d9d6bbeb288beccdd1e404", signatures[0], 64 ) == 64 );
-    rocketnet_unit_check( rn_standard_hex_decode( "c1feb7cd2979a67e446dce907b856166f65c876623531d5e51ae737beea27912dba084da7f6ff698e0001e75f846b23a7c54eb9a84fdaa3213477d318cd6a505", signatures[1], 64 ) == 64 );
-    rocketnet_unit_check( rn_standard_hex_decode( "5ebb1841a19d7dc4f15bfc4d1129ca25e0b89592e7707191046dc3b9c0d55468eb90eafb2c08de9f25a2bfc9e57bee9b591ca54e13d9d6bbeb288beccdd1e414", signatures[2], 64 ) == 64 );
+    rocketnet_unit_check( rn_standard_hex_decode( "3662e81b25c927a6da6b39d111d968ca06fec8ec3edccb94767ac50f2570114033264e762879fc1e0ce448733dd449ef0a1f70b8b7d4a56f33f82bbf4b8a930e", signatures[0], 64 ) == 64 );
+    rocketnet_unit_check( rn_standard_hex_decode( "c1feb7cd2979a67e446dce907b856166f65c876623531d5e51ae737beea27912ac726e0cb3c82097a02437741cf735fbcc8e1e4ac06cd43efe22ae2dd4460608", signatures[1], 64 ) == 64 );
+    rocketnet_unit_check( rn_standard_hex_decode( "3662e81b25c927a6da6b39d111d968ca06fec8ec3edccb94767ac50f2570114020fa43d342dc0e77e28040161cce28040b1f70b8b7d4a56f33f82bbf4b8a931e", signatures[2], 64 ) == 64 );
 
     uint8_t token[ROCKETNET_SIGNED_CONNECT_DATA_BYTES + 64];
     for ( int i = 0; i < ROCKETNET_SIGNED_CONNECT_DATA_BYTES; i++ )
