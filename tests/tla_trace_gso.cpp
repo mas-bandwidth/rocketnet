@@ -433,6 +433,32 @@ static void gso_claim_hook( void * user, int )
                                        gso_state( walk ) ) );
 }
 
+// a load of (q, b, i) another loaded thread holds too, on a counter still at
+// i: the claim gso_claim runs the other thread inside (its hook), which adds
+// up to three records (the other's Claim, the reload, this Claim)
+static bool gso_contests( const gso_walk_t & walk, int t, int q, int b, int i )
+{
+    if ( q < 0 || q >= GSO_QUEUES || b < 0 || b >= GSO_BANKS || i < 0 || i >= GSO_SLOTS || walk.lane[q].num_packets[b] != i )
+    {
+        return false;
+    }
+    for ( int u = 1; u <= GSO_THREADS; u++ )
+    {
+        const gso_load_t & lu = walk.load[u];
+        if ( u != t && lu.loaded && lu.q == q && lu.b == b && lu.i == i )
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool gso_contested( const gso_walk_t & walk, int t )
+{
+    const gso_load_t & l = walk.load[t];
+    return l.loaded && gso_contests( walk, t, l.q, l.b, l.i );
+}
+
 static std::string gso_claim( gso_walk_t & walk, int t, const char ** op, const std::vector<int> & others )
 {
     gso_load_t & l = walk.load[t];
@@ -441,8 +467,7 @@ static std::string gso_claim( gso_walk_t & walk, int t, const char ** op, const 
     // a load the counter has moved past: only a claim the walk ran outside
     // the library's own call can leave one (the hook below always runs the
     // other loaded thread inside this call), so the walk records no step the
-    // library did not take: it ends here (the caller decides whether that is
-    // the record budget's tail or a walk defect)
+    // library did not take: it ends here, and the caller refuses the walk
     if ( l.i < GSO_SLOTS && lane.num_packets[l.b] != l.i )
     {
         *op = "stale";
@@ -765,7 +790,35 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
         }
         // a flush before the threads have spent their demand is offered one
         // step in eight, so most fills run past a bank and stage on both queues
-        const bool can_flush = all_free && walk.flushes < walk.max_flush && ( all_done || random.below( 8 ) == 0 );
+        bool can_flush = all_free && walk.flushes < walk.max_flush && ( all_done || random.below( 8 ) == 0 );
+
+        // the record budget's tail: a contested claim needs three records, so
+        // the walk never leaves one it cannot fit. With exactly three left a
+        // contested pair is resolved now (only its claims are offered); with
+        // three or fewer a load never starts a contest (the load's own record
+        // would leave two). The trace then always ends at steps + 1 records:
+        // a contested claim run outside the library's call would leave the
+        // other thread's load stale, a step the library never takes
+        const int room = walk.max_records - (int) records.size();
+        if ( room == 3 )
+        {
+            std::vector<int> contested;
+            for ( size_t k = 0; k < can_claim.size(); k++ )
+            {
+                if ( gso_contested( walk, can_claim[k] ) )
+                {
+                    contested.push_back( can_claim[k] );
+                }
+            }
+            if ( !contested.empty() )
+            {
+                can_load.clear();
+                can_claim = contested;
+                can_finish.clear();
+                can_return.clear();
+                can_flush = false;
+            }
+        }
 
         const int n_load = (int) can_load.size();
         const int n_claim = (int) can_claim.size();
@@ -785,7 +838,28 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
         int fired = 0;
         if ( pick < n_load )
         {
-            args = gso_load( walk, can_load[(size_t) pick], 1 + random.below( GSO_DESTS ) );
+            // the destinations this load may take: every one, except in the
+            // budget's tail one that would start a contest (a destination on
+            // the other queue never does, so the list is never empty)
+            const int t = can_load[(size_t) pick];
+            std::vector<int> dests;
+            for ( int dest = 1; dest <= GSO_DESTS; dest++ )
+            {
+                const int q = rocketnet_server_gso_send_queue( &walk.dest[dest], GSO_QUEUES );
+                const int b = walk.lane[q].producer;
+                const int i = b >= 0 && b < GSO_BANKS ? walk.lane[q].num_packets[b] : -1;
+                if ( room > 3 || !gso_contests( walk, t, q, b, i ) )
+                {
+                    dests.push_back( dest );
+                }
+            }
+            if ( dests.empty() )
+            {
+                fprintf( stderr, "tla_trace: gso: no destination a load may take at step %d\n", step );
+                rocketnet_server_gso_test_close( walk.gso );
+                return 1;
+            }
+            args = gso_load( walk, t, dests[(size_t) random.below( (int) dests.size() )] );
             op = "load";
             act = "Load";
         }
@@ -795,16 +869,12 @@ static int trace_gso( uint64_t seed, int steps, const char * out )
             act = "Claim";
             if ( strcmp( op, "stale" ) == 0 )
             {
-                // only the record budget's last records skip the hook; a stale
-                // load before them is a walk that ran a claim outside the
-                // library's call
-                if ( (int) records.size() + 3 <= walk.max_records )
-                {
-                    fprintf( stderr, "tla_trace: gso: a load went stale before the record budget's tail at step %d\n", step );
-                    rocketnet_server_gso_test_close( walk.gso );
-                    return 1;
-                }
-                break;
+                // the budget's tail never leaves a contested claim it cannot
+                // fit (above), so a stale load anywhere is a walk that ran a
+                // claim outside the library's call: refused, never a short trace
+                fprintf( stderr, "tla_trace: gso: a load went stale at step %d (%d records)\n", step, (int) records.size() );
+                rocketnet_server_gso_test_close( walk.gso );
+                return 1;
             }
         }
         else if ( pick < n_load + n_claim + n_finish )
