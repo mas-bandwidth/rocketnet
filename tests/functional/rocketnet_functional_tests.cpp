@@ -3022,15 +3022,29 @@ void rocketnet_test_receive_drops_oversize_datagram()
     memset( send_data, 0, sizeof( send_data ) );
     send_data[0] = ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET;
 
-    rocketnet_platform_socket_send_packet( socket, &local_address, send_data, sizeof( send_data ) );
+    // Loopback UDP can lose a datagram before it reaches the socket on a
+    // loaded host (a kernel drop, or a sendto ENOBUFS the socket only
+    // counts). This leg is about the length the receive reports, not about
+    // one datagram surviving, so the same datagram is resent every 250 ms
+    // within the 5 s watchdog, and read once more after it, as in
+    // rocketnet_test_darwin_oversize_receive.
 
     uint8_t receive_data[ROCKETNET_RECEIVE_CEILING];
     rocketnet_address_t from;
     int packet_bytes = 0;
-    double start_time = rocketnet_platform_time();
+    int num_received = 0;
+    int sends = 0;
+    double send_time = 0.0;
+    const double start_time = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start_time < 5.0 )
     {
-        const int num_received = rocketnet_platform_socket_receive_packets( socket, &from, receive_data, ROCKETNET_RECEIVE_CEILING, &packet_bytes, 1 );
+        if ( sends == 0 || rocketnet_platform_time() - send_time >= 0.25 )
+        {
+            rocketnet_platform_socket_send_packet( socket, &local_address, send_data, sizeof( send_data ) );
+            send_time = rocketnet_platform_time();
+            sends++;
+        }
+        num_received = rocketnet_platform_socket_receive_packets( socket, &from, receive_data, ROCKETNET_RECEIVE_CEILING, &packet_bytes, 1 );
         if ( num_received > 0 )
         {
             break;
@@ -3038,9 +3052,16 @@ void rocketnet_test_receive_drops_oversize_datagram()
         rocketnet_platform_sleep( 0.001 );
     }
 
-    if ( packet_bytes == 0 )
+    if ( num_received <= 0 )
     {
-        fprintf( stderr, "harness timeout: oversize datagram did not arrive within the 5 s watchdog; this is a hung harness, not a transport performance failure\n" );
+        num_received = rocketnet_platform_socket_receive_packets( socket, &from, receive_data, ROCKETNET_RECEIVE_CEILING, &packet_bytes, 1 );
+    }
+
+    if ( num_received <= 0 )
+    {
+        fprintf( stderr, "harness timeout: oversize datagram did not arrive within the 5 s watchdog; sender: %d sends, send_failures %llu; receiver: receive_empties %llu, receive_refused_sources %llu\n",
+                 sends, (unsigned long long) rocketnet_platform_socket_send_failures( socket ),
+                 (unsigned long long) rocketnet_platform_receive_empties(), (unsigned long long) rocketnet_platform_receive_refused_sources() );
     }
 
     // the datagram is reported whole, not truncated to the ceiling
@@ -3135,11 +3156,21 @@ void rocketnet_test_receive_drops_oversize_datagram()
     const struct rocketnet_counters_t * server_counters = rocketnet_server_transport_counters( server );
     const uint64_t before_too_large = server_counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
 
-    rocketnet_platform_socket_send_packet( client_socket, &server_address, send_data, (int) sizeof( send_data ) );
+    // resent every 250 ms until counted, for the same loopback loss as above;
+    // each datagram that arrives is counted once, so the count rises by at
+    // least one and by no more than the datagrams sent
 
+    int live_sends = 0;
+    double live_send_time = 0.0;
     const double start = rocketnet_platform_time();
     while ( rocketnet_platform_time() - start < 5.0 )
     {
+        if ( live_sends == 0 || rocketnet_platform_time() - live_send_time >= 0.25 )
+        {
+            rocketnet_platform_socket_send_packet( client_socket, &server_address, send_data, (int) sizeof( send_data ) );
+            live_send_time = rocketnet_platform_time();
+            live_sends++;
+        }
         rocketnet_server_transport_update( server, rocketnet_platform_time() );
         rocketnet_server_transport_send_packets( server );
         if ( server_counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] > before_too_large )
@@ -3154,7 +3185,8 @@ void rocketnet_test_receive_drops_oversize_datagram()
         fprintf( stderr, "harness timeout: live server did not count the oversize datagram within the 5 s watchdog; this is a hung harness, not a transport performance failure\n" );
     }
 
-    rocketnet_check( server_counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] == before_too_large + 1 );
+    rocketnet_check( server_counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] >= before_too_large + 1 );
+    rocketnet_check( server_counters->values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE] <= before_too_large + (uint64_t) live_sends );
     rocketnet_check( rocketnet_server_transport_num_payloads( server ) == 0 );
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
@@ -18171,8 +18203,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #endif // production excludes dev-key cases
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    { "test_server_bind_refused_iocp", rocketnet_test_server_bind_refused_iocp, NULL },
-    { "test_server_bind_refused_rio", rocketnet_test_server_bind_refused_rio, NULL },
+    { "test_server_bind_refused_iocp", rocketnet_test_server_bind_refused_iocp, rocketnet_test_server_pin_is_not_loopback },
+    { "test_server_bind_refused_rio", rocketnet_test_server_bind_refused_rio, rocketnet_test_server_pin_is_not_loopback },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_server_bind_address_not_reached_on_another_address", rocketnet_test_server_bind_address_not_reached_on_another_address, rocketnet_test_server_pin_allows_portable },

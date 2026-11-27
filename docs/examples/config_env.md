@@ -83,3 +83,17 @@ dropped unanswered and counted in `handshakes_dropped_over_budget`; the client
 sends it again, so a mass join or a flood of requests is spread across
 updates. Zero and values above 1024 are refused with
 `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`.
+
+## Link MTU list
+
+`link_mtus` and `num_link_mtus` have the same precedence rules, on the client
+and the server. Their environment names are `ROCKETNET_CLIENT_LINK_MTUS` and
+`ROCKETNET_SERVER_LINK_MTUS`, one variable for the list and its count: decimal
+entries joined by commas, `ROCKETNET_SERVER_LINK_MTUS=1492,1200,576`. The
+default is the one entry 1500, which probes nothing and sends nothing new. A
+list is 1 through 8 IP MTUs, largest first, from 546 through 1500, the same
+on both ends; create refuses the others with `LINK_MTUS_EMPTY`,
+`LINK_MTUS_NOT_DESCENDING`, `LINK_MTUS_TOO_LARGE` or `LINK_MTUS_TOO_SMALL`,
+and a list whose smallest entry fragments one `max_message_bytes` message
+past `reliable_messages_in_flight` with `LINK_MTUS_TOO_SMALL_FOR_MESSAGES`.
+A value that does not parse is `ROCKETNET_STATUS_CONFIG_ENV_INVALID`.

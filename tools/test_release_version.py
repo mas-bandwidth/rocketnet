@@ -207,6 +207,7 @@ WIRE_PATHS = [
     'sdk/rocketnet_read_write.h',
     'sdk/rocketnet_layers.h',
     'sdk/rocketnet.h',
+    'sdk/rocketnet_link_mtu.h',
 ]
 wire_gate = workflow[workflow.index('wire_log=$(git log'):workflow.index('if [ -z "$wire_log" ]')]
 assert '-- $wire_paths)' in wire_gate, 'release-check.yml wire-change gate does not log over $wire_paths'

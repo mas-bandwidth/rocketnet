@@ -380,10 +380,10 @@ void rocketnet_test_read_write()
     uint8_t ad[12];
     uint8_t * a = ad;
 
-    rocketnet_write_uint32( &a, 0x4E7C1A93 );
+    rocketnet_write_uint32( &a, 0x065014D9 );
     rocketnet_write_uint64( &a, 0x1122334455667788ULL );
 
-    const uint8_t expected_ad[12] = { 0x93, 0x1a, 0x7c, 0x4e,
+    const uint8_t expected_ad[12] = { 0xd9, 0x14, 0x50, 0x06,
                                       0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11 };
 
     rocketnet_check( memcmp( ad, expected_ad, 12 ) == 0 );
@@ -1384,7 +1384,7 @@ void rocketnet_test_connect_token_private()
     rocketnet_write_connect_token_private( &input, buffer );
 
     // exact offsets: client id at 0, protocol id at 8, expire at 16, keys at
-    // 24 and 56, user data at 88, zero padding from 344
+    // 24 and 56, user data at 88, zero padding from 152
 
     const uint8_t * p = buffer;
     rocketnet_check( rocketnet_read_uint64( &p ) == ROCKETNET_TEST_CLIENT_ID );
@@ -1393,7 +1393,7 @@ void rocketnet_test_connect_token_private()
     rocketnet_check( memcmp( buffer + 24, rocketnet_test_token_c2s_key, 32 ) == 0 );
     rocketnet_check( memcmp( buffer + 56, rocketnet_test_token_s2c_key, 32 ) == 0 );
 
-    for ( int i = 344; i < ROCKETNET_PRIVATE_BLOCK_BYTES; i++ )
+    for ( int i = 152; i < ROCKETNET_PRIVATE_BLOCK_BYTES; i++ )
     {
         rocketnet_check( buffer[i] == 0 );
     }
@@ -1423,7 +1423,7 @@ void rocketnet_test_signed_connect_data()
 
     rocketnet_check( memcmp( buffer, rocketnet_test_frozen_token, ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK ) == 0 );
 
-    // and the padding after the used 521 bytes is zero
+    // and the padding after the used 329 bytes is zero
 
     for ( int i = ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES; i < ROCKETNET_SIGNED_CONNECT_DATA_BYTES; i++ )
     {
@@ -1471,12 +1471,12 @@ void rocketnet_test_connect_token_frozen()
 
     rocketnet_check( rocketnet_connect_token_private_consistent( &opened, token.signed_connect_data ) );
 
-    // the clear token keys ride at 640 and 672, and the tail pad is zero
+    // the clear token keys ride at 448 and 480, and the tail pad is zero
 
     rocketnet_check( memcmp( token.client_to_server_key, rocketnet_test_token_c2s_key, 32 ) == 0 );
     rocketnet_check( memcmp( token.server_to_client_key, rocketnet_test_token_s2c_key, 32 ) == 0 );
 
-    for ( int i = 704; i < ROCKETNET_CONNECT_TOKEN_BYTES; i++ )
+    for ( int i = 512; i < ROCKETNET_CONNECT_TOKEN_BYTES; i++ )
     {
         rocketnet_check( rocketnet_test_frozen_token[i] == 0 );
     }
@@ -1530,7 +1530,7 @@ void rocketnet_test_connect_token_refusals()
 
     // NEGATIVE: any flipped byte in the signed data fails verification
 
-    const int tamper_offsets[] = { 0, 4, 20, 32, 57, 89, 520 };
+    const int tamper_offsets[] = { 0, 4, 20, 32, 57, 89, 328 };
 
     for ( int i = 0; i < (int) ( sizeof( tamper_offsets ) / sizeof( tamper_offsets[0] ) ); i++ )
     {
@@ -8059,7 +8059,8 @@ void rocketnet_test_wire_server_packet_valid()
     }
 
     // exhaustive: over every type and every size to the ceiling, exactly the
-    // two fixed sizes and the four session ranges are accepted, nothing else
+    // two fixed sizes, the four session ranges and the connection probe's
+    // range are accepted, nothing else
 
     int accepted = 0;
     for ( int type = 0; type < 256; type++ )
@@ -8073,7 +8074,7 @@ void rocketnet_test_wire_server_packet_valid()
         }
     }
 
-    const int expected = 2 + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + 1 );
+    const int expected = 2 + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES - ROCKETNET_CONNECTION_PROBE_MIN_WIRE_BYTES + 1 );
     rocketnet_check( accepted == expected );
 }
 
@@ -8231,6 +8232,9 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_client_state",
     "rocketnet_client_state_name",
     "rocketnet_client_index",
+    "rocketnet_client_max_packet_bytes",
+    "rocketnet_client_max_unreliable_message_bytes",
+    "rocketnet_client_link_mtu",
     "rocketnet_client_transport_name",
     "rocketnet_client_start_message",
     "rocketnet_client_finish_message",
@@ -8263,6 +8267,9 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_server_max_clients",
     "rocketnet_server_num_connected_clients",
     "rocketnet_server_client_connected",
+    "rocketnet_server_client_max_packet_bytes",
+    "rocketnet_server_client_max_unreliable_message_bytes",
+    "rocketnet_server_client_link_mtu",
     "rocketnet_server_client_id",
     "rocketnet_server_client_connection_id",
     "rocketnet_server_client_user_data",
@@ -8301,6 +8308,9 @@ static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_client_disconnected",
     "rocketnet_client_state",
     "rocketnet_client_index",
+    "rocketnet_client_max_packet_bytes",
+    "rocketnet_client_max_unreliable_message_bytes",
+    "rocketnet_client_link_mtu",
     "rocketnet_client_transport_name",
     "rocketnet_client_start_message",
     "rocketnet_client_finish_message",
@@ -8332,6 +8342,9 @@ static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_server_max_clients",
     "rocketnet_server_num_connected_clients",
     "rocketnet_server_client_connected",
+    "rocketnet_server_client_max_packet_bytes",
+    "rocketnet_server_client_max_unreliable_message_bytes",
+    "rocketnet_server_client_link_mtu",
     "rocketnet_server_client_id",
     "rocketnet_server_client_connection_id",
     "rocketnet_server_client_user_data",
@@ -8426,6 +8439,7 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_client_transport_send_packet",
     "rocketnet_client_transport_receive_packet",
     "rocketnet_client_transport_max_payload_bytes",
+    "rocketnet_client_transport_packet_bytes",
     "rocketnet_client_transport_num_payloads",
     "rocketnet_client_transport_payload",
     "rocketnet_client_transport_payloads",
@@ -8478,6 +8492,8 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_server_transport_client_end_reason",
     "rocketnet_server_transport_counters",
     "rocketnet_server_transport_max_payload_bytes",
+    "rocketnet_server_transport_client_max_payload_bytes",
+    "rocketnet_server_transport_client_packet_bytes",
     "rocketnet_server_transport_stats",
     "rocketnet_server_transport_client_stats",
     "rocketnet_server_transport_acked_packets",
@@ -8502,6 +8518,9 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_message_client_destroy",
     "rocketnet_message_client_transport",
     "rocketnet_message_client_state",
+    "rocketnet_message_client_max_packet_bytes",
+    "rocketnet_message_client_max_unreliable_message_bytes",
+    "rocketnet_message_client_link_mtu",
     "rocketnet_message_client_update",
     "rocketnet_message_client_send_packets",
     "rocketnet_message_client_start",
@@ -8533,6 +8552,9 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_message_server_set_send_kbps",
     "rocketnet_message_server_disconnect_reason",
     "rocketnet_message_server_client_connected",
+    "rocketnet_message_server_client_max_packet_bytes",
+    "rocketnet_message_server_client_max_unreliable_message_bytes",
+    "rocketnet_message_server_client_link_mtu",
     "rocketnet_message_server_counters",
 };
 
@@ -8561,6 +8583,7 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_client_transport_send_packet",
     "rocketnet_client_transport_receive_packet",
     "rocketnet_client_transport_max_payload_bytes",
+    "rocketnet_client_transport_packet_bytes",
     "rocketnet_client_transport_num_payloads",
     "rocketnet_client_transport_payload",
     "rocketnet_client_transport_payloads",
@@ -8611,6 +8634,8 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_server_transport_client_end_reason",
     "rocketnet_server_transport_counters",
     "rocketnet_server_transport_max_payload_bytes",
+    "rocketnet_server_transport_client_max_payload_bytes",
+    "rocketnet_server_transport_client_packet_bytes",
     "rocketnet_server_transport_stats",
     "rocketnet_server_transport_client_stats",
     "rocketnet_server_transport_acked_packets",
@@ -8624,6 +8649,9 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_message_client_destroy",
     "rocketnet_message_client_transport",
     "rocketnet_message_client_state",
+    "rocketnet_message_client_max_packet_bytes",
+    "rocketnet_message_client_max_unreliable_message_bytes",
+    "rocketnet_message_client_link_mtu",
     "rocketnet_message_client_update",
     "rocketnet_message_client_send_packets",
     "rocketnet_message_client_start",
@@ -8654,6 +8682,9 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_message_server_set_send_kbps",
     "rocketnet_message_server_disconnect_reason",
     "rocketnet_message_server_client_connected",
+    "rocketnet_message_server_client_max_packet_bytes",
+    "rocketnet_message_server_client_max_unreliable_message_bytes",
+    "rocketnet_message_server_client_link_mtu",
     "rocketnet_message_server_counters",
 };
 
@@ -8759,6 +8790,9 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_client_disconnect( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_DISCONNECTED ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_index( NULL ) == -1 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_max_packet_bytes( NULL ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_max_unreliable_message_bytes( NULL ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_link_mtu( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_transport_name( NULL ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_start_message( NULL, 0, ROCKETNET_RELIABILITY_RELIABLE, 4 ) == NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_finish_message( NULL, 4 ) == 0 ) );
@@ -8808,6 +8842,9 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_max_clients( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_num_connected_clients( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_connected( NULL, 0 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_max_packet_bytes( NULL, 0 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_max_unreliable_message_bytes( NULL, 0 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_link_mtu( NULL, 0 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_id( NULL, 0 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_connection_id( NULL, 0 ) == 0 ) );
     {
@@ -8975,6 +9012,10 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_client_transport_packet_bytes( NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_client_transport_num_payloads( NULL ) == 0 );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
@@ -9116,6 +9157,14 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
 
     before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_server_transport_max_payload_bytes( NULL ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_client_max_payload_bytes( NULL, 0 ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_client_packet_bytes( NULL, 0 ) == 0 );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
@@ -9346,6 +9395,9 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         rocketnet_message_client_destroy( NULL );
         rocketnet_check( rocketnet_message_client_transport( NULL ) == NULL );
         rocketnet_check( rocketnet_message_client_state( NULL ) == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+        rocketnet_check( rocketnet_message_client_max_packet_bytes( NULL ) == 0 );
+        rocketnet_check( rocketnet_message_client_max_unreliable_message_bytes( NULL ) == 0 );
+        rocketnet_check( rocketnet_message_client_link_mtu( NULL ) == 0 );
         rocketnet_check( rocketnet_message_client_update( NULL, 0.0 ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( NULL );
         rocketnet_check( rocketnet_message_client_start( NULL, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) == NULL );
@@ -9359,7 +9411,7 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         rocketnet_check( rocketnet_message_client_set_send_kbps( NULL, 1000 ) == 0 );
         rocketnet_check( rocketnet_message_client_disconnect_reason( NULL ) == ROCKETNET_DISCONNECT_REASON_NONE );
         rocketnet_check( rocketnet_message_client_counters( NULL ) == NULL );
-        rocketnet_check( rocketnet_api_misuse_count() == before + 17 );
+        rocketnet_check( rocketnet_api_misuse_count() == before + 20 );
 
         before = rocketnet_api_misuse_count();
         rocketnet_check( rocketnet_message_server_create( NULL, NULL, NULL, NULL, NULL, 0, 0 ) == NULL );
@@ -9378,8 +9430,11 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         rocketnet_check( rocketnet_message_server_set_send_kbps( NULL, 0, 1000 ) == 0 );
         rocketnet_check( rocketnet_message_server_disconnect_reason( NULL, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
         rocketnet_check( rocketnet_message_server_client_connected( NULL, 0 ) == 0 );
+        rocketnet_check( rocketnet_message_server_client_max_packet_bytes( NULL, 0 ) == 0 );
+        rocketnet_check( rocketnet_message_server_client_max_unreliable_message_bytes( NULL, 0 ) == 0 );
+        rocketnet_check( rocketnet_message_server_client_link_mtu( NULL, 0 ) == 0 );
         rocketnet_check( rocketnet_message_server_counters( NULL ) == NULL );
-        rocketnet_check( rocketnet_api_misuse_count() == before + 17 );
+        rocketnet_check( rocketnet_api_misuse_count() == before + 20 );
 
         // the sizing calls take NULL configs as the defaults: not a misuse
 
@@ -12120,6 +12175,7 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
         uint8_t expected_bytes[256];
         int64_t expected_int = 0;
         uint64_t expected_uint64 = 0;
+        int expected_list[2] = { 0, 0 };
 
         switch ( field->kind )
         {
@@ -12182,6 +12238,17 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
             }
             break;
 
+            case ROCKETNET_CONFIG_KIND_INT_LIST:
+            {
+                // two entries, the row's largest then its smallest: a count
+                // and entries the one-entry default is not
+
+                expected_list[0] = (int) field->max_value;
+                expected_list[1] = (int) field->min_value;
+                (void) snprintf( value_string, sizeof( value_string ), "%d,%d", expected_list[0], expected_list[1] );
+            }
+            break;
+
             default:
             {
                 rocketnet_check( false && "unknown config field kind" );
@@ -12225,6 +12292,16 @@ static void rocketnet_test_config_table_round_trip( const char * transport_name,
             case ROCKETNET_CONFIG_KIND_STRING:
             {
                 rocketnet_check( strcmp( (const char *) base, value_string ) == 0 );
+            }
+            break;
+
+            case ROCKETNET_CONFIG_KIND_INT_LIST:
+            {
+                const int max_entries = field->size / (int) sizeof( int ) - 1;
+                const int * list = reinterpret_cast<const int *>( base );
+
+                rocketnet_check( list[max_entries] == 2 );
+                rocketnet_check( list[0] == expected_list[0] && list[1] == expected_list[1] );
             }
             break;
         }
@@ -12312,6 +12389,8 @@ static const struct rn_test_config_field_t rn_test_client_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, time_callback ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, step_driven ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, token_epoch_unix_seconds ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, link_mtus ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, num_link_mtus ),
 };
 
 static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
@@ -12357,6 +12436,8 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, gso_reserve_cpu_0 ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, io_uring_reserve_cpu_0 ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, portable_reserve_cpu_0 ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, link_mtus ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, num_link_mtus ),
 };
 
 #undef RN_TEST_CONFIG_FIELD
@@ -12426,6 +12507,16 @@ static void rocketnet_test_public_config_fields_have_env( const char * type, con
     {
         const char * name = descriptors[i].name;
         rocketnet_check( name != NULL );
+
+        // the link MTU count is set with its list: one variable,
+        // ROCKETNET_<SIDE>_LINK_MTUS, the list row's
+
+        if ( strcmp( name, "num_link_mtus" ) == 0 )
+        {
+            const struct rocketnet_config_field_t * list = rocketnet_test_find_field( "link_mtus", transport_fields, num_transport_fields );
+            rocketnet_check( list != NULL && list->kind == ROCKETNET_CONFIG_KIND_INT_LIST );
+            name = "link_mtus";
+        }
 
         offsets[i] = descriptors[i].offset;
         sizes[i] = descriptors[i].size;
@@ -15372,6 +15463,18 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
             config.max_clients = c.max_clients;
 
             struct rocketnet_host_memory_estimate_t estimate;
+
+            // a row above the build's ROCKETNET_MAX_CLIENTS (the 1000 row in a
+            // MAX_CLIENTS=512 build) is no plan: the estimate refuses it and
+            // reports zero, as for any max_clients past the build's bound
+
+            if ( c.max_clients > ROCKETNET_MAX_CLIENTS )
+            {
+                rocketnet_check( !rocketnet_server_transport_host_memory_estimate( &config, "msgx", &estimate ) );
+                rocketnet_check( estimate.total_bytes == 0 );
+                continue;
+            }
+
             rocketnet_check( rocketnet_server_transport_host_memory_estimate( &config, "msgx", &estimate ) );
 
             rocketnet_check( estimate.sockets == 1 + c.max_clients );

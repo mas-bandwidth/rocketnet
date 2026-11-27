@@ -1307,7 +1307,7 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
     void * storage = rocketnet_malloc( context, sizeof( rocketnet_rio_lane_t ) );
     if ( !storage )
     {
-        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_create_failed_allocation( status, "rio transport create", "a lane", sizeof( rocketnet_rio_lane_t ) );
         return NULL;
     }
     rocketnet_rio_lane_t * rio = new ( storage ) rocketnet_rio_lane_t();
@@ -1344,7 +1344,7 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
         uint8_t * base = (uint8_t *) rocketnet_malloc( context, (size_t) sized.bytes );
         if ( !base )
         {
-            rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+            rocketnet_create_failed_allocation( status, "rio transport create", "a lane's client-scaled arrays", sized.bytes );
             goto failed;
         }
         rocketnet_rio_sized_bind( rio, base, &sized );
@@ -1360,12 +1360,12 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
     rio->wake = CreateEventW( NULL, FALSE, FALSE, NULL );
     if ( !rio->wake )
     {
-        rocketnet_platform_windows_create_status( status, GetLastError() );
+        rocketnet_create_failed_call( status, "rio transport create", "CreateEventW for the wake event", GetLastError() );
     }
     rio->notify = CreateEventW( NULL, FALSE, FALSE, NULL );
     if ( !rio->notify )
     {
-        rocketnet_platform_windows_create_status( status, GetLastError() );
+        rocketnet_create_failed_call( status, "rio transport create", "CreateEventW for the notify event", GetLastError() );
     }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->wake )
@@ -1400,7 +1400,7 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->socket == INVALID_SOCKET )
     {
-        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+        rocketnet_create_failed_call( status, "rio transport create", "WSASocketW for a lane", (unsigned long) WSAGetLastError() );
         goto failed;
     }
 #if ROCKETNET_DEV
@@ -1454,8 +1454,8 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
         {
             // a refusal for want of memory reads OUT_OF_MEMORY, never a bind refusal
             const int error = WSAGetLastError();
+            rocketnet_create_failed_call( status, "rio transport create", "WSAIoctl SIO_CPU_AFFINITY", (unsigned long) error );
             rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
-            rocketnet_platform_windows_create_status( status, (unsigned long) error );
             rocketnet_error( "rio transport refused: SIO_CPU_AFFINITY to processor %d was refused (Winsock %d); lanes share the port only through it",
                              cpu->index, error );
             goto failed;
@@ -1510,8 +1510,9 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
     {
         // a held port or an address this host cannot bind; a refusal for want
         // of buffers (WSAENOBUFS) reads OUT_OF_MEMORY, which ends the transport order
-        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
-        if ( rocketnet_platform_bind_refused( WSAGetLastError() ) )
+        const int bind_error = WSAGetLastError();
+        rocketnet_create_failed_call( status, "rio transport create", "bind of a lane", (unsigned long) bind_error );
+        if ( rocketnet_platform_bind_refused( bind_error ) )
         {
             rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
         }
@@ -1551,14 +1552,14 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
     rio->region = (uint8_t *) rocketnet_malloc( context, (size_t) rio->layout.total_bytes );
     if ( !rio->region )
     {
-        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_create_failed_allocation( status, "rio transport create", "a lane's registered region", rio->layout.total_bytes );
         goto failed;
     }
     memset( rio->region, 0, (size_t) rio->layout.total_bytes );
     rio->buffer_id = rio->rio.RIORegisterBuffer( (PCHAR) rio->region, (DWORD) rio->layout.total_bytes );
     if ( rio->buffer_id == RIO_INVALID_BUFFERID )
     {
-        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+        rocketnet_create_failed_call( status, "rio transport create", "RIORegisterBuffer", (unsigned long) WSAGetLastError() );
     }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->buffer_id != RIO_INVALID_BUFFERID )
@@ -1580,7 +1581,7 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
     rio->send_cq = rio->rio.RIOCreateCompletionQueue( (DWORD) rio->send_frames, &notification );
     if ( rio->send_cq == RIO_INVALID_CQ )
     {
-        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+        rocketnet_create_failed_call( status, "rio transport create", "RIOCreateCompletionQueue for sends", (unsigned long) WSAGetLastError() );
     }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->send_cq != RIO_INVALID_CQ )
@@ -1595,7 +1596,7 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
     rio->receive_cq = rio->rio.RIOCreateCompletionQueue( (DWORD) rio->receives, &notification );
     if ( rio->receive_cq == RIO_INVALID_CQ )
     {
-        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+        rocketnet_create_failed_call( status, "rio transport create", "RIOCreateCompletionQueue for receives", (unsigned long) WSAGetLastError() );
     }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->receive_cq != RIO_INVALID_CQ )
@@ -1618,7 +1619,7 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
                                                          rio->receive_cq, rio->send_cq, NULL );
     if ( rio->request_queue == RIO_INVALID_RQ )
     {
-        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+        rocketnet_create_failed_call( status, "rio transport create", "RIOCreateRequestQueue", (unsigned long) WSAGetLastError() );
     }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->request_queue != RIO_INVALID_RQ )
@@ -1641,7 +1642,7 @@ static rocketnet_rio_lane_t * rocketnet_rio_lane_create( void * context, rocketn
     {
         if ( !rocketnet_rio_post_receive( rio, i ) )
         {
-            rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+            rocketnet_create_failed_call( status, "rio transport create", "RIOReceiveEx posting a receive", (unsigned long) WSAGetLastError() );
             goto failed;
         }
 #if ROCKETNET_DEV
@@ -3650,7 +3651,7 @@ static bool rocketnet_rio_exclusive_probe( const rocketnet_address_t * bind_addr
     SOCKET probe = WSASocketW( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_NO_HANDLE_INHERIT );
     if ( probe == INVALID_SOCKET )
     {
-        rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+        rocketnet_create_failed_call( status, "rio transport create", "WSASocketW for the exclusive probe", (unsigned long) WSAGetLastError() );
         return false;
     }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -3659,24 +3660,28 @@ static bool rocketnet_rio_exclusive_probe( const rocketnet_address_t * bind_addr
     BOOL enabled = TRUE;
     DWORD v6_only = FALSE;
     const char * failed = NULL;
+    const char * failed_call = NULL;
     if ( setsockopt( probe, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *) &enabled, sizeof( enabled ) ) == SOCKET_ERROR )
     {
         failed = "SO_EXCLUSIVEADDRUSE was refused";
+        failed_call = "setsockopt SO_EXCLUSIVEADDRUSE on the exclusive probe";
     }
     else if ( ipv6 && setsockopt( probe, IPPROTO_IPV6, IPV6_V6ONLY, (const char *) &v6_only, sizeof( v6_only ) ) == SOCKET_ERROR )
     {
         failed = "IPV6_V6ONLY was refused";
+        failed_call = "setsockopt IPV6_V6ONLY on the exclusive probe";
     }
     else if ( bind( probe, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
     {
         failed = "the bind was refused: another socket holds the address and port";
+        failed_call = "bind of the exclusive probe";
     }
     const bool bound = failed == NULL;
     if ( !bound )
     {
         const int error = WSAGetLastError();
+        rocketnet_create_failed_call( status, "rio transport create", failed_call, (unsigned long) error );
         rocketnet_create_status( status, ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED );
-        rocketnet_platform_windows_create_status( status, (unsigned long) error );
         rocketnet_warn( "rio transport refused: the exclusive probe on port %d failed (Winsock %d): %s", bind_address->port, error, failed );
     }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -3708,8 +3713,9 @@ static bool rocketnet_rio_lane_processors( void * context, int lanes, rocketnet_
     DWORD bytes = 0;
     if ( GetLogicalProcessorInformationEx( RelationProcessorCore, NULL, &bytes ) || GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes == 0 )
     {
-        rocketnet_platform_windows_create_status( status, GetLastError() );
-        rocketnet_error( "rio transport refused: the processors could not be listed for the lanes (Win32 %lu)", GetLastError() );
+        const DWORD size_error = GetLastError();
+        rocketnet_create_failed_call( status, "rio transport create", "GetLogicalProcessorInformationEx (size)", size_error );
+        rocketnet_error( "rio transport refused: the processors could not be listed for the lanes (Win32 %lu)", size_error );
         return false;
     }
     const DWORD logical = GetActiveProcessorCount( ALL_PROCESSOR_GROUPS );
@@ -3717,7 +3723,14 @@ static bool rocketnet_rio_lane_processors( void * context, int lanes, rocketnet_
     rocketnet_rio_processor_t * order = (rocketnet_rio_processor_t *) rocketnet_malloc( context, sizeof( rocketnet_rio_processor_t ) * ( (size_t) logical + 1 ) );
     if ( !info || !order )
     {
-        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        if ( !info )
+        {
+            rocketnet_create_failed_allocation( status, "rio transport create", "the processor information", (uint64_t) bytes );
+        }
+        else
+        {
+            rocketnet_create_failed_allocation( status, "rio transport create", "the processor order", (uint64_t) sizeof( rocketnet_rio_processor_t ) * ( (uint64_t) logical + 1 ) );
+        }
         rocketnet_free( context, order );
         rocketnet_free( context, info );
         return false;
@@ -3815,7 +3828,7 @@ static bool rocketnet_rio_lane_processors( void * context, int lanes, rocketnet_
     {
         if ( error != 0 )
         {
-            rocketnet_platform_windows_create_status( status, error );
+            rocketnet_create_failed_call( status, "rio transport create", "GetLogicalProcessorInformationEx", error );
             rocketnet_error( "rio transport refused: the processors could not be listed for the lanes (Win32 %lu)", error );
         }
         else
@@ -3988,7 +4001,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     void * storage = rocketnet_malloc( context, sizeof( rocketnet_server_rio_t ) );
     if ( !storage )
     {
-        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_create_failed_allocation( status, "rio transport create", "the transport", sizeof( rocketnet_server_rio_t ) );
         return NULL;
     }
     rocketnet_server_rio_t * rio = new ( storage ) rocketnet_server_rio_t();

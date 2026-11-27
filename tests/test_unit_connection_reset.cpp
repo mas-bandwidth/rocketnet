@@ -208,8 +208,8 @@ static void test_connection_reset_inventory_covers_every_field()
         }
     }
 
-    check( reset_fields == 36 );
-    check( keep_fields == 8 );
+    check( reset_fields == 54 );
+    check( keep_fields == 10 );
 
     reset_walk_passes( rocketnet_reset_inventory_matches( "rocketnet_encryption_mapping_t",
                                                           encryption_mapping_layout, RESET_COUNT( encryption_mapping_layout ),

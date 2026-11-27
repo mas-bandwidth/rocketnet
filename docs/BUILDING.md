@@ -455,6 +455,8 @@ in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_LOG_LEVEL
 * Environment: ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS
 * Environment: ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS
+* Environment: ROCKETNET_CLIENT_LINK_MTUS
+* Environment: ROCKETNET_SERVER_LINK_MTUS
 * Environment: ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH (development use; a production library refuses a nonzero value)
 * Environment: ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH (development use; a production library refuses a nonzero value)
 * Environment: ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW (development use; a production library refuses a nonzero value)

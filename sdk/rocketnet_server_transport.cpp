@@ -1799,6 +1799,22 @@ static bool rocketnet_server_link_send( rocketnet_server_transport_t * transport
     return true;
 }
 
+// whether a held connection's packet size can rise: the server's link MTU
+// list gives some address family more than one packet size, so a client may
+// probe upward and confirm a larger one (sdk/rocketnet_link_mtu.h). False
+// on the default list.
+
+bool rocketnet_server_transport_packet_bytes_can_rise( const struct rocketnet_server_transport_t * server_transport )
+{
+    rocketnet_assert( server_transport );
+
+    const int * link_mtus = server_transport->protocol.link_mtus;
+    const int num_link_mtus = server_transport->protocol.num_link_mtus;
+    int candidates[ROCKETNET_LINK_MTU_MAX_ENTRIES];
+    return rocketnet_link_mtu_candidates( link_mtus, num_link_mtus, ROCKETNET_ADDRESS_IPV4, candidates ) > 1 ||
+           rocketnet_link_mtu_candidates( link_mtus, num_link_mtus, ROCKETNET_ADDRESS_IPV6, candidates ) > 1;
+}
+
 // The development network simulator call on a running transport: applies at
 // once. A development server always owns a link simulator, so this stores the
 // new settings as a config record under the tiny mutex and the thread that owns
@@ -1823,6 +1839,19 @@ bool rocketnet_server_transport_network_simulator( struct rocketnet_server_trans
                                              (float) packet_loss_percent, (float) duplicate_percent );
     return true;
 }
+
+#if ROCKETNET_DEV
+// the unit seam for the list the protocol answers probes with: its entries
+// into link_mtus (ROCKETNET_MAX_LINK_MTUS of room), and its count
+
+int rocketnet_server_transport_link_mtus_for_test( const struct rocketnet_server_transport_t * server_transport, int * link_mtus )
+{
+    rocketnet_assert( server_transport );
+    rocketnet_assert( link_mtus );
+    memcpy( link_mtus, server_transport->protocol.link_mtus, sizeof( server_transport->protocol.link_mtus ) );
+    return server_transport->protocol.num_link_mtus;
+}
+#endif // #if ROCKETNET_DEV
 
 // The unit seam for a lock miss without a second thread: the next `sends`
 // link sends through an active simulator take the lock-miss path, counting
@@ -3039,6 +3068,16 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
         return false;
     }
 
+    const int link_mtus = rocketnet_config_link_mtus_status( "server", effective_config.link_mtus, effective_config.num_link_mtus );
+    if ( link_mtus != ROCKETNET_STATUS_OK )
+    {
+        if ( status )
+        {
+            *status = link_mtus;
+        }
+        return false;
+    }
+
     config = &effective_config;
 
     // the config's public_address, when set, displaces the create call's
@@ -3746,6 +3785,8 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
     struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
     protocol->protocol_id = config->protocol_id;
     protocol->send_rate = ROCKETNET_DEFAULT_SEND_RATE;
+    memcpy( protocol->link_mtus, config->link_mtus, sizeof( protocol->link_mtus ) );       // checked at the resolve (rocketnet_config_link_mtus_status)
+    protocol->num_link_mtus = config->num_link_mtus;
     memcpy( protocol->packet_filter, config->packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( protocol->backend_public_key, config->backend_public_key, 32 );
     memcpy( protocol->server_public_key, config->server_public_key, 32 );
@@ -5338,6 +5379,18 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         return NULL;
     }
 
+    // the connection's payload capacity C(P), from its packet size
+    // (sdk/rocketnet_link_mtu.h): the frame never carries more, so the
+    // sealed packet never exceeds P. ROCKETNET_MAX_PACKET_PAYLOAD_BYTES at
+    // the default packet size.
+
+    const int payload_capacity = rocketnet_link_mtu_payload_bytes( rocketnet_server_protocol_client_packet_bytes( &server_transport->protocol, client_index ) );
+    if ( request_bytes > payload_capacity )
+    {
+        rocketnet_spam( "server start packet refused. request above the connection's payload capacity" );
+        return NULL;
+    }
+
     uint8_t * frame = NULL;
 
     struct rocketnet_server_fill_line_t * line = rocketnet_server_fill_line( server_transport );
@@ -5394,7 +5447,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
 
     context->frame = frame;
     context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET;
-    context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    context->payload_capacity = payload_capacity;
     context->sequence = 0;
     context->client_index = client_index;
 
@@ -5847,7 +5900,7 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
     const int index = ( server_transport->disconnect_burst_head + server_transport->disconnect_burst_count ) % server_transport->disconnect_burst_capacity;
     struct rocketnet_server_disconnect_burst_t * burst = &server_transport->disconnect_bursts[index];
 
-    burst->plaintext_bytes = rocketnet_session_ack_block_build( burst->plaintext, 0, &mapping->accepted_session );
+    burst->plaintext_bytes = rocketnet_session_ack_block_build( burst->plaintext, rocketnet_server_protocol_mapping_packet_bytes( mapping ), 0, &mapping->accepted_session );
     burst->to = *client_address;
     // the whole burst's sequences are taken in one atomic add, so nothing
     // else sealed under this key can carry one of them
@@ -6490,6 +6543,45 @@ int rocketnet_server_transport_max_payload_bytes( struct rocketnet_server_transp
     }
     rocketnet_assert( server_transport );
     return ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+}
+
+int rocketnet_server_transport_client_max_payload_bytes( struct rocketnet_server_transport_t * server_transport, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+    {
+        return 0;
+    }
+    rocketnet_assert( server_transport );
+
+    const int packet_bytes = rocketnet_server_transport_client_packet_bytes( server_transport, client_index );
+    return packet_bytes > 0 ? rocketnet_link_mtu_payload_bytes( packet_bytes ) : 0;
+}
+
+int rocketnet_server_transport_client_packet_bytes( struct rocketnet_server_transport_t * server_transport, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+    {
+        return 0;
+    }
+    rocketnet_assert( server_transport );
+    return rocketnet_server_protocol_client_packet_bytes( &server_transport->protocol, client_index );
+}
+
+int rocketnet_server_transport_client_link_mtu( struct rocketnet_server_transport_t * server_transport, int client_index, int packet_bytes )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+    {
+        return 0;
+    }
+    rocketnet_assert( server_transport );
+
+    struct rocketnet_address_t address;
+    if ( !rocketnet_server_protocol_client_address( &server_transport->protocol, client_index, &address ) )
+    {
+        return 0;
+    }
+
+    return rocketnet_link_mtu_entry( server_transport->protocol.link_mtus, server_transport->protocol.num_link_mtus, address.type, packet_bytes );
 }
 
 int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_t * server_transport, const int ** client_index, const uint64_t ** packet_ids )

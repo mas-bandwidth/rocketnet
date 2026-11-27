@@ -241,7 +241,7 @@ class RulePinTests(unittest.TestCase):
         expression = ("rn_endpoint_unreliable_over_record_capacity( "
                       "ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, "
                       "ROCKETNET_MESSAGE_WIDE_CHANNEL, %d, "
-                      "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )")
+                      "ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, ROCKETNET_MESSAGE_SINGLE_BYTES )")
         pins = [{"expr": expression % 1404}, {"expr": expression % 1405}]
         self.assertEqual(standard.compile_pins(pins, includes), {0: ("n", 0), 1: ("n", 1)})
 

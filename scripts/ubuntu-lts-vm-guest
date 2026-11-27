@@ -24,6 +24,16 @@
 #      CMake, linker or other warning no -Werror reaches
 #   5. ./bin/test, ./bin/test_xdp_compat (jammy), ./bin/functional, each
 #      required to list at least one case, then tools/check_package.py build
+#   6. the whole functional suite again with the server and client
+#      transports pinned on this kernel: gso/portable on every release (UDP
+#      GSO/GRO on 5.15, 6.8 and 7.x), io_uring/portable where the build has
+#      io_uring (liburing >= 2.3: noble and resolute, not jammy)
+#   7. the xdp/portable cell's cases (ci.yml's xdp_cases, read through
+#      scripts/transport-cells-repeat --list) as root on a veth pair
+#      (ROCKETNET_TEST_XDP_VETH=1), against the AF_XDP provider this release
+#      builds with: the legacy libbpf 0.5 path on jammy, libxdp 1.4 on noble,
+#      libxdp 1.6 on resolute. A case passes as the matrix's pass rule says:
+#      exit 0, its own name on a line, no [SKIPPED.
 #
 # --check-log is step 4 alone, over the files named: exit 1 with each warning
 # line printed, 0 when there is none, 2 when a file is missing or empty.
@@ -98,5 +108,27 @@ fi
 functional=$("$bin/functional" --list | grep -c .) || fail "./bin/functional --list listed no case"
 "$bin/functional" || fail "./bin/functional (the functional suite)"
 python3 tools/check_package.py build || fail "tools/check_package.py build"
+pins="gso"
+if [ "$series" != jammy ]; then
+    pins="gso io_uring"
+fi
+for server in $pins; do
+    echo "functional suite, server $server, client portable, kernel $kernel"
+    ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=portable "$bin/functional" \
+        || fail "./bin/functional with ROCKETNET_SERVER_TRANSPORT=$server ROCKETNET_CLIENT_TRANSPORT=portable"
+done
+cell=$(scripts/transport-cells-repeat --list --os linux) || fail "scripts/transport-cells-repeat --list"
+xdp_cases=$(printf '%s\n' "$cell" | sed -n 's|^CELL linux xdp/portable cases=\([^ ]*\).*|\1|p' | tr ',' ' ')
+[ -n "$xdp_cases" ] || fail "no xdp/portable cases read from ci.yml"
+xdp=0
+for case in $xdp_cases; do
+    rc=0
+    sudo env ROCKETNET_NIGHTLY_NO_TIMEOUT=1 ROCKETNET_TEST_XDP_VETH=1 "$bin/functional" --run "$case" > "xdp-$case.log" 2>&1 || rc=$?
+    if [ "$rc" != 0 ] || ! grep -qx "$case" "xdp-$case.log" || grep -q '\[SKIPPED' "xdp-$case.log"; then
+        tail -n 30 "xdp-$case.log"
+        fail "xdp/portable case $case as root on a veth pair (exit $rc)"
+    fi
+    xdp=$((xdp + 1))
+done
 
-echo "LTS-VM-PASS $series kernel=$kernel unit=$unit functional=$functional"
+echo "LTS-VM-PASS $series kernel=$kernel unit=$unit functional=$functional pinned=${pins// /,} xdp_cases=$xdp"

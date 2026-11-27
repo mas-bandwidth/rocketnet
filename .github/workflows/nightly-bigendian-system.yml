@@ -116,8 +116,12 @@ jobs:
           gpg --batch --status-fd 1 --keyid-format long --verify SHA256SUMS.gpg SHA256SUMS | tee gpg-status.txt
           grep -q '^\[GNUPG:\] GOODSIG ' gpg-status.txt
           grep -q "^\[GNUPG:\] VALIDSIG ${PIN} " gpg-status.txt
-          gpgconf --kill all >/dev/null 2>&1 || true
+          # Verified: stop the agent and drop the keyring now, with the status
+          # checked (the step runs under -e), and clear the EXIT trap that
+          # covered a failure above; `trap cleanup EXIT` below replaces it.
+          gpgconf --kill all
           rm -rf "$GNUPGHOME"
+          trap - EXIT
           curl -fL --retry 3 -o "$IMAGE" "$BASE/$IMAGE"
           grep -F "*${IMAGE}" SHA256SUMS | sha256sum -c -
 

@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 
     Unit tests: no sockets, no real time. The known answers are the C
-    library's own, standard/vectors/connect_token_v1.json, minted by
+    library's own, standard/vectors/connect_token_v2.json, minted by
     rocketnet_write_connect_token_deterministic; this backend must write
     every one of them byte for byte.
 
@@ -48,16 +48,16 @@ static class Tests
 
     static string VectorsPath()
     {
-        // walk up from the working directory to the repository's standard/vectors/connect_token_v1.json
+        // walk up from the working directory to the repository's standard/vectors/connect_token_v2.json
         for ( DirectoryInfo? directory = new DirectoryInfo( Directory.GetCurrentDirectory() ); directory != null; directory = directory.Parent )
         {
-            string path = Path.Combine( directory.FullName, "standard", "vectors", "connect_token_v1.json" );
+            string path = Path.Combine( directory.FullName, "standard", "vectors", "connect_token_v2.json" );
             if ( File.Exists( path ) )
             {
                 return path;
             }
         }
-        throw new TestFailure( "standard/vectors/connect_token_v1.json not found above the working directory" );
+        throw new TestFailure( "standard/vectors/connect_token_v2.json not found above the working directory" );
     }
 
     static List<JsonElement> LoadVectors()
@@ -106,7 +106,7 @@ static class Tests
                 ClientId = UnhexUInt64( v, "client_id" ),
                 ClientToServerKey = Unhex( v, "client_to_server_key", 32 ),
                 ServerToClientKey = Unhex( v, "server_to_client_key", 32 ),
-                UserData = Unhex( v, "user_data", 256 ),
+                UserData = Unhex( v, "user_data", 64 ),
             };
             byte[] backendPrivateKey = PublicKeyAuth.GenerateKeyPair( Unhex( v, "backend_signing_seed", 32 ) ).PrivateKey;
 
@@ -185,7 +185,7 @@ static class Tests
         byte[] keys = Enumerable.Repeat( (byte) 0x5a, 64 ).ToArray();
         int offset = 0;
         byte[] token = ConnectToken.Generate( config, 0x0123456789abcdef, 1000, buffer => { Array.Copy( keys, offset, buffer, 0, buffer.Length ); offset += buffer.Length; }, ConnectToken.SealAnonymous );
-        Check( token.Length == ConnectToken.ConnectTokenBytes && Convert.ToBase64String( token ).Length == 1024, "token size" );
+        Check( token.Length == ConnectToken.ConnectTokenBytes && Convert.ToBase64String( token ).Length == 768, "token size" );
 
         byte[] devBackendPublicKey = BackendConfig.DevBackendPrivateKey.AsSpan( 32, 32 ).ToArray();
         byte[] signedData = token.AsSpan( 0, ConnectToken.SignedConnectDataBytes ).ToArray();
@@ -205,7 +205,7 @@ static class Tests
                BinaryPrimitives.ReadUInt64LittleEndian( block.AsSpan( 16 ) ) == 1030 &&
                block.AsSpan( 24, 64 ).SequenceEqual( keys ) &&
                token.AsSpan( ConnectToken.SignedConnectDataBytes + ConnectToken.SignatureBytes, 64 ).SequenceEqual( keys ), "private block" );
-        Check( block.AsSpan( 88 ).IndexOfAnyExcept( (byte) 0 ) < 0 && token.AsSpan( 704 ).IndexOfAnyExcept( (byte) 0 ) < 0, "padding is zero" );
+        Check( block.AsSpan( 88 ).IndexOfAnyExcept( (byte) 0 ) < 0 && token.AsSpan( 512 ).IndexOfAnyExcept( (byte) 0 ) < 0, "padding is zero" );
     }
 
     static void test_config_refused()

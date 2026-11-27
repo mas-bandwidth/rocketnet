@@ -43,13 +43,14 @@ struct rocketnet_unit_file_test_t
 };
 
 // The tree had 1,029 registrations when this fixed registry replaced the
-// pointer chain. 2,048 is the next power of two and leaves the same amount of
-// explicit growth again. Registration needs no allocation before main; a tree
+// pointer chain, and 2,048 was the next power of two; the tree reached 2,048
+// with the path probe's tests, and 4,096 is the next power again, with the
+// same explicit growth. Registration needs no allocation before main; a tree
 // that exceeds the bound aborts with the omitted test's name instead of
 // silently dropping it. Entries are inserted at the front to preserve the
 // linked registry's established reverse-construction enumeration order.
 
-#define ROCKETNET_UNIT_FILE_TEST_CAPACITY 2048
+#define ROCKETNET_UNIT_FILE_TEST_CAPACITY 4096
 
 // The fixed Unix time the DEV unit suite's wall clock reads
 // (rocketnet_platform_set_wall_clock_for_testing, tests/test.cpp): a connect

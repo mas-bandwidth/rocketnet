@@ -45,7 +45,7 @@
 #include "counters_expect.h"
 
 // Keep the table's normative sizes independent of the shared wire constants.
-static_assert( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES == 710, "STANDARD.md request size" );
+static_assert( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES == 518, "STANDARD.md request size" );
 static_assert( ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES == 38, "STANDARD.md cookie size" );
 static_assert( ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES == 66, "STANDARD.md challenge size" );
 static_assert( ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES == 50, "STANDARD.md response size" );
@@ -284,7 +284,7 @@ static void test_reply_never_larger_than_request_every_unauthenticated_type()
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
 
-    // request -> cookie. 710 provoking, 38 answering
+    // request -> cookie. 518 provoking, 38 answering
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     reply_build_standard_request( request, 0xA100ULL, rocketnet_test_salt );
@@ -307,7 +307,7 @@ static void test_reply_never_larger_than_request_every_unauthenticated_type()
     memcpy( stored_challenge, response, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
 
     // the stored challenge is resent byte-identical for as long as the mapping
-    // lives, still 66 bytes against the 710-byte request.
+    // lives, still 66 bytes against the 518-byte request.
 
     rocketnet_unit_check( reply_process_at( &test, &test.client_address, request, sizeof( request ),
                                             response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
@@ -317,7 +317,7 @@ static void test_reply_never_larger_than_request_every_unauthenticated_type()
 
     // a refused token: the expired token is refused before the cookie is
     // issued, and STANDARD.md's rule that a server never answers a request it
-    // has rejected leaves the response empty. 710 provoking, 0 answering.
+    // has rejected leaves the response empty. 518 provoking, 0 answering.
     {
         uint8_t refused_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
         reply_build_request( refused_request, 0xA200ULL, rocketnet_test_salt,
@@ -329,7 +329,7 @@ static void test_reply_never_larger_than_request_every_unauthenticated_type()
         rocketnet_unit_check( response_bytes <= ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
     }
 
-    // request -> denied because the server is full. 710 provoking, 34
+    // request -> denied because the server is full. 518 provoking, 34
     // answering, and no mapping is created.
     {
         uint8_t denied_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
@@ -689,7 +689,7 @@ static void test_reply_never_larger_than_request_hostile_inputs()
 // ---------------------------------------------------------------------------
 // An address that has proven nothing -- no mapping, no valid cookie -- can
 // provoke one reply and only one: the 38-byte cookie, for a request of exactly
-// 710 bytes. A connection request of any other length, shorter or longer, up
+// 518 bytes. A connection request of any other length, shorter or longer, up
 // to the receive ceiling, is answered with nothing. The challenge and the
 // denied are sent only past a valid cookie for the address: with every slot
 // taken, a request without one still gets the cookie, not the denied.
@@ -722,7 +722,7 @@ static void test_reply_unproven_source_gets_at_most_a_cookie()
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     reply_build_standard_request( request, 0xF100ULL, rocketnet_test_salt );
 
-    // no cookie, then a forged one: the cookie each time, at most 38/710
+    // no cookie, then a forged one: the cookie each time, at most 38/518
     // of the request
 
     rocketnet_unit_check( reply_process_at( &test, &test.client_address, request, sizeof( request ),

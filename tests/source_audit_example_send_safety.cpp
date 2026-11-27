@@ -117,6 +117,7 @@ static const manifest_row_t manifest[] = {
     { "examples/thread.h", "c" },
     { "examples/whitelist.h", "c" },
     { "examples/dev_keys.h", "c" },
+    { "examples/link_mtus.h", "c" },
     { "examples/backend/check_token.cpp", "c" },
     { "examples/backend/README.md", "md" },
     { "examples/backend/go/main.go", "inventory" },

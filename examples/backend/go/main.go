@@ -6,7 +6,7 @@
    signed-in player and returns it as base64. The client passes the string to rocketnet_client_connect, and
    the token sends it to the one server it names.
 
-   The token is the 768 byte connect token of STANDARD.md, byte for byte the
+   The token is the 576 byte connect token of STANDARD.md, byte for byte the
    one sdk/rocketnet_connect_token.cpp writes: the backend signs the signed
    connect data with its Ed25519 key, and the private block inside it is
    sealed (crypto_box_seal) to the server's X25519 public key, so only that
@@ -53,14 +53,14 @@ import (
 // The connect token wire format (sdk/rocketnet_connect_token.h).
 
 const (
-	wireVersion            = 0x4E7C1A93
-	connectTokenBytes      = 768
-	signedConnectDataBytes = 576
-	privateBlockBytes      = 384
-	sealedBlockBytes       = 432
+	wireVersion            = 0x065014D9
+	connectTokenBytes      = 576
+	signedConnectDataBytes = 384
+	privateBlockBytes      = 192
+	sealedBlockBytes       = 240
 	signatureBytes         = 64
 	keyBytes               = 32
-	userDataBytes          = 256
+	userDataBytes          = 64
 	addressFlagIPv4        = 1 << 0
 	addressFlagIPv6        = 1 << 1
 	offsetSealedBlock      = 89

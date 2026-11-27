@@ -34,6 +34,7 @@
 #include <type_traits>
 #include "loopback_hub.h"
 #include "fake_client_driver.h"
+#include "suite_runner.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_address.h"
 #include "rocketnet_client_io.h"
@@ -292,7 +293,7 @@ static void test_api_polish_lookups_say_unknown()
 {
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ), "FLOW_ID_RESERVED" ) == 0 );
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -36 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -41 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) 1 ), "UNKNOWN" ) == 0 );
 
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );
@@ -307,7 +308,8 @@ static void test_api_polish_lookups_say_unknown()
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION ), "PROTOCOL_VIOLATION" ) == 0 );
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH ), "CONFIG_MISMATCH" ) == 0 );
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED ), "MESSAGE_MEMORY_EXHAUSTED" ) == 0 );
-    check( strcmp( rocketnet_client_state_name( (rocketnet_client_state_t) -14 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED ), "MTU_PROBE_FAILED" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( (rocketnet_client_state_t) -15 ), "UNKNOWN" ) == 0 );
 
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ), "NONE" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT ), "RELIABLE_TIMED_OUT" ) == 0 );
@@ -354,7 +356,7 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
 
     // every status code from OK down to the last names itself; -9 and -22 are reserved
 
-    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED; status-- )
+    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES; status-- )
     {
         const char * name = rocketnet_status_name( (enum rocketnet_status_t) status );
         check( name != NULL );
@@ -660,6 +662,11 @@ REGISTER_UNIT_TEST( test_api_polish_negative_first_update_time_is_misuse );
 static double g_polish_big_index_now = 1000.0;
 static double api_polish_big_index_clock( void * ) { return g_polish_big_index_now; }
 
+static int api_polish_big_index_server_slots()
+{
+    return ROCKETNET_MAX_CLIENTS + 1000 <= ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT ? ROCKETNET_MAX_CLIENTS + 1000 : ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT;
+}
+
 static void test_api_polish_client_index_at_build_max_clients()
 {
     rocketnet_quiet( true );
@@ -671,7 +678,7 @@ static void test_api_polish_client_index_at_build_max_clients()
     // step 17), the most any server can be built with; in a build at that
     // ceiling the held slots leave the last one free
 
-    const int server_max_clients = ROCKETNET_MAX_CLIENTS + 1000 <= ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT ? ROCKETNET_MAX_CLIENTS + 1000 : ROCKETNET_KEEP_ALIVE_MAX_SLOT_COUNT;
+    const int server_max_clients = api_polish_big_index_server_slots();
     const int held_slots = ROCKETNET_MAX_CLIENTS < server_max_clients ? ROCKETNET_MAX_CLIENTS : server_max_clients - 1;
 
     struct rocketnet_counters_t server_counters;
@@ -809,6 +816,24 @@ static void test_api_polish_client_index_at_build_max_clients()
     rocketnet_quiet( false );
 }
 REGISTER_UNIT_TEST( test_api_polish_client_index_at_build_max_clients );
+
+// The server's ack and slot tables grow with its slots, which follow this
+// build's ROCKETNET_MAX_CLIENTS: the case peaks at 94 MiB at the default build's
+// 2000 slots, under the suite-wide bound, and at 1459 MiB at a
+// MAX_CLIENTS=32768 build's 32768 slots, over it (Linux, 2026-11-26). A build above the default maximum bounds the
+// case by its plan instead: the ack and slot tables planned for its slots
+// (rocketnet_server_acks_allocation_bytes, rocketnet_client_slots_allocation_bytes)
+// plus a stated 64 MiB for the client, the small server tables and the
+// process. The default build keeps the suite-wide bound.
+#if ROCKETNET_MAX_CLIENTS > 1000
+static long api_polish_big_index_rss_bound_mb()
+{
+    const int slots = api_polish_big_index_server_slots();
+    return suite_rss_bound_mb( rocketnet_server_acks_allocation_bytes( slots ) + rocketnet_client_slots_allocation_bytes( slots ), 64 );
+}
+
+SUITE_CASE_RSS_BOUND( test_api_polish_client_index_at_build_max_clients, api_polish_big_index_rss_bound_mb );
+#endif // #if ROCKETNET_MAX_CLIENTS > 1000
 
 // --- server abort_message acts on the pending start: with none, a no-op ---------
 

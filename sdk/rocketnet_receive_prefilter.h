@@ -45,10 +45,11 @@
 // What it refuses, in main's order (sdk/rocketnet_server_protocol.cpp,
 // rocketnet_server_protocol_process_received):
 //   1. the prefilter header: too short, too large, wrong epoch, wrong value;
-//   2. a reserved type (9 and up);
+//   2. a reserved type (10 and up);
 //   3. a type only a server sends (denied, challenge, cookie);
 //   4. a server-inbound type whose size its type forbids (the request's exact
-//      size, the response's exact size, the session types' wire floor).
+//      size, the response's exact size, the session types' and the probe's
+//      wire floor).
 // What it cannot refuse, by design: anything that needs a key or a table
 // (signatures, tokens, replays, unknown sources). Those still reach main.
 
@@ -69,6 +70,7 @@ enum rocketnet_receive_drop_t
     ROCKETNET_RECEIVE_DROP_PAYLOAD_WRONG_SIZE,
     ROCKETNET_RECEIVE_DROP_DISCONNECT_WRONG_SIZE,
     ROCKETNET_RECEIVE_DROP_ACK_WRONG_SIZE,
+    ROCKETNET_RECEIVE_DROP_PROBE_WRONG_SIZE,
 
     // never returned by the prefilter: counted by the transport itself when
     // a datagram that passed (or was never offered to) the prefilter finds
@@ -139,6 +141,8 @@ static inline enum rocketnet_receive_drop_t rocketnet_receive_prefilter( const u
             return packet_bytes >= ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES ? ROCKETNET_RECEIVE_ACCEPT : ROCKETNET_RECEIVE_DROP_DISCONNECT_WRONG_SIZE;
         case ROCKETNET_CONNECTION_ACK_PACKET:
             return packet_bytes >= ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES ? ROCKETNET_RECEIVE_ACCEPT : ROCKETNET_RECEIVE_DROP_ACK_WRONG_SIZE;
+        case ROCKETNET_CONNECTION_PROBE_PACKET:
+            return packet_bytes >= ROCKETNET_CONNECTION_PROBE_MIN_WIRE_BYTES ? ROCKETNET_RECEIVE_ACCEPT : ROCKETNET_RECEIVE_DROP_PROBE_WRONG_SIZE;
         default:
             break;
     }
@@ -212,6 +216,10 @@ static inline int rocketnet_receive_drop_counters( enum rocketnet_receive_drop_t
         case ROCKETNET_RECEIVE_DROP_ACK_WRONG_SIZE:
             counters[1] = ROCKETNET_COUNTER_ACK_RECEIVED;
             counters[2] = ROCKETNET_COUNTER_ACK_WRONG_SIZE;
+            return 3;
+        case ROCKETNET_RECEIVE_DROP_PROBE_WRONG_SIZE:
+            counters[1] = ROCKETNET_COUNTER_CONNECTION_PROBE_RECEIVED;
+            counters[2] = ROCKETNET_COUNTER_CONNECTION_PROBE_WRONG_SIZE;
             return 3;
         default:
             break;
