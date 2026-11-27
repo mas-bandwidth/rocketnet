@@ -82,7 +82,7 @@ From the repository root on Linux or macOS, prepare the libraries for the
 compile/run check, then run the documentation checks:
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_BUILD_DEV_LIBRARIES=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF -DROCKETNET_BUILD_DEV_LIBRARIES=ON
 cmake --build build --target rocketnet rocketnet_dev --parallel 4
 python3 tools/check_client_server_words.py
 python3 tools/docs/check_links.py
@@ -90,7 +90,7 @@ python3 tools/docs/check_getting_started.py
 sh tools/docs/check_agents_md.sh all
 ```
 
-The compile/run check requires built `rocketnet` and `rocketnet_dev` libraries
-under `build/`. These checks validate documentation structure and examples;
-they do not requalify all platforms or performance. The CI documentation job
+The checker runs the message exchange with `rocketnet_dev` and the create-only
+example with both `rocketnet_dev` and the production `rocketnet` library.
+These checks validate documentation structure and examples. The CI documentation job
 also builds the generated API reference and checks for undocumented symbols.

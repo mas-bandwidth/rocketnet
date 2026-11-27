@@ -416,6 +416,10 @@ add_library(rocketnet STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 if(ROCKETNET_BUILD_SHARED)
     add_library(rocketnet_shared SHARED ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 endif()
+# The standalone documentation checker invokes the C compiler directly. Give
+# its rocketnet consumer the same public header mode as this library.
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/docs-rocketnet-dev-mode" CONTENT "$<BOOL:${ROCKETNET_DEV}>\n")
+
 # The development library: the same source compiled with ROCKETNET_DEV=1,
 # so the dev flow (examples, functional suite, soak) keeps the
 # development token minting and accepts the published development keys that the
