@@ -15808,12 +15808,21 @@ static void rocketnet_test_server_stop_disconnects_every_client( const char * tr
     rocketnet_server_stop( server );
 
     // the clients' timeout is ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS; the
-    // disconnect packets end every connection well inside it
+    // disconnect packets end every connection well inside it.
+    //
+    // rocketnet_server_stopped is polled every pass, before the clients read:
+    // each poll is the next stop step (rocketnet_server_transport_stop_step),
+    // and the stop seals only the bursts its send room takes per step. Asked
+    // only once every client had disconnected, a burst the first step had no
+    // room for never left, and its client never heard the stop (a loaded
+    // ASan host, nightly 44886138237, portable/gso).
 
     const double stop_start = rocketnet_time();
     int disconnected = 0;
-    while ( rocketnet_time() - stop_start < 2.0 && ( disconnected < num_clients || !rocketnet_server_stopped( server ) ) )
+    bool stopped = false;
+    while ( rocketnet_time() - stop_start < 2.0 && ( disconnected < num_clients || !stopped ) )
     {
+        stopped = rocketnet_server_stopped( server );
         const double now = 1000.0 + ( rocketnet_time() - wall_start );
         disconnected = 0;
         for ( int i = 0; i < num_clients; i++ )
