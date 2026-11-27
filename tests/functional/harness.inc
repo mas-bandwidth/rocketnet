@@ -97,7 +97,7 @@ enum rocketnet_status_t rocketnet_functional_production_write_token( const char 
     rocketnet_functional_production_keys( backend_public, backend_secret, server_public, server_secret );
 
     const char * addresses[1] = { server_address_string };
-    return rocketnet_write_production_connect_token( backend_secret, server_public, rocketnet_functional_production_protocol_id, addresses, 1, client_id, current_timestamp, current_timestamp + 30, 10, NULL, connect_token, connect_token_bytes );
+    return rocketnet_write_production_connect_token( backend_secret, server_public, rocketnet_functional_production_protocol_id, addresses, 1, client_id, current_timestamp, current_timestamp + 30, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS, NULL, connect_token, connect_token_bytes );
 }
 enum rocketnet_status_t rocketnet_functional_production_create_token( const char * server_address_ipv4, const char * server_address_ipv6, const uint8_t * server_public_key, int expire_seconds, int timeout_seconds, uint64_t client_id, uint64_t protocol_id, uint64_t unix_timestamp, const uint8_t * user_data, char * connect_token )
 {
