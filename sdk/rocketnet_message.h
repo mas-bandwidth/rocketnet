@@ -249,12 +249,18 @@ struct rocketnet_message_reader_t
     int offset;                     // the next record's offset in the body
     int violation;
     const struct rocketnet_message_limits_t * limits;
+    int fragment_bytes;             // F, the block stride check 7 and 8 hold a block to
 };
 
 // returns ROCKETNET_MESSAGE_VIOLATION_NONE, or the one violation the payload
-// hit (also left in reader->violation).
+// hit (also left in reader->violation). begin checks blocks at the ceiling's
+// stride ROCKETNET_MESSAGE_FRAGMENT_BYTES; begin_stride at a connection's own
+// block stride F(P) (sdk/rocketnet_link_mtu.h), a positive multiple of 16,
+// which the channels pass (rn_ordered_receive).
 
 int rocketnet_message_reader_begin( struct rocketnet_message_reader_t * reader, const uint8_t * payload, int bytes, const struct rocketnet_message_limits_t * limits );
+int rocketnet_message_reader_begin_stride( struct rocketnet_message_reader_t * reader, const uint8_t * payload, int bytes,
+                                           const struct rocketnet_message_limits_t * limits, int fragment_bytes );
 
 // returns 1 with the next record, or 0 when the payload is done or was refused
 

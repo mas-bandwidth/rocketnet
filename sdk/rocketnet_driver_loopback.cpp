@@ -201,6 +201,75 @@ void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, ui
 }
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
+// the link seam: a path that carries datagrams up to a size and drops the
+// rest, as a smaller link MTU does, and the largest datagram any endpoint
+// handed the hub. Both are read and written under the hub mutex; a case sets
+// the size before its endpoints send. Until a case sets it the seam is not
+// armed, and a datagram pays one relaxed load before the hub mutex and
+// nothing else: the instruction count benchmark and every case that never
+// sets it measure the hub without it.
+
+static std::atomic<int> loopback_test_link_armed( 0 );
+
+static inline bool loopback_test_link_armed_now() { return loopback_test_link_armed.load( std::memory_order_relaxed ) != 0; }
+static int loopback_test_link_max_bytes = 0;
+static int loopback_test_largest_sent = 0;
+static int loopback_test_largest_carried = 0;
+static int loopback_test_dropped_above = 0;
+static int loopback_test_largest_server_sent = 0;
+
+void rocketnet_loopback_test_link_max_bytes( int max_bytes )
+{
+    loopback_test_link_armed.store( 1, std::memory_order_relaxed );
+    loopback_test_link_max_bytes = max_bytes > 0 ? max_bytes : 0;
+    loopback_test_largest_sent = 0;
+    loopback_test_largest_carried = 0;
+    loopback_test_dropped_above = 0;
+    loopback_test_largest_server_sent = 0;
+}
+
+int rocketnet_loopback_test_largest_sent() { return loopback_test_largest_sent; }
+
+int rocketnet_loopback_test_largest_carried() { return loopback_test_largest_carried; }
+
+int rocketnet_loopback_test_dropped_above() { return loopback_test_dropped_above; }
+
+int rocketnet_loopback_test_largest_server_sent() { return loopback_test_largest_server_sent; }
+
+// server: the datagram is a server endpoint's (its batch send), not a client's
+static bool loopback_test_link_carries( int bytes, bool server )
+{
+    if ( server && bytes > loopback_test_largest_server_sent )
+    {
+        loopback_test_largest_server_sent = bytes;
+    }
+    if ( bytes > loopback_test_largest_sent )
+    {
+        loopback_test_largest_sent = bytes;
+    }
+    if ( loopback_test_link_max_bytes == 0 || bytes <= loopback_test_link_max_bytes )
+    {
+        if ( bytes > loopback_test_largest_carried )
+        {
+            loopback_test_largest_carried = bytes;
+        }
+        return true;
+    }
+    loopback_test_dropped_above++;
+    return false;
+}
+#else
+static inline bool loopback_test_link_armed_now() { return false; }
+
+static bool loopback_test_link_carries( int bytes, bool server )
+{
+    (void) bytes;
+    (void) server;
+    return true;
+}
+#endif // #if ROCKETNET_DEV
+
 static bool loopback_try_send_lock( rocketnet_loopback_hub_t * hub )
 {
 #if ROCKETNET_DEV
@@ -878,6 +947,20 @@ static void loopback_send( void * transport, const rocketnet_address_t * to, con
     // receive traffic. Disconnect/stop/check never invoke this callback:
     // the client stages its final burst for the worker or explicit update.
 
+    // the link seam, armed only by a case that sets it: a datagram above its
+    // size is lost on the path, as a datagram above a link MTU is
+
+    if ( loopback_test_link_armed_now() )
+    {
+        rocketnet_platform_mutex_acquire( &hub->mutex );
+        const bool carried = loopback_test_link_carries( bytes, false );
+        rocketnet_platform_mutex_release( &hub->mutex );
+        if ( !carried )
+        {
+            return;
+        }
+    }
+
     rocketnet_platform_mutex_acquire( &hub->mutex );
 
     rocketnet_loopback_endpoint_t * dst = loopback_find_destination( hub, *to );
@@ -941,6 +1024,11 @@ static void loopback_server_send_batch_impl( void * transport, const rocketnet_p
         if ( packet.packet_bytes <= 0 || packet.packet_bytes > ROCKETNET_RECEIVE_CEILING )
         {
             continue;
+        }
+
+        if ( loopback_test_link_armed_now() && !loopback_test_link_carries( packet.packet_bytes, true ) )
+        {
+            continue;                   // lost on the path, as a datagram above a link MTU is
         }
 
         rocketnet_loopback_endpoint_t * dst = loopback_find_destination( hub, *packet.to );

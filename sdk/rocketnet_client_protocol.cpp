@@ -15,6 +15,7 @@
 #include "rocketnet_test_seams.h"
 
 #include <sodium.h>
+#include <math.h>
 #include <string.h>
 
 void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signed_connect_data_t * signed_fields,
@@ -25,6 +26,7 @@ const char * rocketnet_client_transport_state_name( int state )
 {
     switch ( state )
     {
+        case ROCKETNET_CLIENT_TRANSPORT_STATE_MTU_PROBE_FAILED:              return "mtu probe failed";
         case ROCKETNET_CLIENT_TRANSPORT_STATE_PROTOCOL_VIOLATION:            return "protocol violation";
         case ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED:         return "connect token expired";
         case ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN:         return "invalid connect token";
@@ -127,7 +129,190 @@ void rocketnet_client_protocol_init( struct rocketnet_client_protocol_t * client
     client->state = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
     client->client_index = -1;
     client->state_first_send_time = -1.0;
+    client->link_mtus[0] = ROCKETNET_LINK_MTU_MAX;
+    client->num_link_mtus = 1;
     rocketnet_ack_endpoint_reset( &client->ack );
+}
+
+// proofs/tla/RNPathProbe.tla ClientSendData: after connect, every session
+// packet the client seals is at most this size, P0 at connect and raised only
+// by an authenticated large reply (ClientRecvLarge, PNeverDecreases); the
+// server's packets to it are at the slot's size, never above it
+// (ServerNeverAhead)
+
+int rocketnet_client_protocol_packet_bytes( const struct rocketnet_client_protocol_t * client )
+{
+    rocketnet_assert( client );
+    return client->packet_bytes > 0 ? client->packet_bytes : ROCKETNET_MAX_PACKET_BYTES;
+}
+
+// The path probe (standard/TRANSPORT.md t11.4; proofs/tla/RNPathProbe.tla;
+// the pacing and its numbers in sdk/rocketnet_link_mtu.h).
+//
+// A connection starts at P0, the smallest candidate its link MTU list gives
+// the server's family, which the response carries: it joins as fast as the
+// default list. Once connected, a client whose list gives more than one
+// candidate probes upward, one step at a time, smallest first, a pair at
+// connect and then at the paced interval: a small probe and a large one at
+// the candidate, the next size up, under one pair number. The pair resolves
+// when the next is due: a large reply raised the size already; a small
+// reply with no large one is a strike against the candidate, at the same
+// pace; no small reply is loss, which sets the candidate's strikes back to
+// zero and doubles the interval, so loss alone never rules a size out.
+// ROCKETNET_LINK_MTU_PROBE_STRIKES strikes in a row rule the candidate out,
+// and the walk waits, then re-tries the same size on the re-try schedule
+// (sdk/rocketnet_link_mtu.h), for as long as the connection lasts: the sizes
+// above it are never tried before it is raised to. An authenticated large
+// reply above P raises P at once and the client confirms it to the server,
+// which raises its own sends only on the confirm. P never decreases. The
+// walk ends for good at the largest candidate. When the first step up is
+// ruled out at P0 for the first time, P0 itself is checked before the wait:
+// its counted strikes end the connection in mtu probe failed (-14), small
+// probes coming back but packets of the connection's own size never doing
+// so. A one-candidate list (the default) never probes.
+
+// the connection response, built once: its padding opens with the
+// connection's packet size (0 for the ceiling, so the default list's
+// response is byte-identical to a build without the list), and it is
+// retransmitted byte for byte -- one ciphertext, never a second encryption
+
+static void rocketnet_client_build_response( struct rocketnet_client_protocol_t * client )
+{
+    const int packet_bytes = rocketnet_client_protocol_packet_bytes( client );
+    const int field = packet_bytes == ROCKETNET_MAX_PACKET_BYTES ? 0 : packet_bytes;
+
+    uint8_t response_padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
+    response_padding[0] = (uint8_t) ( field & 0xFF );
+    response_padding[1] = (uint8_t) ( field >> 8 );
+
+    int response_bytes = rocketnet_write_sealed_packet( client->stored_response, ROCKETNET_CONNECTION_RESPONSE_PACKET,
+                                                        client->packet_filter, client->send_sequence_handshake,
+                                                        NULL, response_padding, ROCKETNET_RESPONSE_PADDING_BYTES,
+                                                        client->signed_fields.protocol_id, client->connection_salt,
+                                                        client->client_ephemeral_public_key,
+                                                        client->keys.handshake_client_to_server );
+    rocketnet_assert( response_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+
+    (void) response_bytes;
+
+    client->send_sequence_handshake++;
+}
+
+// one probe of wire_bytes: its 8-byte header (kind, the size field, the pair
+// number) and zero padding, sealed under the session client-to-server key on
+// the session sequence -- authenticated as every packet after the challenge
+// is (proofs/tla/RNPathProbe.tla ClientSendPair, ClientSendConfirm)
+
+static const uint8_t rocketnet_client_probe_zeros[ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES] = { 0 };
+
+static int rocketnet_client_write_probe( struct rocketnet_client_protocol_t * client, int wire_bytes, int kind, int size_field, uint32_t pair, uint8_t * out_packet )
+{
+    rocketnet_assert( wire_bytes >= ROCKETNET_CONNECTION_PROBE_MIN_WIRE_BYTES && wire_bytes <= ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES );
+
+    uint8_t plaintext[ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES];
+    const int plaintext_bytes = wire_bytes - ROCKETNET_PACKET_OVERHEAD_BYTES;
+    memcpy( plaintext, rocketnet_client_probe_zeros, (size_t) plaintext_bytes );
+    uint8_t * p = plaintext;
+    rocketnet_write_uint8( &p, (uint8_t) kind );
+    rocketnet_write_uint8( &p, 0 );
+    rocketnet_write_uint16( &p, (uint16_t) size_field );
+    rocketnet_write_uint32( &p, pair );
+
+    const uint64_t sequence = rocketnet_session_sequence_take( &client->send_sequence_session );
+    const int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_PROBE_PACKET,
+                                                     client->packet_filter, sequence,
+                                                     NULL, plaintext, plaintext_bytes,
+                                                     client->signed_fields.protocol_id, client->connection_salt,
+                                                     NULL, client->keys.session_client_to_server );
+    rocketnet_assert( bytes == wire_bytes );
+
+    return bytes;
+}
+
+// the first pairs' interval: FIRST_INTERVAL, or twice the handshake's round
+// trip when that is longer, never above MAX_INTERVAL
+
+static double rocketnet_client_probe_first_interval( const struct rocketnet_client_protocol_t * client )
+{
+    double interval = 2.0 * client->rtt_estimate;
+    if ( interval < ROCKETNET_LINK_MTU_PROBE_FIRST_INTERVAL_SECONDS )
+    {
+        interval = ROCKETNET_LINK_MTU_PROBE_FIRST_INTERVAL_SECONDS;
+    }
+    if ( interval > ROCKETNET_LINK_MTU_PROBE_MAX_INTERVAL_SECONDS )
+    {
+        interval = ROCKETNET_LINK_MTU_PROBE_MAX_INTERVAL_SECONDS;
+    }
+    return interval;
+}
+
+// the walk's end, for good, at the largest candidate: no pair is sent again
+// on this connection (proofs/tla/RNPathProbe.tla NoProbeAfterDone)
+
+static void rocketnet_client_probe_done( struct rocketnet_client_protocol_t * client )
+{
+    client->probing = 0;
+    client->probe_waiting = 0;
+    client->probe_ruled = 0;
+    client->probe_pair_out = 0;
+    client->probe_pair_small = 0;
+    client->probe_pair_large = 0;
+}
+
+// the walk waits to re-try its ruled-out candidate at the next time of the
+// candidate's re-try schedule after current_time (sdk/rocketnet_link_mtu.h;
+// proofs/tla/RNPathProbe.tla ClientRuleOut, and ClientRecvLarge at P0's
+// check): no pair is out or sent until then
+
+static void rocketnet_client_probe_wait( struct rocketnet_client_protocol_t * client, double current_time )
+{
+    rocketnet_assert( client->probe_ruled );
+
+    client->probe_waiting = 1;
+    client->probe_strikes = 0;
+    client->probe_next_time = rocketnet_link_mtu_retry_next( &client->probe_retries, &client->probe_retry_time, current_time );
+    client->probe_pair_out = 0;
+    client->probe_pair_small = 0;
+    client->probe_pair_large = 0;
+
+    rocketnet_debug( "client waits %.1f seconds to re-try packet size %d bytes", client->probe_next_time - current_time,
+                     client->probe_candidates[client->probe_index] );
+}
+
+// raise the connection's packet size to a size an authenticated large reply
+// proved carried both ways, and confirm it to the server
+// (proofs/tla/RNPathProbe.tla ClientRecvLarge): P never decreases. The walk
+// goes up one step at a time, so a raise moves it to the next size up, its
+// first pair due now, and a raise to the largest candidate ends it
+
+static void rocketnet_client_probe_raise( struct rocketnet_client_protocol_t * client, int packet_bytes, double current_time )
+{
+    rocketnet_assert( packet_bytes > rocketnet_client_protocol_packet_bytes( client ) );
+
+    rocketnet_debug( "client raised its packet size from %d to %d bytes", rocketnet_client_protocol_packet_bytes( client ), packet_bytes );
+
+    client->packet_bytes = packet_bytes;
+    client->confirm_bytes = packet_bytes;
+    client->confirm_next_time = current_time;
+    client->counters->values[ROCKETNET_COUNTER_CLIENT_PROBE_ACCEPTED]++;
+
+    if ( client->probe_index == 0 )
+    {
+        rocketnet_client_probe_done( client );
+        return;
+    }
+
+    client->probe_index--;
+    client->probe_strikes = 0;
+    client->probe_ruled = 0;
+    client->probe_waiting = 0;
+    client->probe_retries = 0;
+    client->probe_retry_time = 0.0;
+    client->probe_interval = rocketnet_client_probe_first_interval( client );
+    client->probe_next_time = current_time;
+    client->probe_pair_out = 0;
+    client->probe_pair_small = 0;
+    client->probe_pair_large = 0;
 }
 
 // one rtt sample: first send in the current state to the first packet that
@@ -384,11 +569,12 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
 
     rocketnet_assert( type_data_bytes <= 8 );
 
-    // the block truncates to the budget's remaining room -- the capacity
-    // arithmetic is what keeps the packet inside the send budget, whatever
-    // the replay window's depth
+    // the block truncates to the room the connection's packet size leaves --
+    // the capacity arithmetic is what keeps the packet inside that size,
+    // whatever the replay window's depth
 
-    int block_bytes = rocketnet_session_ack_block_build( plaintext, type_data_bytes, &client->accepted_session );
+    const int packet_bytes = rocketnet_client_protocol_packet_bytes( client );
+    int block_bytes = rocketnet_session_ack_block_build( plaintext, packet_bytes, type_data_bytes, &client->accepted_session );
 
     if ( type_data_bytes > 0 )
     {
@@ -412,7 +598,7 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
         return 0;
     }
 
-    rocketnet_assert( bytes <= ROCKETNET_SEND_BUDGET );
+    rocketnet_assert( bytes <= packet_bytes );
 
 
     rocketnet_ack_count_sent_result( rocketnet_ack_endpoint_record_sent_classified( &client->ack, sequence, bytes, 0, 0, current_time ),
@@ -437,6 +623,24 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
 static bool rocketnet_client_send_due( const struct rocketnet_client_protocol_t * client, double current_time )
 {
     return current_time - client->last_send_time >= 1.0 / client->send_rate - ROCKETNET_SEND_INTERVAL_TOLERANCE_SECONDS;
+}
+
+// the early send counts only in the two states whose advance arms it
+// (proofs/tla/ClientConnection.tla ClientEarlySend; RNPathProbe.tla maySend)
+
+static inline bool rocketnet_client_send_ready( const struct rocketnet_client_protocol_t * client, double current_time )
+{
+    const bool early_send = client->handshake_early_send &&
+                            ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST ||
+                              client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
+    return early_send || rocketnet_client_send_due( client, current_time );
+}
+
+bool rocketnet_client_protocol_send_ready( const struct rocketnet_client_protocol_t * client, double current_time )
+{
+    rocketnet_assert( client );
+    return rocketnet_client_send_ready( client, current_time );
 }
 
 // proofs/tla/ClientConnection.tla ClientSend and ClientEarlySend
@@ -470,16 +674,14 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
     // Retries of the same state stay on the tick, and nothing is sent from
     // the receive path itself.
 
-    const bool early_send = client->handshake_early_send &&
-                            ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST ||
-                              client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+    const bool send_ready = rocketnet_client_send_ready( client, current_time );     // rocketnet_client_protocol_send_ready, inline on the per-frame path
     client->handshake_early_send = 0;
 
     // proofs/tla/RNEndpoint.tla WriteAck: sends a packet that carries only the owed acks.
     // An owed ack goes out on this update, outside the scheduled send rate.
     // Type 8 does not add debt, so the ack cannot ping-pong.
 
-    if ( !early_send && !rocketnet_client_send_due( client, current_time ) )
+    if ( !send_ready )
     {
         if ( client->state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
              client->ack.ack_debt >= ROCKETNET_ACK_DEBT_THRESHOLD )
@@ -777,20 +979,15 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     client->last_receive_time = current_time;
 
-    // the response is built once and retransmitted byte-identical: same key, same sequence, same bytes -- one ciphertext, never a second encryption
+    // the candidate packet sizes of the server's family: the connection
+    // starts at the smallest, P0, which the response carries, so every list
+    // joins as the default does; the probe raises it after connect
+    // (proofs/tla/RNPathProbe.tla, the client's list)
 
-    const uint8_t response_padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
-    int response_bytes = rocketnet_write_sealed_packet( client->stored_response, ROCKETNET_CONNECTION_RESPONSE_PACKET,
-                                                        client->packet_filter, client->send_sequence_handshake,
-                                                        NULL, response_padding, ROCKETNET_RESPONSE_PADDING_BYTES,
-                                                        client->signed_fields.protocol_id, client->connection_salt,
-                                                        client->client_ephemeral_public_key,
-                                                        client->keys.handshake_client_to_server );
-    rocketnet_assert( response_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
-
-    (void) response_bytes;
-
-    client->send_sequence_handshake++;
+    client->num_probe_candidates = rocketnet_link_mtu_candidates( client->link_mtus, client->num_link_mtus,
+                                                                  client->server_address.type, client->probe_candidates );
+    client->packet_bytes = client->num_probe_candidates > 0 ? client->probe_candidates[client->num_probe_candidates - 1] : ROCKETNET_MAX_PACKET_BYTES;
+    rocketnet_client_build_response( client );
 
     counters[ROCKETNET_COUNTER_CLIENT_CHALLENGE_ACCEPTED]++;
 
@@ -803,6 +1000,382 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     client->handshake_early_send = 1;
 
     return 1;
+}
+
+// proofs/tla/RNPathProbe.tla ClientRecvSmall, ClientRecvLarge,
+// ClientRecvConfirmEcho and ClientRecvForged: a probe reply counts only while
+// connected, at the small size or a candidate size, opened under the session
+// server-to-client key, with a well-formed header and zero padding. A small
+// reply marks the current pair's small partner seen; a large one above P
+// raises P and moves the walk a step up (its end at the largest candidate);
+// a large one at P0, checked once the first step up is ruled out, sends the
+// walk to wait for that step's re-try; a large one while the walk waits is
+// ignored; a confirm echo stops the confirm's resends.
+
+static int rocketnet_client_process_probe( struct rocketnet_client_protocol_t * client,
+                                           const uint8_t * packet_data,
+                                           int packet_bytes,
+                                           double current_time )
+{
+    uint64_t * counters = client->counters->values;
+
+    counters[ROCKETNET_COUNTER_CLIENT_PROBE_RECEIVED]++;
+
+    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
+        rocketnet_spam( "client ignored probe reply. not connected" );
+
+        counters[ROCKETNET_COUNTER_CLIENT_PROBE_WRONG_STATE]++;
+        return 0;
+    }
+
+    bool size_ok = packet_bytes == ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES;
+    for ( int i = 0; i < client->num_probe_candidates; i++ )
+    {
+        if ( client->probe_candidates[i] == packet_bytes )
+        {
+            size_ok = true;
+        }
+    }
+
+    if ( !size_ok )
+    {
+        rocketnet_spam( "client ignored probe reply. size is neither the small size nor a candidate" );
+
+        counters[ROCKETNET_COUNTER_CLIENT_PROBE_SIZE_NOT_CANDIDATE]++;
+        return 0;
+    }
+
+    const uint8_t * p = packet_data + ROCKETNET_PREFILTER_BYTES;
+    const uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), client->replay_session.highest_opened );
+    if ( sequence == 0 )
+    {
+        rocketnet_spam( "client ignored probe reply. zero sequence" );
+
+        counters[ROCKETNET_COUNTER_CLIENT_PROBE_ZERO_SEQUENCE]++;
+        return 0;
+    }
+
+    uint8_t opened[ROCKETNET_CONNECTION_PROBE_MAX_WIRE_BYTES];
+    const int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, (int) sizeof( opened ), packet_data, packet_bytes,
+                                                           ROCKETNET_CONNECTION_PROBE_PACKET, sequence,
+                                                           client->signed_fields.protocol_id, client->connection_salt,
+                                                           NULL, client->keys.session_server_to_client );
+    if ( opened_bytes < 0 )
+    {
+        rocketnet_spam( "client ignored probe reply. did not open" );
+
+        counters[ROCKETNET_COUNTER_CLIENT_PROBE_DID_NOT_OPEN]++;
+        rocketnet_client_integrity_failure( client );
+        return 0;
+    }
+
+    int kind = -1;
+    int size_field = 0;
+    uint32_t pair = 0;
+    if ( !rocketnet_probe_header_read( opened, opened_bytes, packet_bytes, &kind, &size_field, &pair ) )
+    {
+        rocketnet_spam( "client ignored probe reply. header or padding malformed" );
+
+        counters[ROCKETNET_COUNTER_CLIENT_PROBE_PADDING_NOT_ZERO]++;
+        return 0;
+    }
+
+    client->last_receive_time = current_time;
+
+    if ( kind == ROCKETNET_PROBE_KIND_CONFIRM )
+    {
+        // the server has raised to at least this size: the confirm is done
+
+        if ( client->confirm_bytes > 0 && size_field >= client->confirm_bytes )
+        {
+            client->confirm_bytes = 0;
+        }
+        return 1;
+    }
+
+    if ( !client->probing || pair == 0 || pair > client->probe_pair )
+    {
+        rocketnet_spam( "client ignored probe reply. not probing, or a pair not sent" );
+
+        counters[ROCKETNET_COUNTER_CLIENT_PROBE_WRONG_STATE]++;
+        return 0;
+    }
+
+    // a small reply counts for its own pair alone; a large reply at the
+    // candidate from any pair proves it carried, however late it comes
+
+    if ( packet_bytes == ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES )
+    {
+        if ( pair != client->probe_pair || !client->probe_pair_out )
+        {
+            rocketnet_spam( "client ignored probe reply. a small reply of a pair already resolved" );
+
+            counters[ROCKETNET_COUNTER_CLIENT_PROBE_WRONG_STATE]++;
+            return 0;
+        }
+
+        client->probe_pair_small = 1;
+        return 1;
+    }
+
+    if ( client->probe_waiting )
+    {
+        rocketnet_spam( "client ignored probe reply. a large reply while the walk waits to re-try" );
+
+        counters[ROCKETNET_COUNTER_CLIENT_PROBE_WRONG_STATE]++;
+        return 0;
+    }
+
+    if ( packet_bytes != client->probe_candidates[client->probe_index] )
+    {
+        rocketnet_spam( "client ignored probe reply. a large reply at a candidate no longer probed" );
+
+        counters[ROCKETNET_COUNTER_CLIENT_PROBE_WRONG_STATE]++;
+        return 0;
+    }
+
+    client->probe_pair_large = 1;
+
+    if ( packet_bytes > rocketnet_client_protocol_packet_bytes( client ) )
+    {
+        rocketnet_client_probe_raise( client, packet_bytes, current_time );
+    }
+    else
+    {
+        // P0 itself, checked once the first step up is ruled out, is
+        // carried: the connection stays at P0, which is not an error, and
+        // the first step up waits for its re-try
+
+        rocketnet_debug( "client kept its packet size %d bytes. the next size up is ruled out", packet_bytes );
+
+        client->probe_index = client->num_probe_candidates - 2;
+        rocketnet_client_probe_wait( client, current_time );
+    }
+
+    return 1;
+}
+
+// proofs/tla/RNPathProbe.tla ClientSendPair, ClientResolvePair, ClientRuleOut,
+// ClientFail, ClientRetry and ClientSendConfirm
+
+void rocketnet_client_protocol_probe_update( struct rocketnet_client_protocol_t * client,
+                                             double current_time,
+                                             uint8_t * out_small,
+                                             int * out_small_bytes,
+                                             uint8_t * out_large,
+                                             int * out_large_bytes )
+{
+    rocketnet_assert( client );
+    rocketnet_assert( out_small_bytes );
+    rocketnet_assert( out_large_bytes );
+
+    *out_small_bytes = 0;
+    *out_large_bytes = 0;
+
+    if ( client->state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+    {
+        return;
+    }
+
+    uint64_t * counters = client->counters->values;
+
+    // a raise is confirmed until the server echoes it. The walk goes on
+    // after a raise, so a confirm and a pair can be due together: the
+    // confirm goes first, and the pair in the next update
+
+    if ( client->confirm_bytes > 0 && current_time >= client->confirm_next_time )
+    {
+        *out_small_bytes = rocketnet_client_write_probe( client, ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES, ROCKETNET_PROBE_KIND_CONFIRM,
+                                                         client->confirm_bytes, 0, out_small );
+        client->confirm_next_time = current_time + ROCKETNET_LINK_MTU_CONFIRM_INTERVAL_SECONDS;
+        counters[ROCKETNET_COUNTER_CLIENT_PROBE_SENT]++;
+        return;
+    }
+
+    if ( !client->probing || current_time < client->probe_next_time )
+    {
+        return;
+    }
+
+    rocketnet_client_protocol_probe_resolve( client );
+
+    if ( rocketnet_client_protocol_probe_rule_out( client, current_time ) < 0 || !client->probing )
+    {
+        return;
+    }
+
+    // a rule-out just now sets the wait, which ends in a later update
+
+    if ( client->probe_waiting )
+    {
+        if ( current_time < client->probe_next_time )
+        {
+            return;
+        }
+        rocketnet_client_protocol_probe_retry( client );
+    }
+
+    rocketnet_client_protocol_probe_send_pair( client, current_time, out_small, out_small_bytes, out_large, out_large_bytes );
+}
+
+// the previous pair resolves without success (a large reply moves the walk
+// on at once). A small reply with no large one is evidence about the size, not
+// loss: a strike, and the pace holds. No small reply is loss: the
+// candidate's strikes go back to zero, so only an unbroken run of pairs
+// whose small probes came back rules a size out, and the next pair waits
+// twice as long, up to MAX_INTERVAL (proofs/tla/RNPathProbe.tla
+// ClientResolvePair, Strike)
+
+int rocketnet_client_protocol_probe_resolve( struct rocketnet_client_protocol_t * client )
+{
+    rocketnet_assert( client );
+    rocketnet_assert( client->probing );
+
+    if ( !client->probe_pair_out )
+    {
+        return 0;
+    }
+
+    if ( client->probe_pair_small && !client->probe_pair_large )
+    {
+        client->probe_strikes++;
+        client->counters->values[ROCKETNET_COUNTER_CLIENT_PROBE_STRIKE]++;
+    }
+    else if ( !client->probe_pair_small )
+    {
+        client->probe_strikes = 0;
+        client->probe_interval *= 2.0;
+        if ( client->probe_interval > ROCKETNET_LINK_MTU_PROBE_MAX_INTERVAL_SECONDS )
+        {
+            client->probe_interval = ROCKETNET_LINK_MTU_PROBE_MAX_INTERVAL_SECONDS;
+        }
+    }
+
+    client->probe_pair_out = 0;
+    client->probe_pair_small = 0;
+    client->probe_pair_large = 0;
+
+    return 1;
+}
+
+// the candidate's counted strikes rule it out, and the walk waits to re-try
+// it on its schedule, measured from its first rule-out: the sizes above a
+// ruled-out size are never tried before it is raised to (ClientRuleOut). At
+// the first rule-out of the first step up, the connection still at P0, P0
+// itself is checked first, its first pair now: its counted strikes end the
+// connection in mtu probe failed, small probes being carried while packets
+// of the connection's size are not (ClientFail); its large reply sends the
+// walk to the wait (rocketnet_client_process_probe)
+
+int rocketnet_client_protocol_probe_rule_out( struct rocketnet_client_protocol_t * client, double current_time )
+{
+    rocketnet_assert( client );
+    rocketnet_assert( client->probing );
+
+    if ( client->probe_strikes < ROCKETNET_LINK_MTU_PROBE_STRIKES )
+    {
+        return 0;
+    }
+
+    uint64_t * counters = client->counters->values;
+
+    counters[ROCKETNET_COUNTER_CLIENT_PROBE_RULED_OUT]++;
+
+    if ( client->probe_index == client->num_probe_candidates - 1 )
+    {
+        rocketnet_debug( "client failed. packet size %d bytes is not carried", client->probe_candidates[client->probe_index] );
+
+        counters[ROCKETNET_COUNTER_CLIENT_PROBE_FAILED]++;
+        rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_MTU_PROBE_FAILED );
+        return -1;
+    }
+
+    rocketnet_debug( "client ruled out packet size %d bytes", client->probe_candidates[client->probe_index] );
+
+    client->probe_strikes = 0;
+
+    // the size's schedule starts at its first rule-out; a re-try ruled out
+    // again goes on with it
+
+    const bool first = !client->probe_ruled;
+    if ( first )
+    {
+        client->probe_ruled = 1;
+        client->probe_retries = 0;
+        client->probe_retry_time = current_time;
+    }
+
+    // probe_index stays at the ruled-out size while the walk waits for it
+
+    const int p0 = client->probe_candidates[client->num_probe_candidates - 1];
+
+    if ( !first || rocketnet_client_protocol_packet_bytes( client ) != p0 )
+    {
+        rocketnet_client_probe_wait( client, current_time );
+        return 1;
+    }
+
+    client->probe_index = client->num_probe_candidates - 1;
+    client->probe_interval = rocketnet_client_probe_first_interval( client );
+    return 1;
+}
+
+// the wait is over: the ruled-out size is probed again, as a fresh step at
+// the first interval with its strikes at zero, its first pair now
+// (ClientRetry)
+
+int rocketnet_client_protocol_probe_retry( struct rocketnet_client_protocol_t * client )
+{
+    rocketnet_assert( client );
+    rocketnet_assert( client->probing );
+
+    if ( !client->probe_waiting )
+    {
+        return 0;
+    }
+
+    rocketnet_debug( "client re-tries packet size %d bytes", client->probe_candidates[client->probe_index] );
+
+    client->probe_waiting = 0;
+    client->probe_strikes = 0;
+    client->probe_interval = rocketnet_client_probe_first_interval( client );
+    return 1;
+}
+
+// the next pair: the small probe and the large one at the walk's candidate,
+// one new pair number (ClientSendPair)
+
+void rocketnet_client_protocol_probe_send_pair( struct rocketnet_client_protocol_t * client,
+                                                double current_time,
+                                                uint8_t * out_small,
+                                                int * out_small_bytes,
+                                                uint8_t * out_large,
+                                                int * out_large_bytes )
+{
+    rocketnet_assert( client );
+    rocketnet_assert( client->probing );
+    rocketnet_assert( !client->probe_waiting );
+    rocketnet_assert( !client->probe_pair_out );
+    rocketnet_assert( client->probe_strikes < ROCKETNET_LINK_MTU_PROBE_STRIKES );
+
+    const int candidate = client->probe_candidates[client->probe_index];
+
+    client->probe_pair++;
+    if ( client->probe_pair == 0 )
+    {
+        client->probe_pair = 1;
+    }
+    client->probe_pair_out = 1;
+    client->probe_pair_small = 0;
+    client->probe_pair_large = 0;
+    client->probe_next_time = current_time + client->probe_interval;
+
+    *out_small_bytes = rocketnet_client_write_probe( client, ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES, ROCKETNET_PROBE_KIND_PROBE,
+                                                     ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES, client->probe_pair, out_small );
+    *out_large_bytes = rocketnet_client_write_probe( client, candidate, ROCKETNET_PROBE_KIND_PROBE,
+                                                     candidate, client->probe_pair, out_large );
+    client->counters->values[ROCKETNET_COUNTER_CLIENT_PROBE_SENT] += 2;
 }
 
 // proofs/tla/ClientConnection.tla ClientRecvDenied
@@ -1233,6 +1806,29 @@ static int rocketnet_client_process_keep_alive( struct rocketnet_client_protocol
         client->client_index = (int) rocketnet_read_uint32( &p );
         client->max_clients = (int) rocketnet_read_uint32( &p );
         rocketnet_client_set_state( client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
+        // the walk starts at connect at the next size up from P0, its first
+        // pair at the next probe update; a one-candidate list never probes.
+        // The walk's fields are set here, whatever the connection before
+        // left; the pair's replies (probe_pair_small, probe_pair_large) and
+        // the confirm (confirm_bytes, confirm_next_time) are cleared only by
+        // the connect's rocketnet_client_connection_reset (proofs/tla/
+        // RNPathProbe.tla Reuse)
+
+        if ( client->num_probe_candidates > 1 )
+        {
+            client->probing = 1;
+            client->probe_index = client->num_probe_candidates - 2;
+            client->probe_strikes = 0;
+            client->probe_ruled = 0;
+            client->probe_waiting = 0;
+            client->probe_retries = 0;
+            client->probe_retry_time = 0.0;
+            client->probe_pair = 0;
+            client->probe_pair_out = 0;
+            client->probe_next_time = current_time;
+            client->probe_interval = rocketnet_client_probe_first_interval( client );
+        }
     }
 
     return 1;
@@ -1392,7 +1988,7 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
         return 0;
     }
 
-    // types 9 through 255 are reserved and ignored by a conforming receiver
+    // types 10 through 255 are reserved and ignored by a conforming receiver
 
     if ( packet_type >= ROCKETNET_FIRST_RESERVED_PACKET_TYPE )
     {
@@ -1429,6 +2025,8 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
             return rocketnet_client_process_disconnect( client, packet_data, packet_bytes, current_time );
         case ROCKETNET_CONNECTION_ACK_PACKET:
             return rocketnet_client_process_ack( client, packet_data, packet_bytes, current_time );
+        case ROCKETNET_CONNECTION_PROBE_PACKET:
+            return rocketnet_client_process_probe( client, packet_data, packet_bytes, current_time );
     }
 
     return 0;
@@ -1528,15 +2126,19 @@ int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protoc
         return 0;
     }
 
-    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+    // the connection's payload capacity C(P) (sdk/rocketnet_link_mtu.h):
+    // ROCKETNET_MAX_PACKET_PAYLOAD_BYTES at the default packet size
+
+    const int packet_bytes = rocketnet_client_protocol_packet_bytes( client );
+    if ( payload_bytes < 1 || payload_bytes > rocketnet_link_mtu_payload_bytes( packet_bytes ) )
     {
         return 0;
     }
 
-    // the application's bytes come first: the block truncates to the budget's remaining room, oldest entries dropped first. the 7-byte minimum always fits.
+    // the application's bytes come first: the block truncates to the room the packet size leaves, oldest entries dropped first. the 7-byte minimum always fits.
 
     uint8_t ack_block[ROCKETNET_ACK_BLOCK_MAX_BYTES];
-    int ack_block_bytes = rocketnet_session_ack_block_build( ack_block, payload_bytes, &client->accepted_session );
+    int ack_block_bytes = rocketnet_session_ack_block_build( ack_block, packet_bytes, payload_bytes, &client->accepted_session );
 
     int wire_bytes = rocketnet_write_sealed_payload_in_place( wire_start, client->packet_filter, sequence,
                                                               ack_block, ack_block_bytes,
@@ -1575,14 +2177,15 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
         return 0;
     }
 
-    if ( payload_bytes < 1 || payload_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
+    const int packet_bytes = rocketnet_client_protocol_packet_bytes( client );
+    if ( payload_bytes < 1 || payload_bytes > rocketnet_link_mtu_payload_bytes( packet_bytes ) )
     {
         return 0;
     }
 
     uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 
-    int block_bytes = rocketnet_session_ack_block_build( plaintext, payload_bytes, &client->accepted_session );
+    int block_bytes = rocketnet_session_ack_block_build( plaintext, packet_bytes, payload_bytes, &client->accepted_session );
     memcpy( plaintext + block_bytes, payload_data, (size_t) payload_bytes );
 
     // proofs/tla/SessionSendSequence.tla ControlTake and ControlSeal: the

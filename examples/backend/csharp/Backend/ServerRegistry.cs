@@ -69,7 +69,11 @@ namespace RocketNet.Backend
             }
         }
 
-        public RegisteredServer? Random()
+        public RegisteredServer? Random() => Pick()?.Server;
+
+        // selects a registered server with choose, in id order so a choice
+        // of index always names the same server, and returns its id with it
+        public ( string Id, RegisteredServer Server )? Pick()
         {
             lock ( mutex )
             {
@@ -82,14 +86,17 @@ namespace RocketNet.Backend
                 {
                     throw new InvalidOperationException( "failed to select a registered server" );
                 }
-                foreach ( RegisteredServer server in servers.Values )
-                {
-                    if ( index-- == 0 )
-                    {
-                        return new RegisteredServer( server.Addresses.ToArray(), server.PublicKey.ToArray() );
-                    }
-                }
-                throw new InvalidOperationException( "failed to select a registered server" );
+                string id = servers.Keys.Order( StringComparer.Ordinal ).ElementAt( index );
+                RegisteredServer server = servers[id];
+                return ( id, new RegisteredServer( server.Addresses.ToArray(), server.PublicKey.ToArray() ) );
+            }
+        }
+
+        public bool Has( string id )
+        {
+            lock ( mutex )
+            {
+                return servers.ContainsKey( id );
             }
         }
     }

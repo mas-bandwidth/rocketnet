@@ -32,7 +32,7 @@ static uint64_t rn_reliable_round16( uint64_t bytes )
 static int rn_channels_dispatch_reliable_chunk( rn_channels_t * channels, const rocketnet_message_record_t * record, rn_delivery_t * out )
 {
     rn_region_t * region = channels->region;
-    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t F = rn_region_fragment_bytes( region );
     const uint32_t count = record->fragments + 1;
     const uint32_t index = record->fragment;
     const bool last = index + 1 == count;

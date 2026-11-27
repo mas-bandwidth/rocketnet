@@ -564,6 +564,7 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     region->holds = (uint32_t) config->sequenced_messages_held;
     region->receipt_entries = (uint32_t) config->max_message_receipts;
     region->max_message_bytes = (uint32_t) config->max_message_bytes;
+    region->fragment_bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
 
     // every typed carve-out at its part's offset, nothing outside the region
 
@@ -1144,7 +1145,7 @@ int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * o
 
     rocketnet_assert( region );
 
-    if ( bytes < (int) RN_SPAN_MIN_BYTES || (uint32_t) bytes > region->max_message_bytes )
+    if ( !rn_region_send_is_span( region, bytes ) || (uint32_t) bytes > region->max_message_bytes )
     {
         return RN_SEND_FIT_REFUSED;
     }
@@ -1180,12 +1181,12 @@ int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * o
 
 int rn_region_send_fit( const rn_region_t * region, int bytes )
 {
-    return rn_region_send_is_span( bytes ) ? rn_region_send_fit_span( region, bytes, NULL ) : rn_region_send_fit_store( region, bytes, NULL );
+    return rn_region_send_is_span( region, bytes ) ? rn_region_send_fit_span( region, bytes, NULL ) : rn_region_send_fit_store( region, bytes, NULL );
 }
 
 uint32_t rn_region_send_take( rn_region_t * region, int bytes )
 {
-    return rn_region_send_is_span( bytes ) ? rn_region_send_alloc_span( region, bytes ) : rn_region_send_alloc( region, bytes );
+    return rn_region_send_is_span( region, bytes ) ? rn_region_send_alloc_span( region, bytes ) : rn_region_send_alloc( region, bytes );
 }
 
 uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
@@ -1215,7 +1216,8 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     descriptor->chunk = RN_CHUNK_NONE;
     descriptor->bytes = (uint32_t) bytes;
-    descriptor->fragments = (uint16_t) ( ( bytes + ROCKETNET_MESSAGE_FRAGMENT_BYTES - 1 ) / ROCKETNET_MESSAGE_FRAGMENT_BYTES );
+    const uint32_t F = rn_region_fragment_bytes( region );
+    descriptor->fragments = (uint16_t) ( ( (uint32_t) bytes + F - 1 ) / F );
     descriptor->in_use = 1;
 
     rn_span_link( region, d, start, len16 );
@@ -1245,7 +1247,7 @@ const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t d, uin
         return NULL;
     }
 
-    const uint32_t F = RN_STORE_LARGE_BYTES;
+    const uint32_t F = rn_region_fragment_bytes( region );
     const bool block = descriptor->fragments > 1;
     if ( ( !block && fragment != 0 ) || ( block && fragment >= descriptor->fragments ) )
     {
@@ -1433,7 +1435,7 @@ int rn_region_send_fits( const rn_region_t * region, int bytes, uint64_t * free_
 
     if ( bytes >= 1 && (uint32_t) bytes <= region->max_message_bytes )
     {
-        if ( rn_region_send_is_span( bytes ) )
+        if ( rn_region_send_is_span( region, bytes ) )
         {
             free_room = region->span_bytes - rn_span_used( region );
             pool = region->span_bytes;

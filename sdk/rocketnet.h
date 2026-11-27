@@ -49,7 +49,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                         "v1.2.2"
+    #define ROCKETNET_VERSION_FULL                         "v1.3.0"
 
     /// The major component of the SDK version.
 
@@ -57,11 +57,11 @@
 
     /// The minor component of the SDK version.
 
-    #define ROCKETNET_VERSION_MINOR                        2
+    #define ROCKETNET_VERSION_MINOR                        3
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                        2
+    #define ROCKETNET_VERSION_PATCH                        0
 
 #else // !ROCKETNET_DEV
 
@@ -136,8 +136,15 @@
 
 #define ROCKETNET_MAX_PACKET_BYTES                     ( 1500 - 40 - 8 )
 
+/// The most entries a config's link MTU list holds (link_mtus in the client
+/// and server configs).
+
+#define ROCKETNET_MAX_LINK_MTUS                            8
+
 /// Maximum application payload bytes per packet, excluding RocketNet overhead.
-/// A multiple of eight.
+/// A multiple of eight. This is the value at ROCKETNET_MAX_PACKET_BYTES, the
+/// ceiling; a connection whose link MTU list gave it a smaller packet size
+/// carries less per packet.
 
 #define ROCKETNET_MAX_PACKET_PAYLOAD_BYTES                 1416
 
@@ -148,16 +155,23 @@
 /// UNRELIABLE becomes RELIABLE.
 /// UNRELIABLE_SEQUENCED becomes RELIABLE_SEQUENCED on its channel.
 /// UNRELIABLE_WITH_ACK_RECEIPT becomes RELIABLE_WITH_ACK_RECEIPT.
+/// This is the value at the ceiling packet size; one connection's own limit
+/// is rocketnet_client_max_unreliable_message_bytes or
+/// rocketnet_server_client_max_unreliable_message_bytes.
 
 #define ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES             1411
 
-/// Connect-token buffer bytes: 1024 base64 characters plus the terminating NUL.
+/// Connect-token buffer bytes: 768 base64 characters plus the terminating NUL.
 
-#define ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES           1025
+#define ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES           769
 
-/// Connect-token user-data bytes.
+/// Connect-token user-data bytes. User data is for small items: an index or
+/// key into the backend's own records (a session key or a user hash), not
+/// the data itself. The game server uses that key to fetch whatever else it
+/// needs from the backend after connect, so 64 bytes is enough, and the
+/// connection request stays inside a 576-byte MTU.
 
-#define ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES            256
+#define ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES            64
 
 /// Packet-filter bytes in each config.
 
@@ -459,7 +473,36 @@ enum rocketnet_status_t
     /// can bind. Free the port or choose another, or set a local address of
     /// this host.
 
-    ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED = -35
+    ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED = -35,
+
+    /// Create refused: the config's link MTU list has no entry, or more than
+    /// ROCKETNET_MAX_LINK_MTUS. Set num_link_mtus from 1 to
+    /// ROCKETNET_MAX_LINK_MTUS; the default is the one entry 1500.
+
+    ROCKETNET_STATUS_LINK_MTUS_EMPTY = -36,
+
+    /// Create refused: an entry of the link MTU list is not below the one
+    /// before it. List the link MTUs largest first, each one once.
+
+    ROCKETNET_STATUS_LINK_MTUS_NOT_DESCENDING = -37,
+
+    /// Create refused: an entry of the link MTU list is above 1500, the
+    /// largest link MTU.
+
+    ROCKETNET_STATUS_LINK_MTUS_TOO_LARGE = -38,
+
+    /// Create refused: the smallest entry of the link MTU list is below 546,
+    /// the smallest IPv4 link that carries the connection request.
+
+    ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL = -39,
+
+    /// Create refused: at the packet size of the smallest entry of the link
+    /// MTU list, one max_message_bytes message needs more fragments than
+    /// reliable_messages_in_flight holds. Raise reliable_messages_in_flight
+    /// (and packets_in_flight with it), lower max_message_bytes, or drop the
+    /// smallest entry.
+
+    ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES = -40
 };
 
 /// The process-wide log levels, least to most verbose. A log callback may
@@ -657,6 +700,14 @@ enum rocketnet_disconnect_reason_t
 
 enum rocketnet_client_state_t
 {
+    /// The path does not carry the smallest packet size of the client's link
+    /// MTU list, the size the connection started at: after connect, probes
+    /// at that size went unanswered while smaller probes came back. Only a
+    /// client whose list gives more than one packet size probes. See
+    /// rocketnet_client_config_t link_mtus.
+
+    ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED = -14,
+
     /// A message was still in the receive queue at update. See
     /// rocketnet_client_update.
 
@@ -1453,7 +1504,8 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_loopback_hub_destroy( struct 
 /// the environment again.
 ///
 /// Integers use decimal. Byte arrays use base64 with exactly the field's
-/// length. Strings are used as-is.
+/// length. Strings are used as-is. Lists (link_mtus) use decimal entries
+/// joined by commas.
 ///
 /// Transport is a comma-separated list tried from left to right at client
 /// connect or server start. The first transport that starts wins. "auto" is
@@ -1689,6 +1741,46 @@ struct rocketnet_client_config_t
     /// connect. Production builds may set it. Default is 0.
 
     uint64_t token_epoch_unix_seconds;
+
+    /// ROCKETNET_CLIENT_LINK_MTUS sets the link MTU list: the IP MTUs, in
+    /// bytes, of the links the path to the server may cross, largest first.
+    /// Use the same list on the client and the server. The default is the
+    /// one entry 1500, exactly the behaviour of earlier builds: no probe and
+    /// nothing new on the wire. A longer list, for example the three steps
+    /// { 1492, 1200, 576 }, starts the connection at the list's smallest
+    /// size, so it joins as fast as the default, then the client probes the
+    /// larger sizes one step at a time, smallest first, and the connection's
+    /// packet size rises with each size the path carries both ways. At the
+    /// first size it does not carry the probe waits, then tries that size
+    /// again 10, 20 and 30 s later, then at gaps doubling to 300 s and every
+    /// 300 s after, so a size ruled out by heavy loss is taken once the loss
+    /// ends; sizes above it are never tried before the connection is at it.
+    /// The packet size never falls (rocketnet_client_max_packet_bytes;
+    /// rocketnet_client_state MTU_PROBE_FAILED when even the smallest is not
+    /// carried). An entry's packet size is the
+    /// MTU less 28 bytes over IPv4 or 48 over IPv6, at most
+    /// ROCKETNET_MAX_PACKET_BYTES; an IPv6 connection skips the entries below
+    /// 1280. The variable is a comma list with no spaces, "1492,1200,576";
+    /// a value that does not parse, or has more than ROCKETNET_MAX_LINK_MTUS
+    /// entries, returns ROCKETNET_STATUS_CONFIG_ENV_INVALID. Create refuses
+    /// num_link_mtus outside 1 .. ROCKETNET_MAX_LINK_MTUS with
+    /// ROCKETNET_STATUS_LINK_MTUS_EMPTY, an entry not below the one before it
+    /// with ROCKETNET_STATUS_LINK_MTUS_NOT_DESCENDING, an entry above 1500
+    /// with ROCKETNET_STATUS_LINK_MTUS_TOO_LARGE, a smallest entry below 546
+    /// with ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL, and a list whose smallest
+    /// entry fragments one max_message_bytes message into more than
+    /// reliable_messages_in_flight blocks with
+    /// ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES: below a 1237-byte
+    /// IPv4 link a block carries less than 1152 bytes, and below 1109 less
+    /// than 1024, so there the default 1048576-byte message needs more than
+    /// the default window of 1024 (4096 at 576, where a block carries 480).
+
+    int link_mtus[ROCKETNET_MAX_LINK_MTUS];
+
+    /// The number of entries of link_mtus in use, 1 .. ROCKETNET_MAX_LINK_MTUS.
+    /// Set by ROCKETNET_CLIENT_LINK_MTUS with the list. Default is 1.
+
+    int num_link_mtus;
 };
 
 /// The server config starts without a backend public key or protocol id.
@@ -2126,6 +2218,35 @@ struct rocketnet_server_config_t
     /// place the portable workers and do not read it.
 
     int portable_reserve_cpu_0;
+
+    /// ROCKETNET_SERVER_LINK_MTUS sets the link MTU list: the IP MTUs, in
+    /// bytes, of the links the paths to the clients may cross, largest
+    /// first. Use the same list on the server and its clients: the server
+    /// answers a client's probe only at a size its own list gives the
+    /// client's family. The default is the one entry 1500, exactly the
+    /// behaviour of earlier builds: no probe and nothing new on the wire. A
+    /// longer list, for example the three steps { 1492, 1200, 576 }, starts
+    /// each connection at the list's smallest size, and the client then
+    /// probes upward: the connection's packet size rises to the largest size
+    /// its path carries both ways, and never falls. An
+    /// entry's packet size is the MTU less 28 bytes over IPv4 or 48 over
+    /// IPv6, at most ROCKETNET_MAX_PACKET_BYTES; an IPv6 connection skips
+    /// the entries below 1280. The variable is a comma list with no spaces,
+    /// "1492,1200,576"; a value that does not parse, or has more than
+    /// ROCKETNET_MAX_LINK_MTUS entries, returns
+    /// ROCKETNET_STATUS_CONFIG_ENV_INVALID. Create refuses the list as the
+    /// client's link_mtus does: ROCKETNET_STATUS_LINK_MTUS_EMPTY,
+    /// ROCKETNET_STATUS_LINK_MTUS_NOT_DESCENDING,
+    /// ROCKETNET_STATUS_LINK_MTUS_TOO_LARGE,
+    /// ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL and
+    /// ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES.
+
+    int link_mtus[ROCKETNET_MAX_LINK_MTUS];
+
+    /// The number of entries of link_mtus in use, 1 .. ROCKETNET_MAX_LINK_MTUS.
+    /// Set by ROCKETNET_SERVER_LINK_MTUS with the list. Default is 1.
+
+    int num_link_mtus;
 };
 
 /// Messages
@@ -2195,7 +2316,7 @@ struct rocketnet_receipt_t
 /// Connect tokens
 
 /// A connect token is an opaque base64 string identifying one server.
-/// It is exactly ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 (1024)
+/// It is exactly ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 (768)
 /// characters, followed by a NUL terminator. Any other length is refused.
 /// Production tokens come from your backend. Development tokens come from
 /// rocketnet_create_dev_connect_token.
@@ -2294,7 +2415,11 @@ struct rocketnet_connect_token_config_t
 
     uint64_t protocol_id;
 
-    /// User data carried to the server. Default is all zeros.
+    /// User data carried to the server: ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES
+    /// (64) bytes for small items, an index or key into the backend's own
+    /// records (a session key or a user hash), not the data itself. The game
+    /// server uses that key to fetch whatever else it needs from the backend
+    /// after connect. Default is all zeros.
 
     uint8_t user_data[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
 
@@ -2402,7 +2527,10 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_connect_token( const s
 /// RELIABLE_ORDERED_WITH_ACK_RECEIPT; for RELIABLE_SEQUENCED 1399, or 1398 on
 /// a channel of 256 or more. Every one is at most
 /// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES. Size a per-packet game message against
-/// the value for the mode and channel it is sent on.
+/// the value for the mode and channel it is sent on. These are the values at
+/// the ceiling packet size ROCKETNET_MAX_PACKET_BYTES; on a connection with a
+/// smaller packet size each is smaller by the same amount
+/// (rocketnet_client_max_unreliable_message_bytes).
 ///
 /// A pure function: it reads and changes no state, counts nothing and works
 /// before init. Thread: any thread.
@@ -2697,7 +2825,7 @@ ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * con
 
 /// Starts a connection using a token string.
 /// The string must be exactly ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1
-/// (1024) base64 characters followed by a NUL; any other length is refused.
+/// (768) base64 characters followed by a NUL; any other length is refused.
 /// Malformed strings return ROCKETNET_STATUS_INVALID_CONNECT_TOKEN without
 /// changing the client.
 ///
@@ -2848,6 +2976,57 @@ ROCKETNET_EXPORT const char * rocketnet_client_state_name( enum rocketnet_client
 /// for a NULL client, which counts as API misuse.
 
 ROCKETNET_EXPORT int rocketnet_client_index( const struct rocketnet_client_t * client );
+
+/// Returns the connection's current packet size: the most wire bytes any
+/// datagram of the connection carries, in either direction. It is
+/// ROCKETNET_MAX_PACKET_BYTES (1452) on the default link MTU list. With a
+/// longer list (link_mtus) the connection starts at the list's smallest size
+/// and rises as the client's probe finds a larger size the path carries: the
+/// value only grows while the connection lasts, so read it again rather than
+/// keeping the first value.
+///
+/// Callable in every client state. Thread: not thread-safe; the caller owns
+/// the client one thread at a time.
+///
+/// @param client The client.
+/// @return The packet size in bytes while CONNECTED, or 0 in every other
+/// state and for a NULL client, which counts as API misuse.
+
+ROCKETNET_EXPORT int rocketnet_client_max_packet_bytes( struct rocketnet_client_t * client );
+
+/// Returns the largest UNRELIABLE message the connection sends in one packet,
+/// without promoting it to RELIABLE: ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES
+/// (1411) at the default packet size, less on a connection with a smaller one
+/// (rocketnet_client_max_packet_bytes). It follows the current packet size,
+/// so it only grows while the connection lasts. A larger UNRELIABLE message
+/// is still sent, as RELIABLE.
+///
+/// Callable in every client state. Thread: not thread-safe; the caller owns
+/// the client one thread at a time.
+///
+/// @param client The client.
+/// @return The limit in bytes while CONNECTED, or 0 in every other state and
+/// for a NULL client, which counts as API misuse.
+
+ROCKETNET_EXPORT int rocketnet_client_max_unreliable_message_bytes( struct rocketnet_client_t * client );
+
+/// Returns the entry of the client's link MTU list (link_mtus) the
+/// connection's current packet size comes from: 1500 on the default list.
+/// Where several entries give the same packet size, such as 1500 and 1492
+/// over IPv4 (both 1452 after the 1452 cap), it is the first, largest, of
+/// them. It follows the packet size (rocketnet_client_max_packet_bytes), so
+/// it only grows while the connection lasts: on a longer list it starts at
+/// the entry of the list's smallest size and rises with each size the probe
+/// finds the path carries.
+///
+/// Callable in every client state. Thread: not thread-safe; the caller owns
+/// the client one thread at a time.
+///
+/// @param client The client.
+/// @return The link MTU in bytes while CONNECTED, or 0 in every other state
+/// and for a NULL client, which counts as API misuse.
+
+ROCKETNET_EXPORT int rocketnet_client_link_mtu( struct rocketnet_client_t * client );
 
 /// Returns the selected transport name, or NULL when no transport is
 /// selected: while DISCONNECTED, and in a negative state that holds no
@@ -3519,6 +3698,58 @@ ROCKETNET_EXPORT int rocketnet_server_num_connected_clients( const struct rocket
 
 ROCKETNET_EXPORT bool rocketnet_server_client_connected( const struct rocketnet_server_t * server, int client_index );
 
+/// Returns the current packet size of the slot's connection: the most wire
+/// bytes any datagram of the connection carries, in either direction. It is
+/// ROCKETNET_MAX_PACKET_BYTES (1452) on the default link MTU list. With a
+/// longer list (link_mtus) the connection starts at the list's smallest size
+/// and rises when the client confirms a larger size its probe found the path
+/// carries: the value only grows while the connection lasts.
+///
+/// Callable running or stopped; 0 while stopped. Thread: not thread-safe; the
+/// caller owns the server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns 0.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error and counts as API misuse.
+/// @return The packet size in bytes, or 0 for a slot with no connected client.
+
+ROCKETNET_EXPORT int rocketnet_server_client_max_packet_bytes( struct rocketnet_server_t * server, int client_index );
+
+/// Returns the largest UNRELIABLE message the slot's connection sends in one
+/// packet, without promoting it to RELIABLE:
+/// ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES (1411) at the default packet size,
+/// less on a connection with a smaller one
+/// (rocketnet_server_client_max_packet_bytes). It follows the current packet
+/// size, so it only grows while the connection lasts. A larger UNRELIABLE
+/// message is still sent, as RELIABLE.
+///
+/// Callable running or stopped; 0 while stopped. Thread: not thread-safe; the
+/// caller owns the server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns 0.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error and counts as API misuse.
+/// @return The limit in bytes, or 0 for a slot with no connected client.
+
+ROCKETNET_EXPORT int rocketnet_server_client_max_unreliable_message_bytes( struct rocketnet_server_t * server, int client_index );
+
+/// Returns the entry of the server's link MTU list (link_mtus) the slot's
+/// current packet size comes from, for the client's address family: 1500 on
+/// the default list. Where several entries give the same packet size, such
+/// as 1500 and 1492 over IPv4, it is the first, largest, of them. It follows
+/// the packet size (rocketnet_server_client_max_packet_bytes), so it only
+/// grows while the connection lasts.
+///
+/// Callable running or stopped; 0 while stopped. Thread: not thread-safe; the
+/// caller owns the server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns 0.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error and counts as API misuse.
+/// @return The link MTU in bytes, or 0 for a slot with no connected client.
+
+ROCKETNET_EXPORT int rocketnet_server_client_link_mtu( struct rocketnet_server_t * server, int client_index );
+
 /// Returns the client ID from the slot's connect token.
 /// Zero is also a valid ID. Check rocketnet_server_client_connected first.
 ///
@@ -3582,6 +3813,52 @@ ROCKETNET_EXPORT uint64_t rocketnet_server_client_connection_id( const struct ro
 /// copied.
 
 ROCKETNET_EXPORT bool rocketnet_server_client_user_data( const struct rocketnet_server_t * server, int client_index, uint8_t * user_data );
+
+/// Writes the address and port the connected client sends from, as the
+/// server sees them: "a.b.c.d:port" for IPv4, "[v6]:port" for IPv6. The
+/// port is the client's source port, so two clients behind one address read
+/// different strings.
+/// Returns true if the slot holds a connected client and the address fits.
+/// Use a buffer of ROCKETNET_MAX_ADDRESS_STRING_BYTES.
+///
+/// The address is for diagnostics, support and logging. To look a client up
+/// or key per-client state fast, use client_index or
+/// rocketnet_server_client_id, not the address. Do not ban by it: banning by
+/// IP address does not work. A player changes address easily, by changing
+/// networks or through a VPN, and many players share one address behind
+/// carrier-grade NAT, so an IP ban misses the player it is for and locks out
+/// strangers. Ban the authenticated account by its user hash, the slot's
+/// rocketnet_server_client_id, and enforce it with per-server whitelists:
+/// see the bans and whitelists guide, BANS-AND-WHITELISTS.md ("Why IP bans
+/// fail" and "How to enforce an account ban").
+///
+/// With a buffer of ROCKETNET_MAX_ADDRESS_STRING_BYTES it returns true
+/// exactly when rocketnet_server_client_connected does: from the moment the
+/// slot connects until it is released (a disconnect, a timeout, or the server
+/// stopping). A slot without a connected client, and any slot while stopped,
+/// returns false; that is not misuse.
+///
+/// Failure is handled as rocketnet_server_ipv4_address handles it: every
+/// failure writes an empty string if address_bytes is positive, never part
+/// of an address. A buffer too small for the address logs an error. A
+/// zero-sized buffer is left untouched.
+///
+/// Callable running or stopped. Thread: not thread-safe; the caller owns the
+/// server one thread at a time. It is a main thread call: between
+/// rocketnet_server_update_receive and rocketnet_server_update_finish, and
+/// while game threads send, it must not run.
+///
+/// @param server The server. NULL counts as API misuse, writes an empty
+/// string and returns false.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error, counts as API misuse, writes an empty string and returns false.
+/// @param address The output buffer. NULL counts as API misuse, writes
+/// nothing and returns false.
+/// @param address_bytes The size of address in bytes.
+/// @return True if the slot holds a connected client and its address was
+/// written.
+
+ROCKETNET_EXPORT bool rocketnet_server_client_address( const struct rocketnet_server_t * server, int client_index, char * address, size_t address_bytes );
 
 /// Disconnects a client and frees its slot.
 ///
