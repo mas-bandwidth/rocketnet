@@ -21,6 +21,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -50,6 +51,10 @@ class ApiError(Exception):
 
 class NotFound(ApiError):
     pass
+
+
+class ServerError(ApiError):
+    """HTTP 5xx: Api asks a GET again on its GET_RETRY_WAITS schedule."""
 
 
 # ---------------------------------------------------------------- versions
@@ -143,11 +148,30 @@ def load_gates(path=GATES_FILE):
 class Api:
     """GitHub REST over urllib. get/post/put return decoded JSON; 404 raises NotFound."""
 
-    def __init__(self, token, base="https://api.github.com"):
+    # A GET answered 5xx is asked again after these waits (seconds), the schedule
+    # tools/fetch_run_jobs.py keeps; still 5xx after the last, the verdict is
+    # refused as before. The jobs listing of a 65-job ci.yml run answered 502
+    # on two nights running (planted violations, 2026-11-19 and 11-20) and 200
+    # on the next ask. A 4xx, a POST or a PUT is never repeated.
+    GET_RETRY_WAITS = (2, 4, 8)
+
+    def __init__(self, token, base="https://api.github.com", opener=None, sleep=None):
         self.token = token
         self.base = base.rstrip("/")
+        self.opener = opener or urllib.request.urlopen
+        self.sleep = sleep or time.sleep
 
     def _send(self, method, path, params=None, body=None):
+        waits = list(self.GET_RETRY_WAITS) if method == "GET" else []
+        while True:
+            try:
+                return self._send_once(method, path, params, body)
+            except ServerError:
+                if not waits:
+                    raise
+                self.sleep(waits.pop(0))
+
+    def _send_once(self, method, path, params=None, body=None):
         url = self.base + path
         if params:
             url += "?" + urllib.parse.urlencode(params)
@@ -158,12 +182,14 @@ class Api:
             "X-GitHub-Api-Version": "2022-11-28",
         })
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with self.opener(request, timeout=60) as response:
                 raw = response.read()
                 return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as error:
             if error.code == 404:
                 raise NotFound(f"{method} {path}: 404") from error
+            if error.code >= 500:
+                raise ServerError(f"{method} {path}: HTTP {error.code} {error.read()[:300]!r}") from error
             raise ApiError(f"{method} {path}: HTTP {error.code} {error.read()[:300]!r}") from error
         except (urllib.error.URLError, ValueError, OSError) as error:
             raise ApiError(f"{method} {path}: {error}") from error
