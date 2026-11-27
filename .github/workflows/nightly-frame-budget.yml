@@ -21,12 +21,21 @@
 #   - linux-frame-budget:   0 hosted minutes (self-hosted rocketnet-quiet)
 #   - macos-frame-budget:   0 hosted minutes (self-hosted macOS, ARM64, fleet)
 #   - windows-frame-budget: 0 hosted minutes (self-hosted rocketnet-windows)
+#
+# Slot: 02:00 UTC. The rocketnet-quiet runners live on hetzner2 beside the
+# fleet runners. At the old 05:30 slot the row shared hetzner2 with TLC
+# records (05:00 cron, 05:03 to 06:17 on 11-21) and CBMC (05:10 cron, 05:15
+# to 05:40), and voided at load 26.88 (11-20) and 195.24 (11-21) on 32
+# cores. No rocketnet job ran on hetzner2 between 00:00 and 03:00 on 11-19,
+# 11-20 or 11-21; the first scheduled one is nightly-real-load at 03:00.
+# The Linux legs run one at a time (max-parallel: 1) so the main and
+# sprint rows do not share the host with each other either.
 
 name: Nightly Client Frame Budget
 
 on:
   schedule:
-    - cron: "30 5 * * *"
+    - cron: "0 2 * * *"
   workflow_dispatch:
 
 permissions:
@@ -52,6 +61,8 @@ jobs:
     timeout-minutes: 7200
     strategy:
       fail-fast: false
+      # one row at a time on the quiet host (header: Slot)
+      max-parallel: 1
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON('["main", "sprint/rocketnet-proof"]') }}
     steps:

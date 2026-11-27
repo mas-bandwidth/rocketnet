@@ -324,6 +324,25 @@ static void fuzz_overlay( int table_index, int field_index, uint8_t mode, const 
         }
         break;
 
+        case ROCKETNET_CONFIG_KIND_INT_LIST:
+        {
+            const int max_entries = field->size / (int) sizeof( int ) - 1;
+            int parsed[64];
+            int count = 0;
+            const bool parses = max_entries <= 64 && rocketnet_config_parse_int_list_value( value, parsed, max_entries, &count );
+            rocketnet_fuzz_require( applied == parses, "an INT_LIST field applies exactly when the strict list parse accepts" );
+            if ( applied )
+            {
+                int stored_count = 0;
+                memcpy( &stored_count, b + start + sizeof( int ) * (size_t) max_entries, sizeof( stored_count ) );
+                rocketnet_fuzz_require( stored_count == count && memcmp( b + start, parsed, sizeof( int ) * (size_t) count ) == 0,
+                                        "an applied INT_LIST field holds the parsed entries and their count" );
+                rocketnet_fuzz_require( rocketnet_config_validate( table->endpoint, &config, table->fields, table->num_fields ),
+                                        "a list overlay leaves the range walk valid: its checks are the create's" );
+            }
+        }
+        break;
+
         default:
             rocketnet_fuzz_require( false, "every field has a known kind" );
     }

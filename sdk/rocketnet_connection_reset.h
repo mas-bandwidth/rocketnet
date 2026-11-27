@@ -45,7 +45,14 @@ struct rn_message_object_t;
     X( RESET, received_session_sequence ) X( RESET, ack ) X( RESET, num_acked ) \
     X( RESET, acked_packet_ids ) \
     X( KEEP, publish_keys ) X( KEEP, retire_keys ) X( KEEP, keys_context ) \
-    X( RESET, record_verdict ) X( RESET, record_sequence )
+    X( RESET, record_verdict ) X( RESET, record_sequence ) \
+    X( KEEP, link_mtus ) X( KEEP, num_link_mtus ) \
+    X( RESET, probe_candidates ) X( RESET, num_probe_candidates ) X( RESET, probe_index ) \
+    X( RESET, probe_strikes ) X( RESET, probe_pair ) X( RESET, probe_pair_small ) \
+    X( RESET, probe_pair_large ) X( RESET, probe_pair_out ) X( RESET, probe_next_time ) X( RESET, probe_interval ) \
+    X( RESET, probing ) X( RESET, probe_ruled ) X( RESET, probe_waiting ) X( RESET, probe_retries ) \
+    X( RESET, probe_retry_time ) \
+    X( RESET, confirm_bytes ) X( RESET, confirm_next_time ) X( RESET, packet_bytes )
 
 #define ROCKETNET_CLIENT_SLOTS_OWNER_FIELDS( X ) \
     X( KEEP, context ) X( KEEP, max_clients ) X( KEEP, num_connected ) X( KEEP, hash_key ) \
@@ -75,7 +82,8 @@ struct rn_message_object_t;
     X( RESET, token_identifier ) X( RESET, token_expire_timestamp ) \
     X( RESET, last_send_time ) X( RESET, last_keep_alive_send_time ) \
     X( RESET, send_sequence_handshake ) X( RESET, send_sequence_session ) \
-    X( RESET, handshake_highest_opened ) X( RESET, replay_session ) X( RESET, accepted_session ) X( RESET, integrity_failures )
+    X( RESET, handshake_highest_opened ) X( RESET, replay_session ) X( RESET, accepted_session ) X( RESET, integrity_failures ) \
+    X( RESET, probe_update ) X( RESET, probe_large_update ) X( RESET, packet_bytes )
 
 #define ROCKETNET_ENCRYPTION_MAPPING_CONTROL_CONNECTION_FIELDS( X ) \
     X( RESET, handshake_deadline ) X( RESET, last_receive_time ) \
@@ -84,7 +92,7 @@ struct rn_message_object_t;
 #define ROCKETNET_ENDPOINT_CONNECTION_FIELDS( X ) \
     X( KEEP, region ) X( RESET, ordered ) X( RESET, unreliable_builder ) X( RESET, budget ) \
     X( KEEP, config ) X( KEEP, default_kbps ) X( RESET, send_budget_enabled ) \
-    X( KEEP, max_payload_bytes ) X( RESET, send_error ) X( RESET, send_refused ) \
+    X( KEEP, max_payload_bytes ) X( KEEP, packet_bytes ) X( RESET, send_error ) X( RESET, send_refused ) \
     X( RESET, config_wait_start ) X( RESET, config_error ) X( RESET, serial ) \
     X( RESET, pending_type ) X( RESET, pending_descriptor ) X( RESET, pending_bytes ) \
     X( RESET, pending_in_place ) X( RESET, pending_channel ) X( RESET, pending_header ) \

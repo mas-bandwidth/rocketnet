@@ -117,6 +117,11 @@ struct rocketnet_server_uring_queue_t
     bool worker_ready = false;
     struct rocketnet_uring_queue_worker_t worker;
     struct rocketnet_platform_thread_t * thread = NULL;
+    // the online cpu count, read on the creating thread before the worker
+    // starts: glibc's sysconf( _SC_NPROCESSORS_ONLN ) opens
+    // /sys/devices/system/cpu/online, which the worker must not hold open
+    // after create returned (the transport's descriptors settle at create)
+    int online_cpus = 1;
 
     // the cpu the worker pinned itself to (rocketnet_uring_pin.h): PENDING
     // until its thread has run the pin, then the cpu or NONE
@@ -786,7 +791,7 @@ static void rocketnet_server_uring_worker_thread( struct rocketnet_platform_thre
 {
     struct rocketnet_server_uring_queue_t * queue = (struct rocketnet_server_uring_queue_t *) data;
     rocketnet_assert( queue );
-    rocketnet_server_uring_pin_worker( queue, (int) sysconf( _SC_NPROCESSORS_ONLN ), &rocketnet_uring_affinity_real );
+    rocketnet_server_uring_pin_worker( queue, queue->online_cpus, &rocketnet_uring_affinity_real );
     rocketnet_uring_queue_worker_run( &queue->worker );
     queue->exited.store( true, std::memory_order_release );
 }
@@ -1283,6 +1288,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_pinned( void * c
     for ( int i = 0; i < num_queues; i++ )
     {
         struct rocketnet_server_uring_queue_t * queue = &uring->queues[i];
+        queue->online_cpus = (int) sysconf( _SC_NPROCESSORS_ONLN );
         queue->thread = rocketnet_platform_thread_create( context, rocketnet_server_uring_worker_thread, queue, status );
         if ( !queue->thread )
         {
@@ -1477,17 +1483,20 @@ void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uri
     rocketnet_assert( too_short );
     rocketnet_assert( too_large );
 
-    uint64_t size = 0;
-    uint64_t large = 0;
+    // the queues count each size drop in exactly one of the two: a read
+    // racing a worker sees a datagram whole or not at all, never a short
+    // count derived from a total that moved before its split did
+    uint64_t short_drops = 0;
+    uint64_t large_drops = 0;
     for ( int i = 0; i < uring->num_queues; i++ )
     {
         uint64_t receive[ROCKETNET_URING_RECEIVE_NUM_COUNTERS];
         rocketnet_uring_receive_queue_counters( uring->queues[i].receive, receive );
-        size += receive[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SIZE];
-        large += receive[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_LARGE];
+        short_drops += receive[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_SHORT];
+        large_drops += receive[ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_LARGE];
     }
-    *too_large = large;
-    *too_short = size - large;
+    *too_short = short_drops;
+    *too_large = large_drops;
 }
 
 void rocketnet_server_uring_receive_drop_totals( struct rocketnet_server_uring_t * uring, uint64_t * values )

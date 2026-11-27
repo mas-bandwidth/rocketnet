@@ -896,7 +896,7 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
     check( defaults.disconnect_packets_per_update == ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE );
     check( defaults.handshakes_per_update == ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE );
     check( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONFIG_BYTES_2 );
-    check( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3 && ROCKETNET_SERVER_CONFIG_BYTES_3 < ROCKETNET_SERVER_CONFIG_BYTES_4 && ROCKETNET_SERVER_CONFIG_BYTES_4 < ROCKETNET_SERVER_CONFIG_BYTES_5 && ROCKETNET_SERVER_CONFIG_BYTES_5 < ROCKETNET_SERVER_CONFIG_BYTES_6 && ROCKETNET_SERVER_CONFIG_BYTES_6 < ROCKETNET_SERVER_CONFIG_BYTES_7 && ROCKETNET_SERVER_CONFIG_BYTES_7 < ROCKETNET_SERVER_CONFIG_BYTES_8 && ROCKETNET_SERVER_CONFIG_BYTES_8 == sizeof( defaults ) );
+    check( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3 && ROCKETNET_SERVER_CONFIG_BYTES_3 < ROCKETNET_SERVER_CONFIG_BYTES_4 && ROCKETNET_SERVER_CONFIG_BYTES_4 < ROCKETNET_SERVER_CONFIG_BYTES_5 && ROCKETNET_SERVER_CONFIG_BYTES_5 < ROCKETNET_SERVER_CONFIG_BYTES_6 && ROCKETNET_SERVER_CONFIG_BYTES_6 < ROCKETNET_SERVER_CONFIG_BYTES_7 && ROCKETNET_SERVER_CONFIG_BYTES_7 < ROCKETNET_SERVER_CONFIG_BYTES_8 && ROCKETNET_SERVER_CONFIG_BYTES_8 < ROCKETNET_SERVER_CONFIG_BYTES_9 && ROCKETNET_SERVER_CONFIG_BYTES_9 == sizeof( defaults ) );
 
     struct rocketnet_server_config_t old_caller;
     memset( &old_caller, 0xCD, sizeof( old_caller ) );
@@ -1058,9 +1058,9 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 }
 
-// The public client config has four revisions and the server config seven
-// (ROCKETNET_CLIENT_CONFIG_BYTES_1 .. _4 and ROCKETNET_SERVER_CONFIG_BYTES_1
-// .. _7 in sdk/rocketnet_layers.h; docs/ABI-EVOLUTION.md section 4):
+// The public client config has five revisions and the server config nine
+// (ROCKETNET_CLIENT_CONFIG_BYTES_1 .. _5 and ROCKETNET_SERVER_CONFIG_BYTES_1
+// .. _9 in sdk/rocketnet_layers.h; docs/ABI-EVOLUTION.md section 4):
 // the plain default fills every current field, and the plain create reads
 // every field in the caller's declared revision. The network simulator is a
 // call, not a field. Every case runs in memory: the loopback transport, step

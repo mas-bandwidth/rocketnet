@@ -181,14 +181,21 @@ cleanup:
     }
     {
         const double deadline = rocketnet_time() + 10.0;
-        while ( ( client && !rocketnet_client_disconnected( client ) ) ||
-                ( server && !rocketnet_server_stopped( server ) ) )
+        for ( ;; )
         {
+            /* Poll the server on every pass, never behind ||: each poll is
+               the next stop step, so skipping it stalls the stop. */
+            const int server_done = !server || rocketnet_server_stopped( server );
+            const int client_done = !client || rocketnet_client_disconnected( client );
+            if ( server_done && client_done )
+            {
+                break;
+            }
             if ( rocketnet_time() >= deadline )
             {
                 return 1; /* Fail without freeing storage still owned by I/O. */
             }
-            if ( client && !rocketnet_client_disconnected( client ) )
+            if ( !client_done )
             {
                 rocketnet_client_update( client, game_time ); /* never back in time */
             }

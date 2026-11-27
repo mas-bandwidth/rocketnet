@@ -1945,6 +1945,17 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
         return false;
     }
 
+    const int link_mtus = rocketnet_config_link_mtus_status( "client", effective_config.link_mtus, effective_config.num_link_mtus );
+    if ( link_mtus != ROCKETNET_STATUS_OK )
+    {
+        if ( status )
+        {
+            *status = link_mtus;
+        }
+
+        return false;
+    }
+
     config = &effective_config;
 
 #if ROCKETNET_DEV
@@ -2132,6 +2143,13 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_impl( vo
     rocketnet_client_protocol_init( &client_transport->protocol, &client_transport->counters );
 
     memcpy( client_transport->protocol.packet_filter, config->packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
+
+    // the link MTU list, checked at the resolve: the connection's first size
+    // and the path probe's candidates once connected (sdk/rocketnet_link_mtu.h),
+    // kept across the connection reset
+
+    memcpy( client_transport->protocol.link_mtus, config->link_mtus, sizeof( client_transport->protocol.link_mtus ) );
+    client_transport->protocol.num_link_mtus = config->num_link_mtus;
 
     // the create-time clock is checked the same way an update's is: a
     // non-finite, negative or above-ceiling seed would poison every later
@@ -3579,6 +3597,20 @@ static void rocketnet_client_transport_update_body( rocketnet_client_transport_t
     int packet_bytes = 0;
     rocketnet_client_protocol_update( &client_transport->protocol, current_time, packet, &packet_bytes );
 
+    // the path probe's sends after connect: a pair, or a confirm, or nothing
+    // (standard/TRANSPORT.md t11.4; proofs/tla/RNPathProbe.tla ClientSendPair
+    // and ClientSendConfirm); the default list never sends one, and a frame
+    // with nothing to probe pays one test (rocketnet_client_protocol_probe_active)
+
+    uint8_t probe_small[ROCKETNET_CONNECTION_PROBE_SMALL_WIRE_BYTES];
+    uint8_t probe_large[ROCKETNET_RECEIVE_CEILING];
+    int probe_small_bytes = 0;
+    int probe_large_bytes = 0;
+    if ( rocketnet_client_protocol_probe_active( &client_transport->protocol ) )
+    {
+        rocketnet_client_protocol_probe_update( &client_transport->protocol, current_time, probe_small, &probe_small_bytes, probe_large, &probe_large_bytes );
+    }
+
     // the connection ended inside this update: the reset keeps the batch, so
     // the payloads this update counted delivered reach the caller
     // (proofs/tla/RNClientDelivery.tla Return)
@@ -3613,6 +3645,14 @@ static void rocketnet_client_transport_update_body( rocketnet_client_transport_t
         {
             rocketnet_client_transport_io_commit_packet( client_transport, packet, packet_bytes );
         }
+        if ( probe_small_bytes > 0 )
+        {
+            rocketnet_client_transport_io_commit_packet( client_transport, probe_small, probe_small_bytes );
+        }
+        if ( probe_large_bytes > 0 )
+        {
+            rocketnet_client_transport_io_commit_packet( client_transport, probe_large, probe_large_bytes );
+        }
 
         rocketnet_client_transport_io_hand_off( client_transport );
 #if ROCKETNET_DEV
@@ -3622,14 +3662,24 @@ static void rocketnet_client_transport_update_body( rocketnet_client_transport_t
         }
 #endif // #if ROCKETNET_DEV
     }
-    else if ( packet_bytes > 0 )
+    else if ( packet_bytes > 0 || probe_small_bytes > 0 || probe_large_bytes > 0 )
     {
-        client_transport->stats_frames[stats_index].packets_sent++;
-        client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( client_transport->protocol.server_address.type ) );
-        client_transport->client_stats.packets_sent++;
-        client_transport->client_stats.bytes_sent += (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( client_transport->protocol.server_address.type ) );
+        const uint8_t * sends[3] = { packet, probe_small, probe_large };
+        const int send_bytes[3] = { packet_bytes, probe_small_bytes, probe_large_bytes };
+        for ( int i = 0; i < 3; i++ )
+        {
+            if ( send_bytes[i] <= 0 )
+            {
+                continue;
+            }
 
-        rocketnet_client_link_send( client_transport, &client_transport->protocol.server_address, packet, packet_bytes );
+            client_transport->stats_frames[stats_index].packets_sent++;
+            client_transport->stats_frames[stats_index].bytes_sent += (uint64_t) ( send_bytes[i] + rocketnet_wire_header_bytes( client_transport->protocol.server_address.type ) );
+            client_transport->client_stats.packets_sent++;
+            client_transport->client_stats.bytes_sent += (uint64_t) ( send_bytes[i] + rocketnet_wire_header_bytes( client_transport->protocol.server_address.type ) );
+
+            rocketnet_client_link_send( client_transport, &client_transport->protocol.server_address, sends[i], send_bytes[i] );
+        }
         rocketnet_client_link_flush( client_transport );
     }
 
@@ -3724,6 +3774,18 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
         return NULL;
     }
 
+    // the connection's payload capacity C(P), from its packet size
+    // (sdk/rocketnet_link_mtu.h): the frame never carries more, so the
+    // sealed packet never exceeds P. ROCKETNET_MAX_PACKET_PAYLOAD_BYTES at
+    // the default packet size.
+
+    const int payload_capacity = rocketnet_link_mtu_payload_bytes( rocketnet_client_protocol_packet_bytes( &client_transport->protocol ) );
+    if ( request_bytes > payload_capacity )
+    {
+        rocketnet_spam( "client start packet refused. request above the connection's payload capacity" );
+        return NULL;
+    }
+
     // a real wire frame, written in place, sealed in place, zero copies, in
     // the ring send_fill names (RNClientIo Write). The slot is claimed before
     // the sequence is taken, so a start the full ring refuses spends no
@@ -3753,7 +3815,7 @@ uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t 
     uint8_t * frame = ring->data + slot * ROCKETNET_FRAME_STRIDE;
 
     context->payload_index = ROCKETNET_FRAME_PAYLOAD_OFFSET;
-    context->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    context->payload_capacity = payload_capacity;
 
     rocketnet_assert( ( (uintptr_t) frame % 16 ) == 0 );
 
@@ -4071,7 +4133,50 @@ int rocketnet_client_transport_max_payload_bytes( rocketnet_client_transport_t *
     }
 
     rocketnet_assert( client_transport );
-    return ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    return rocketnet_link_mtu_payload_bytes( rocketnet_client_protocol_packet_bytes( &client_transport->protocol ) );
+}
+
+#if ROCKETNET_DEV
+const struct rocketnet_client_protocol_t * rocketnet_client_transport_protocol_for_test( const struct rocketnet_client_transport_t * client_transport )
+{
+    rocketnet_assert( client_transport );
+    return &client_transport->protocol;
+}
+#endif // #if ROCKETNET_DEV
+
+int rocketnet_client_transport_link_mtu( rocketnet_client_transport_t * client_transport, int packet_bytes )
+{
+    if ( !rocketnet_api_null_guard( client_transport ) )
+    {
+        return 0;
+    }
+
+    rocketnet_assert( client_transport );
+
+    const struct rocketnet_client_protocol_t * protocol = &client_transport->protocol;
+    return rocketnet_link_mtu_entry( protocol->link_mtus, protocol->num_link_mtus, protocol->server_address.type, packet_bytes );
+}
+
+int rocketnet_client_transport_packet_bytes( rocketnet_client_transport_t * client_transport )
+{
+    if ( !rocketnet_api_null_guard( client_transport ) )
+    {
+        return 0;
+    }
+
+    rocketnet_assert( client_transport );
+
+    // decided once the challenge (or the probe reply) fixed it, the response
+    // carrying it: from sending connection response on, 0 before and after
+
+    const int state = client_transport->protocol.state;
+    if ( ( state != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE && state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ) ||
+         client_transport->protocol.packet_bytes <= 0 )
+    {
+        return 0;
+    }
+
+    return client_transport->protocol.packet_bytes;
 }
 
 // the batch the copying cursor above walks, exposed whole: by count and
@@ -4165,6 +4270,19 @@ const char * rocketnet_client_transport_io_name( rocketnet_client_transport_t * 
     rocketnet_assert( client_transport );
     return rocketnet_transport_name( client_transport->transport );
 }
+
+#if ROCKETNET_DEV
+// the unit seam for the list the protocol probes with: its entries into
+// link_mtus (ROCKETNET_MAX_LINK_MTUS of room), and its count
+
+int rocketnet_client_transport_link_mtus_for_test( const struct rocketnet_client_transport_t * client_transport, int * link_mtus )
+{
+    rocketnet_assert( client_transport );
+    rocketnet_assert( link_mtus );
+    memcpy( link_mtus, client_transport->protocol.link_mtus, sizeof( client_transport->protocol.link_mtus ) );
+    return client_transport->protocol.num_link_mtus;
+}
+#endif // #if ROCKETNET_DEV
 
 int rocketnet_client_transport_client_index( rocketnet_client_transport_t * client_transport )
 {

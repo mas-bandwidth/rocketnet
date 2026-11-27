@@ -1557,9 +1557,15 @@ static void live_matrix_close( struct live_matrix_t * m )
     {
         // the disconnect burst is deferred when the I/O thread is still
         // sending the other ring (proofs/tla/RNClientIo.tla Defer) and leaves with
-        // the client's next hand-off, so the client is updated too
+        // the client's next hand-off, so the client is updated too.
+        //
+        // over UDP every copy of the burst can be lost; what the protocol
+        // guarantees is the slot freed once the server has heard nothing for
+        // the token's timeout (LIVE_MATRIX_TOKEN_TIMEOUT; sdk/rocketnet_server_protocol.cpp,
+        // the silence end), so the wait is that timeout plus a second for the
+        // update cadence. a delivered disconnect ends it at once.
 
-        for ( int pass = 0; rocketnet_message_server_client_connected( m->server, 0 ) && pass < LIVE_MATRIX_WAIT_PASSES( 2.0 ); pass++ )
+        for ( int pass = 0; rocketnet_message_server_client_connected( m->server, 0 ) && pass < LIVE_MATRIX_WAIT_PASSES( LIVE_MATRIX_TOKEN_TIMEOUT + 1.0 ); pass++ )
         {
             live_matrix_pump( m );
             rocketnet_platform_sleep( LIVE_MATRIX_WAIT_SLEEP );

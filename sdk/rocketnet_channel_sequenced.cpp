@@ -243,7 +243,7 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
                                uint32_t * hold, uint32_t * first_hold, uint32_t delta, uint32_t slot, rn_delivery_t * out )
 {
     rn_region_t * region = channels->region;
-    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const uint32_t F = rn_region_fragment_bytes( region );
     const uint32_t count = record->fragments + 1;
     const uint32_t index = record->fragment;
 

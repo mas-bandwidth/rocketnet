@@ -341,7 +341,7 @@ static void fuzz_minted( const uint8_t * data, size_t size )
         pf.server_to_client_key[i] = (uint8_t) ( 0x50 + i );
     }
 
-    for ( int i = 0; i < 128 - 27; i++ )
+    for ( int i = 0; i < ROCKETNET_USER_DATA_BYTES; i++ )
     {
         pf.user_data[i] = r[27 + i];
     }

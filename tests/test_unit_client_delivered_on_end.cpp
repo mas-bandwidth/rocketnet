@@ -476,4 +476,41 @@ static void test_client_deferred_acks_only_for_accepted_payloads_in_this_batch()
 }
 
 REGISTER_UNIT_TEST( test_client_deferred_acks_only_for_accepted_payloads_in_this_batch );
+
+// The server transport's disconnect burst, delivered, ends the client in
+// exactly DISCONNECTED: the client accepts the server's disconnect packet
+// (CLIENT_DISCONNECT_ACCEPTED) and ends at once, never by its timeout (the
+// token's 60 seconds) and never in another end state. The functional
+// rocketnet_test_transport_disconnect_delivery runs the same disconnect over
+// real UDP, where every copy of the burst can be lost, so it also allows
+// CONNECTION_TIMED_OUT; this lossless case is where the exact end state is
+// checked.
+
+static void test_server_transport_disconnect_reads_disconnected()
+{
+    struct delivered_on_end_pair_t pair;
+    delivered_on_end_setup( &pair );
+    delivered_on_end_connect( &pair );
+
+    check( rocketnet_client_transport_counters( pair.client )->values[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED] == 0 );
+
+    rocketnet_server_transport_disconnect_client( pair.server, 0 );
+    rocketnet_server_transport_send_packets( pair.server );
+    check( !rocketnet_server_transport_is_client_connected( pair.server, 0 ) );
+
+    const double disconnect_time = pair.time;
+    for ( int i = 0; i < 10 && rocketnet_client_transport_state( pair.client ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++ )
+    {
+        delivered_on_end_step( &pair );
+    }
+
+    check( rocketnet_client_transport_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
+    check( rocketnet_client_transport_counters( pair.client )->values[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED] == 1 );
+    check( pair.time - disconnect_time < 1.0 );
+
+    rn_test_client_transport_stop_and_destroy( pair.client );
+    rn_test_server_transport_stop_and_destroy( pair.server );
+}
+
+REGISTER_UNIT_TEST( test_server_transport_disconnect_reads_disconnected );
 #endif // #if ROCKETNET_DEV

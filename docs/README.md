@@ -14,6 +14,7 @@ message exchange → integrate a frame loop → connect a backend → qualify a 
 | Understand channels, delivery, and receipts | [Messages and channels](CHANNELS.md), [reliability example](examples/reliability.md), [receive pressure](RECEIVE-PRESSURE.md) |
 | Understand connection identity | [Sessions](SESSION.md), [Keys](KEYS.md) |
 | Replace local development tokens | [Production integration](PRODUCTION.md), [backend service examples](../examples/backend/README.md) |
+| Authenticate players, enforce one seat per account, and apply bans during play | [Recommended practices for client authentication and banning](BANS-AND-WHITELISTS.md), [run the example](BANS-AND-WHITELISTS.md#run-it) |
 | Work with an AI coding agent | [Agent integration guide](AGENTS.md) |
 | Explore one feature at a time | [Example catalogue](../examples/README.md) |
 
@@ -53,7 +54,7 @@ the library you link.
 Start with [Testing and qualification](TESTING.md). The [release process](RELEASING.md#the-release-gates)
 uses the release commit's required CI results as qualification evidence,
 subject to the documented check limitations. The index explains
-what each test tier establishes and labels older qualification records as history. [Release notes](RELEASE-NOTES-v1.2.2.md)
+what each test tier establishes and labels older qualification records as history. [Release notes](RELEASE-NOTES-v1.3.0.md)
 describe migrations; the v1.0.0 notes are on its
 [GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.0.0),
 and the preview notes, such as [preview-5](RELEASE-NOTES-v1.0.0-preview-5.md),

@@ -307,6 +307,29 @@ LAYERS = {
         # time grows faster than the walk: 200 steps a seed stays in budget
         "steps": 200,
     },
+    "path-probe": {
+        "modules": ["RNPathProbe.tla", "TraceRNPathProbe.tla"],
+        "untraced": {
+            "ClientSendData": "a payload at P changes no model variable; the session layer sends it, not the probe",
+            "ServerSendData": "a payload at the slot's P changes no model variable; the session layer sends it, not the probe",
+        },
+        "ghost": {
+            "badUnproven": "the history of ReplyOnlyConnected, computed by the model",
+            "badLarger": "the history of ReplyNoLarger, computed by the model",
+            "badOffList": "the history of ReplyOwnList, computed by the model",
+            "badTwice": "the history of OneReplyPerUpdate, computed by the model",
+            "badStale": "the history of ReuseStartsFresh, computed by the model",
+        },
+        "reach": ["RaisedBelowMax", "ServerRaised", "Waiting", "Retrying", "Reused"],
+    },
+    "path-probe-retry": {
+        "modules": ["RNPathProbeRetryLayout.tla", "TraceRNPathProbeRetryLayout.tla"],
+        "untraced": {
+            "Done": "the model's exploration bound: past Horizon nothing more; the walk stays below it",
+        },
+        "reach": ["AtCap"],
+        "header_only": True,
+    },
 }
 
 # The CI shards (ci.yml tla-trace, --shard I/10 with --seeds 1-4; 5, 7, 8 and 9
@@ -339,7 +362,7 @@ SHARDS = [
     ["msgx:4", "msgxsendruns", "gather"],
     ["xdp-reply-macs:1", "example", "queue-worker"],
     ["xdp-reply-macs:2", "xdp-reply-macs:3", "iocp-admit", "xdp-receive-ring", "fillphase"],
-    ["xdp-reply-macs:4", "xdp-gateway-refresh"],
+    ["xdp-reply-macs:4", "xdp-gateway-refresh", "path-probe", "path-probe-retry"],
     ["ackapply", "bank", "receive", "receive-handoff-xdp", "msgxreceivefill", "client-receive-handoff"],
     ["iocp-lanes", "queue-send", "rio-lane", "sendreserve", "writerfinish", "xdp-replay-marks", "receive-handoff"],
     ["msgx:reach"],
@@ -973,10 +996,14 @@ def trace_sha(walk_dir, report):
     return hashlib.sha256((walk_dir / (report["module"] + ".tla")).read_bytes()).hexdigest()
 
 
-def reached(args, name, layer, predicate, log):
+def reached(args, name, layer, predicate, log, accepted):
     """True when some seed's accepted clean trace reaches the predicate: a TLC run of the trace with the
-    invariant ~predicate must find it violated"""
+    invariant ~predicate must find it violated. Only the seeds in accepted are tried (a clean trace TLC
+    accepted here, or a coverage walk held to check_seed's checks): a walk that failed, timed out or was
+    refused may have left a module without its cfg, and its trace proves nothing"""
     for seed in args.seeds:
+        if seed not in accepted:
+            continue
         walk_dir = args.dir / f"{name}-{seed}" / "clean" / "walk"
         traced = list(walk_dir.glob("MC*.tla")) if walk_dir.exists() else []
         if len(traced) != 1:
@@ -1194,6 +1221,8 @@ def main():
     # needs one in the run, so an unreached plant on one seed is not red, and
     # a plant no seed reaches is
     proved = {n: 0 for n in names}
+    # the seeds whose clean walk the reach predicates may try (reached)
+    accepted = {n: set() for n in names}
     # each seed runs its two TLC runs at once
     with ThreadPoolExecutor(max_workers=max(1, args.jobs // 2)) as pool:
         futures = [pool.submit(check_seed, args, n, LAYERS[n], plants[n], seed, facts[n]) for n, seed in pairs]
@@ -1207,6 +1236,7 @@ def main():
             for failure in failures:
                 failed.append(f"layer {n} seed {seed}: {failure}")
             if clean and not failures:
+                accepted[n].add(seed)
                 # actions are counted from the traces TLC accepted, never
                 # from the walk's own report
                 for act, count in clean["logged"].items():
@@ -1231,6 +1261,7 @@ def main():
             failed.append(f"layer {n} seed {seed}: {failure}")
         if report is None:
             continue
+        accepted.setdefault(n, set()).add(seed)
         for act, count in report["logged"].items():
             taken[n][act] = taken[n].get(act, 0) + count
 
@@ -1245,7 +1276,7 @@ def main():
     # each reach predicate tries the seeds in turn, the predicates at once
     with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
         checks = [(n, p, []) for n in reach_here for p in LAYERS[n].get("reach", [])]
-        hits = list(pool.map(lambda c: reached(args, c[0], LAYERS[c[0]], c[1], c[2]), checks))
+        hits = list(pool.map(lambda c: reached(args, c[0], LAYERS[c[0]], c[1], c[2], accepted.get(c[0], set())), checks))
     for (n, predicate, log), hit in zip(checks, hits):
         if not hit:
             sys.stdout.write("".join(log))
