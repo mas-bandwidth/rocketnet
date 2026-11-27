@@ -106,6 +106,13 @@ struct sr_rig_t
     void * real_instance;
 };
 
+// The payload ring chunk cases: 640 clients, a ring with room past the guard's
+// chunk for every fill line (8 x 64 = 512 slots), held to the build's
+// ROCKETNET_MAX_CLIENTS. A MAX_CLIENTS=512 build's 512-slot ring still claims
+// the chunks those cases walk; a build under 512 has no chunk path, and the
+// cases' capacity check fails by name.
+#define SR_CHUNK_CLIENTS ( ROCKETNET_MAX_CLIENTS < 640 ? ROCKETNET_MAX_CLIENTS : 640 )
+
 static void sr_connect( struct sr_rig_t * rig, int max_clients )
 {
     rocketnet_quiet( 1 );
@@ -682,7 +689,7 @@ static void test_server_fill_refusal_names_tails_held()
 static void test_server_fill_ring_chunk()
 {
     struct sr_rig_t rig;
-    sr_connect( &rig, 640 );
+    sr_connect( &rig, SR_CHUNK_CLIENTS );
     rocketnet_server_transport_send_packets( rig.server );
 
     const int capacity = rocketnet_server_transport_send_capacity_available( rig.server );
@@ -788,7 +795,7 @@ static void test_server_fill_ring_small_server_takes_every_slot()
 static void test_server_fill_ring_chunk_lost_install_keeps_start_order()
 {
     struct sr_rig_t rig;
-    sr_connect( &rig, 640 );
+    sr_connect( &rig, SR_CHUNK_CLIENTS );
     rocketnet_server_transport_send_packets( rig.server );
     check( rocketnet_server_transport_send_capacity_available( rig.server ) >= 8 * ROCKETNET_FILL_PHASE_FILL_LINES );
 

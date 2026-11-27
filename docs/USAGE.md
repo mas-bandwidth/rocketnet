@@ -310,6 +310,15 @@ one-packet limit of every mode (the one-record limits of
 [standard/MESSAGES.md, m2.1](../standard/MESSAGES.md#m2.1)); it is a pure function,
 so size a per-packet game message against it, or against
 `ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES` at compile time for UNRELIABLE.
+The 1,411 bytes and the one-packet limits are the values at the ceiling
+packet size of 1,452 bytes, the default. A connection whose `link_mtus` list
+settles on a smaller packet size has a smaller limit:
+`rocketnet_client_max_packet_bytes` and
+`rocketnet_client_max_unreliable_message_bytes` (on the server,
+`rocketnet_server_client_max_packet_bytes` and
+`rocketnet_server_client_max_unreliable_message_bytes`) return that
+connection's values once it is connected, and `rocketnet_client_link_mtu`
+(`rocketnet_server_client_link_mtu`) the list entry that size comes from.
 
 The channel is the ordering channel. RELIABLE_ORDERED,
 RELIABLE_ORDERED_WITH_ACK_RECEIPT and the two SEQUENCED types are ordered or
@@ -636,6 +645,17 @@ client's connect token, `rocketnet_server_num_connected_clients` counts them
 client still in the handshake as it is, and keeps the server running. The user data is
 readable from connect until the slot is released; release wipes it, and a slot
 without a connected client reads zeros and returns false.
+`rocketnet_server_client_address` writes the address and port the connected
+client sends from, as the server sees them ("a.b.c.d:port" or
+"[v6]:port"), into a buffer of `ROCKETNET_MAX_ADDRESS_STRING_BYTES`. With
+that buffer it returns true exactly when `rocketnet_server_client_connected`
+does. Failure is handled as the server's own address calls handle it: false
+and an empty string. The address is for diagnostics, support and logging; to look a
+client up or key per-client state, use the client index or
+`rocketnet_server_client_id`. Do not ban by it: players change address easily
+and many share one, so ban the account's user hash
+(`rocketnet_server_client_id`) and enforce it with the whitelist
+([Bans and whitelists](BANS-AND-WHITELISTS.md)).
 `rocketnet_server_client_connection_id` names the connection in a slot: a
 nonzero id, unique for the server's lifetime across slots, stops and starts,
 and 0 when the slot is free. A freed slot reads not connected after the update

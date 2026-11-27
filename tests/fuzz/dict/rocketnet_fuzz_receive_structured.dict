@@ -30,15 +30,17 @@ prefilter_cookie="\x07\x00\xb7\x59\x01\x00"
 
 # ROCKETNET_CONNECTION_ACK_PACKET with ROCKETNET_FILTER_EPOCH_UNKEYED and ROCKETNET_TEST_FILTER_VALUE (sdk/rocketnet_wire.h)
 prefilter_ack="\x08\x00\xb7\x59\x01\x00"
+prefilter_probe="\x09\x00\xb7\x59\x01\x00"
 
 # ROCKETNET_FIRST_RESERVED_PACKET_TYPE (sdk/rocketnet_wire.h)
-type_reserved="\x09"
+type_probe="\x09"
+type_reserved="\x0a"
 
 # The first keyed epoch after ROCKETNET_FILTER_EPOCH_UNKEYED (sdk/rocketnet_wire.h)
 epoch_keyed="\x01"
 
-# ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, 710, u16 little-endian (sdk/rocketnet_wire.h)
-request_wire_bytes="\xc6\x02"
+# ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES, 518, u16 little-endian (sdk/rocketnet_wire.h)
+request_wire_bytes="\x06\x02"
 
 # ROCKETNET_CONNECTION_DENIED_WIRE_BYTES, 34, u16 little-endian (sdk/rocketnet_wire.h)
 denied_wire_bytes="\x22\x00"
@@ -94,8 +96,8 @@ sequence_wrap_low="\xff\xff\xff\xff"
 # The sequence reconstruction window's half-window edge, u32 little-endian (sdk/rocketnet_replay.cpp)
 sequence_half="\x00\x00\x00\x80"
 
-# ROCKETNET_WIRE_VERSION, 0x4E7C1A93, little-endian (sdk/rocketnet_connect_token.h)
-version="\x93\x1a\x7c\x4e"
+# ROCKETNET_WIRE_VERSION, 0x065014D9, little-endian (sdk/rocketnet_connect_token.h)
+version="\xd9\x14\x50\x06"
 
 # ROCKETNET_DEV_PROTOCOL_ID, 0x1122334455667788, little-endian (sdk/rocketnet_connect_token.h)
 protocol_id="\x88\x77\x66\x55\x44\x33\x22\x11"

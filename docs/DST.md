@@ -79,9 +79,10 @@ The same seeds and options must print the same trace on Linux, macOS and
 Windows, so a seed that fails on one OS replays on the others. The reference is
 
     ./bin/dst --seeds 1-50
-    PASS seeds=1-50 runs=50 trace=7a207ea303f1dbc2
+    PASS seeds=1-50 runs=50 trace=9b13bbc71bc249e1
 
-measured on Linux (x64, gcc, Release) at W2-115, the change that set it.
+measured on Linux (x64, gcc, Release) at the link MTU change, the change
+that set it.
 Whether macOS and Windows print the same value is first compared by the
 nightly (`.github/workflows/nightly-dst.yml`), whose legs on those OSes hold
 their PASS line to the same pin. The last reference measured equal on all
@@ -112,12 +113,17 @@ W2-115 moved it to 7a207ea303f1dbc2, measured on Linux (x64, gcc, Release):
 a standalone ack now stamps the client's send clock as any session packet
 does, so the next keep-alive is due a send interval after the ack rather
 than after the packet before it. The fixed range and the nine schedules
-moved with it again (measured on Linux at W2-115).
+moved with it again (measured on Linux at W2-115). The link MTU change moved
+it to 9b13bbc71bc249e1, measured on Linux (x64, gcc, Release): the connect
+token's user data went from 256 to 64 bytes, so the connection request every
+run's handshake sends is 518 bytes, and the trace hashes each packet's size.
+The fixed range and the nine schedules moved with it (measured on Linux at
+the link MTU change).
 A change that moves this
 trace changes what a run does; it updates the reference here and
 `DST_REFERENCE_TRACE` in `.github/workflows/nightly-dst.yml` together (the
 per-commit Release unit job reads its pin from there). The nightly pins the
-fixed range 1-2050 (`DST_FIXED_TRACE`, 11e290abdf932865) and each fault schedule
+fixed range 1-2050 (`DST_FIXED_TRACE`, 632b08b51686df44) and each fault schedule
 over seeds 1-50 (`DST_TRACE_<SCHEDULE>`) beside it, and compares each step's
 whole PASS line; a change that moves one moves its pin with it.
 

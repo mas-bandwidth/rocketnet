@@ -99,6 +99,21 @@ uint64_t rocketnet_loopback_test_client_empty_receives();
 // hub is created; 0 restores the hub's own range: from 49152, or lower for a
 // hub of more than 16383 clients, so the range holds every endpoint.
 void rocketnet_loopback_test_first_port( uint16_t port );
+
+// Link seam; test library only. Every datagram above max_bytes wire bytes is
+// lost on the path, as on a link whose MTU carries no more, uncounted (0, the
+// default: none is). Setting it also zeroes the largest datagram any
+// endpoint handed the hub since, which rocketnet_loopback_test_largest_sent
+// reads, the dropped ones included; the largest the path carried, which
+// rocketnet_loopback_test_largest_carried reads; and the count of datagrams
+// dropped for their size, which rocketnet_loopback_test_dropped_above reads;
+// and the largest datagram a server endpoint handed the hub, dropped or not,
+// which rocketnet_loopback_test_largest_server_sent reads.
+void rocketnet_loopback_test_link_max_bytes( int max_bytes );
+int rocketnet_loopback_test_largest_sent();
+int rocketnet_loopback_test_largest_carried();
+int rocketnet_loopback_test_dropped_above();
+int rocketnet_loopback_test_largest_server_sent();
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_DRIVER_LOOPBACK_H

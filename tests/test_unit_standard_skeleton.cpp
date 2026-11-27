@@ -6,7 +6,7 @@
 // test_unit_standard_skeleton.cpp -- the vector twins of RN-1 t3
 // (standard/TRANSPORT.md, Constants and registries), regenerated through the
 // implementation. The one vector is the token identifier of the frozen
-// connect token: crypto_generichash, 16 bytes, no key, over the token's 576
+// connect token: crypto_generichash, 16 bytes, no key, over the token's 384
 // signed connect data bytes, which begin at offset 0 of the token.
 
 #include "test_unit_standard.h"
@@ -15,7 +15,7 @@
 #include "rocketnet_test_vectors.h"
 
 static const rn_standard_vector_t standard_skeleton_table[] = {
-    RN_STANDARD_VECTOR( "t3.token-identifier", "f520da9d95fd072256b47d755f810f61" ),
+    RN_STANDARD_VECTOR( "t3.token-identifier", "f10952a0db61d36130367589cbbc4061" ),
 };
 
 static int standard_skeleton_generate( const char * id, uint8_t * out, int capacity )

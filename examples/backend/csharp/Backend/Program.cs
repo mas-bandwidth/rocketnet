@@ -2,9 +2,8 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    A very simple backend: one HTTP
-    endpoint that mints a RocketNet connect token for a client and returns it
-    as base64. The C client passes the string to rocketnet_client_connect,
+    A very simple backend: it mints a RocketNet connect token for a
+    signed-in player and returns it as base64. The C client passes the string to rocketnet_client_connect,
     and the token sends it to the one server it names. ConnectToken.cs
     writes the token.
 
@@ -14,8 +13,10 @@
     is for local runs only, and a production server (built with
     ROCKETNET_DEV=0) refuses it at start.
 
-    A real backend authenticates the player before minting a token for them;
-    this one mints for any client id it is asked for.
+    The player signs in with an auth provider (here a mock, Users.cs) and
+    sends the ticket to POST /match. The backend checks the ticket, refuses
+    a banned user, and mints a token whose client id is the user's hash, for
+    one server whose whitelist then holds that user.
 */
 
 using System;
@@ -130,23 +131,51 @@ app.MapPut( "/servers/{serverId}", async ( string serverId, HttpRequest request 
     }
 } );
 
-app.MapGet( "/match/{clientId}", ( string clientId, HttpResponse response ) =>
+byte[] mockKey = Users.ReadSecretKey( Environment.GetEnvironmentVariable, "ROCKETNET_BACKEND_MOCK_PROVIDER_KEY", buffer => RandomNumberGenerator.Fill( buffer ), out _ );
+byte[] hashKey = Users.ReadSecretKey( Environment.GetEnvironmentVariable, "ROCKETNET_BACKEND_USER_HASH_KEY", buffer => RandomNumberGenerator.Fill( buffer ), out bool hashKeySet );
+if ( !hashKeySet )
 {
-    if ( !ulong.TryParse( clientId, NumberStyles.None, CultureInfo.InvariantCulture, out ulong id ) )
+    Console.Error.WriteLine( "rocketnet-backend: warning: ROCKETNET_BACKEND_USER_HASH_KEY is not set, so user hashes (client ids) change when the backend restarts" );
+}
+MockProvider mock = new MockProvider( mockKey );
+UserRoutes routes = new UserRoutes( config, registry, new Users( hashKey ), mock, Users.VerifyWith( mock ),
+                                    buffer => RandomNumberGenerator.Fill( buffer ), ConnectToken.SealAnonymous );
+ulong Now() => (ulong) DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+IResult Answer( Reply reply, HttpResponse response )
+{
+    if ( reply.Status == StatusCodes.Status204NoContent )
     {
-        return Results.BadRequest( "the client id is not a decimal 64 bit number" );
+        return Results.NoContent();
     }
-    RegisteredServer? server = registry.Random();
-    if ( server == null )
+    if ( reply.Status != StatusCodes.Status200OK )
     {
-        return Results.StatusCode( StatusCodes.Status503ServiceUnavailable );
+        return Results.Text( reply.Text, "text/plain; charset=utf-8", statusCode: reply.Status );
     }
-    string token = MintToken( config.ForServer( server ), id );
-    // a token is for one client, once: never cached
+    // tickets, tokens and whitelists are never cached
     response.Headers.CacheControl = "no-store";
-    Console.Error.WriteLine( $"rocketnet-backend: matched client {id:x16} to {string.Join( ',', server.Addresses )}" );
-    return Results.Text( token, "text/plain; charset=utf-8" );
+    return reply.Data != null ? Results.Bytes( reply.Data, "application/octet-stream" ) : Results.Text( reply.Text, "text/plain; charset=utf-8" );
+}
+
+app.MapGet( "/servers/{serverId}/whitelist", ( string serverId, HttpResponse response ) => Answer( routes.Whitelist( serverId ), response ) );
+app.MapPost( "/mock/ticket/{userId}", ( string userId, HttpResponse response ) => Answer( routes.MockTicket( userId, Now() ), response ) );
+app.MapPost( "/match", async ( HttpRequest request, HttpResponse response ) =>
+{
+    byte[] body = new byte[MockProvider.MaxTicketTextBytes + 3];
+    int used = 0;
+    int count;
+    while ( used < body.Length && ( count = await request.Body.ReadAsync( body.AsMemory( used, body.Length - used ) ) ) > 0 )
+    {
+        used += count;
+    }
+    if ( used == body.Length )
+    {
+        return Results.Text( "the ticket is too long", "text/plain; charset=utf-8", statusCode: StatusCodes.Status400BadRequest );
+    }
+    return Answer( routes.Match( System.Text.Encoding.UTF8.GetString( body, 0, used ), Now() ), response );
 } );
+app.MapPut( "/bans/{provider}/{userId}", ( string provider, string userId, HttpResponse response ) => Answer( routes.Ban( provider, userId, true ), response ) );
+app.MapDelete( "/bans/{provider}/{userId}", ( string provider, string userId, HttpResponse response ) => Answer( routes.Ban( provider, userId, false ), response ) );
 
 Console.Error.WriteLine( $"rocketnet-backend: started backend on {listenHost}:{config.Port}" );
 app.Run();

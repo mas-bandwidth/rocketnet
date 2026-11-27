@@ -1,52 +1,46 @@
 # RocketNet backend examples
 
 A client never connects to a RocketNet server by passing a raw IP address to the
-client API. Every client connects with a 768-byte connect token (encoded as
-exactly 1024 characters of base64 in a
-`ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES` = 1025-byte buffer), and the game's
+client API. Every client connects with a 576-byte connect token (encoded as
+exactly 768 characters of base64 in a
+`ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES` = 769-byte buffer), and the game's
 backend mints that token.
 
-This directory contains two minimal reference backend services — one in Go and
-one in C#.
-Each exposes two HTTP routes:
+The Go and C# examples issue tokens and keep one seat per authenticated
+account. Both expose the same HTTP API. To try a ban while a player is
+connected, follow [Bans and whitelists](../../docs/BANS-AND-WHITELISTS.md#run-it).
 
-```
-PUT /servers/{serverID}
-GET /match/{clientID}
-```
+| Method and route | Request and response |
+| --- | --- |
+| `PUT /servers/{serverID}` | Register the server's advertised UDP addresses and 32-byte X25519 public key. The example game server sends its bound port and public key after startup. |
+| `GET /servers/{serverID}/whitelist` | Return the ids allowed on this server in ascending order, each as eight little-endian bytes. The response type is `application/octet-stream`. An empty list has a zero-length body. |
+| `POST /mock/ticket/{userID}` | Issue a short-lived mock sign-in ticket for the requested user. This route exists for local testing. |
+| `POST /match` | Send the ticket as the request body. The backend verifies it, derives the account's `client_id`, selects a server, and checks the ban. Once token generation succeeds, it rechecks the ban and records the seat before returning the token. A failed match leaves the previous seat in place. The response is base64 text with `Cache-Control: no-store`. Pass it directly to `rocketnet_client_connect`. |
+| `PUT /bans/{provider}/{userID}` | Ban the account. Each subsequent whitelist omits the id, and the backend refuses to issue another token for it. |
+| `DELETE /bans/{provider}/{userID}` | Lift the ban. The example retains the user's last seat, so that server's whitelist can include the id again. |
 
-- `PUT /servers/{serverID}` registers or updates a live game server's served UDP
-  addresses (`a.b.c.d:port`, `[ipv6]:port`, or one of each: the addresses its
-  clients connect to, with the port the server bound, as
-  `rocketnet_server_ipv4_address` and `rocketnet_server_ipv6_address` write
-  them) and 32-byte X25519 public key (`rocketnet_server_public_key`).
-- `GET /match/{clientID}` selects a registered server, mints a fresh connect
-  token bound to that server and `clientID`, and returns it as base64 text
-  (`Content-Type: text/plain; charset=utf-8`, `Cache-Control: no-store`). The C
-  game client passes that opaque string directly to `rocketnet_client_connect`.
-
-Both backends implement the 768-byte connect-token format specified in [STANDARD.md](../../docs/STANDARD.md) and implemented in
+Both backends implement the 576-byte connect-token format specified in [STANDARD.md](../../docs/STANDARD.md) and implemented in
 [`sdk/rocketnet_connect_token.cpp`](../../sdk/rocketnet_connect_token.cpp):
 
-- The backend signs the 576-byte `signed_connect_data` prefix (`offsets 0..575`)
-  with its 64-byte Ed25519 secret key (`signature` at `offsets 576..639`), so
+- The backend signs the 384-byte `signed_connect_data` prefix (`offsets 0..383`)
+  with its 64-byte Ed25519 secret key (`signature` at `offsets 384..447`), so
   any server holding the matching 32-byte Ed25519 `backend_public_key` can
   verify that the backend issued the token.
-- Inside `signed_connect_data`, the backend seals a 384-byte private block into
-  the 432-byte `sealed_private_block` (`offsets 89..520`) using
+- Inside `signed_connect_data`, the backend seals a 192-byte private block into
+  the 240-byte `sealed_private_block` (`offsets 89..328`) using
   `crypto_box_seal` with the selected server's 32-byte X25519
   `server_public_key` (`offsets 57..88`), so only that server instance can open
   the client's session keys and `client_id`.
-- The trailing client section (`offsets 640..703`) carries the client's copy of
+- The trailing client section (`offsets 448..511`) carries the client's copy of
   the 32-byte `client_to_server_key` and 32-byte `server_to_client_key`
-  (followed by 64 zero bytes at `offsets 704..767`), allowing the client to
+  (followed by 64 zero bytes at `offsets 512..575`), allowing the client to
   complete the handshake without being able to forge the backend's signature or
   open the server's sealed block.
 
 | Backend | Source | Dependencies |
 | --- | --- | --- |
-| Go | [go/main.go](go/main.go) | Go standard library, plus `golang.org/x/crypto` (`nacl/box` for `crypto_box_seal` and `blake2b`) |
-| C# | [csharp/Backend/](csharp/Backend/) | ASP.NET Core minimal API, plus `Sodium.Core` |
+| Go | [go/main.go](go/main.go), [go/users.go](go/users.go), [go/users_http.go](go/users_http.go) | Go standard library, plus `golang.org/x/crypto` (`nacl/box` for `crypto_box_seal` and `blake2b`) |
+| C# | [csharp/Backend/](csharp/Backend/) (users in [Users.cs](csharp/Backend/Users.cs)) | ASP.NET Core minimal API, plus `Sodium.Core` |
 
 The C# project targets .NET 10 and uses `Sodium.Core` for token cryptography
 (which wraps `libsodium`,
@@ -56,37 +50,30 @@ no C# client API.**
 
 ---
 
-## Title-owned integration seams (development vs. production)
+<a id="title-owned-integration-seams-development-vs-production"></a>
 
-These examples keep the HTTP surface minimal so the cryptographic token flow can
-be read and tested end-to-end on `localhost`. Two routes are **title-owned
-integration seams** whose authentication and policy belong to the game's
-platform infrastructure in production:
+## Connecting a real game backend
 
-1. **Server registration seam (`PUT /servers/{serverID}`) — unauthenticated in
-   this example (development only):**
-   In `go/main.go` and `csharp/Backend/Program.cs`, `PUT /servers/{serverID}`
-   accepts any syntactically valid registration JSON up to 4096 bytes without
-   caller authentication. **In production, server registration must never be
-   exposed unauthenticated on a public network.** Authenticate fleet
-   registrations (for example with mTLS, a fleet control-plane bearer/HMAC
-   credential, or authenticated orchestrator registration) before calling
-   `registry.put` / `registry.Put` so an untrusted caller cannot register a
-   rogue server or overwrite a live server's address and public key.
-2. **Player authentication and server selection seam (`GET /match/{clientID}`) —
-   unauthenticated URL parameter and random server pick in this example
-   (development only):**
-   In `go/main.go` and `csharp/Backend/Program.cs`, `GET /match/{clientID}`
-   trusts the decimal `clientID` in the URL path and calls `registry.random()` /
-   `registry.Random()` to pick a registered server uniformly at random. **In
-   production, a client must never choose its own `client_id`.** Your match or
-   session endpoint must first verify the player's platform or account session
-   credential, derive the authoritative `uint64_t` `client_id` on the backend,
-   and select a target server by region, available capacity, or match assignment before calling
-   `generateConnectToken` / `ConnectToken.Generate`.
+- **Player sign-in.** Replace the ticket verifier constructed by
+  `verifyTicketWith` in Go or `Users.VerifyWith` in C#. Have it return
+  the provider and user id from a verified ticket. Remove the mock issuer,
+  which issues a ticket for any requested account.
+- **Server identity.** Authenticate the game server before accepting a
+  registration or returning its whitelist. The example accepts registration
+  JSON up to 4096 bytes on its local HTTP listener. In a deployment,
+  authorize each server for its own `serverID` and protect the channel.
+- **Match selection.** The example picks a registered server uniformly at
+  random. A game can use its match assignment, region and available capacity.
+  Matching the account to a new server moves its one seat.
+- **Ban administration.** Authorize operators before accepting ban or unban
+  requests. Persist bans and the user hash key across backend restarts.
+  The example keeps bans, seats and registrations in memory. If you run
+  multiple backend instances, give them the same user hash key and share
+  the records used for matches and whitelists. See
+  [Running multiple backend instances](../../docs/BANS-AND-WHITELISTS.md#running-multiple-backend-instances).
 
 **Join pacing is title-owned too, and these examples do not do it.**
-`GET /match/{clientID}` mints one token per request as it arrives and does not
+`POST /match` mints one token per request as it arrives and does not
 pace the issue. When many clients join one server at once, the backend is
 expected to spread the issue of their tokens over time: the server takes at
 most `handshakes_per_update` connection requests (default 16) to the signature
@@ -110,8 +97,8 @@ depends on your update rate, round trip and loss: measure yours. See
 ## Build and run
 
 The complete [production integration walkthrough](../../docs/PRODUCTION.md)
-shows key generation, a production SDK build, server startup, registration, and
-a client exchange in three terminals. Follow it for the manual path. A Release
+shows key generation, a production SDK build, backend and server startup, and
+a client exchange. Follow it for the manual path. A Release
 compiler configuration alone does not set `ROCKETNET_DEV=0`.
 
 For an automated exchange from the repository root:
@@ -127,6 +114,17 @@ selected `rocketnet` library; `backend_check_token` links `rocketnet_dev` becaus
 it is a fixed-development-server-key test fixture. It cannot inspect a token
 sealed to a live production server. The harness supplies its fixture token on
 standard input, then tests a separate live server/token/client exchange.
+
+`example_backend_server` registers itself with the backend at
+`127.0.0.1:8080` (`--backend <ip:port>`) as `example-<port>`
+(`--server-id <id>`), fetches its whitelist every 2 seconds on its own
+thread ([whitelist.h](../whitelist.h)), and disconnects any client not on
+it after a qualifying fetch. If a fetch fails, the server keeps the last
+good list. Six seconds after connection it enforces that list even if it is
+stale. See [server behavior during an outage](../../docs/BANS-AND-WHITELISTS.md#the-example-game-server).
+It exits once a client has come and gone (`--sessions N`: N clients).
+`example_backend_client --stay` stays connected after its echo until the
+server disconnects it, and passes only if that happens within `--seconds`.
 
 `example_backend_server` runs a 60 Hz frame. By default every server call is
 made on the main thread. With `--game-threads N` it runs a game server's
@@ -148,12 +146,136 @@ Each backend also provides two command-line modes:
   instructions in [Keys](../../docs/KEYS.md).
 - `--mint <clientID>` prints one token without starting the HTTP listener.
   Supply `ROCKETNET_BACKEND_SERVER_PUBLIC_KEY`, the server addresses, and the
-  backend signing key through the variables below.
+  backend signing key through the variables below. It is an operator tool:
+  it issues a token without checking a ticket, checking a ban or changing a
+  seat. The game server still checks the id against its whitelist.
 
 The long-running service retains its signing secret for successive tokens;
 protect its process and environment. Key-generation mode clears its temporary
 private-key buffer after printing, and minting clears temporary session-key
 buffers. This does not erase the key output or token held by the caller.
+
+## Path MTU
+
+The link MTU list (`link_mtus` and `num_link_mtus` in the client and server
+configs) is the set of link sizes a connection may use, largest first. The
+default is the one entry 1500: no probe, and the same packets as a build
+without the list. A longer list connects small and probes upward: the
+connection starts at the smallest size the list gives, so it joins exactly as
+fast as the default, and once connected the client probes the larger sizes
+one step at a time, smallest first, raising the connection's packet size to
+each one that crosses both ways. The packet size only grows. Probing stops for
+good once the connection is at the largest size. When the next size up is
+ruled out, the client waits and tries that same size again later, and never
+tries a size above it before the connection is at it. If the path does not carry even the smallest size, the client ends in
+`ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED` (-14) instead of hanging.
+
+**Both sides must use the same list.** The server only answers the sizes its
+own list gives. Set the list in code, or with `ROCKETNET_CLIENT_LINK_MTUS` and
+`ROCKETNET_SERVER_LINK_MTUS`. The backend examples take
+`--link-mtus <list>` on both `example_backend_server` and
+`example_backend_client`. Given a list, both also raise
+`reliable_messages_in_flight` and `packets_in_flight` to 4096, so the list may
+reach 576.
+
+```sh
+./bin/example_backend_server --link-mtus 1500,1492
+ticket="$(curl -fsS -X POST http://127.0.0.1:8080/mock/ticket/alice)"
+./bin/example_backend_client --link-mtus 1500,1492 --token "$(curl -fsS --data-binary "$ticket" http://127.0.0.1:8080/match)"
+```
+
+Each prints the connection's packet size, the largest unreliable message
+that fits in one packet, and the link MTU, when it connects and again each
+time the size rises: `rocketnet_client_max_packet_bytes`,
+`rocketnet_client_max_unreliable_message_bytes` and
+`rocketnet_client_link_mtu`, and on the server
+`rocketnet_server_client_max_packet_bytes`,
+`rocketnet_server_client_max_unreliable_message_bytes` and
+`rocketnet_server_client_link_mtu` for each client. The link MTU is the entry
+of the `link_mtus` list the packet size comes from; where entries give the
+same size, such as 1500 and 1492 over IPv4, it is the first, largest, of
+them, so `--link-mtus 1500,1492` reports 1500. On the three-step list the
+client prints `packet_bytes=548 max_unreliable_message_bytes=507
+link_mtu=576` at connect and `packet_bytes=1452
+max_unreliable_message_bytes=1411 link_mtu=1492` once the probe finds the
+path carries it. These calls report the current value, which never falls,
+and 0 while not connected, so a game that sizes its unreliable messages from
+them can read them again later and get more room.
+
+A packet size is the link MTU less the IP and UDP headers: 28 bytes over IPv4
+and 48 over IPv6. It is never above the 1452-byte ceiling. Two entries that
+give one family the same size are one candidate, and that size is probed once.
+
+**PPPoE.** Many DSL and fibre home links run PPPoE. Its 8-byte header makes
+the link MTU 1492 (1500 less 8).
+
+- **IPv4:** a full packet is 1452 + 28 = 1480 bytes, which fits in 1492. On
+  IPv4, the lists 1500 and 1500, 1492 behave identically: one candidate,
+  1452, and no probe.
+- **IPv6:** a full packet is 1452 + 48 = 1500 bytes, which a 1492 PPPoE path
+  drops.
+
+For games with IPv6 players, use `{ 1500, 1492 }`. IPv4 connections are
+unchanged. An IPv6 connection starts at 1444; behind PPPoE its 1452 probe is
+ruled out and it stays at 1444, trying 1452 again now and then, and on a
+full 1500 path it rises to 1452.
+
+**VPNs and tunnels.** Players behind a VPN or tunnel can have much smaller
+links. For them, use the three-step list `{ 1492, 1200, 576 }`. It gives IPv4
+the sizes 1452, 1172 and 548. IPv6 skips entries below 1280, so it gets 1444
+alone. The 548 step needs a larger message window: with the default 1 MiB
+message, set `reliable_messages_in_flight` and `packets_in_flight` to 4096 at
+both ends, or create refuses the list (`LINK_MTUS_TOO_SMALL_FOR_MESSAGES`).
+
+**How probing works.** Each probe is a pair: a small probe and a large one at
+the size being tried, sent together. The first pair goes out in the update the
+client connects in, and the next every 0.1 s (or twice the round trip, when
+that is longer). A large probe that is lost while its small partner comes back
+is a strike against that size: evidence about the size, not loss, so the pace
+holds, and four strikes in a row rule the size out and probing waits there.
+A pair whose small probe is lost too is loss: it sets the
+strikes back to zero and doubles the wait, up to one pair a second. So loss
+alone never rules a size out, and there is no time limit while it lasts: the
+first pair after the loss clears goes out within about a second. A loss of
+large packets only, while the small ones come back, for four pairs in a row
+does rule a size out; under 50% loss each way that happens to a size the path
+carries 1.6% of the time. So a ruled-out size is tried again: 10, 20 and 30 s
+after it was ruled out, then 50, 90, 170 and 330 s, then every 300 s for as
+long as the connection lasts, each time with the same pairs and the same four
+strikes. A try that gets through raises the size and probing goes on up; the
+next size, if it is ruled out, starts its own tries at 10 s. A try that is
+ruled out again waits for the next time on the list. When the large reply arrives the client raises its
+size at once, confirms, and probes the next size up at once; the server raises
+when the confirm arrives. On the three-step list a 1500 path takes two steps:
+548, then 1172, then 1452.
+
+**Join cost and time to full size.** Every list joins as the default does: in
+10 ms steps on a path with no added delay, the default and the three-step list
+both join in 40 ms on every path. The time from connect until both ends reach
+1452, measured with the three-step list on a 1500 path with a 50 ms round trip:
+
+| Path | Both ends at 1452 |
+| --- | --- |
+| no loss | 0.16 s (the client at 0.13 s) |
+| 10% loss each way, 50 runs | 0.29 s mean, 1.26 s worst |
+| 50% loss each way for the first 10 s, 50 runs | 3.58 s mean, 12.16 s worst; all 50 reach it: one rules 1452 out under the loss and takes it on its first try again, 10 s later, and the other 49 are there by 10.86 s |
+| every packet lost for the first 10 s | 10.66 s, 0.66 s after the loss ends |
+
+On a path that carries 1200 but not 1492, both ends are at 1172 0.09 s after
+connect; 1452 is then ruled out and probing waits 0.48 s after connect. On a
+576 path, 1172 is ruled out, 548 answers, and probing waits 0.46 s after
+connect; 1452 is never sent. From there the ruled-out size is tried again on
+the schedule above, and is ruled out again each time. A path that does not carry 548 ends in -14 0.88 s
+after connect.
+
+**Bandwidth.** A pair is at most 1452 + 34 bytes each way, and a confirm 34
+bytes. On a clean path the whole cost is one pair and one confirm for each
+step. While pairs
+go unanswered the client sends at most one pair a second, about 1.5 KB/s each
+way; while the small probes come back it sends up to ten pairs a second, four
+for the size ruled out. Waiting to try a size again costs nothing; each try
+again is four pairs. On a 1200 link once the tries are 300 s apart, that is
+about 1190 bytes a minute up and 27 down. The default list sends none.
 
 ## Configuration reference
 
@@ -169,6 +291,8 @@ address is hardcoded in source control.
 | `ROCKETNET_BACKEND_PORT` | Backend HTTP listen port (`1..65535`). | `8080` |
 | `ROCKETNET_BACKEND_LISTEN_ADDRESS` | Literal IP for the HTTP listener; non-loopback addresses expose the unauthenticated example routes. | `127.0.0.1` |
 | `ROCKETNET_BACKEND_TOKEN_EXPIRE_SECONDS` | Token validity window in seconds (`expire_timestamp - create_timestamp`, `1..4294967295`). | `30` |
+| `ROCKETNET_BACKEND_USER_HASH_KEY` | 32-byte secret, base64, that keys the user hash (`client_id`). Keep it fixed: a new key gives every user a new `client_id`, and bans keyed by the old ones stop matching. | A fresh random key at each start, with a warning |
+| `ROCKETNET_BACKEND_MOCK_PROVIDER_KEY` | 32-byte secret, base64, that the mock auth provider signs tickets with. | A fresh random key at each start |
 | `ROCKETNET_BACKEND_TOKEN_TIMEOUT_SECONDS` | Connection keepalive/handshake timeout in seconds (`1..2147483647`); the server also enforces its configured `max_timeout_seconds`. | `10` |
 
 ---
@@ -189,12 +313,16 @@ from network loss.
 | Production build (`ROCKETNET_DEV=0`) given the published test packet filter | `rocketnet_server_create` / `rocketnet_client_create` | `ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION` (`-29`) | Set a 4-byte title `packet_filter` (or `ROCKETNET_SERVER_PACKET_FILTER` / `ROCKETNET_CLIENT_PACKET_FILTER`). |
 | `config.protocol_id` is `0` | `rocketnet_server_start` | `ROCKETNET_STATUS_INVALID_PROTOCOL_ID` (`-11`) | Set a nonzero 64-bit `protocol_id` matching `ROCKETNET_BACKEND_PROTOCOL_ID`. |
 
-### 2. Backend HTTP refusals (`PUT /servers/{serverID}` and `GET /match/{clientID}`)
+### 2. Backend HTTP refusals
 
 | Route & condition | HTTP status | Safe action |
 | --- | --- | --- |
-| `GET /match/{clientID}` when no servers have registered | `503 Service Unavailable` | Register at least one live server via `PUT /servers/{serverID}` (or wait for fleet registration) before matching players. |
-| `GET /match/{clientID}` with a non-decimal or out-of-range `uint64` `clientID` | `400 Bad Request` | Pass a valid unsigned 64-bit integer derived by the backend's player authentication layer. |
+| `POST /match` when no servers have registered | `503 Service Unavailable` | Start a game server (it registers itself via `PUT /servers/{serverID}`) before matching players. |
+| `POST /match` with a ticket that is malformed, forged, edited or expired | `401 Unauthorized` | Sign in again with the auth provider and send the fresh ticket. |
+| `POST /match` for a banned user | `403 Forbidden` | None for the client: the user is banned. An operator lifts the ban with `DELETE /bans/{provider}/{userID}`. |
+| `POST /match` with a body three or more bytes longer than the longest valid ticket | `400 Bad Request` | Send only the ticket. |
+| `POST /mock/ticket/{userID}`, `PUT` or `DELETE /bans/{provider}/{userID}` with a user id that is not 1 to 128 bytes of UTF-8, or a provider name that is empty or holds `:` | `400 Bad Request` | Fix the user id or provider name. |
+| `GET /servers/{serverID}/whitelist` for a server that is not registered | `404 Not Found` | The game server registers again (`example_backend_server` does this on its own). |
 | `PUT /servers/{serverID}` with empty `serverID` or one over the limit (Go: `> 128` bytes; C#: `> 128` characters), malformed JSON, `0` or `> 2` addresses, two addresses of the same IP family, port `0`, a hostname (`localhost:40000`) instead of a literal IP, an IPv6 zone (`%en0`), or a `public_key` that is not 32-byte base64 | `400 Bad Request` | Export the served literal IP addresses (`rocketnet_server_ipv4_address`, `rocketnet_server_ipv6_address`) with nonzero ports and the 32-byte `rocketnet_server_public_key` in base64. |
 | `PUT /servers/{serverID}` contains an unknown JSON field | `400 Bad Request` (Go); accepted and ignored (C#) | Send only the documented `addresses` and `public_key` fields. Do not rely on the C# backend ignoring additional fields. |
 | `PUT /servers/{serverID}` body exceeds 4096 bytes | `400 Bad Request` (Go) / `413 Payload Too Large` (C#) | Keep registration payload within the 4096-byte bound (1–2 literal address strings and one base64 public key). |
@@ -207,8 +335,8 @@ sent, it returns a negative `rocketnet_status_t` immediately:
 | Condition | `rocketnet_client_connect` return | `rocketnet_client_state(client)` after refusal | Safe client action |
 | --- | --- | --- | --- |
 | `client` or `token` pointer is `NULL` | `ROCKETNET_STATUS_INVALID_ARGUMENT` (`-6`) | A non-NULL client keeps its previous state; do not query a NULL client | Fix the caller argument; do not enter the connected loop. |
-| Token string is empty, not 1024 base64 characters, or invalid base64 (`./bin/example_backend_client --token "not-base64"`) | `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN` (`-15`) | Previous state (DISCONNECTED on a fresh client) | Request a fresh token from the backend and call `rocketnet_client_connect` again. |
-| Token decodes to 768 bytes, but `wire_version != 0x4E7C1A93`, `address_flags` invalid, `timeout_seconds <= 0`, or `create_timestamp > expire_timestamp` | `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN` (`-15`) | `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`) | Check backend token writer configuration; fetch a fresh valid token before retrying. |
+| Token string is empty, not 768 base64 characters, or invalid base64 (`./bin/example_backend_client --token "not-base64"`) | `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN` (`-15`) | Previous state (DISCONNECTED on a fresh client) | Request a fresh token from the backend and call `rocketnet_client_connect` again. |
+| Token decodes to 576 bytes, but `wire_version != 0x065014D9`, `address_flags` invalid, `timeout_seconds <= 0`, or `create_timestamp > expire_timestamp` | `ROCKETNET_STATUS_INVALID_CONNECT_TOKEN` (`-15`) | `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`) | Check backend token writer configuration; fetch a fresh valid token before retrying. |
 | Token's `expire_timestamp <= current_timestamp` before the first packet is sent | `ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED` (`-16`) | `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`) | Never cache or reuse connect tokens; request a fresh token from the backend immediately before connecting. |
 | Production client (`ROCKETNET_DEV=0`) given a token sealed to the published development server key | `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` (`-30`) | `ROCKETNET_CLIENT_STATE_DISCONNECTED` (`0`), also on a client retrying from a terminal state | Register the live production server's X25519 public key with the backend and mint a production token. |
 | Token names a flagged server address with port `0` | `ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO` (`-31`) | `ROCKETNET_CLIENT_STATE_DISCONNECTED` (`0`), also on a client retrying from a terminal state | Register the server's actual bound port (`rocketnet_server_ipv4_address` after `rocketnet_server_start`), never `:0`. |
@@ -235,7 +363,7 @@ mismatched requests and sends an explicit denial only when all slots are full:
    `rocketnet_client_update` if the client is step-driven) until it returns
    `true`.
 3. If reconnecting, request a **brand-new** connect token from the backend
-   (`GET /match/{clientID}`) and pass it to `rocketnet_client_connect(client, new_token)`.
+   (`POST /match` with a fresh ticket) and pass it to `rocketnet_client_connect(client, new_token)`.
    If exiting, call `rocketnet_client_destroy(client)`.
 
 ---
@@ -244,12 +372,16 @@ mismatched requests and sends an explicit denial only when all slots are full:
 
 The backend unit suites use no sockets and no wall-clock sleeps (`create_timestamp`
 is passed explicitly). They reproduce every deterministic vector in
-[`standard/vectors/connect_token_v1.json`](../../standard/vectors/connect_token_v1.json)
+[`standard/vectors/connect_token_v2.json`](../../standard/vectors/connect_token_v2.json)
 byte-for-byte, verify IPv4/IPv6 address encoding, open freshly minted tokens the
-way a server does, and exercise configuration, registration, and match refusal
-logic at the function level. The HTTP handlers return `204`, `400`, and `413`
-(registration) and `200`, `400`, and `503` (match), but the unit suites do not
-assert those HTTP status codes:
+way a server does, and exercise configuration and registration logic at the
+function level. The user tests (`go/users_test.go`, `csharp/Tests/UsersTests.cs`)
+check tickets (forged, edited and expired ones get no token), user hashes,
+bans, seats and whitelists, and run the ticket, match, ban and whitelist routes
+with a fixed clock and no socket (Go through an in-process recorder, C# as
+plain functions), asserting their status codes; both backends produce the same
+ticket and user hash for the same keys. The registration handlers return
+`204`, `400`, and `413`, but the unit suites do not assert those:
 
 ```sh
 (cd examples/backend/go && go test -v ./...)
@@ -263,9 +395,12 @@ keypair in memory (never written to the test receipt). The harness first mints a
 separate token sealed to the published development server key and passes it on
 standard input to `backend_check_token`, with the expected client ID and
 protocol ID as arguments. It then starts the backend with an empty registry to
-verify HTTP `503`, registers the live server over `PUT /servers/example` (`HTTP 204`), obtains a fresh token from the HTTP match route, and runs the production
-client-server message exchange without passing that live-server token to the
-checker. Passing `--production` requires both `example_backend_server` and
+verify HTTP `503`, starts the server (which registers itself), and runs the
+ban, whitelist and sharing steps listed in
+[Bans and whitelists](../../docs/BANS-AND-WHITELISTS.md#testing): a ban kicks
+the client within one whitelist interval plus 0.5 seconds, a shared token or a
+second sign-in as the same user gets no second seat, and with the backend gone
+the server keeps its last good list and still kicks a client on no list. Passing `--production` requires both `example_backend_server` and
 `example_backend_client` to report `mode=production transport=portable`:
 
 ```sh

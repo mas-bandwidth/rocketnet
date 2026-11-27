@@ -157,7 +157,7 @@ int main( void )
     CHECK( rocketnet_version() == ROCKETNET_VERSION );
     CHECK( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
 
-    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED; i-- )
+    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES; i-- )
     {
         CHECK( rocketnet_status_name( (enum rocketnet_status_t) i ) != NULL );
     }
@@ -172,7 +172,7 @@ int main( void )
 
     CHECK( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_ERROR ), "ERROR" ) == 0 );
 
-    for ( int i = ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED; i <= ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    for ( int i = ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED; i <= ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
     {
         CHECK( rocketnet_client_state_name( (enum rocketnet_client_state_t) i ) != NULL );
     }
@@ -183,6 +183,7 @@ int main( void )
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH ), "CONFIG_MISMATCH" ) == 0 );
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED ), "MESSAGE_MEMORY_EXHAUSTED" ) == 0 );
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED ), "MESSAGE_NOT_RECEIVED" ) == 0 );
+    CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MTU_PROBE_FAILED ), "MTU_PROBE_FAILED" ) == 0 );
     CHECK( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED ), "MESSAGE_NOT_RECEIVED" ) == 0 );
     CHECK( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_TIMED_OUT ), "TIMED_OUT" ) == 0 );
     CHECK( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED ), "CLIENT_DISCONNECTED" ) == 0 );
