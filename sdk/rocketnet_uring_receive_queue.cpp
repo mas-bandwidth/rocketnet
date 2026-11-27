@@ -641,11 +641,10 @@ static int rocketnet_uring_receive_queue_buffer( struct rocketnet_uring_receive_
 
     if ( verdict != ROCKETNET_URING_RECV_OK )
     {
-        rocketnet_uring_receive_queue_count( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SIZE );
-        if ( verdict == ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED )
-        {
-            rocketnet_uring_receive_queue_count( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_LARGE );
-        }
+        // one counter per datagram (TOO_SHORT and TOO_LARGE are disjoint): a
+        // reader on main never sees a datagram in one and not yet the other
+        rocketnet_uring_receive_queue_count( queue, verdict == ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED ? ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_LARGE
+                                                                                                      : ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_SHORT );
         return 0;
     }
 
@@ -667,7 +666,7 @@ static int rocketnet_uring_receive_queue_buffer( struct rocketnet_uring_receive_
     const int segments = rocketnet_coalesce_split_prefix( payload_bytes, segment_bytes, offsets, lengths, ROCKETNET_URING_RECEIVE_MAX_SEGMENTS, &beyond );
     if ( segments == 0 )
     {
-        rocketnet_uring_receive_queue_count( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SIZE );
+        rocketnet_uring_receive_queue_count( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_SHORT );
         return 0;
     }
 
@@ -692,11 +691,8 @@ static int rocketnet_uring_receive_queue_buffer( struct rocketnet_uring_receive_
 
         if ( bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES || bytes > ROCKETNET_RECEIVE_CEILING )
         {
-            rocketnet_uring_receive_queue_count( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SIZE );
-            if ( bytes > ROCKETNET_RECEIVE_CEILING )
-            {
-                rocketnet_uring_receive_queue_count( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_LARGE );
-            }
+            rocketnet_uring_receive_queue_count( queue, bytes > ROCKETNET_RECEIVE_CEILING ? ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_LARGE
+                                                                                          : ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_SHORT );
             continue;
         }
 
