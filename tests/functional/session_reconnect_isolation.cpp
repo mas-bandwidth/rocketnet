@@ -68,6 +68,17 @@ static void session_isolation_check_handler( const char * condition, const char 
         }                                                                                                    \
     } while ( 0 )
 
+// The connection timeout every token here carries (session_mint_token). A
+// client's disconnect over UDP is best effort: every copy of its burst can be
+// lost. What the protocol guarantees is the slot freed once the server has
+// heard nothing for this timeout (sdk/rocketnet_server_protocol.cpp, the
+// silence end), so a wait for the server to empty after a client disconnect
+// is bounded by it plus SESSION_UPDATE_MARGIN_SECONDS for the update cadence,
+// never by less. A delivered disconnect ends such a wait at once.
+#define SESSION_TOKEN_TIMEOUT_SECONDS 10
+#define SESSION_UPDATE_MARGIN_SECONDS 1.0
+#define SESSION_SLOT_FREE_SECONDS     ( (double) SESSION_TOKEN_TIMEOUT_SECONDS + SESSION_UPDATE_MARGIN_SECONDS )
+
 class session_env_guard_t
 {
 public:
@@ -185,7 +196,7 @@ static void session_mint_token( const uint8_t * backend_secret, rocketnet_server
     const uint64_t timestamp = rocketnet_functional_token_timestamp( 0, rocketnet_platform_time() );
     session_check( rn_test_server_token_string( backend_secret, server, SESSION_ISO_PROTOCOL_ID,
                                                 addresses, 1, client_id, timestamp, timestamp + 30ULL,
-                                                10, NULL, token ) == ROCKETNET_STATUS_OK );
+                                                SESSION_TOKEN_TIMEOUT_SECONDS, NULL, token ) == ROCKETNET_STATUS_OK );
 }
 
 static void session_wait_client_disconnected( rocketnet_client_t * client, rocketnet_server_t * server_a, rocketnet_server_t * server_b, double wall_start )
@@ -398,9 +409,10 @@ static void session_run_isolation_pair( const char * server_transport, const cha
     rocketnet_client_update( client, 1000.0 + ( rocketnet_time() - wall_start ) );
     session_check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
 
-    // Wait for server_a to retire slot 0 so the reconnect reuses slot 0 cleanly.
+    // Wait for server_a to retire slot 0 so the reconnect reuses slot 0 cleanly:
+    // at once on the delivered disconnect, by the timeout when it was lost.
     const double empty_start = rocketnet_time();
-    while ( rocketnet_server_client_connected( server_a, 0 ) && rocketnet_time() - empty_start < 5.0 )
+    while ( rocketnet_server_client_connected( server_a, 0 ) && rocketnet_time() - empty_start < SESSION_SLOT_FREE_SECONDS )
     {
         const double now = 1000.0 + ( rocketnet_time() - wall_start );
         rocketnet_client_update( client, now );
@@ -1018,7 +1030,8 @@ static void small_server_generation( rocketnet_server_t * server, rocketnet_clie
         {
             break;
         }
-        session_check( rocketnet_time() - disconnect_start < 10.0 );
+        // a lost disconnect frees its slot by the timeout (SESSION_SLOT_FREE_SECONDS)
+        session_check( rocketnet_time() - disconnect_start < SESSION_SLOT_FREE_SECONDS );
     }
 }
 

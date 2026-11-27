@@ -150,11 +150,22 @@ void rocketnet_test_cpp_transports_connect_over_loopback()
     rocketnet_check( server_received >= 16 );
     rocketnet_check( client_received >= 16 );
 
-    // the deliberate disconnect crosses the wire and the server empties
+    // the deliberate disconnect crosses the wire and the server empties. over
+    // UDP every copy of the disconnect burst can be lost; what the protocol
+    // guarantees is the slot freed once the server has heard nothing for the
+    // connection's timeout (sdk/rocketnet_server_protocol.cpp, the silence end):
+    // the test token's ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS
+    // (sdk/rocketnet_connect_token.h) under the server's max_timeout_seconds
+    // cap, plus a margin for the update cadence. a delivered disconnect ends
+    // the wait at once.
+
+    const int timeout_seconds = server_config.max_timeout_seconds > 0 && server_config.max_timeout_seconds < ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS ? server_config.max_timeout_seconds : ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS;
+    const double update_margin_seconds = 1.0;
+    const double slot_free_seconds = (double) timeout_seconds + update_margin_seconds;
 
     rocketnet_client_transport_disconnect( client );
     start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 2.0 )
+    while ( rocketnet_platform_time() - start < slot_free_seconds )
     {
         // the client keeps updating while the server waits: a disconnect burst whose
         // hand-off found the other send ring busy is deferred and goes out on

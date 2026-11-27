@@ -181,6 +181,11 @@ struct portable_server_t
     // when cpu 0 is not reserved. Each worker writes its own entries once, at
     // its start; any thread reads them
     int num_os_cpus = 1;
+    // the online cpu count, read at create on the creating thread: glibc's
+    // sysconf( _SC_NPROCESSORS_ONLN ) opens /sys/devices/system/cpu/online,
+    // so a worker reading it at its start would hold a descriptor after
+    // create returned. Create settles every descriptor the server holds.
+    int online_cpus = 1;
     bool reserve_cpu_0 = true;
     std::atomic<uint64_t> pin_refusals{ 0 }; // PORTABLE_PIN_REFUSALS: refused pins and failed confinements after them
     std::atomic<int> pin_cpu[PORTABLE_WORKERS] = { { ROCKETNET_GSO_PIN_PENDING }, { ROCKETNET_GSO_PIN_PENDING } };
@@ -669,7 +674,7 @@ static void portable_tx_worker( rocketnet_platform_thread_t *, void * arg )
 
     portable_server_t * server = (portable_server_t *) arg;
 #if defined( __linux__ )
-    portable_place_worker( server, 0, (int) sysconf( _SC_NPROCESSORS_ONLN ), &portable_affinity_real );
+    portable_place_worker( server, 0, server->online_cpus, &portable_affinity_real );
 #endif // #if defined( __linux__ )
     for ( ;; )
     {
@@ -839,7 +844,7 @@ static void portable_rx_worker( rocketnet_platform_thread_t *, void * arg )
 
     portable_server_t * server = (portable_server_t *) arg;
 #if defined( __linux__ )
-    portable_place_worker( server, 1, (int) sysconf( _SC_NPROCESSORS_ONLN ), &portable_affinity_real );
+    portable_place_worker( server, 1, server->online_cpus, &portable_affinity_real );
 #endif // #if defined( __linux__ )
     for ( ;; )
     {
@@ -990,6 +995,7 @@ static void * portable_create( void * context, const rocketnet_server_transport_
     // the workers' placement (portable_place_worker): the server's num_os_cpus
     // (0, the default, reads as 1: the OS keeps cpu 0) and portable_reserve_cpu_0
     server->num_os_cpus = config->transport && config->transport->num_os_cpus > 0 ? config->transport->num_os_cpus : 1;
+    server->online_cpus = (int) sysconf( _SC_NPROCESSORS_ONLN );
     server->reserve_cpu_0 = rocketnet_builtin_reserve_cpu_0( "portable", config->transport ? config->transport->portable_reserve_cpu_0 : 0,
                                                              config->transport ? config->transport->num_os_cpus : 0 );
 #endif // #if defined( __linux__ )
