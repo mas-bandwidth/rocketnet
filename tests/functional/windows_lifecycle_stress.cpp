@@ -1122,7 +1122,13 @@ static void windows_connect_disconnect_cycle( const windows_cell_t * cell, rocke
 
     windows_lifecycle_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     rocketnet_client_transport_disconnect( client );
-    windows_lifecycle_check( windows_wait_server_empty( server, client, &clock, 5.0 ) );
+    // The disconnect burst is best effort over UDP. What the protocol
+    // guarantees is the slot freed once the server has heard nothing for the
+    // token's ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS (sdk/rocketnet_connect_token.h;
+    // sdk/rocketnet_server_protocol.cpp, the silence end), so wait that long
+    // plus a margin for the update cadence, as posix_lifecycle_stress.cpp
+    // does. A delivered disconnect ends the wait at once.
+    windows_lifecycle_check( windows_wait_server_empty( server, client, &clock, (double) ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS + 1.0 ) );
     rn_native_client_transport_stop_and_destroy( client );
 }
 

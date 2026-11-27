@@ -241,6 +241,11 @@ struct rocketnet_server_gso_queue_t
     bool ipv6 = false;
     struct rocketnet_server_gso_t * gso = NULL;
     rocketnet_platform_thread_t * thread = NULL;
+    // the online cpu count, read on the creating thread before the worker
+    // starts: glibc's sysconf( _SC_NPROCESSORS_ONLN ) opens
+    // /sys/devices/system/cpu/online, which the worker must not hold open
+    // after create returned (the transport's descriptors settle at create)
+    int online_cpus = 1;
 
     // the cpu the worker pinned itself to (rocketnet_gso_pin.h): PENDING until
     // its thread has run the pin, then the cpu or NONE
@@ -1574,7 +1579,7 @@ static void rocketnet_server_gso_worker( rocketnet_platform_thread_t *, void * d
 
     struct rocketnet_server_gso_t * gso = queue->gso;
 
-    rocketnet_server_gso_place_worker( queue, (int) sysconf( _SC_NPROCESSORS_ONLN ), &rocketnet_gso_affinity_real );
+    rocketnet_server_gso_place_worker( queue, queue->online_cpus, &rocketnet_gso_affinity_real );
 
     struct pollfd fds[2];
     bool stalled = false;
@@ -1890,6 +1895,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create_pinned( void * conte
         }
 
         queue->stopped.store( false, std::memory_order_relaxed );
+        queue->online_cpus = (int) sysconf( _SC_NPROCESSORS_ONLN );
         queue->thread = rocketnet_platform_thread_create( context, rocketnet_server_gso_worker, queue, status );
         if ( !queue->thread )
         {
