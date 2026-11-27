@@ -159,8 +159,7 @@ void rocketnet_test_cpp_transports_connect_over_loopback()
     // cap, plus a margin for the update cadence. a delivered disconnect ends
     // the wait at once.
 
-    const int timeout_seconds = server_config.max_timeout_seconds > 0 && server_config.max_timeout_seconds < ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS ?
-                                server_config.max_timeout_seconds : ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS;
+    const int timeout_seconds = server_config.max_timeout_seconds > 0 && server_config.max_timeout_seconds < ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS ? server_config.max_timeout_seconds : ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS;
     const double update_margin_seconds = 1.0;
     const double slot_free_seconds = (double) timeout_seconds + update_margin_seconds;
 
