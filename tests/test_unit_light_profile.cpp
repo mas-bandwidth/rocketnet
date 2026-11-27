@@ -211,8 +211,35 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // before) adds 68947128 to the server, the iocp memory plan's growth, and
 // nothing to the client: actual=1578291423 (AWS m7i.16xlarge, MSVC, Release
 // and Debug, DEV=ON, 2026-11-14), measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1577242847 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350380 )
+// Connect-token user data from 256 to 64 bytes: 192 fewer a client in the
+// slots' user data and 192 in each of the encryption map's two entries a
+// client, 576000 fewer at 1000 clients; 384 fewer to the client (its token
+// and its connection request, 192 each). Derived from the macOS reading, not
+// measured on Windows.
+// The link MTU list and the path probe: 21 appended counters, the link MTU
+// list and probe state in each client protocol and encryption mapping, and
+// each connection's packet size and block stride in the message layer: 40384
+// more to the server at 1000 clients and 512 more to the client:
+// actual=1664773371 and 15046602 (studio, Apple clang, Debug, DEV=ON),
+// measured; the other platforms derived from the macOS reading.
+// The path probe after connect: two more appended counters
+// (CLIENT_PROBE_RULED_OUT, CONNECTION_PROBE_CONFIRMED) and the walk's pair,
+// strike and confirm state in the client protocol: 128 more to the client;
+// the large probe's own allowance in each of the encryption map's two
+// entries a client (8 bytes each) and the counters: 16064 more to the server
+// at 1000 clients: actual=15195346 and 2146872178 (space, gcc, Debug, DEV
+// ON), measured; the other platforms derived from the Linux reading.
+// The path probe's re-try: the ruled-out flag, the wait flag, the re-try
+// count and the next re-try's time in the client protocol: 64 more to the
+// client: actual=15195410 (hetzner1, gcc, Debug, DEV ON), measured; the
+// other platforms derived from the Linux reading. On Windows the client
+// measured no change, not 64 more, as on macOS: the growth is taken by the
+// client transport's padding to its 64-byte alignment: actual=15399212 (CI,
+// windows Release unit, MSVC). The server measured 64 more than the
+// Linux-derived pin, as on macOS (16128 more for the path probe, not 16064):
+// actual=1577771935 (CI, windows Release unit, MSVC).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1576723359 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14350636 )
 #elif defined( __APPLE__ )
 // macOS arm64 (studio), clang, Release.
 // The figures are the planned peak: the probe's actual= lines (server
@@ -334,8 +361,37 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // cursors in place of the ready-slot banks): 64 more to the server, the
 // client unchanged: actual=1665308987 and 15046474 (studio, Apple clang,
 // Debug, DEV=ON), measured.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1664260411 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13997898 )
+// Connect-token user data from 256 to 64 bytes: 192 fewer a client in the
+// slots' user data and 192 in each of the encryption map's two entries a
+// client, 576000 fewer at 1000 clients; 384 fewer to the client (its token
+// and its connection request, 192 each). actual=1664732987 and 15046090
+// (studio, Apple clang, Release, DEV=ON), measured.
+// The link MTU list and the path probe: 21 appended counters, the link MTU
+// list and probe state in each client protocol and encryption mapping, and
+// each connection's packet size and block stride in the message layer: 40384
+// more to the server at 1000 clients and 512 more to the client:
+// actual=1664773371 and 15046602 (studio, Apple clang, Debug, DEV=ON),
+// measured; the other platforms derived from the macOS reading.
+// The path probe after connect: two more appended counters
+// (CLIENT_PROBE_RULED_OUT, CONNECTION_PROBE_CONFIRMED) and the walk's pair,
+// strike and confirm state in the client protocol: 128 more to the client;
+// the large probe's own allowance in each of the encryption map's two
+// entries a client (8 bytes each) and the counters: 16064 more to the server
+// at 1000 clients: actual=15195346 and 2146872178 (space, gcc, Debug, DEV
+// ON), measured; the other platforms derived from the Linux reading. On
+// macOS the server measured 16128 more, not 16064: actual=1664789499 (CI,
+// macos Debug unit, Apple clang, DEV=ON).
+// The path probe's re-try: the ruled-out flag, the wait flag, the re-try
+// count and the next re-try's time in the client protocol: 64 more to the
+// client: actual=15195410 (hetzner1, gcc, Debug, DEV ON), measured; the
+// other platforms derived from the Linux reading. On macOS the client
+// measured no change, not 64 more: the four fields grow the client protocol
+// by 24 bytes (234000 to 234024, Apple clang), and the client transport that
+// holds it stays 10131520 bytes, the growth taken by the padding to its
+// 64-byte alignment: actual=15046730 (CI, macos Debug unit, Apple clang,
+// DEV=ON).
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1663740923 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 13998154 )
 #else
 // Linux x86-64 with io_uring and XDP built (vision), gcc, Release (a Debug build reports the same figure).
 // The RTT reader added to the message link crosses the message object's
@@ -485,9 +541,19 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // (one more 64-byte rounding of its counter blocks): actual=2147391666
 // (integration/v1.1.58, aws-mut-3, gcc, Debug and Release, DEV ON), measured;
 // arm64 the same 64, computed.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146343098ULL )
+// Connect-token user data from 256 to 64 bytes: 192 fewer a client in the
+// slots' user data and 192 in each of the encryption map's two entries a
+// client, 576000 fewer at 1000 clients; 384 fewer to the client (its token
+// and its connection request, 192 each). Derived from the macOS reading, not
+// measured on Linux.
+// The link MTU list and the path probe: 40384 more to the server at 1000
+// clients, derived from the macOS reading (actual=1664773371, studio).
+// Measured on Linux with the probe under the session keys: 64 more than
+// the macOS derivation, actual=2146856114 (space, gcc, Debug, DEV ON);
+// arm64 the same 64, computed.
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145823610ULL )
 #else // #if defined( __aarch64__ )
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2146343090ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 2145823602ULL )
 #endif // #if defined( __aarch64__ )
 // The appended counters RECEIVE_DROPPED_STOPPED and RIO_PIN_REFUSALS add 64
 // to the client (16 bytes a counter block across a 64-byte rounding) and
@@ -504,7 +570,28 @@ static void light_client_filter( struct rocketnet_client_config_t * config )
 // The appended counter XDP_KERNEL_DROPPED_NO_SESSION adds 64 more to the
 // client: actual=15195154 (integration/v1.1.58, aws-mut-3, gcc, Debug and
 // Release, DEV ON), measured.
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146578 )
+// User data from 256 to 64 bytes: 384 fewer to the client (above), derived
+// from the macOS reading, not measured on Linux.
+// The link MTU list and the path probe: 21 appended counters, the link MTU
+// list and probe state in each client protocol and encryption mapping, and
+// each connection's packet size and block stride in the message layer: 40384
+// more to the server at 1000 clients and 512 more to the client:
+// actual=1664773371 and 15046602 (studio, Apple clang, Debug, DEV=ON),
+// measured; the other platforms derived from the macOS reading.
+// Measured on Linux with the probe under the session keys: 64 fewer
+// than the macOS derivation, actual=15195218 (space, gcc, Debug, DEV ON).
+// The path probe after connect: two more appended counters
+// (CLIENT_PROBE_RULED_OUT, CONNECTION_PROBE_CONFIRMED) and the walk's pair,
+// strike and confirm state in the client protocol: 128 more to the client;
+// the large probe's own allowance in each of the encryption map's two
+// entries a client (8 bytes each) and the counters: 16064 more to the server
+// at 1000 clients: actual=15195346 and 2146872178 (space, gcc, Debug, DEV
+// ON), measured; the other platforms derived from the Linux reading.
+// The path probe's re-try: the ruled-out flag, the wait flag, the re-try
+// count and the next re-try's time in the client protocol: 64 more to the
+// client: actual=15195410 (hetzner1, gcc, Debug, DEV ON), measured; the
+// other platforms derived from the Linux reading.
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 14146834 )
 #endif // #if defined( _WIN32 )
 
 // 1 when this build is the configuration the pins were read in, so the

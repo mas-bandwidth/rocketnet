@@ -33,6 +33,11 @@ naming `<struct>.<member>`.
 | | `ack`, `num_acked`, `acked_packet_ids` | ack bitfields, packet rings and receipt batch | RESET | packet ids and measurements belong to one session |
 | | key publication hooks and context | transport hooks | KEEP | transport wiring |
 | | current record verdict and sequence | input record | RESET | no record is live after reset |
+| | `link_mtus`, `num_link_mtus` | the configured link MTU list | KEEP | configuration; each connection's challenge takes the walk's candidates from it |
+| | `probe_candidates`, `num_probe_candidates`, `packet_bytes` | the walk's candidates and the packet size P | RESET | the next challenge sets them again; a new connection starts at P0 (proofs/tla/RNPathProbe.tla `Reuse`, `ReuseStartsFresh`) |
+| | `probing`, `probe_index`, `probe_strikes`, `probe_pair`, `probe_pair_small`, `probe_pair_large`, `probe_pair_out`, `probe_next_time`, `probe_interval` | the probe walk | RESET | the connect's keep-alive starts the walk again at the first step up, its first pair due |
+| | `probe_ruled`, `probe_waiting`, `probe_retries`, `probe_retry_time` | a ruled-out size and its re-try schedule | RESET | a rule-out belongs to one path: a new connection may be on another |
+| | `confirm_bytes`, `confirm_next_time` | the confirm of a raise | RESET | an unanswered confirm never reaches the next connection |
 | `rocketnet_ack_endpoint_t` | sequence heads, ack debt, sent/received records and bitmaps | delivery and ack history | RESET | a new connection starts with no packet history |
 | | RTT, jitter, loss and bandwidth estimates | connection quality | RESET | statistics describe one session |
 | `rocketnet_client_transport_t` | payload rings | staged connection packets | RESET | invalid after the terminal transition |
@@ -62,6 +67,8 @@ other session state.
 | | send times | clocks and pacing | RESET | one mapping |
 | | handshake/session sequences | packet sequence spaces | RESET | new mapping starts fresh |
 | | replay windows and integrity failures | receive security history | RESET | old ciphertext cannot affect a new mapping |
+| | `probe_update`, `probe_large_update` | the update a probe of each kind was last answered in (one per mapping per update) | RESET | assignment zeroes the mapping; an allowance never crosses connections |
+| | `packet_bytes` | the slot's packet size P | RESET | assignment zeroes it and the connect sets P0 from the response |
 | `rocketnet_encryption_mapping_control_t` | client index, established | slot identity | RESET | identity cannot leak to reuse |
 | | timeout, handshake deadline and receive time | expiry clocks | RESET | one mapping |
 | `rocketnet_client_slots_t` | per-index identity, mapping, confirmation and user data | slot record | RESET | slot release clears the record and removes its flat-index entry |
@@ -200,7 +207,16 @@ canaries in the receive ring and send store across reset, checks that no old
 receipts or aggregate survive, and verifies exact single delivery in both
 directions for all eight delivery modes. The existing reset inventory and
 slot-reuse tests cover field decisions, ACK/replay state, partial fragments,
-timeout exits and isolation from other connected slots. The secret-wipe tests
+timeout exits and isolation from other connected slots. The link MTU reuse
+tests (`tests/test_unit_link_mtu_packet_size.cpp`) end a connection at 1452,
+or one waiting to re-try a size it ruled out, and connect again in the same
+slot, by a new client and by the same client object. They check that the
+new connection starts at P0 on a smaller path, with nothing above it at either
+end for even one step, and that it climbs on a full path as fast as a first
+connection does. They also check that every probe field at its first connected
+step is the first connection's, field by field. The trace walk's reuse
+(`tests/tla_trace_path_probe.cpp`) reconnects the same client protocol object
+directly. The secret-wipe tests
 (`test_unit_secrets_wiped.cpp`, including
 `test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing`) use a
 nonzero allocator and inspect memory across disconnect, reconnect, and destroy;

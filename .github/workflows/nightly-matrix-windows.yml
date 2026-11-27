@@ -1,0 +1,621 @@
+# THE WINDOWS RUN-MATRIX CELLS: every Windows cell of
+# tools/verification_matrix.tsv that was owed (run by no workflow) and that the
+# fleet's native Windows runner can run, each wired here to the step that runs
+# it. Two parameterised jobs on rocketnet-windows (the label ci.yml's Windows
+# rows use), each leg in its own job:
+#
+#   windows-suites    one build per leg, then the suites the leg's cells name:
+#     release              MSVC Release (ROCKETNET_DEV=ON): the functional suite
+#                          under every server~client transport pair below, and
+#                          the binaries only this leg runs: test_wide (the unit
+#                          cases at ROCKETNET_MAX_CHANNELS=512),
+#                          test_platform_primitives, test_internal_c and
+#                          connect_token_vectors (its output compared byte for
+#                          byte with standard/vectors/connect_token_v2.json).
+#     debug                MSVC Debug: the transport asserts Release compiles out.
+#     debug-asan-msvc      MSVC Debug, -DROCKETNET_SANITIZE_ADDRESS=ON.
+#     debug-asan-clangcl   clang-cl (-T ClangCL) Debug under its own ASan
+#                          runtime; clang-cl refuses ASan with the debug CRT,
+#                          so the release CRT (/MD), as nightly-windows-sanitizers.yml.
+#     debug-appverif       MSVC Debug under Application Verifier
+#                          (tools/windows/appverif_run.py, every functional
+#                          case once per pair). Its first step proves the
+#                          runner's account may write Image File Execution
+#                          Options in HKLM; the leg is red with
+#                          APPVERIF-REFUSED when it cannot.
+#     production           ROCKETNET_DEV=OFF: functional_production per pair.
+#     minsizerel, relwithdebinfo
+#                          the other two optimized build types: unit and
+#                          functional suites (ROCKETNET_HARDEN applies to both).
+#     history-32768, max-clients-32768, max-clients-512, harden-off
+#                          one CMake value each, at its documented bound or
+#                          its other value: unit and functional suites.
+#     system-sodium        ROCKETNET_USE_SYSTEM_SODIUM=ON against upstream's
+#                          libsodium MSVC release (SHA-256 from the release's
+#                          asset digest, checked before use; the version read
+#                          from its header must be the pin): unit and
+#                          functional suites.
+#   windows-consumer  the SDK built with ROCKETNET_BUILD_SHARED=OFF (static
+#                     only; the tests need the shared library) or
+#                     ROCKETNET_BUILD_DEV_LIBRARIES=OFF, installed, relocated
+#                     and consumed by C and C++ programs (tools/check_package.py).
+#
+# A pair is <server>~<client>; auto leaves that pin unset (the client's
+# automatic order is iocp on Windows). Every whole-suite run goes through
+# tools/run_functional.sh, so its skips are held both ways to the leg in
+# tests/functional/expected_skips.txt (leg names say the pins). Debug and
+# Application Verifier legs run with the Debug figure of the per-case RSS
+# bound (ROCKETNET_TEST_MAX_CASE_RSS_MB=2048, as nightly.yml's windows / Debug);
+# the ASan legs set none, so test_unit_case_memory is skipped there by its
+# listed reason, as on every sanitized leg. Nothing here relaxes a bound,
+# skips a case or masks a status: each step runs when the build succeeded,
+# even after an earlier step is red, and the job is red when any step is.
+
+name: nightly-matrix-windows
+
+on:
+  schedule:
+    - cron: "20 14 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Test execution has no repository wall-clock cap; GitHub still limits
+# self-hosted jobs to five days.
+env:
+  ROCKETNET_NIGHTLY_NO_TIMEOUT: '1'
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+jobs:
+
+  windows-suites:
+    name: windows matrix ${{ matrix.leg }}
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        leg: [release, debug, debug-asan-msvc, debug-asan-clangcl, debug-appverif, production, minsizerel, relwithdebinfo, history-32768, max-clients-32768, max-clients-512, harden-off, system-sodium]
+        include:
+          - leg: release
+            config: Release
+            kind: dev
+            option: ''
+            toolset: ''
+            ccache: true
+            unit: false
+            extras: true
+            rss: ''
+            pins: [iocp~auto, iocp~portable, loopback~loopback, portable~auto, portable~iocp, portable~portable, rio~auto, rio~portable]
+          - leg: debug
+            config: Debug
+            kind: dev
+            option: ''
+            toolset: ''
+            ccache: true
+            unit: false
+            extras: false
+            rss: '2048'
+            pins: [auto~auto, iocp~portable, loopback~loopback, portable~iocp, portable~portable, rio~auto, rio~portable]
+          - leg: debug-asan-msvc
+            config: Debug
+            kind: sanitized
+            option: ROCKETNET_SANITIZE_ADDRESS=ON
+            toolset: ''
+            ccache: false
+            unit: false
+            extras: false
+            rss: ''
+            pins: [auto~auto, iocp~portable, loopback~loopback, portable~iocp, portable~portable, rio~portable]
+          - leg: debug-asan-clangcl
+            config: Debug
+            kind: sanitized
+            option: ROCKETNET_SANITIZE_ADDRESS=ON
+            toolset: ClangCL
+            ccache: false
+            unit: false
+            extras: false
+            rss: ''
+            pins: [iocp~portable, loopback~loopback, portable~iocp, portable~portable, rio~portable]
+          - leg: debug-appverif
+            config: Debug
+            kind: appverif
+            option: ''
+            toolset: ''
+            ccache: true
+            unit: false
+            extras: false
+            rss: '2048'
+            pins: [auto~auto, iocp~portable, loopback~loopback, portable~iocp, portable~portable, rio~portable]
+          - leg: production
+            config: Release
+            kind: prod
+            option: ROCKETNET_DEV=OFF
+            toolset: ''
+            ccache: true
+            unit: false
+            extras: false
+            rss: ''
+            pins: [iocp~auto, iocp~portable, loopback~loopback, portable~auto, portable~iocp, rio~auto, rio~portable]
+          - leg: minsizerel
+            config: MinSizeRel
+            kind: dev
+            option: ''
+            toolset: ''
+            ccache: true
+            unit: true
+            extras: false
+            rss: ''
+            pins: [auto~auto]
+          - leg: relwithdebinfo
+            config: RelWithDebInfo
+            kind: dev
+            option: ''
+            toolset: ''
+            ccache: true
+            unit: true
+            extras: false
+            rss: ''
+            pins: [auto~auto]
+          - leg: history-32768
+            config: Release
+            kind: dev
+            option: ROCKETNET_HISTORY_PACKETS=32768
+            toolset: ''
+            ccache: true
+            unit: true
+            extras: false
+            rss: ''
+            pins: [auto~auto]
+          - leg: max-clients-32768
+            config: Release
+            kind: dev
+            option: ROCKETNET_MAX_CLIENTS=32768
+            toolset: ''
+            ccache: true
+            unit: true
+            extras: false
+            rss: ''
+            pins: [auto~auto]
+          - leg: max-clients-512
+            config: Release
+            kind: dev
+            option: ROCKETNET_MAX_CLIENTS=512
+            toolset: ''
+            ccache: true
+            unit: true
+            extras: false
+            rss: ''
+            pins: [auto~auto]
+          - leg: harden-off
+            config: Release
+            kind: dev
+            option: ROCKETNET_HARDEN=OFF
+            toolset: ''
+            ccache: true
+            unit: true
+            extras: false
+            rss: ''
+            pins: [auto~auto]
+          - leg: system-sodium
+            config: Release
+            kind: dev
+            option: ROCKETNET_USE_SYSTEM_SODIUM=ON
+            toolset: ''
+            ccache: true
+            unit: true
+            extras: false
+            rss: ''
+            pins: [auto~auto]
+    # keyed by the event as well as the ref: a dispatch never cancels or
+    # displaces the scheduled night, and the night never cancels a dispatch
+    concurrency:
+      group: nightly-matrix-windows-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.leg }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
+    env:
+      LEG: ${{ matrix.leg }}
+      LEG_CONFIG: ${{ matrix.config }}
+      LEG_KIND: ${{ matrix.kind }}
+      LEG_OPTION: ${{ matrix.option }}
+      LEG_TOOLSET: ${{ matrix.toolset }}
+      LEG_PINS: ${{ join(matrix.pins, ' ') }}
+      LEG_BIN: bin/${{ matrix.config }}
+      ROCKETNET_TEST_MAX_CASE_RSS_MB: ${{ matrix.rss }}
+      ROCKETNET_TEST_NIGHTLY: '1'
+      ROCKETNET_TEST_KEEP_GOING: '1'
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+
+      - uses: ./.github/actions/ccache
+
+      - name: Application Verifier can be enabled by this runner's account
+        if: matrix.kind == 'appverif'
+        run: |
+          set -euo pipefail
+          # APPVERIF names the program for a fixture run; the runner's is the SDK's
+          av=${APPVERIF:-/c/Windows/System32/appverif.exe}
+          if [ ! -x "$av" ]; then echo "APPVERIF-MISSING $av on $RUNNER_NAME: install Application Verifier for x64"; exit 1; fi
+          probe="rocketnet_appverif_probe_$$.exe"
+          if out=$("$av" -enable Heaps -for "$probe" 2>&1); then rc=0; else rc=$?; fi
+          # take the probe's settings back whatever the enable did; a failure
+          # here is printed, and a refused enable is the verdict below
+          if ! "$av" -disable '*' -for "$probe" > /dev/null 2>&1; then echo "appverif -disable for $probe did not succeed"; fi
+          if ! "$av" -delete settings -for "$probe" > /dev/null 2>&1; then echo "appverif -delete settings for $probe did not succeed"; fi
+          if [ "$rc" != 0 ]; then
+            echo "APPVERIF-REFUSED on $RUNNER_NAME as $(whoami): appverif -enable exit $rc: $(printf '%s' "$out" | tr -d '\r' | tr '\n' ' ')"
+            echo "Application Verifier writes Image File Execution Options in HKLM; this runner's account may not."
+            exit 1
+          fi
+          echo "APPVERIF-OK on $RUNNER_NAME as $(whoami)"
+
+      # upstream's prebuilt MSVC libsodium, the one Windows consumers of a
+      # system libsodium link; its SHA-256 is the digest GitHub records for
+      # the release asset, and the header's version must be the pin
+      - name: Fetch the pinned libsodium MSVC release (content-verified)
+        if: matrix.leg == 'system-sodium'
+        env:
+          SODIUM_VERSION: "1.0.22"
+          SODIUM_SHA256: "3e03a726fac4bc09cb61d8f29d658ef7a5eca0811de59082130414f7ca2e4279"
+        run: |
+          set -euo pipefail
+          url="https://github.com/jedisct1/libsodium/releases/download/${SODIUM_VERSION}-RELEASE/libsodium-${SODIUM_VERSION}-msvc.zip"
+          rm -rf sodium-msvc sodium-msvc.zip
+          curl -fsSL -o sodium-msvc.zip "$url"
+          echo "${SODIUM_SHA256}  sodium-msvc.zip" | sha256sum -c -
+          python -m zipfile -e sodium-msvc.zip sodium-msvc
+          mapfile -t headers < <(find sodium-msvc -type f -path '*/include/sodium.h')
+          if [ "${#headers[@]}" != 1 ]; then echo "SODIUM-LAYOUT want one include/sodium.h in $url, found ${#headers[@]}: ${headers[*]}"; exit 1; fi
+          include=$(dirname "${headers[0]}")
+          # the newest MSVC toolset's dynamic x64 Release build (v14x sorts by toolset)
+          mapfile -t libs < <(find sodium-msvc -type f -name libsodium.lib -path '*/x64/Release/*/dynamic/*' | sort)
+          if [ "${#libs[@]}" = 0 ]; then echo "SODIUM-LAYOUT no x64/Release/*/dynamic/libsodium.lib in $url"; exit 1; fi
+          lib=${libs[${#libs[@]}-1]}
+          dll="$(dirname "$lib")/libsodium.dll"
+          if [ ! -f "$dll" ]; then echo "SODIUM-LAYOUT no libsodium.dll beside $lib"; exit 1; fi
+          version=$(sed -n 's/^#define SODIUM_VERSION_STRING "\([0-9.]*\)".*/\1/p' "$include/sodium/version.h")
+          if [ "$version" != "$SODIUM_VERSION" ]; then echo "SODIUM-VERSION the header says '$version', the pin is $SODIUM_VERSION"; exit 1; fi
+          echo "libsodium $version: $lib"
+          echo "LEG_SODIUM_INCLUDE=$(cygpath -m "$PWD/$include")" >> "$GITHUB_ENV"
+          echo "LEG_SODIUM_LIBRARY=$(cygpath -m "$PWD/$lib")" >> "$GITHUB_ENV"
+          echo "LEG_SODIUM_DLL=$PWD/$dll" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: |
+          set -euo pipefail
+          args=(-B build -A x64)
+          if [ -n "$LEG_TOOLSET" ]; then args+=(-T "$LEG_TOOLSET"); fi
+          if [ -n "$LEG_OPTION" ]; then args+=("-D$LEG_OPTION"); fi
+          # clang-cl refuses AddressSanitizer with the debug CRT: the release CRT, NDEBUG still unset
+          if [ "$LEG_TOOLSET" = ClangCL ]; then args+=(-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL); fi
+          # the compiler cache wraps MSVC's cl.exe only, and not the sanitizer builds (as nightly-windows-sanitizers.yml)
+          if [ "${{ matrix.ccache }}" = true ]; then args+=("-DCMAKE_VS_GLOBALS=${ROCKETNET_VS_CCACHE_GLOBALS:-}"); fi
+          if [ "$LEG" = system-sodium ]; then args+=("-DROCKETNET_SODIUM_INCLUDE_DIR=$LEG_SODIUM_INCLUDE" "-DROCKETNET_SODIUM_LIBRARY=$LEG_SODIUM_LIBRARY"); fi
+          cmake "${args[@]}"
+
+      - name: Build
+        id: build
+        run: |
+          set -euo pipefail
+          case "$LEG_KIND" in
+            prod) targets=(functional_production) ;;
+            *)    targets=(functional) ;;
+          esac
+          if [ "${{ matrix.unit }}" = true ]; then targets+=(test); fi
+          if [ "${{ matrix.extras }}" = true ]; then targets+=(test_wide test_platform_primitives test_internal_c connect_token_vectors); fi
+          # the ASan runtime DLL is staged beside the executables by its own
+          # target (CMakeLists.txt rocketnet_asan_runtime, part of ALL only),
+          # without which every sanitized executable fails to load
+          if [ "$LEG_OPTION" = ROCKETNET_SANITIZE_ADDRESS=ON ]; then targets+=(rocketnet_asan_runtime); fi
+          cmake --build build --config "$LEG_CONFIG" --target "${targets[@]}" --parallel 8
+          if [ "$LEG" = system-sodium ]; then cp "$LEG_SODIUM_DLL" "$LEG_BIN/"; fi
+          mkdir -p logs
+
+      - name: Unit suite
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.unit }}
+        run: |
+          set -euo pipefail
+          "$LEG_BIN/test.exe" 2>&1 | tr -d '\r' | tee logs/unit.log
+
+      # ---- the functional suite, one step per server~client pair ----
+
+      - name: Functional suite, auto~auto
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && contains(matrix.pins, 'auto~auto') && matrix.kind != 'appverif' }}
+        run: |
+          set -euo pipefail
+          case "$LEG_KIND" in
+            dev)       bash tools/run_functional.sh dev --log logs/functional.auto-auto.log "$LEG_BIN/functional.exe" ;;
+            sanitized) bash tools/run_functional.sh dev-sanitized --log logs/functional.auto-auto.log "$LEG_BIN/functional.exe" ;;
+            *) echo "PAIR-UNWIRED auto~auto has no $LEG_KIND leg in tests/functional/expected_skips.txt"; exit 1 ;;
+          esac
+
+      - name: Functional suite, iocp~auto
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && contains(matrix.pins, 'iocp~auto') && matrix.kind != 'appverif' }}
+        env:
+          ROCKETNET_SERVER_TRANSPORT: iocp
+        run: |
+          set -euo pipefail
+          case "$LEG_KIND" in
+            dev)  bash tools/run_functional.sh dev-iocp --log logs/functional.iocp-auto.log "$LEG_BIN/functional.exe" ;;
+            prod) bash tools/run_functional.sh prod-iocp --log logs/functional.iocp-auto.log "$LEG_BIN/functional_production.exe" ;;
+            *) echo "PAIR-UNWIRED iocp~auto has no $LEG_KIND leg in tests/functional/expected_skips.txt"; exit 1 ;;
+          esac
+
+      - name: Functional suite, iocp~portable
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && contains(matrix.pins, 'iocp~portable') && matrix.kind != 'appverif' }}
+        env:
+          ROCKETNET_SERVER_TRANSPORT: iocp
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -euo pipefail
+          case "$LEG_KIND" in
+            dev)       bash tools/run_functional.sh dev-iocp-portable --log logs/functional.iocp-portable.log "$LEG_BIN/functional.exe" ;;
+            sanitized) bash tools/run_functional.sh dev-sanitized-iocp-portable --log logs/functional.iocp-portable.log "$LEG_BIN/functional.exe" ;;
+            prod)      bash tools/run_functional.sh prod-iocp-portable --log logs/functional.iocp-portable.log "$LEG_BIN/functional_production.exe" ;;
+            *) echo "PAIR-UNWIRED iocp~portable has no $LEG_KIND leg in tests/functional/expected_skips.txt"; exit 1 ;;
+          esac
+
+      - name: Functional suite, loopback~loopback
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && contains(matrix.pins, 'loopback~loopback') && matrix.kind != 'appverif' }}
+        env:
+          ROCKETNET_SERVER_TRANSPORT: loopback
+          ROCKETNET_CLIENT_TRANSPORT: loopback
+        run: |
+          set -euo pipefail
+          case "$LEG_KIND" in
+            dev)       bash tools/run_functional.sh dev-loopback --log logs/functional.loopback-loopback.log "$LEG_BIN/functional.exe" ;;
+            sanitized) bash tools/run_functional.sh dev-sanitized-loopback --log logs/functional.loopback-loopback.log "$LEG_BIN/functional.exe" ;;
+            prod)      bash tools/run_functional.sh prod-loopback --log logs/functional.loopback-loopback.log "$LEG_BIN/functional_production.exe" ;;
+            *) echo "PAIR-UNWIRED loopback~loopback has no $LEG_KIND leg in tests/functional/expected_skips.txt"; exit 1 ;;
+          esac
+
+      - name: Functional suite, portable~auto
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && contains(matrix.pins, 'portable~auto') && matrix.kind != 'appverif' }}
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+        run: |
+          set -euo pipefail
+          case "$LEG_KIND" in
+            dev)  bash tools/run_functional.sh dev-portable --log logs/functional.portable-auto.log "$LEG_BIN/functional.exe" ;;
+            prod) bash tools/run_functional.sh prod-portable-auto --log logs/functional.portable-auto.log "$LEG_BIN/functional_production.exe" ;;
+            *) echo "PAIR-UNWIRED portable~auto has no $LEG_KIND leg in tests/functional/expected_skips.txt"; exit 1 ;;
+          esac
+
+      - name: Functional suite, portable~iocp
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && contains(matrix.pins, 'portable~iocp') && matrix.kind != 'appverif' }}
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: iocp
+        run: |
+          set -euo pipefail
+          case "$LEG_KIND" in
+            dev)       bash tools/run_functional.sh dev-portable-iocp --log logs/functional.portable-iocp.log "$LEG_BIN/functional.exe" ;;
+            sanitized) bash tools/run_functional.sh dev-sanitized-portable-iocp --log logs/functional.portable-iocp.log "$LEG_BIN/functional.exe" ;;
+            prod)      bash tools/run_functional.sh prod-portable-iocp --log logs/functional.portable-iocp.log "$LEG_BIN/functional_production.exe" ;;
+            *) echo "PAIR-UNWIRED portable~iocp has no $LEG_KIND leg in tests/functional/expected_skips.txt"; exit 1 ;;
+          esac
+
+      - name: Functional suite, portable~portable
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && contains(matrix.pins, 'portable~portable') && matrix.kind != 'appverif' }}
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -euo pipefail
+          case "$LEG_KIND" in
+            dev)       bash tools/run_functional.sh dev-portable-portable --log logs/functional.portable-portable.log "$LEG_BIN/functional.exe" ;;
+            sanitized) bash tools/run_functional.sh dev-sanitized-portable-portable --log logs/functional.portable-portable.log "$LEG_BIN/functional.exe" ;;
+            *) echo "PAIR-UNWIRED portable~portable has no $LEG_KIND leg in tests/functional/expected_skips.txt"; exit 1 ;;
+          esac
+
+      - name: Functional suite, rio~auto
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && contains(matrix.pins, 'rio~auto') && matrix.kind != 'appverif' }}
+        env:
+          ROCKETNET_SERVER_TRANSPORT: rio
+        run: |
+          set -euo pipefail
+          case "$LEG_KIND" in
+            dev)  bash tools/run_functional.sh dev-rio --log logs/functional.rio-auto.log "$LEG_BIN/functional.exe" ;;
+            prod) bash tools/run_functional.sh prod-rio --log logs/functional.rio-auto.log "$LEG_BIN/functional_production.exe" ;;
+            *) echo "PAIR-UNWIRED rio~auto has no $LEG_KIND leg in tests/functional/expected_skips.txt"; exit 1 ;;
+          esac
+
+      - name: Functional suite, rio~portable
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && contains(matrix.pins, 'rio~portable') && matrix.kind != 'appverif' }}
+        env:
+          ROCKETNET_SERVER_TRANSPORT: rio
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -euo pipefail
+          case "$LEG_KIND" in
+            dev)       bash tools/run_functional.sh dev-rio-portable --log logs/functional.rio-portable.log "$LEG_BIN/functional.exe" ;;
+            sanitized) bash tools/run_functional.sh dev-sanitized-rio-portable --log logs/functional.rio-portable.log "$LEG_BIN/functional.exe" ;;
+            prod)      bash tools/run_functional.sh prod-rio-portable --log logs/functional.rio-portable.log "$LEG_BIN/functional_production.exe" ;;
+            *) echo "PAIR-UNWIRED rio~portable has no $LEG_KIND leg in tests/functional/expected_skips.txt"; exit 1 ;;
+          esac
+
+      # every functional case once per pair under Application Verifier, as
+      # nightly-windows-sanitizers.yml runs it per server pin: appverif_run.py
+      # verifies a copy of the binary under its own image name, every case
+      # starts as a child of that image (tests/suite_runner.h), and its own
+      # lines go to a report file, so the suite's log is the suite's alone and
+      # run_functional.sh holds it to the leg's skips. A pass also needs
+      # appverif_run's PASS line, and a name line in the log for every case
+      # functional.exe --list names under the same pins.
+      - name: Functional suite under Application Verifier, every pair
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.kind == 'appverif' }}
+        run: |
+          set -euo pipefail
+          # the exec rows: their names, from the functional registry's exec table
+          exec_rows=$(sed -n 's/.*{ *"\(test_[a-z0-9_]*\)", *"test[a-z0-9_]*",.*/\1/p' tests/functional/main.cpp tests/functional/unit_case_memory.cpp | sort -u | paste -sd '|' -)
+          [ -n "$exec_rows" ] || { echo "FAIL no exec rows read from tests/functional/main.cpp"; exit 1; }
+          failed=0
+          for pair in $LEG_PINS; do
+            server=${pair%%~*}
+            client=${pair#*~}
+            if [ "$server" = auto ]; then unset ROCKETNET_SERVER_TRANSPORT; else export ROCKETNET_SERVER_TRANSPORT=$server; fi
+            if [ "$client" = auto ]; then unset ROCKETNET_CLIENT_TRANSPORT; else export ROCKETNET_CLIENT_TRANSPORT=$client; fi
+            slug="$server-$client"
+            log="logs/functional.$slug.log"
+            "$LEG_BIN/functional.exe" --list | tr -d '\r' > "logs/functional.$slug.list"
+            listed=$(awk '/^test_/ { n++ } END { print n + 0 }' "logs/functional.$slug.list")
+            report="logs/appverif-functional.$slug.report"
+            : > "$report"
+            verify=(python tools/windows/appverif_run.py --xml "logs/appverif-functional.$slug.xml" --report "$report" -- "$LEG_BIN/functional.exe")
+            rc=0
+            case $pair in
+              auto~auto)          bash tools/run_functional.sh dev-appverif --log "$log" "${verify[@]}" > /dev/null || rc=$? ;;
+              iocp~portable)      bash tools/run_functional.sh dev-appverif-iocp-portable --log "$log" "${verify[@]}" > /dev/null || rc=$? ;;
+              loopback~loopback)  bash tools/run_functional.sh dev-appverif-loopback --log "$log" "${verify[@]}" > /dev/null || rc=$? ;;
+              portable~iocp)      bash tools/run_functional.sh dev-appverif-portable-iocp --log "$log" "${verify[@]}" > /dev/null || rc=$? ;;
+              portable~portable)  bash tools/run_functional.sh dev-appverif-portable-portable --log "$log" "${verify[@]}" > /dev/null || rc=$? ;;
+              rio~portable)       bash tools/run_functional.sh dev-appverif-rio-portable --log "$log" "${verify[@]}" > /dev/null || rc=$? ;;
+              *) echo "PAIR-UNWIRED $pair has no appverif leg in tests/functional/expected_skips.txt"; rc=1 ;;
+            esac
+            skipped=$(awk '/^SKIPPED / { n++ } END { print n + 0 }' "$log")
+            # every listed registry row printed its own name line in the run;
+            # the exec rows run a sibling binary and print that binary's cases
+            unrun=$(awk 'NR == FNR { ran[$0] = 1; next } /^test_/ && !($0 in ran) { print }' "$log" "logs/functional.$slug.list" | grep -cvxE "$exec_rows" || [ $? = 1 ])
+            # an empty log is no run at all (awk would read the list as the log)
+            if [ ! -s "$log" ]; then unrun=$listed; fi
+            if [ "$rc" = 0 ] && grep -q '^appverif_run: PASS' "$report" && [ "$listed" -gt 0 ] && [ "$unrun" = 0 ]; then
+              echo "PASS $pair: $listed cases listed, all ran; $skipped skipped ($(grep -o 'appverif_run: PASS.*' "$report"))"
+            else
+              echo "FAIL $pair (exit $rc): $listed cases listed, $unrun of them did not run, $skipped skipped"
+              awk '/^appverif_run: (STOP|FAIL)/ && n++ < 20 { print "    " $0 }' "$report"
+              awk '/check failed|FAILED/ && n++ < 10 { print "    " $0 }' "$log"
+              tail -n 5 "$log" | sed 's/^/    /'
+              failed=1
+            fi
+          done
+          exit "$failed"
+
+      # ---- the binaries only the release leg runs ----
+
+      - name: Wide-channel unit suite (ROCKETNET_MAX_CHANNELS=512)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.extras }}
+        run: |
+          set -euo pipefail
+          "$LEG_BIN/test_wide.exe" 2>&1 | tr -d '\r' | tee logs/test_wide.log
+
+      # tests/functional/platform_primitives.cpp built standalone; the line it
+      # prints must name the DEV setting this leg built (ROCKETNET_DEV=ON)
+      - name: Platform primitives (standalone)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.extras }}
+        run: |
+          set -euo pipefail
+          "$LEG_BIN/test_platform_primitives.exe" 2>&1 | tr -d '\r' | tee logs/platform-primitives.log
+          if ! grep -q '^platform primitives OK: DEV=1,' logs/platform-primitives.log; then
+            echo "test_platform_primitives did not report DEV=1 (this leg builds ROCKETNET_DEV=ON)"
+            exit 1
+          fi
+
+      - name: Internal API callable from C
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.extras }}
+        run: |
+          set -euo pipefail
+          "$LEG_BIN/test_internal_c.exe" 2>&1 | tr -d '\r' | tee logs/internal-c.log
+          grep -qx 'internal C linkage passed' logs/internal-c.log
+
+      # the one writer of standard/vectors/connect_token_v2.json, built and run
+      # under MSVC: what it mints must be the committed file byte for byte
+      - name: Connect token vectors regenerate byte-identical
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.extras }}
+        run: |
+          set -euo pipefail
+          "$LEG_BIN/connect_token_vectors.exe" logs/connect_token_v2.json
+          if ! cmp standard/vectors/connect_token_v2.json logs/connect_token_v2.json; then
+            echo "VECTORS-DIFFER connect_token_vectors on $RUNNER_OS minted another standard/vectors/connect_token_v2.json"
+            exit 1
+          fi
+
+      # GitHub expressions have no replace(): the artifact name's ref and leg slug is made here
+      - name: Artifact name for the ref and leg
+        id: slug
+        if: failure()
+        env:
+          REF: ${{ matrix.ref }}
+        run: |
+          set -euo pipefail
+          s="$REF-$LEG"; s=${s//\//-}
+          echo "slug=$s" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: nightly-matrix-windows-logs-${{ steps.slug.outputs.slug }}
+          path: logs/
+          if-no-files-found: ignore
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
+      - name: Clean build tree
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -rf build bin logs sodium-msvc sodium-msvc.zip
+
+  windows-consumer:
+    name: windows consumer ${{ matrix.option }}
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 7200
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        # static only (the tests need the shared library, a FATAL_ERROR), and
+        # no build-tree development libraries (tests, examples and tools need them)
+        option: [ROCKETNET_BUILD_SHARED=OFF, ROCKETNET_BUILD_DEV_LIBRARIES=OFF]
+    concurrency:
+      group: nightly-matrix-windows-consumer-${{ github.event_name }}-${{ matrix.ref }}-${{ matrix.option }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
+    env:
+      LEG_OPTION: ${{ matrix.option }}
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+
+      - uses: ./.github/actions/ccache
+
+      - name: Configure
+        run: |
+          set -euo pipefail
+          cmake -B build -A x64 "-D$LEG_OPTION" -DROCKETNET_BUILD_TESTS=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF "-DCMAKE_VS_GLOBALS=${ROCKETNET_VS_CCACHE_GLOBALS:-}"
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          cmake --build build --config Release --parallel 8
+
+      # tools/check_package.py reads the two options from the build's cache:
+      # only the libraries this configuration builds are installed and consumed
+      - name: Install and relocate the SDK; run its C/C++ consumers
+        run: |
+          set -euo pipefail
+          python tools/check_package.py build --config Release
+
+      - if: always()
+        uses: ./.github/actions/ccache-stats
+
+      - name: Clean build tree
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -rf build bin

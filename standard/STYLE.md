@@ -201,8 +201,8 @@ one per input, as `name: value`; then the bytes, lower-case hex, 16 bytes to a
 row separated by single spaces, the last row 1 to 16 bytes:
 
     ```vector t3.token-identifier
-    input: the 576 signed connect data bytes of the frozen connect token
-    f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61
+    input: the 384 signed connect data bytes of the frozen connect token
+    f1 09 52 a0 db 61 d3 61 30 36 75 89 cb bc 40 61
     ```
 
 A vector sits in the section that defines what it encodes. Each document's
@@ -212,7 +212,7 @@ demand with `--print-index`; that generated index is not committed.
 Every vector has a twin in a test file `test_unit_standard_<topic>.cpp` under
 `tests/`:
 
-    RN_STANDARD_VECTOR( "t3.token-identifier", "f520da9d95fd072256b47d755f810f61" )
+    RN_STANDARD_VECTOR( "t3.token-identifier", "f10952a0db61d36130367589cbbc4061" )
 
 The hex is the same bytes, with or without spaces, and may be split across
 adjacent string literals. A twin counts only outside comments, in a file that

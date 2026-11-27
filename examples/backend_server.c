@@ -7,9 +7,23 @@
     published development key in a development build) and listens on
     127.0.0.1 at the port from --port <n>, else ROCKETNET_EXAMPLE_PORT, else
     40000. The backend mints each client's token for this server's address and
-    public key, so the server prints both and writes them to backend.env as
-    the two environment variables the backends in examples/backend/ read. It
-    echoes the client's message and exits after its first client disconnects.
+    public key, so the server registers both with the backend
+    (PUT /servers/{id}), prints them, and writes them to backend.env as the
+    two environment variables the backends in examples/backend/ read. It
+    echoes each client's message, and exits once a client has disconnected
+    (--sessions N: once N clients have come and gone).
+
+    The whitelist. Every few seconds the server fetches the client ids the
+    backend allows on it (GET /servers/{id}/whitelist), on its own thread
+    (whitelist.h), and disconnects any connected client whose client id is
+    not on the list: a banned user, or a user the backend has since matched
+    to another server. A client is judged by the first list asked for after
+    it connected, or by the newest list once it has been connected for
+    WHITELIST_GRACE seconds. A failed fetch keeps the last good list, and
+    with no list at all no client is allowed past the grace: the server
+    fails closed. The backend is at 127.0.0.1:8080 unless --backend
+    <ip:port> says otherwise, and the server's id is example-<port> unless
+    --server-id <id> says otherwise.
 
     The server runs a 60 Hz frame. By default (--game-threads 1) every server
     call is made on the main thread, one thread at a time. With
@@ -18,6 +32,11 @@
     second half of the network update (queue the echoes, send, update in
     three calls) is split off to run on another thread in parallel with the
     main thread, and joined at the start of the next frame.
+
+    --link-mtus <list> sets the link MTU list (examples/link_mtus.h); every
+    client must be given the same list. When a client connects the server
+    prints the packet size that client's connection chose and its largest
+    unreliable message.
 
     Run this server, then a backend, then example_backend_client. See
     examples/backend/README.md.
@@ -28,7 +47,9 @@
 #include "rocketnet.h"
 #include "dev_keys.h"
 #include "shutdown.h"
+#include "whitelist.h"
 #include "thread.h"
+#include "link_mtus.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,7 +57,9 @@
 #define ENV_FILE "backend.env"
 
 #define FRAME_DT        ( 1.0 / 60.0 )
-#define MAX_CLIENTS     1
+#define MAX_CLIENTS     4
+#define WHITELIST_SECONDS   2.0     // how often the server fetches its whitelist
+#define WHITELIST_GRACE     ( 3.0 * WHITELIST_SECONDS )    // judged by the newest list after this long, fetched or not
 #define MAX_ECHOES      64          // messages echoed in one frame
 #define MAX_ECHO_BYTES  256         // a longer message is printed, not echoed
 
@@ -161,13 +184,44 @@ int main( int argc, char ** argv )
 {
     const char * port = getenv( "ROCKETNET_EXAMPLE_PORT" );
 
+    int link_mtus[ROCKETNET_MAX_LINK_MTUS];
+    int num_link_mtus = 0;
+    argc = rn_cli_take_link_mtus( argc, argv, link_mtus, &num_link_mtus );
+    if ( argc < 0 )
+    {
+        return 1;
+    }
+
     int game_threads = 1;
+    int max_sessions = 1;
+    const char * backend_address = "127.0.0.1:8080";
+    const char * server_id = NULL;
 
     for ( int i = 1; i + 1 < argc; i++ )
     {
         if ( strcmp( argv[i], "--port" ) == 0 )
         {
             port = argv[i + 1];
+        }
+        else if ( strcmp( argv[i], "--backend" ) == 0 )
+        {
+            backend_address = argv[i + 1];
+        }
+        else if ( strcmp( argv[i], "--server-id" ) == 0 )
+        {
+            server_id = argv[i + 1];
+        }
+        else if ( strcmp( argv[i], "--sessions" ) == 0 )
+        {
+            char * count_end = NULL;
+            const long count = strtol( argv[i + 1], &count_end, 10 );
+            if ( argv[i + 1][0] < '0' || argv[i + 1][0] > '9' || *count_end != '\0' || count < 1 || count > 1000 )
+            {
+                printf( "FAIL: --sessions takes 1 .. 1000, not \"%s\"\n", argv[i + 1] );
+                return 1;
+            }
+
+            max_sessions = (int) count;
         }
         else if ( strcmp( argv[i], "--game-threads" ) == 0 )
         {
@@ -193,6 +247,25 @@ int main( int argc, char ** argv )
 
     char address[32];
     snprintf( address, sizeof( address ), "127.0.0.1:%ld", port_number );
+
+    // the whitelist fetch's settings, fixed before its thread starts
+
+    static struct rn_cli_whitelist_fetch_t fetch;
+    memset( &fetch, 0, sizeof( fetch ) );
+    if ( strlen( backend_address ) >= sizeof( fetch.backend_address ) || ( server_id && ( strlen( server_id ) == 0 || strlen( server_id ) > 32 || strspn( server_id, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_." ) != strlen( server_id ) ) ) )
+    {
+        printf( "FAIL: --backend takes ip:port and --server-id takes 1 to 32 letters, digits, '-', '_' or '.'\n" );
+        return 1;
+    }
+    snprintf( fetch.backend_address, sizeof( fetch.backend_address ), "%s", backend_address );
+    if ( server_id )
+    {
+        snprintf( fetch.server_id, sizeof( fetch.server_id ), "%s", server_id );
+    }
+    else
+    {
+        snprintf( fetch.server_id, sizeof( fetch.server_id ), "example-%ld", port_number );
+    }
 
     // a file left by an earlier run names a key this server does not use
 
@@ -230,6 +303,19 @@ int main( int argc, char ** argv )
     config.max_clients = MAX_CLIENTS;
     config.transport = "portable";
     memcpy( config.packet_filter, packet_filter, sizeof( packet_filter ) );
+    if ( num_link_mtus > 0 )
+    {
+        memcpy( config.link_mtus, link_mtus, sizeof( int ) * (size_t) num_link_mtus );
+        config.num_link_mtus = num_link_mtus;
+
+        // a list down to 576 carries the default 1 MiB message in 480-byte
+        // fragments, more than the default window of 1024 holds, so create
+        // would refuse it (LINK_MTUS_TOO_SMALL_FOR_MESSAGES): raise both
+        // windows, as "Path MTU" in examples/backend/README.md says
+
+        config.reliable_messages_in_flight = 4096;
+        config.packets_in_flight = 4096;
+    }
 #if ROCKETNET_DEV
     const uint8_t dev_backend_public_key[] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     memcpy( config.backend_public_key, dev_backend_public_key, sizeof( dev_backend_public_key ) );
@@ -305,6 +391,49 @@ int main( int argc, char ** argv )
     printf( "server wrote %s for the backend\n", ENV_FILE );
     fflush( stdout );
 
+    // register with the backend and fetch the whitelist, on another thread
+
+    snprintf( fetch.registration, sizeof( fetch.registration ), "{\"addresses\":[\"%s\"],\"public_key\":\"%s\"}", served_address, server_public_key_base64 );
+    const int sockets_started = rn_cli_http_init();
+    rn_cli_lock_init( &fetch.lock );
+    struct rn_cli_thread_t fetch_thread;
+    memset( &fetch_thread, 0, sizeof( fetch_thread ) );
+    if ( !sockets_started || !rn_cli_thread_start( &fetch_thread, rn_cli_whitelist_thread, &fetch ) )
+    {
+        printf( "FAIL: could not start the whitelist thread\n" );
+        rn_cli_lock_destroy( &fetch.lock );
+        if ( sockets_started )
+        {
+            rn_cli_http_term();
+        }
+        rn_cli_server_stop_and_destroy( server );
+
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+        {
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
+        return 1;
+    }
+
+    printf( "server fetches its whitelist from %s every %.1f seconds as %s; a client not on it is kicked after at most %.1f seconds\n", fetch.backend_address, WHITELIST_SECONDS, fetch.server_id, WHITELIST_GRACE );
+    fflush( stdout );
+
+    // what the server knows of each slot's connection: its id, so a new
+    // connection in the slot is seen, and when it connected
+
+    struct slot_t
+    {
+        uint64_t connection_id;
+        uint64_t client_id;
+        double connected_at;
+    };
+
+    static struct slot_t slots[MAX_CLIENTS];
+    double next_fetch = 0.0;
+    int have_list = 0, sessions = 0;
+
     static struct echo_frame_t frames[2];
     struct echo_frame_t * split_off = NULL;     // the frame the other thread is sending from, until the join
     struct rn_cli_thread_t network;
@@ -315,7 +444,8 @@ int main( int argc, char ** argv )
         rn_cli_pool_start( &pool, game_threads );
     }
 
-    int had_client = 0, echoed = 0, thread_failed = 0;
+    int echoed = 0, thread_failed = 0;
+    int reported_packet_bytes[MAX_CLIENTS] = { 0 };
     const double start = rocketnet_time();
     double frame_end = start + FRAME_DT;
     for ( uint32_t frame_number = 0; rocketnet_time() - start < 60.0; frame_number++ )
@@ -371,16 +501,88 @@ int main( int argc, char ** argv )
         }
 
         // 3. the world update, on the main thread: a game simulates here.
-        // This server only notes whether its client has come and gone
+        // This server keeps its clients to the whitelist, and notes when
+        // its clients come and go
 
-        if ( rocketnet_server_num_connected_clients( server ) > 0 )
+        // each client's packet size and its largest UNRELIABLE message: at
+        // connect, and again each time the size rises as the client's probe
+        // finds a larger one the path carries (it never falls)
+
+        for ( int client_index = 0; client_index < MAX_CLIENTS; client_index++ )
         {
-            had_client = 1;
+            const int packet_bytes = rocketnet_server_client_connected( server, client_index ) ? rocketnet_server_client_max_packet_bytes( server, client_index ) : 0;
+            if ( packet_bytes > reported_packet_bytes[client_index] )
+            {
+                printf( "backend_server: client %d packet_bytes=%d max_unreliable_message_bytes=%d link_mtu=%d\n", client_index,
+                        packet_bytes, rocketnet_server_client_max_unreliable_message_bytes( server, client_index ),
+                        rocketnet_server_client_link_mtu( server, client_index ) );
+            }
+            reported_packet_bytes[client_index] = packet_bytes;
         }
-        else if ( had_client )
+
+        const double game_time = frame->now - 1000.0;
+        const int ask = game_time >= next_fetch;
+        if ( ask )
         {
-            printf( "server client disconnected (reason %s)\n", rocketnet_disconnect_reason_name( rocketnet_server_disconnect_reason( server, 0 ) ) );
-            break;
+            next_fetch = game_time + WHITELIST_SECONDS;
+        }
+        const struct rn_cli_whitelist_t * whitelist = rn_cli_whitelist_frame( &fetch, game_time, ask, &have_list );
+
+        for ( int i = 0; i < MAX_CLIENTS; i++ )
+        {
+            struct slot_t * slot = &slots[i];
+            const uint64_t connection_id = rocketnet_server_client_connected( server, i ) ? rocketnet_server_client_connection_id( server, i ) : 0;
+            if ( connection_id != slot->connection_id )
+            {
+                if ( slot->connection_id != 0 )
+                {
+                    printf( "server client %.16llx disconnected from slot %d (reason %s)\n", (unsigned long long) slot->client_id, i, rocketnet_disconnect_reason_name( rocketnet_server_disconnect_reason( server, i ) ) );
+                }
+                slot->connection_id = connection_id;
+                slot->client_id = connection_id ? rocketnet_server_client_id( server, i ) : 0;
+                slot->connected_at = game_time;
+                if ( connection_id )
+                {
+                    sessions++;
+                    // the address the client sends from: for logs
+                    // and support only, never for bans (bans go by client id
+                    // and the whitelist, docs/BANS-AND-WHITELISTS.md)
+                    char client_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+                    rocketnet_server_client_address( server, i, client_address, sizeof( client_address ) );
+                    printf( "server client %.16llx connected in slot %d from %s\n", (unsigned long long) slot->client_id, i, client_address );
+                }
+                fflush( stdout );
+            }
+
+            if ( !connection_id || ( whitelist && rn_cli_whitelist_contains( whitelist, slot->client_id ) ) )
+            {
+                continue;
+            }
+
+            // not on the list: judged once a list asked for after it
+            // connected has arrived, or once the grace is over, list or none
+
+            const int judged = ( whitelist && whitelist->requested_at > slot->connected_at ) || game_time - slot->connected_at > WHITELIST_GRACE;
+            if ( judged )
+            {
+                printf( "server kicked client %.16llx from slot %d: not on the whitelist%s\n", (unsigned long long) slot->client_id, i, whitelist ? "" : " (no whitelist yet)" );
+                fflush( stdout );
+                rocketnet_server_disconnect_client( server, i );
+            }
+        }
+
+        if ( sessions >= max_sessions && rocketnet_server_num_connected_clients( server ) == 0 )
+        {
+            // the last client's disconnect is printed above, the frame its slot frees
+            int all_seen = 1;
+            for ( int i = 0; i < MAX_CLIENTS; i++ )
+            {
+                all_seen &= slots[i].connection_id == 0;
+            }
+            if ( all_seen )
+            {
+                break;
+            }
         }
 
         // 4. the second half of the network update. By default it runs here,
@@ -422,6 +624,13 @@ int main( int argc, char ** argv )
         echoed |= any_echoed( split_off );
     }
 
+    rn_cli_lock_acquire( &fetch.lock );
+    fetch.stop = 1;
+    rn_cli_lock_release( &fetch.lock );
+    rn_cli_thread_join( &fetch_thread );
+    rn_cli_lock_destroy( &fetch.lock );
+    rn_cli_http_term();
+
     if ( game_threads > 1 )
     {
         rn_cli_pool_stop( &pool );
@@ -441,7 +650,7 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    const int passed = had_client && echoed && !thread_failed;
+    const int passed = sessions >= max_sessions && echoed && !thread_failed;
     printf( passed ? "PASS\n" : "FAIL: a client connected and its message was echoed\n" );
     return passed ? 0 : 1;
 }

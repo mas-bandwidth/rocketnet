@@ -3,11 +3,11 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// tools/connect_token_vectors/main.cpp -- mints the byte-stable 768-byte
-// connect token vectors of standard/vectors/connect_token_v1.json from their fixed
+// tools/connect_token_vectors/main.cpp -- mints the byte-stable 576-byte
+// connect token vectors of standard/vectors/connect_token_v2.json from their fixed
 // inputs, and writes them to the one path it is given:
 //
-//     ./bin/connect_token_vectors standard/vectors/connect_token_v1.json
+//     ./bin/connect_token_vectors standard/vectors/connect_token_v2.json
 //
 // The write goes to <path>.tmp and is renamed over <path>, so a reader never
 // sees half a file. Nothing else writes the file: the unit suite compiles the
@@ -248,7 +248,7 @@ static bool ctv_generate_json( std::string & out )
     }
 
     out += "{\n";
-    out += "  \"description\": \"RocketNet 768-byte connect token known answers, minted by rocketnet_write_connect_token_deterministic "
+    out += "  \"description\": \"RocketNet 576-byte connect token known answers, minted by rocketnet_write_connect_token_deterministic "
            "and regenerated only by the connect_token_vectors tool (tools/connect_token_vectors/main.cpp). Every field but description and name is lower-case hex. Integers are their value "
            "as fixed-width big-endian hex (u64: 16 digits; version: 8 digits; timeout_seconds: 8 digits, int32 two's complement). "
            "Byte fields are in wire order: ipv4_address is 4 octets then the port little-endian; ipv6_address is 8 uint16 groups "
@@ -316,7 +316,7 @@ int main( int argc, char ** argv )
     if ( argc != 2 || argv[1][0] == '\0' )
     {
         fprintf( stderr, "usage: connect_token_vectors <output path>\n"
-                         "writes the connect token known-answer vectors (standard/vectors/connect_token_v1.json) to <output path>\n" );
+                         "writes the connect token known-answer vectors (standard/vectors/connect_token_v2.json) to <output path>\n" );
         return 2;
     }
 

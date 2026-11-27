@@ -424,7 +424,9 @@ requirements to each configuration group:
   `ROCKETNET_MAX_MESSAGE_BYTES` (`1,048,576`). Exact one-packet limits depend
   on the reliability form's headers; larger messages use the message layer's
   bounded reliable-fragment path. The transport carries at most one packet's
-  payload, `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES` (`1416`), per send.
+  payload, `ROCKETNET_MAX_PACKET_PAYLOAD_BYTES` (`1416`), per send: the
+  ceiling's value, and less on a connection whose `link_mtus` list settles on
+  a smaller packet size.
 - **Validation invariants**:
   - `1415 <= max_message_bytes <= ROCKETNET_MAX_MESSAGE_BYTES` (`1,048,576`).
   - `receive_message_buffer_bytes` is a multiple of 16 in `4096 .. 1048576`,

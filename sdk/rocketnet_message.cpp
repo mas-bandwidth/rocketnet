@@ -462,7 +462,7 @@ static inline int rocketnet_message_round16( int bytes )
 }
 
 static int rocketnet_message_decode_record( const uint8_t * record_start, int remaining, int payload_bytes,
-                                            const struct rocketnet_message_limits_t * limits,
+                                            const struct rocketnet_message_limits_t * limits, int fragment_bytes,
                                             struct rocketnet_message_record_t * record, int * record_bytes )
 {
     // one record at body[offset], with remaining = body bytes from offset on.
@@ -561,7 +561,7 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
     // fragment but the last exactly F bytes (standard/MESSAGES.md m8). The agreement
     // with a live block descriptor is layer 5's.
 
-    const int F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const int F = fragment_bytes;
     if ( block )
     {
         const int k = (int) record->fragments + 1;
@@ -626,12 +626,13 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
     return ROCKETNET_MESSAGE_VIOLATION_NONE;
 }
 
-int rocketnet_message_check_payload( const uint8_t * payload, int bytes, const struct rocketnet_message_limits_t * limits )
+static int rocketnet_message_check_payload_at( const uint8_t * payload, int bytes, const struct rocketnet_message_limits_t * limits, int fragment_bytes )
 {
     // check 1, then each record of the body in turn; the first failure refuses
     // the whole payload (standard/MESSAGES.md m4).
 
     rocketnet_assert( limits );
+    rocketnet_assert( fragment_bytes > 0 && fragment_bytes % ROCKETNET_MESSAGE_RING_UNIT == 0 );
 
     if ( bytes < 2 || !payload )
     {
@@ -667,7 +668,7 @@ int rocketnet_message_check_payload( const uint8_t * payload, int bytes, const s
     {
         struct rocketnet_message_record_t record;
         int record_bytes = 0;
-        const int violation = rocketnet_message_decode_record( payload + offset, body_bytes - offset, bytes, limits, &record, &record_bytes );
+        const int violation = rocketnet_message_decode_record( payload + offset, body_bytes - offset, bytes, limits, fragment_bytes, &record, &record_bytes );
         if ( violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
         {
             return violation;
@@ -681,7 +682,18 @@ int rocketnet_message_check_payload( const uint8_t * payload, int bytes, const s
     return ROCKETNET_MESSAGE_VIOLATION_NONE;
 }
 
+int rocketnet_message_check_payload( const uint8_t * payload, int bytes, const struct rocketnet_message_limits_t * limits )
+{
+    return rocketnet_message_check_payload_at( payload, bytes, limits, ROCKETNET_MESSAGE_FRAGMENT_BYTES );
+}
+
 int rocketnet_message_reader_begin( struct rocketnet_message_reader_t * reader, const uint8_t * payload, int bytes, const struct rocketnet_message_limits_t * limits )
+{
+    return rocketnet_message_reader_begin_stride( reader, payload, bytes, limits, ROCKETNET_MESSAGE_FRAGMENT_BYTES );
+}
+
+int rocketnet_message_reader_begin_stride( struct rocketnet_message_reader_t * reader, const uint8_t * payload, int bytes,
+                                           const struct rocketnet_message_limits_t * limits, int fragment_bytes )
 {
     rocketnet_assert( reader );
     rocketnet_assert( limits );
@@ -690,7 +702,8 @@ int rocketnet_message_reader_begin( struct rocketnet_message_reader_t * reader, 
     reader->payload_bytes = bytes;
     reader->offset = 0;
     reader->limits = limits;
-    reader->violation = rocketnet_message_check_payload( payload, bytes, limits );
+    reader->fragment_bytes = fragment_bytes;
+    reader->violation = rocketnet_message_check_payload_at( payload, bytes, limits, fragment_bytes );
     reader->form = reader->violation == ROCKETNET_MESSAGE_VIOLATION_NONE ? payload[bytes - 1] : -1;
 
     return reader->violation;
@@ -729,7 +742,7 @@ int rocketnet_message_reader_next( struct rocketnet_message_reader_t * reader, s
 
     int record_bytes = 0;
     const int violation = rocketnet_message_decode_record( reader->payload + reader->offset, body_bytes - reader->offset,
-                                                           reader->payload_bytes, reader->limits, record, &record_bytes );
+                                                           reader->payload_bytes, reader->limits, reader->fragment_bytes, record, &record_bytes );
     rocketnet_assert( violation == ROCKETNET_MESSAGE_VIOLATION_NONE );     // begin already checked every record
     if ( violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
     {
