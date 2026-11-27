@@ -21,12 +21,20 @@
 #   - linux-client-frame-time:   0 hosted minutes (self-hosted rocketnet-quiet)
 #   - macos-client-frame-time:   0 hosted minutes (self-hosted macOS, ARM64, fleet)
 #   - windows-client-frame-time: 0 hosted minutes (self-hosted rocketnet-windows)
+#
+# Slot: 02:15 UTC, after the frame budget (02:00, about 2 minutes). The
+# rocketnet-quiet runners live on hetzner2 beside the fleet runners. At the
+# old 05:45 slot the row passed only on nights TLC records (05:00 cron) had
+# finished first: 11-20 TLC ended 05:40 and the row measured load 0.10,
+# worst frame 58.37 us; 11-21 TLC ran to 06:17 and the row measured load
+# 101.60, worst frame 3156.14 us, on the same commit. No rocketnet job ran on
+# hetzner2 between 00:00 and 03:00 on 11-19, 11-20 or 11-21.
 
 name: Nightly Client Frame Time
 
 on:
   schedule:
-    - cron: "45 5 * * *"
+    - cron: "15 2 * * *"
   workflow_dispatch:
 
 permissions:
