@@ -118,6 +118,16 @@ static const uint8_t reasons_packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x
 // every wait in these cases is bounded by this, well inside the suite's limit
 static const double reasons_wait_seconds = 4.0;
 
+// A disconnect over UDP is best effort: every copy of a disconnect burst can
+// be lost, and then the other end ends the connection on its own timeout, the
+// connect token's timeout_seconds (sdk/rocketnet_server_protocol.cpp and
+// sdk/rocketnet_client_protocol.cpp, the silence end). A wait for the other end
+// to see a disconnect is bounded by that timeout plus this margin for the
+// update cadence, never by less; the delivered burst ends it at once. The
+// exact reasons a delivered burst gives are checked on the lossless loopback
+// transport (tests/test_unit_server_disconnected_reason.cpp).
+static const double reasons_update_margin_seconds = 1.0;
+
 struct reasons_pair_t
 {
     struct rocketnet_server_t * server;
@@ -125,6 +135,7 @@ struct reasons_pair_t
     double start;
     double client_time;
     int slot;
+    int timeout_seconds;    // the connect token's
 };
 
 // The game clock both ends are updated with: 1000 plus the wall seconds since
@@ -169,6 +180,7 @@ static void reasons_pair_connect( reasons_pair_t * pair, int reliable_message_ti
 {
     memset( pair, 0, sizeof( *pair ) );
     pair->start = rocketnet_time();
+    pair->timeout_seconds = timeout_seconds;
 
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
@@ -268,7 +280,10 @@ static bool reasons_conditions_zero( const struct rocketnet_conditions_t * condi
 
 // The server disconnects a connected client: the slot reads
 // SERVER_DISCONNECTED at once and the client, told by the server's
-// disconnect packets, moves to SERVER_DISCONNECTED.
+// disconnect packets, moves to SERVER_DISCONNECTED; when every copy of them is
+// lost, which UDP allows, it moves to CONNECTION_TIMED_OUT on its timeout.
+// The exact SERVER_DISCONNECTED is checked on the lossless loopback transport
+// (test_server_disconnect_sets_server_disconnected_reason).
 void rocketnet_test_disconnect_reason_server_disconnected_portable()
 {
     reasons_env_guard_t env_all( "ROCKETNET_TRANSPORT" );
@@ -283,12 +298,21 @@ void rocketnet_test_disconnect_reason_server_disconnected_portable()
     reasons_check( rocketnet_server_disconnect_reason( pair.server, pair.slot ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
 
     const double begin = rocketnet_time();
-    while ( rocketnet_time() - begin < reasons_wait_seconds && rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+    while ( rocketnet_time() - begin < pair.timeout_seconds + reasons_update_margin_seconds &&
+            rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
     {
         reasons_step( &pair, true, true );
     }
 
-    reasons_check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
+    // CONNECTION_TIMED_OUT is allowed only because over UDP every disconnect
+    // packet can be lost; any other state still fails
+
+    const enum rocketnet_client_state_t end_state = rocketnet_client_state( pair.client );
+    if ( end_state != ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED )
+    {
+        printf( "%s: the client ended in %s after the server's disconnect\n", __func__, rocketnet_client_state_name( end_state ) );
+    }
+    reasons_check( end_state == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED || end_state == ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT );
     reasons_check( rocketnet_server_disconnect_reason( pair.server, pair.slot ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
 
     reasons_pair_destroy( &pair );
@@ -477,12 +501,24 @@ void rocketnet_test_conditions_portable()
     reasons_check( reasons_conditions_zero( &client_conditions ) );
 
     begin = rocketnet_time();
-    while ( rocketnet_time() - begin < reasons_wait_seconds && rocketnet_server_client_connected( pair.server, pair.slot ) )
+    while ( rocketnet_time() - begin < pair.timeout_seconds + reasons_update_margin_seconds &&
+            rocketnet_server_client_connected( pair.server, pair.slot ) )
     {
         reasons_step( &pair, true, true );
     }
 
-    reasons_check( rocketnet_server_disconnect_reason( pair.server, pair.slot ) == ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED );
+    // CLIENT_DISCONNECTED when the burst arrived; TIMED_OUT is allowed only
+    // because over UDP every disconnect packet can be lost. Any other reason
+    // still fails. The exact CLIENT_DISCONNECTED is checked on the lossless
+    // loopback transport (test_server_reason_names_timeout_and_client_disconnect).
+
+    reasons_check( !rocketnet_server_client_connected( pair.server, pair.slot ) );
+    const enum rocketnet_disconnect_reason_t end_reason = rocketnet_server_disconnect_reason( pair.server, pair.slot );
+    if ( end_reason != ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED )
+    {
+        printf( "%s: the server's slot ended with %s after the client's disconnect\n", __func__, rocketnet_disconnect_reason_name( end_reason ) );
+    }
+    reasons_check( end_reason == ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED || end_reason == ROCKETNET_DISCONNECT_REASON_TIMED_OUT );
     memset( &server_conditions, 0xFF, sizeof( server_conditions ) );
     reasons_check( !rocketnet_server_client_conditions( pair.server, pair.slot, &server_conditions, (int) sizeof( server_conditions ) ) );
     reasons_check( reasons_conditions_zero( &server_conditions ) );

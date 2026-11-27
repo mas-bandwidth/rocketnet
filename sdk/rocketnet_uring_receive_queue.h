@@ -94,8 +94,10 @@ struct io_uring_buf_ring;
 // in one DROPPED_* below or in the drop tally.
 
 #define ROCKETNET_URING_RECEIVE_COUNTER_BANKED                               0      // datagrams banked for main (the transport's PACKETS_RECEIVED)
-#define ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SIZE                         1      // a datagram outside [server min, receive ceiling], truncated in its buffer, or a short buffer
-#define ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_LARGE                    2      // the part of DROPPED_SIZE above the receive ceiling or truncated
+#define ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_SHORT                    1      // a datagram under the server min, or a short buffer
+#define ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_LARGE                    2      // a datagram above the receive ceiling, or truncated in its buffer
+// TOO_SHORT and TOO_LARGE are disjoint (one store per datagram), so main reads
+// each split without a torn pair; the public URING_RECEIVE_DROPPED_SIZE is their sum
 #define ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SOURCE                       3      // a source address the boundary could not convert, or a name truncated
 #define ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_NO_BUFFER                    4      // a completion with res >= 0 that names no provided buffer of the queue
 #define ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_OVERFLOW                     5      // datagrams of one coalesced receive past ROCKETNET_URING_RECEIVE_MAX_SEGMENTS
