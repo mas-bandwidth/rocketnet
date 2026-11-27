@@ -542,6 +542,46 @@ static void rocketnet_platform_network_thread_priority( rocketnet_platform_threa
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+// a create's failure named (sdk/rocketnet_internal.h): called only on the
+// error path, so a create that succeeds pays nothing
+
+const char * rocketnet_windows_out_of_memory_error_name( unsigned long error )
+{
+    switch ( error )
+    {
+        case 8:
+            return "ERROR_NOT_ENOUGH_MEMORY";
+        case 14:
+            return "ERROR_OUTOFMEMORY";
+        case 1450:
+            return "ERROR_NO_SYSTEM_RESOURCES";
+        case 1455:
+            return "ERROR_COMMITMENT_LIMIT";
+        case 10055:
+            return "WSAENOBUFS";
+        default:
+            return NULL;
+    }
+}
+
+bool rocketnet_create_failed_call( int * status, const char * who, const char * call, unsigned long error )
+{
+    const char * name = rocketnet_windows_out_of_memory_error_name( error );
+    if ( !name )
+    {
+        return false;
+    }
+    rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+    rocketnet_error( "%s: %s failed with Windows error %lu (%s), out of memory", who, call, error, name );
+    return true;
+}
+
+void rocketnet_create_failed_allocation( int * status, const char * who, const char * what, uint64_t bytes )
+{
+    rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+    rocketnet_error( "%s: could not allocate %llu bytes for %s", who, (unsigned long long) bytes, what );
+}
+
 // A send that answers -1 (SOCKET_ERROR on Windows) drops its datagram: the
 // drop is counted on the socket that made it, so a caller can price what the
 // kernel refused (ENOBUFS from a full interface queue, EAGAIN from a full send
@@ -4341,7 +4381,7 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
 
     if ( !record )
     {
-        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_create_failed_allocation( status, "platform thread create", "the thread record", sizeof( thread_record_t ) );
         return NULL;
     }
 
@@ -4366,7 +4406,7 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     const int start_error = ROCKETNET_PLATFORM_PRIORITY_CALL( thread_start )( thread, record );
     if ( start_error != 0 )
     {
-        rocketnet_platform_windows_create_status( status, (unsigned long) start_error );
+        rocketnet_create_failed_call( status, "platform thread create", "CreateThread", (unsigned long) start_error );
         rocketnet_platform_thread_sleep_timer_close( thread );
         rocketnet_free( context, thread );
         return NULL;
@@ -4670,19 +4710,19 @@ bool rocketnet_platform_receive_status_is_reset( int status )
     }
 }
 
+// the out-of-memory errors rocketnet_windows_out_of_memory_error_name names
+// by value (above, in every build) are the Windows headers' values
+ROCKETNET_STATIC_ASSERT( ERROR_NOT_ENOUGH_MEMORY == 8 && WSA_NOT_ENOUGH_MEMORY == 8, "ERROR_NOT_ENOUGH_MEMORY is 8" );
+ROCKETNET_STATIC_ASSERT( ERROR_OUTOFMEMORY == 14, "ERROR_OUTOFMEMORY is 14" );
+ROCKETNET_STATIC_ASSERT( ERROR_NO_SYSTEM_RESOURCES == 1450, "ERROR_NO_SYSTEM_RESOURCES is 1450" );
+ROCKETNET_STATIC_ASSERT( ERROR_COMMITMENT_LIMIT == 1455, "ERROR_COMMITMENT_LIMIT is 1455" );
+ROCKETNET_STATIC_ASSERT( WSAENOBUFS == 10055, "WSAENOBUFS is 10055" );
+
 void rocketnet_platform_windows_create_status( int * status, unsigned long error )
 {
-    switch ( error )
+    if ( rocketnet_windows_out_of_memory_error_name( error ) )
     {
-        case ERROR_NOT_ENOUGH_MEMORY:
-        case ERROR_OUTOFMEMORY:
-        case ERROR_COMMITMENT_LIMIT:
-        case ERROR_NO_SYSTEM_RESOURCES:
-        case WSAENOBUFS:
-            rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
-            break;
-        default:
-            break;
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
     }
 }
 
@@ -5197,7 +5237,7 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     rocketnet_platform_wake_t * wake = (rocketnet_platform_wake_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_wake_t ) );
     if ( !wake )
     {
-        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_create_failed_allocation( status, "platform wake create", "the wake", sizeof( rocketnet_platform_wake_t ) );
         return NULL;
     }
     wake->context = context;
@@ -5212,7 +5252,7 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
         wake->read_event = WSACreateEvent();
         if ( wake->read_event == WSA_INVALID_EVENT )
         {
-            rocketnet_platform_windows_create_status( status, (unsigned long) WSAGetLastError() );
+            rocketnet_create_failed_call( status, "platform wake create", "WSACreateEvent", (unsigned long) WSAGetLastError() );
             rocketnet_free( context, wake );
             return NULL;
         }
@@ -5244,7 +5284,7 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     wake->wake_event = CreateEvent( NULL, socket ? TRUE : FALSE, FALSE, NULL );
     if ( wake->wake_event == NULL )
     {
-        rocketnet_platform_windows_create_status( status, GetLastError() );
+        rocketnet_create_failed_call( status, "platform wake create", "CreateEvent", GetLastError() );
     }
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( wake->wake_event )

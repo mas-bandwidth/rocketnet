@@ -890,7 +890,15 @@ REGISTER_UNIT_TEST( test_server_send_cap_unreliable_over_budget_takes_no_slot );
 // and the healthy clients lose theirs.
 
 #define PC_CLIENTS          16      // the per-commit cases
-#define PC_MAX_CLIENTS      ROCKETNET_MAX_CLIENTS   // the nightly case
+// the nightly case: the build's ROCKETNET_MAX_CLIENTS, at most 1000. The case
+// runs that many default-profile clients and a default-profile server in one
+// process, and the default profile plans about 18.7 MiB of server memory and
+// 21 MiB of client memory per client (docs/MEMORY.md; 40 GiB at 1000, and 1.4
+// TB at a MAX_CLIENTS=32768 build, which no host holds and Windows refuses to
+// commit). The per-client cost is the same in every build, so a build above
+// 1000 runs the case at 1000 clients, the default build's maximum, against
+// its own larger fixed tables.
+#define PC_MAX_CLIENTS      ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 )
 #define PC_TICKS            90
 #define PC_FIRST_TICK       5
 #define PC_STAGGER          3

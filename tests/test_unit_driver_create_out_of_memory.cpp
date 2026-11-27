@@ -31,7 +31,8 @@
 // sdk/rocketnet_internal.h), as the in-memory transport here does, and the
 // functional sweep test_public_start_and_connect_out_of_memory_sweep walks
 // them. test_create_status_out_of_memory_is_kept holds the status rule and
-// the platform wake create's report.
+// the platform wake create's report, and test_create_failure_names_the_call
+// the error line that names what failed when a create runs out of memory.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
@@ -556,6 +557,105 @@ static void test_create_status_out_of_memory_is_kept()
 }
 
 REGISTER_UNIT_TEST( test_create_status_out_of_memory_is_kept );
+
+// A create's failure is named on its error path (sdk/rocketnet_internal.h):
+// a failed call whose Windows error is one of the out-of-memory errors writes
+// OUT_OF_MEMORY and one error line naming the create, the call, the error's
+// number and its name; any other error writes and logs nothing, the caller
+// reporting its own refusal; a refused allocation writes OUT_OF_MEMORY and
+// one error line naming what it was for and its size. OUT_OF_MEMORY already
+// written is kept. The iocp and rio creates (Windows only) report through
+// these, and tests/test_iocp.cpp plants their failures through the
+// transports' own seams; the values are held to the Windows headers in
+// sdk/rocketnet_platform.cpp.
+
+static int g_create_named_calls = 0;
+static rocketnet_log_level_t g_create_named_level = ROCKETNET_LOG_LEVEL_NONE;
+static char g_create_named_message[256];
+
+static void create_named_log( void *, rocketnet_log_level_t level, const char * message, size_t length )
+{
+    g_create_named_calls++;
+    g_create_named_level = level;
+    const size_t n = length < sizeof( g_create_named_message ) - 1 ? length : sizeof( g_create_named_message ) - 1;
+    memcpy( g_create_named_message, message, n );
+    g_create_named_message[n] = '\0';
+}
+
+static void test_create_failure_names_the_call()
+{
+    const rocketnet_log_level_t saved = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_function( create_named_log, NULL );
+
+    struct named_error_t
+    {
+        unsigned long error;
+        const char * name;
+    };
+    const named_error_t named[] = {
+        { 8, "ERROR_NOT_ENOUGH_MEMORY" },
+        { 14, "ERROR_OUTOFMEMORY" },
+        { 1450, "ERROR_NO_SYSTEM_RESOURCES" },
+        { 1455, "ERROR_COMMITMENT_LIMIT" },
+        { 10055, "WSAENOBUFS" },
+    };
+    for ( const named_error_t & e : named )
+    {
+        const char * name = rocketnet_windows_out_of_memory_error_name( e.error );
+        check( name != NULL && strcmp( name, e.name ) == 0 );
+
+        int status = ROCKETNET_STATUS_OK;
+        g_create_named_calls = 0;
+        check( rocketnet_create_failed_call( &status, "iocp transport create", "bind of an endpoint", e.error ) );
+        check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+        check( g_create_named_calls == 1 );
+        check( g_create_named_level == ROCKETNET_LOG_LEVEL_ERROR );
+        char expected[256];
+        snprintf( expected, sizeof( expected ), "iocp transport create: bind of an endpoint failed with Windows error %lu (%s), out of memory", e.error, e.name );
+        check( strcmp( g_create_named_message, expected ) == 0 );
+    }
+
+    // any other error (none, access denied, a held port, the working set
+    // quota) is the caller's to report: no status, no line
+    const unsigned long other[] = { 0, 1, 5, 1453, 10013, 10048 };
+    for ( unsigned long error : other )
+    {
+        check( rocketnet_windows_out_of_memory_error_name( error ) == NULL );
+        int status = ROCKETNET_STATUS_OK;
+        g_create_named_calls = 0;
+        check( !rocketnet_create_failed_call( &status, "rio transport create", "RIOCreateRequestQueue", error ) );
+        check( status == ROCKETNET_STATUS_OK );
+        check( g_create_named_calls == 0 );
+    }
+
+    // a refused allocation: its purpose and its size, past 32 bits
+    int status = ROCKETNET_STATUS_OK;
+    g_create_named_calls = 0;
+    rocketnet_create_failed_allocation( &status, "rio transport create", "a lane's registered region", 123456789012ULL );
+    check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+    check( g_create_named_calls == 1 );
+    check( g_create_named_level == ROCKETNET_LOG_LEVEL_ERROR );
+    check( strcmp( g_create_named_message, "rio transport create: could not allocate 123456789012 bytes for a lane's registered region" ) == 0 );
+
+    // OUT_OF_MEMORY replaces an earlier reason and is kept; no status asked
+    // for still names the failure
+    status = ROCKETNET_STATUS_THREAD_CREATE_FAILED;
+    check( rocketnet_create_failed_call( &status, "platform thread create", "CreateThread", 1455 ) );
+    check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+    check( !rocketnet_create_failed_call( &status, "platform thread create", "CreateThread", 5 ) );
+    check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+    g_create_named_calls = 0;
+    check( rocketnet_create_failed_call( NULL, "platform thread create", "CreateThread", 8 ) );
+    rocketnet_create_failed_allocation( NULL, "platform thread create", "the thread record", 64 );
+    check( g_create_named_calls == 2 );
+    check( strcmp( g_create_named_message, "platform thread create: could not allocate 64 bytes for the thread record" ) == 0 );
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved );
+}
+
+REGISTER_UNIT_TEST( test_create_failure_names_the_call );
 
 #if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC )
 // A POSIX wake create that fails at its kernel object (the kqueue on macOS,

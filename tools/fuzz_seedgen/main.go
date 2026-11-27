@@ -18,7 +18,7 @@ type ptype struct {
 }
 
 var types = []ptype{
-	{"request", 0, []int{710}},
+	{"request", 0, []int{518}},
 	{"response", 3, []int{50}},
 	{"keepalive", 4, []int{41, 60}},
 	{"payload", 5, []int{34, 200, 1416 + 17 + 16}},

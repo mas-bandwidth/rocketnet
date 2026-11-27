@@ -15,6 +15,7 @@
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -918,8 +919,55 @@ static long loopback_full_hub_rss_bound_mb()
 
 SUITE_CASE_RSS_BOUND( test_loopback_transport_io_holds_max_clients_plus_server, loopback_full_hub_rss_bound_mb );
 
+// Each loopback client holds a wake descriptor (an eventfd on Linux, a kqueue
+// on macOS: loopback_client_create), so a process holding every client of a
+// hub needs a descriptor limit above max_clients (docs/MACOS.md "a test that
+// runs many clients in one process checks the limits first"). A
+// ROCKETNET_MAX_CLIENTS=32768 build needs more than the common soft limit
+// (1024 on Linux), and its client opens fail with EMFILE. The case raises the
+// soft limit to what it needs, refusing by name when the hard limit or the
+// kernel will not allow it, and puts the old limit back when it is done.
+
+#if !defined( _WIN32 )
+static const rlim_t LOOPBACK_FULL_HUB_DESCRIPTOR_SLACK = 256;
+
+static bool loopback_full_hub_descriptors( struct rlimit * restore )
+{
+    const rlim_t need = (rlim_t) ROCKETNET_MAX_CLIENTS + LOOPBACK_FULL_HUB_DESCRIPTOR_SLACK;
+    if ( getrlimit( RLIMIT_NOFILE, restore ) != 0 )
+    {
+        printf( "error: cannot read RLIMIT_NOFILE (%s)\n", strerror( errno ) );
+        return false;
+    }
+    if ( restore->rlim_cur == RLIM_INFINITY || restore->rlim_cur >= need )
+    {
+        return true;
+    }
+    if ( restore->rlim_max != RLIM_INFINITY && restore->rlim_max < need )
+    {
+        printf( "error: RLIMIT_NOFILE hard limit %llu is below the %llu descriptors %d loopback clients need\n", (unsigned long long) restore->rlim_max,
+                (unsigned long long) need, (int) ROCKETNET_MAX_CLIENTS );
+        return false;
+    }
+    struct rlimit raised = *restore;
+    raised.rlim_cur = need;
+    if ( setrlimit( RLIMIT_NOFILE, &raised ) != 0 )
+    {
+        printf( "error: cannot raise RLIMIT_NOFILE from %llu to %llu for %d loopback clients (%s)\n", (unsigned long long) restore->rlim_cur,
+                (unsigned long long) need, (int) ROCKETNET_MAX_CLIENTS, strerror( errno ) );
+        return false;
+    }
+    return true;
+}
+#endif // #if !defined( _WIN32 )
+
 static void test_loopback_transport_io_holds_max_clients_plus_server()
 {
+#if !defined( _WIN32 )
+    struct rlimit descriptor_limit;
+    rocketnet_unit_check( loopback_full_hub_descriptors( &descriptor_limit ) );
+#endif // #if !defined( _WIN32 )
+
     debug_crt_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h: the hub for every build slot
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_test_loopback_hub_clients( ROCKETNET_MAX_CLIENTS );
@@ -1029,6 +1077,10 @@ static void test_loopback_transport_io_holds_max_clients_plus_server()
     free( seen );
     free( clients );
     free( client_addresses );
+
+#if !defined( _WIN32 )
+    rocketnet_unit_check( setrlimit( RLIMIT_NOFILE, &descriptor_limit ) == 0 );
+#endif // #if !defined( _WIN32 )
 }
 
 static char g_loopback_refusal_log[1024];

@@ -78,6 +78,12 @@ than one packet are fragmented and reassembled by the reliable path:
 at or below `rocketnet_max_unfragmented_message_bytes( reliability, channel )`.
 Plain unreliable messages have a compile-time limit of
 `ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES` (1,411 bytes) before promotion.
+These are the ceiling's values, for a connection whose packet size is
+`ROCKETNET_MAX_PACKET_BYTES` (1,452 bytes), the default. A connection that
+settles on a smaller packet size from its `link_mtus` list has lower limits,
+all shifted down by the same amount; read them for a live connection with
+`rocketnet_client_max_unreliable_message_bytes` or
+`rocketnet_server_client_max_unreliable_message_bytes`.
 
 Ordered and sequenced modes share a channel's ordering state. A sequenced
 message in its current ordered turn is delivered as soon as it is complete

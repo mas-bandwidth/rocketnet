@@ -22,7 +22,7 @@ set. Commands below run from the repository root unless stated otherwise.
 ## Fixtures and where each case runs
 
 A unit case reads no file and writes none. The fixed known-answer files the
-unit cases check against, `standard/vectors/connect_token_v1.json` and the three
+unit cases check against, `standard/vectors/connect_token_v2.json` and the three
 `wycheproof/*_test.json` files, are compiled into `./bin/test` at build time by
 `cmake/EmbedTestFixtures.cmake` (portable CMake, `file(READ ... HEX)`) and read
 from memory through `rocketnet_test_fixture`; editing one rebuilds the unit
@@ -30,13 +30,13 @@ binary. Their cases (`test_vectors_regenerate_byte_identical`,
 `test_each_vector_verifies_and_opens`, `test_tampered_vector_refused` and the
 `test_wycheproof_*` cases) are unit cases.
 
-`standard/vectors/connect_token_v1.json` is written only by the tool
+`standard/vectors/connect_token_v2.json` is written only by the tool
 `./bin/connect_token_vectors <path>` (`tools/connect_token_vectors/main.cpp`),
 which mints it from the same generator the unit case checks and writes only
 the path it is given, through a temporary file renamed over it:
 
 ```
-./bin/connect_token_vectors standard/vectors/connect_token_v1.json
+./bin/connect_token_vectors standard/vectors/connect_token_v2.json
 ```
 
 then rebuild, and `test_vectors_regenerate_byte_identical` checks the new copy.

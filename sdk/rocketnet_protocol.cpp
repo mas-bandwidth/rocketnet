@@ -101,13 +101,13 @@ static int rocketnet_packet_type_has_session_nonce( uint8_t packet_type )
     return packet_type == ROCKETNET_CONNECTION_DENIED_PACKET || packet_type == ROCKETNET_CONNECTION_CHALLENGE_PACKET;
 }
 
-// the sealed types: 1 through 6 and 8. type 0 (request) and type 7
+// the sealed types: 1 through 6, 8 and 9. type 0 (request) and type 7
 // (cookie) are the two unsealed packets.
 
 static int rocketnet_packet_type_is_sealed( uint8_t packet_type )
 {
     return ( packet_type >= ROCKETNET_CONNECTION_DENIED_PACKET && packet_type <= ROCKETNET_CONNECTION_DISCONNECT_PACKET ) ||
-           packet_type == ROCKETNET_CONNECTION_ACK_PACKET;
+           packet_type == ROCKETNET_CONNECTION_ACK_PACKET || packet_type == ROCKETNET_CONNECTION_PROBE_PACKET;
 }
 
 static int rocketnet_packet_type_has_ephemeral_in_ad( uint8_t packet_type )
@@ -510,9 +510,11 @@ bool rocketnet_session_elicits_ack( uint8_t packet_type )
     return packet_type != ROCKETNET_CONNECTION_ACK_PACKET && rocketnet_session_ack_eligible_on_open( packet_type );
 }
 
-int rocketnet_session_ack_block_build( uint8_t * output, int other_bytes, const struct rocketnet_replay_protection_t * accepted )
+int rocketnet_session_ack_block_build( uint8_t * output, int packet_bytes, int other_bytes, const struct rocketnet_replay_protection_t * accepted )
 {
-    int capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - other_bytes;
+    rocketnet_assert( packet_bytes >= ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES && packet_bytes <= ROCKETNET_SEND_BUDGET );
+
+    int capacity = packet_bytes - ROCKETNET_PACKET_OVERHEAD_BYTES - other_bytes;
     if ( capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
     {
         capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;

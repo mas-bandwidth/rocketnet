@@ -690,11 +690,16 @@ static void memo_differential( uint64_t seed, int steps )
     rocketnet_free( NULL, b );
 }
 
+// 12000 steps at the default 4096-packet ring: about 1.1 sequences a step
+// (sends average one, one in ten burns another), past three wraps. The steps
+// scale with the ring, so a HISTORY_PACKETS build wraps its ring three times too
+
 static void test_ack_block_memo_matches_the_full_apply()
 {
-    memo_differential( 0x5EED0001ull, 12000 );
-    memo_differential( 0xACC0FFEEull, 12000 );
-    memo_differential( 0xBADC0DEull, 12000 );
+    const int steps = (int) ( 12000ull * ROCKETNET_SENT_PACKET_BUFFER_SIZE / 4096 );
+    memo_differential( 0x5EED0001ull, steps );
+    memo_differential( 0xACC0FFEEull, steps );
+    memo_differential( 0xBADC0DEull, steps );
 }
 REGISTER_UNIT_TEST( test_ack_block_memo_matches_the_full_apply );
 

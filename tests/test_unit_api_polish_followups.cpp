@@ -4,7 +4,7 @@
 */
 
 // The api-polish follow-ups, pinned: the quiet switch is Next SDK named
-// (rocketnet_quiet), the last status code is TRANSPORT_BIND_REFUSED at -35,
+// (rocketnet_quiet), the last status code is LINK_MTUS_TOO_SMALL_FOR_MESSAGES at -40,
 // and the WARN level's name is "WARN", matching its enum as every other level
 // name does; "warn", lower case, is the word its log lines carry. The assert
 // callback has one way in, rocketnet_assert_function; the internal pointer it
@@ -23,7 +23,7 @@
 #define check rocketnet_unit_check
 
 static_assert( std::is_same<decltype( &rocketnet_quiet ), void ( * )( bool )>::value, "Next SDK naming: rocketnet_quiet( bool )" );
-static_assert( ROCKETNET_STATUS_TRANSPORT_BIND_REFUSED == -35, "TRANSPORT_BIND_REFUSED is the last failure code" );
+static_assert( ROCKETNET_STATUS_LINK_MTUS_TOO_SMALL_FOR_MESSAGES == -40, "LINK_MTUS_TOO_SMALL_FOR_MESSAGES is the last failure code" );
 
 static int api_polish_followups_count = 0;
 
@@ -64,10 +64,10 @@ static void test_api_polish_followups()
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( saved );
 
-    // the last code is TRANSPORT_BIND_REFUSED, and one past it is no code
+    // the last code is LINK_MTUS_TOO_SMALL_FOR_MESSAGES, and one past it is no code
 
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -35 ), "TRANSPORT_BIND_REFUSED" ) == 0 );
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -36 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -40 ), "LINK_MTUS_TOO_SMALL_FOR_MESSAGES" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -41 ), "UNKNOWN" ) == 0 );
 
     // every level name matches its enum: WARN is "WARN"; the word a log line
     // carries is the lower-case "warn"

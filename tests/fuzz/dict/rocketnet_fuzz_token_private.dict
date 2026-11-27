@@ -8,8 +8,8 @@ sel_signed="\x01"
 sel_minted="\x02"
 sel_raw_signed="\x03"
 
-# ROCKETNET_WIRE_VERSION 0x4E7C1A93 (sdk/rocketnet_connect_token.h)
-version="\x93\x1a\x7c\x4e"
+# ROCKETNET_WIRE_VERSION 0x065014D9 (sdk/rocketnet_connect_token.h)
+version="\xd9\x14\x50\x06"
 
 # ROCKETNET_DEV_PROTOCOL_ID 0x1122334455667788 (sdk/rocketnet_connect_token.h)
 dev_protocol_id="\x88\x77\x66\x55\x44\x33\x22\x11"
