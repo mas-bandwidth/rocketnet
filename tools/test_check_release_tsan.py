@@ -15,6 +15,7 @@ import os
 import sys
 import unittest
 import unittest.mock
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -152,6 +153,60 @@ class CheckReleaseTsan(unittest.TestCase):
         finally:
             os.environ.clear()
             os.environ.update(saved)
+
+
+class ApiRetry(unittest.TestCase):
+    """release_gates.Api asks a GET again on 5xx (its GET_RETRY_WAITS), and never a 4xx or a POST."""
+
+    class Answer:
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return self.body
+
+    def api(self, answers):
+        rg = check_release_tsan.rg
+        calls, sleeps = [], []
+
+        def opener(request, timeout):
+            calls.append(request.get_method())
+            answer = answers.pop(0)
+            if isinstance(answer, int):
+                raise urllib.error.HTTPError(request.full_url, answer, "x", {}, io.BytesIO(b'{"message": "x"}'))
+            return self.Answer(answer)
+
+        return rg.Api("t", base="http://fixture.invalid", opener=opener, sleep=sleeps.append), calls, sleeps
+
+    def test_a_502_then_the_answer(self):
+        api, calls, sleeps = self.api([502, b'{"jobs": []}'])
+        self.assertEqual(api.get("/repos/o/r/actions/runs/1/jobs"), {"jobs": []})
+        self.assertEqual((calls, sleeps), (["GET", "GET"], [2]))
+
+    def test_5xx_on_every_ask_refuses(self):
+        api, calls, sleeps = self.api([502, 503, 500, 504])
+        with self.assertRaises(check_release_tsan.rg.ApiError) as raised:
+            api.get("/repos/o/r/actions/runs/1/jobs")
+        self.assertIn("HTTP 504", str(raised.exception))
+        self.assertEqual((len(calls), sleeps), (4, [2, 4, 8]))
+
+    def test_a_4xx_is_not_asked_again(self):
+        api, calls, sleeps = self.api([403, b"{}"])
+        with self.assertRaises(check_release_tsan.rg.ApiError):
+            api.get("/repos/o/r/actions/runs/1/jobs")
+        self.assertEqual((calls, sleeps), (["GET"], []))
+
+    def test_a_post_is_not_asked_again(self):
+        api, calls, sleeps = self.api([502, b"{}"])
+        with self.assertRaises(check_release_tsan.rg.ApiError):
+            api.post("/repos/o/r/statuses/x", {"state": "success"})
+        self.assertEqual((calls, sleeps), (["POST"], []))
 
 
 if __name__ == "__main__":
