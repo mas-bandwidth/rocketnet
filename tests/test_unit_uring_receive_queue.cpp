@@ -463,23 +463,23 @@ static void test_uring_receive_queue_transport_refusals()
     // a buffer shorter than the header
     int buffer_id = rocketnet_uring_receive_queue_test_take( queue, &ring_head );
     check( rocketnet_uring_receive_queue_cqe( queue, 8, receive_queue_flags( buffer_id, true ) ) == 0 );
-    check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SIZE ) == 1 );
+    check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_SHORT ) == 1 );
     check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_LARGE ) == 0 );
 
     // truncated by the kernel: too large
     receive_queue_packet( packet, 64, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1 );
     check( receive_queue_deliver( queue, &ring_head, packet, 64, 0, 0, MSG_TRUNC ) == 0 );
-    check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SIZE ) == 2 );
+    check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_SHORT ) == 1 );
     check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_LARGE ) == 1 );
 
     // past the receive ceiling, and under the server's smallest packet
     receive_queue_packet( packet, 2000, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 1 );
     check( receive_queue_deliver( queue, &ring_head, packet, ROCKETNET_RECEIVE_CEILING + 1 ) == 0 );
-    check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SIZE ) == 3 );
+    check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_SHORT ) == 1 );
     check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_LARGE ) == 2 );
     check( receive_queue_deliver( queue, &ring_head, packet, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1 ) == 0 );
     check( receive_queue_deliver( queue, &ring_head, packet, 0 ) == 0 );
-    check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SIZE ) == 5 );
+    check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_SHORT ) == 3 );
     check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_LARGE ) == 2 );
 
     // the prefilter's own size rungs are a strict suffix: the transport's
@@ -602,7 +602,7 @@ static void test_uring_receive_queue_prefilter_drops_by_name()
     receive_queue_packet( packet, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1, ROCKETNET_CONNECTION_ACK_PACKET, 1 );
     check( receive_queue_deliver( queue, &ring_head, packet, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1 ) == 0 );
     check( receive_queue_drop( queue, ROCKETNET_RECEIVE_DROP_ACK_WRONG_SIZE ) == 0 );
-    check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_SIZE ) == 1 );
+    check( receive_queue_counter( queue, ROCKETNET_URING_RECEIVE_COUNTER_DROPPED_TOO_SHORT ) == 1 );
 
     rocketnet_uring_receive_queue_destroy( queue );
 }
