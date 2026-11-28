@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 // The bindings table full of unexpired bindings (sdk/rocketnet_token_tables.cpp,
 // rn_token_binding_select_slot). The history counts the slots each insertion
 // reads (DEV only). No socket, no real time: timestamps are arguments from 1000.

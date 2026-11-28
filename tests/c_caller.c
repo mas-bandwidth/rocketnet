@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 // Calls into the public API from C, for the unit suite. A C caller may hand
 // any int where the API takes an enum. Keep the C entry points covered even
 // where the C++ enum has a fixed int underlying type.

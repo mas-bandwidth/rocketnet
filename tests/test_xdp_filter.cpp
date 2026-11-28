@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 
 // Functional test: the XDP receive filter, judged by the kernel. It needs the
 // kernel, root or CAP_BPF and CAP_NET_ADMIN, and usleep, so it is a functional

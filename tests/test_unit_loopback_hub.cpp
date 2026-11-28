@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 // Unit tests for the loopback hub (rocketnet_loopback_hub_create and
 // rocketnet_loopback_hub_destroy): its one allocation through the caller's
 // allocator and context, its range, the refusal of a loopback create with no

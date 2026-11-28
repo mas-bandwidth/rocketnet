@@ -1,6 +1,6 @@
 /*
     RocketNet. Copyright 2026 Mas Bandwidth LLC.
-    Licensed under the GNU Affero General Public License v3.0
+    Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 
     The DST command line (docs/DST.md section 2): one seed drives one
     single-process run of N clients and a server over the in-memory network

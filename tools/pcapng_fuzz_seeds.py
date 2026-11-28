@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 #
 #   RocketNet. Copyright 2026 Más Bandwidth LLC.
-#   Licensed under the GNU Affero General Public License v3.0
+#   Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 #
 # Seed the fuzz harnesses from the pcapng corpus: every captured wire
 # datagram becomes a prefilter seed and every captured kind-3 message

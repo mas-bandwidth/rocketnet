@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 // The server's worst-case receive update: max_clients connected clients on the
 // loopback transport, each delivering ROCKETNET_RECEIVE_PACKETS_PER_CLIENT
 // payload packets, so one update processes the whole receive budget

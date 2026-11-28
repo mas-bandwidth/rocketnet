@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 // The cost of a connection request on the server's receive path, as the
 // transport drives it: one encryption-map lookup of the source, then
 // rocketnet_server_protocol_process_received with that answer.

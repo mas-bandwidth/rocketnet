@@ -1,6 +1,6 @@
 /*
    RocketNet. Copyright 2026 Más Bandwidth LLC.
-   Licensed under the GNU Affero General Public License v3.0
+   Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 
    A very simple backend: it mints a RocketNet connect token for a
    signed-in player and returns it as base64. The client passes the string to rocketnet_client_connect, and

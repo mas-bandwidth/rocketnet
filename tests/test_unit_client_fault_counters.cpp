@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 // Client I/O transport faults and the public counters (sdk/rocketnet_client_io.h).
 // A send driver that returns a consumed count out of range is a transport
 // fault, counted on the I/O state; no public counter names it, so the fold at

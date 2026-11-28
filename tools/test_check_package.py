@@ -44,7 +44,7 @@ if args and args[0] == "--install":
         "add_library(RocketNet::rocketnet_shared SHARED IMPORTED)" + chr(10))
     # the rest of what a real install writes: tools/check_package.py holds
     # the installed tree to its INSTALLED_FILES
-    for rel in ("include/rocketnet.h", "share/rocketnet/LICENSE", "share/rocketnet/sodium/LICENSE",
+    for rel in ("include/rocketnet.h", "share/rocketnet/LICENSE", "share/rocketnet/MBSL.md", "share/rocketnet/sodium/LICENSE",
                 "lib/cmake/RocketNet/RocketNetTargets-release.cmake", "lib/librocketnet.a", "lib/librocketnet_shared.so"):
         (prefix / rel).parent.mkdir(parents=True, exist_ok=True)
         (prefix / rel).write_text("")

@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 // The client's BASE receive path (a transport without wait and wake) and the
 // public counters: a byte count past the UDP size limit reads
 // PREFILTER_TOO_LARGE once at update, as on the I/O thread path; a negative

@@ -1,6 +1,6 @@
 # Credits
 
-RocketNet was created by **Glenn Fiedler**.
+RocketNet was created by **Glenn Fiedler and Rowan Claude**.
 
 ## Sponsor
 

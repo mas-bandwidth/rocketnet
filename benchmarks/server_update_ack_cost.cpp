@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 // The server's per-frame update on the main thread with the ack shape of the
 // 10 Gb/s bar: N connected clients on the loopback transport, the server
 // sending each of them S unreliable messages of B bytes a frame (one packet

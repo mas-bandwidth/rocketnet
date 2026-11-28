@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 // Transport results the transports trust: a batch count, a byte count, a missing
 // wait, the loopback destination, and the GRO cmsg. No socket, no thread, no
 // wall clock. The clock argument is 1000.0. This file is compiled into the

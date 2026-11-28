@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 // Valid-call diagnostic. See lease_cost.md; this does not measure NIC throughput.
 #include "../tests/native_shutdown.h"
 #include "rocketnet_internal.h"

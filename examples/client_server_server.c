@@ -1,6 +1,6 @@
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
-    Licensed under the GNU Affero General Public License v3.0
+    Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 
     Client/server server: real UDP on 127.0.0.1, at the port from --port <n>,
     else the ROCKETNET_EXAMPLE_PORT environment variable, else 40000. The
