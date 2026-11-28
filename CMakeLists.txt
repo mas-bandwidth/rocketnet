@@ -1599,6 +1599,7 @@ install(TARGETS ${rocketnet_install_targets} EXPORT RocketNetTargets
 install(FILES sdk/rocketnet.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet)
+install(FILES MBSL.md DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet)
 install(FILES sodium/LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet/sodium)
 set(ROCKETNET_PACKAGE_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/RocketNet")
 if(TARGET RocketNet::Uring)

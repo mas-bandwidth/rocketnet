@@ -23,6 +23,7 @@ LIB = r"lib(?:64|/[a-z0-9_]+-[a-z0-9_]+-[a-z0-9_]+)?"
 INSTALLED_FILES = (
     (r"include/rocketnet\.h", "the whole public C API"),
     (r"share/rocketnet/LICENSE", "the licence"),
+    (r"share/rocketnet/MBSL\.md", "the commercial licence, MBSL-1.0"),
     (r"share/rocketnet/sodium/LICENSE", "the vendored sodium's licence"),
     (LIB + r"/cmake/RocketNet/RocketNet(?:Config|ConfigVersion|Dependencies|Targets)\.cmake", "the package files"),
     (LIB + r"/cmake/RocketNet/RocketNetTargets-[a-z]+\.cmake", "the per-configuration targets"),
@@ -44,10 +45,10 @@ def unexpected_installed_files(installed):
                 break
         else:
             problems.append(f"installed {rel}: not part of the SDK (tools/check_package.py INSTALLED_FILES)")
-    for i in (0, 1, 3):
+    for i in (0, 1, 2, 4):
         if i not in seen:
             problems.append(f"nothing installed for {INSTALLED_FILES[i][1]} ({INSTALLED_FILES[i][0]})")
-    if not any(re.fullmatch(INSTALLED_FILES[i][0], rel) for rel in files for i in (5, 6, 7)):
+    if not any(re.fullmatch(INSTALLED_FILES[i][0], rel) for rel in files for i in (6, 7, 8)):
         problems.append("no library installed")
     return problems
 
@@ -62,7 +63,7 @@ def self_test():
             (root / rel).write_text("")
         return root
 
-    base = ["include/rocketnet.h", "share/rocketnet/LICENSE", "share/rocketnet/sodium/LICENSE",
+    base = ["include/rocketnet.h", "share/rocketnet/LICENSE", "share/rocketnet/MBSL.md", "share/rocketnet/sodium/LICENSE",
             "lib/cmake/RocketNet/RocketNetConfig.cmake", "lib/cmake/RocketNet/RocketNetConfigVersion.cmake",
             "lib/cmake/RocketNet/RocketNetDependencies.cmake", "lib/cmake/RocketNet/RocketNetTargets.cmake",
             "lib/cmake/RocketNet/RocketNetTargets-release.cmake", "lib/librocketnet.a"]
@@ -78,6 +79,7 @@ def self_test():
         ("a stray file", base + ["share/rocketnet/notes.txt"], True),
         ("no public header", [b for b in base if not b.startswith("include/")], True),
         ("no library", [b for b in base if not b.endswith(".a")], True),
+        ("no MBSL.md beside LICENSE", [b for b in base if b != "share/rocketnet/MBSL.md"], True),
     ]
     for name, paths, want in cases:
         got = bool(unexpected_installed_files(tree(*paths)))

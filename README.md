@@ -58,7 +58,26 @@ alone does not provide a production backend.
 
 ## License and credits
 
-**rocketnet** is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+**rocketnet** is dual-licensed: `AGPL-3.0-or-later OR LicenseRef-MBSL-1.0`.
+
+- **[GNU Affero General Public License v3.0](LICENSE)** or any later version. Free.
+- **[Más Bandwidth Source License](MBSL.md)** (MBSL-1.0). The commercial licence, for use that does not comply with the AGPL.
+
+The MBSL is a subscription at **https://patreon.com/masbandwidth**:
+
+- USD $1 a month, or USD $100 a month if your company and its group had revenue over USD $1,000,000 in the last 12 months. At $100, send us your company's legal name.
+- One subscription covers all MBSL-licensed code from Mas Bandwidth LLC.
+- Pay from the first month your product uses rocketnet. Development counts.
+- Missed months are paid by invoice: email glenn@mas-bandwidth.com. An unpaid month is AGPL.
+- You may not bundle rocketnet for others to build with. They need their own subscription.
+- Your product's credits must carry:
+
+      Mas Bandwidth LLC
+          rocketnet        Glenn Fiedler and Rowan Claude
+
+A perpetual licence is USD $2,500 per product. It is bought from us: contact glenn@mas-bandwidth.com.
+
+Contact: glenn@mas-bandwidth.com
 
 See [Credits](docs/CREDITS.md) for its creator and sponsor, and
 [Security](docs/SECURITY.md) for reporting a vulnerability.
