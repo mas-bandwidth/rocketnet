@@ -1,6 +1,6 @@
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
-    Licensed under the GNU Affero General Public License v3.0
+    Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 
     Reliability: the server sends eight numbered messages in every reliability
     mode, one channel per mode, over loopback with simulated latency and

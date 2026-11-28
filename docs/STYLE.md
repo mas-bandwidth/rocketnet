@@ -235,7 +235,7 @@ Examples of the rule:
 ```
 sdk/rocketnet_address.cpp:1  /*
 sdk/rocketnet_address.cpp:2      RocketNet. Copyright 2026 Más Bandwidth LLC.  
-sdk/rocketnet_address.cpp:3      Licensed under the GNU Affero General Public License v3.0
+sdk/rocketnet_address.cpp:3      Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 sdk/rocketnet_address.cpp:4  */
 sdk/rocketnet_address.cpp:5  
 ```

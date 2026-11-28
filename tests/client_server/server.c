@@ -1,6 +1,6 @@
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
-    Licensed under the GNU Affero General Public License v3.0
+    Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 
     The out-of-the-box server: runs with the published development keys, so
     a first server needs no backend and no configuration -- run it, point a

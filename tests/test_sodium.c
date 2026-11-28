@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 // Fixed published vectors also run when no independent system sodium exists.
 #include <sodium.h>
 #include <stdio.h>

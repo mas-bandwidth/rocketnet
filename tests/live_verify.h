@@ -1,6 +1,6 @@
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
-    Licensed under the GNU Affero General Public License v3.0
+    Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 
     The live-message verify scheme and size schedule (docs/LIVE-XDP.md
     sections 3 and 4), shared as C99 static inline so the example programs

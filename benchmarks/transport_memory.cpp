@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 // Pre-allocation plan and optional allocator-observed server footprint.
 #include "../tests/native_shutdown.h"
 #include "../tests/token_string.h"

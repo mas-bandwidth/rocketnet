@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # RocketNet. Copyright 2026 Más Bandwidth LLC.
-# Licensed under the GNU Affero General Public License v3.0
+# Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 #
 # Checks that this user's RLIMIT_MEMLOCK covers the io_uring functional cases
 # every CI runner of this user on this host can run at once

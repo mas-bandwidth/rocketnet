@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 // Exercise the actual Darwin pump with controlled syscall refusal. Function
 // pointer substitution is confined to this executable; SDK sources are unchanged.
 // The msgx seam (the pause-expiry race hook) is ROCKETNET_DEV code.

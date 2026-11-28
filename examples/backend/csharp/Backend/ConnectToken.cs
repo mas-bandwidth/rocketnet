@@ -1,6 +1,6 @@
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
-    Licensed under the GNU Affero General Public License v3.0
+    Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 
     The connect token a backend mints: the 576 byte token of STANDARD.md,
     byte for byte the one sdk/rocketnet_connect_token.cpp writes. The backend

@@ -1,6 +1,6 @@
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
-    Licensed under the GNU Affero General Public License v3.0
+    Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 
     test_resend_timing_table_over_lossy_links: the measured latency and cost of the
     reliable resend rule (standard/MESSAGES.md m9; proofs/tla/RNResendTiming.tla) over

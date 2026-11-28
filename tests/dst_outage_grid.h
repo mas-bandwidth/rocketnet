@@ -1,6 +1,6 @@
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
-    Licensed under the GNU Affero General Public License v3.0
+    Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 
     `./bin/dst --outage <set> [--seeds a-b]` (docs/DST.md, "Outage
     scenarios"): the outage world of tests/dst_outage.h over a grid of rows.

@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 
 /* The load harness resource census (tests/load/load_census.h) finds the thread and the
    handle a cycle leaves behind, and nothing when it leaves nothing. CMake builds it

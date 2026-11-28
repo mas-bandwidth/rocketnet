@@ -1,6 +1,6 @@
 /*
     RocketNet. Copyright 2026 Mas Bandwidth LLC.
-    Licensed under the GNU Affero General Public License v3.0
+    Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 
     The DST layer-1 core's unit cases (docs/DST.md section 2): determinism of
     the seeded run, seed sensitivity, substream independence, the fail line

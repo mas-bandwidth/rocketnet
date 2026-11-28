@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # RocketNet. Copyright 2026 Más Bandwidth LLC.
-# Licensed under the GNU Affero General Public License v3.0
+# Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 #
 # Runs ./bin/test_xdp_filter -v against the built server_xdp.o inside a
 # virtme-ng (vng) guest of the host's matching kernel, requiring all 19

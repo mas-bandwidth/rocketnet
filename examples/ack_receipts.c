@@ -1,6 +1,6 @@
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
-    Licensed under the GNU Affero General Public License v3.0
+    Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
 
     Ack receipts: the client sends unreliable state updates with
     ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT over loopback while the

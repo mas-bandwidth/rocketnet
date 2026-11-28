@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 #pragma once
 
 #ifndef ROCKETNET_SDK_ROCKETNET_STATS_WINDOW_H

@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 
 // Boundary tests for the risk survivors of the 2026-10-24 mutation audit
 // (docs/audits/2026-10-24-mutation-testing.md, findings 1, 3, 4 and 5). Each

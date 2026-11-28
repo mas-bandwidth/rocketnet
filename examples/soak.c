@@ -1,6 +1,6 @@
 /*
     RocketNet. Copyright 2026 Más Bandwidth LLC.
-    Licensed under the GNU Affero General Public License v3.0
+    Licensed under the GNU Affero General Public License v3.0 or later, or the Más Bandwidth Source License 1.0 (MBSL-1.0). See LICENSE and MBSL.md.
     Soak: 1000 clients against one server over a lossy link for N seconds,
     checking every message's integrity and order, and measuring server tick
     and client update timings, packet/byte rates, and allocator activity.

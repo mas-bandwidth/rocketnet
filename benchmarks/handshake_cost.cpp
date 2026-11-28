@@ -1,4 +1,4 @@
-/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
+/* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0-or-later or MBSL-1.0. See LICENSE and MBSL.md. */
 // The cost of one unit of the server's per-update handshake work budget
 // (handshakes_per_update): one cookie-validated connection request through
 // the protocol's request check sequence, the shape a flood or a mass join spends.
