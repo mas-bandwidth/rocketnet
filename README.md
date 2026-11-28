@@ -61,23 +61,24 @@ alone does not provide a production backend.
 **rocketnet** is dual-licensed: `AGPL-3.0-or-later OR LicenseRef-MBSL-1.0`.
 
 - **[GNU Affero General Public License v3.0](LICENSE)** or any later version. Free.
-- **[Más Bandwidth Source License](MBSL.md)** (MBSL-1.0). The commercial licence, for use that does not comply with the AGPL.
+- **[Más Bandwidth Source License](MBSL.md)** (MBSL-1.0). The commercial license, for use that does not comply with the AGPL.
 
-The MBSL is a subscription at **https://patreon.com/masbandwidth**:
+Subscribe at **https://patreon.com/masbandwidth**. The [license](MBSL.md) governs.
 
-- USD $1 a month, or USD $100 a month if your company and its group had revenue over USD $1,000,000 in the last 12 months. At $100, send us your company's legal name.
-- One subscription covers all MBSL-licensed code from Mas Bandwidth LLC.
-- Pay from the first month your product uses rocketnet. Development counts.
-- Missed months are paid by invoice: email glenn@mas-bandwidth.com. An unpaid month is AGPL.
-- You may not bundle rocketnet for others to build with. They need their own subscription.
+- USD $1 a month, or USD $100 if your group's Revenue, as defined in section 1.8, exceeded USD $1,000,000 in the preceding 12 months. Within 30 days of your first USD $100 payment, send us your legal name by email or Patreon message.
+- One subscription covers all MBSL-licensed code from Mas Bandwidth LLC, for you and every entity you control.
+- Pay from the first month you use rocketnet. Evaluation and development count.
+- Missed months are paid by invoice: email glenn@mas-bandwidth.com. An unpaid month is not licensed under the MBSL.
+- A publisher needs no subscription of its own for a product licensed to its developer. A developer the publisher does not control needs its own.
+- You may not bundle rocketnet for others to build with. Anyone who builds with rocketnet needs their own subscription, or must comply with the AGPL, however they received it.
 - Your product's credits must carry:
 
       Mas Bandwidth LLC
           rocketnet        Glenn Fiedler and Rowan Claude
 
-A perpetual licence is USD $2,500 per product. It is bought from us: contact glenn@mas-bandwidth.com.
+A one-time payment of USD $2,500 covers one named product permanently from the month of payment. Earlier months of that product's use must still be paid. Contact glenn@mas-bandwidth.com.
 
-Contact: glenn@mas-bandwidth.com
+The XDP program in `sdk/xdp/` keeps its own license, the GPL. It runs inside the kernel and is not part of the MBSL.
 
-See [Credits](docs/CREDITS.md) for its creator and sponsor, and
+See [Credits](docs/CREDITS.md) for rocketnet's creator and sponsor, and
 [Security](docs/SECURITY.md) for reporting a vulnerability.
